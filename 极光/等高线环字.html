@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>等高线环字 Contour</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#04140b;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(4,20,11,.85),rgba(4,20,11,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a7f72;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">等高线环字 <b id="m">地形图</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn pri" id="btn-text">换文字</button>
+</div>
+<div id="hint">波纹从字形向外扩散 · 环线衰减 · 双色交替</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1);
+
+  const CFG = {
+    text: 'AURORA',
+    spacing: 18,      // 环距（CSS px）
+    lineWidth: 2.5,
+    range: 180,       // 外扩范围
+    speed: 1,         // 波动速度（正=向外扩，负=向内收，0=静止）
+    inner: true,      // 字内是否实心
+    falloff: 0.5,     // 环衰减
+    jitter: 0,        // 抖动（手绘感）
+    weight: 800,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    colorA: '#39ff8f',
+    colorB: '#0f7f4a',
+    background: '#04140b'
+  };
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.floor(W * dpr); cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fieldKey = '';
+  }
+
+  // ========== 距离场 ==========
+  const FM = 480;
+  let gw = 2, gh = 2;
+  let dist = null;
+  let jn = null;
+  let fieldKey = '';
+
+  const raster = document.createElement('canvas');
+  const rctx = raster.getContext('2d', { willReadFrequently: true });
+
+  function buildField() {
+    const k = Math.min(1, FM / Math.max(2, Math.max(W, H)));
+    const w = Math.max(2, Math.round(W * k));
+    const h = Math.max(2, Math.round(H * k));
+    const key = `${CFG.text}|${CFG.weight}|${w}x${h}`;
+    if (key === fieldKey && dist) return;
+    fieldKey = key;
+    gw = w; gh = h;
+
+    raster.width = w; raster.height = h;
+    rctx.clearRect(0, 0, w, h);
+    rctx.fillStyle = '#fff';
+    rctx.textAlign = 'center';
+    rctx.textBaseline = 'middle';
+    const lines = CFG.text.split('\n').filter(l => l.length > 0);
+    const maxW = w * 0.9, maxH = h * 0.86;
+    const lh = maxH / Math.max(1, lines.length);
+    let size = Math.floor(lh * 0.8);
+    const setF = s => { rctx.font = `${CFG.weight} ${s}px ${CFG.font}`; };
+    setF(size);
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, rctx.measureText(l).width);
+    if (widest > maxW) { size = Math.max(6, Math.floor(size * maxW / widest)); setF(size); }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) { size = Math.max(6, Math.floor(size * maxH / totalH)); setF(size); }
+    const startY = h / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (let i = 0; i < lines.length; i++) {
+      rctx.fillText(lines[i], w / 2, startY + i * size * 1.15);
+    }
+
+    const img = rctx.getImageData(0, 0, w, h).data;
+    const inside = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) inside[i] = img[i * 4 + 3] > 128 ? 1 : 0;
+
+    const INF = 1e9;
+    const d1 = new Float32Array(w * h);
+    const d2 = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      d1[i] = inside[i] ? INF : 0;
+      d2[i] = inside[i] ? 0 : INF;
+    }
+    chamfer(d1, w, h);
+    chamfer(d2, w, h);
+    dist = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      dist[i] = inside[i] ? d1[i] : -d2[i];
+    }
+
+    // 抖动场（手绘感）
+    jn = new Float32Array(w * h);
+    if (CFG.jitter > 0) {
+      const nz = new Noise(11);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        jn[y * w + x] = nz.fbm2(x * 0.06, y * 0.06, 3);
+      }
+    }
+  }
+
+  function chamfer(d, w, h) {
+    const INF = 1e9;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let v = d[i];
+      if (x > 0) v = Math.min(v, d[i - 1] + 3);
+      if (y > 0) {
+        v = Math.min(v, d[i - w] + 3);
+        if (x > 0) v = Math.min(v, d[i - w - 1] + 4);
+        if (x < w - 1) v = Math.min(v, d[i - w + 1] + 4);
+      }
+      d[i] = v;
+    }
+    for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      let v = d[i];
+      if (x < w - 1) v = Math.min(v, d[i + 1] + 3);
+      if (y < h - 1) {
+        v = Math.min(v, d[i + w] + 3);
+        if (x < w - 1) v = Math.min(v, d[i + w + 1] + 4);
+        if (x > 0) v = Math.min(v, d[i + w - 1] + 4);
+      }
+      d[i] = v;
+    }
+    for (let i = 0; i < w * h; i++) if (d[i] < INF) d[i] /= 3;
+  }
+
+  // ========== 噪声 ==========
+  class Noise {
+    constructor(seed) { this.p = new Uint8Array(512); const r = mulberry(seed); const arr = new Uint8Array(256); for (let i = 0; i < 256; i++) arr[i] = i; for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } for (let i = 0; i < 512; i++) this.p[i] = arr[i & 255]; }
+    noise2(x, y) {
+      const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+      x -= Math.floor(x); y -= Math.floor(y);
+      const u = x * x * (3 - 2 * x), v = y * y * (3 - 2 * y);
+      const p = this.p;
+      const a = p[X] + Y, b = p[X + 1] + Y;
+      return lerp(lerp(grad(p[a], x, y), grad(p[b], x - 1, y), u),
+                  lerp(grad(p[a + 1], x, y - 1), grad(p[b + 1], x - 1, y - 1), u), v) * 0.5;
+    }
+    fbm2(x, y, oct) {
+      let s = 0, a = 0.5, f = 1;
+      for (let i = 0; i < oct; i++) { s += a * this.noise2(x * f, y * f); f *= 2; a *= 0.5; }
+      return s;
+    }
+  }
+  function grad(h, x, y) { const u = (h & 1) ? -x : x; const v = (h & 2) ? -y : y; return u + v; }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  // ========== 离屏输出 ==========
+  const off = document.createElement('canvas');
+  const octx = off.getContext('2d');
+  let imgData = null;
+
+  let time = 0, lastT = performance.now();
+
+  function render(now) {
+    const dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now; time += dt;
+
+    buildField();
+
+    off.width = gw; off.height = gh;
+    if (!imgData || imgData.width !== gw || imgData.height !== gh) {
+      imgData = octx.createImageData(gw, gh);
+    }
+    const px = imgData.data;
+
+    const [bgR, bgG, bgB] = hex2rgb(CFG.background);
+    const [aR, aG, aB] = hex2rgb(CFG.colorA);
+    const [bR, bG, bB] = hex2rgb(CFG.colorB);
+
+    // 场里 1 CSS px ≈ gw/W 场像素
+    const k = gw / W;
+    const spacing = Math.max(2, CFG.spacing * k);
+    const lineW = Math.max(0.5, CFG.lineWidth * k);
+    const range = Math.max(spacing, CFG.range * k);
+    const jitter = CFG.jitter * spacing * 0.5;
+    const falloff = CFG.falloff;
+    const inner = CFG.inner;
+    const speed = CFG.speed;
+    const dPhase = time * speed;
+
+    // A 环的亮色（向上偏移）
+    const aHiR = aR + (255 - aR) * 0.35;
+    const aHiG = aG + (255 - aG) * 0.35;
+    const aHiB = aB + (255 - aB) * 0.35;
+
+    // 抗锯齿参考宽
+    const AA = 0.6;
+    const fallPow = 1 + falloff * 3;
+
+    for (let i = 0, o = 0; i < gw * gh; i++, o += 4) {
+      const d = dist[i];
+      let r = bgR, g = bgG, b = bgB;
+
+      if (d > 0 && !inner) {
+        // 字内实心填充
+        const t = Math.min(1, d);
+        r = bgR + (aR - bgR) * t;
+        g = bgG + (aG - bgG) * t;
+        b = bgB + (aB - bgB) * t;
+        px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255;
+        continue;
+      }
+
+      // 抖动
+      const dd = jitter > 0 ? d + jn[i] * jitter : d;
+
+      if (dd > -range) {
+        // 归一化相位
+        const ph = dd / spacing + dPhase;
+        const fl = Math.floor(ph);
+        const fr = ph - fl;
+        // 到环线中心的距离（三角波）
+        const dist2line = (fr < 1 - fr ? fr : 1 - fr) * spacing;
+
+        // 环线亮度（高斯近似的软线）
+        const bright = Math.max(0, 1 - (dist2line - lineW * 0.5) / (lineW * 0.5 + AA));
+
+        if (bright > 0) {
+          // 环衰减：越远越暗
+          const t = dd < 0 ? 1 : Math.pow(Math.max(0, 1 - dd / range), fallPow);
+          const w = bright * t;
+          const useA = (fl & 1) === 0;
+          const cr = useA ? aR : bR;
+          const cg = useA ? aG : bG;
+          const cb = useA ? aB : bB;
+          r = bgR + (cr - bgR) * w;
+          g = bgG + (cg - bgG) * w;
+          b = bgB + (cb - bgB) * w;
+        }
+      }
+
+      // 字内亮线（描边效果）：贴近边界给一圈高光
+      if (d >= 0) {
+        const w = Math.max(0, 1 - Math.abs(d) / 1.2) * 0.85;
+        if (w > 0.02) {
+          r = r + (aHiR - r) * w;
+          g = g + (aHiG - g) * w;
+          b = b + (aHiB - b) * w;
+        }
+      }
+
+      px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = 255;
+    }
+
+    octx.putImageData(imgData, 0, 0);
+
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(off, 0, 0, W, H);
+
+    requestAnimationFrame(render);
+  }
+
+  // ========== 工具 ==========
+  function hex2rgb(h) {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ========== 预设 ==========
+  const PRESETS = [
+    {
+      label: '地形图',
+      cfg: { spacing: 14, lineWidth: 1.5, range: 150, speed: 0.15, inner: true, falloff: 0.3, jitter: 0.35,
+        colorA: '#d7c7a2', colorB: '#9a8760', background: '#171a14', text: 'AURORA' }
+    },
+    {
+      label: '雷达扫描',
+      cfg: { spacing: 26, lineWidth: 2, range: 320, speed: 2.2, inner: false, falloff: 0.55, jitter: 0,
+        colorA: '#39ff8f', colorB: '#0f7f4a', background: '#03120a', text: 'RADAR' }
+    },
+    {
+      label: '指纹',
+      cfg: { spacing: 8, lineWidth: 2.5, range: 90, speed: 0.3, inner: true, falloff: 0.7, jitter: 0.6,
+        colorA: '#e8e2d4', colorB: '#a89f8d', background: '#141210', text: '指纹' }
+    },
+    {
+      label: '声波',
+      cfg: { spacing: 20, lineWidth: 3, range: 380, speed: 3, inner: false, falloff: 0.4, jitter: 0.1,
+        colorA: '#4fd8ff', colorB: '#ff5ac8', background: '#060812', text: 'WAVE' }
+    },
+    {
+      label: '霓虹光环',
+      cfg: { spacing: 16, lineWidth: 2, range: 260, speed: 1.4, inner: false, falloff: 0.6, jitter: 0,
+        colorA: '#ff2fd6', colorB: '#5be0ff', background: '#05030a', text: 'NEON' }
+    }
+  ];
+  let presetIdx = 0;
+  const mLabel = document.getElementById('m');
+
+  document.getElementById('btn-preset').addEventListener('click', () => {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    const p = PRESETS[presetIdx];
+    Object.assign(CFG, p.cfg);
+    mLabel.textContent = p.label;
+    fieldKey = '';
+  });
+
+  const CONTENTS = ['AURORA', '等高线', 'RADAR', '环\nRING', '脉冲', '⚡'];
+  let contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', () => {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    fieldKey = '';
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', () => setTimeout(resize, 80));
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Optimized ByteBeat Player</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:monospace}
+body{background:#111;color:#eee;padding:16px}
+textarea{width:100%;height:220px;background:#222;color:#0f0;padding:10px;font-size:13px;white-space:pre;resize:vertical}
+#canvas{background:#000;margin:10px 0;border:1px solid #444}
+.ctrl{margin:8px 0}
+button{padding:8px 16px;font-size:14px}
+</style>
+</head>
+<body>
+<h2>ByteBeat Player</h2>
+<div class="ctrl">
+<button id="playBtn">Play / Pause</button>
+<span>Sample Rate: <input id="sr" value="8000" type="number" style="width:80px"></span>
+</div>
+<textarea id="code">
+(t %= 786432, (x, v = 12288, z = 0.5) => {
+    const pI = parseInt;
+    const tShift12_31 = t >> 12 & 31;
+    const tShift12_15 = t >> 12 & 15;
+    const tShift13_31 = t >> 13 & 31;
+    const tShift19_1 = t >> 19 & 1;
+    const mask16384 = t & 16384;
+
+    const str1 = "J HJC AC7 570 5 35A 5 35D ";
+    const num1 = pI(str1[tShift12_31], 36) / 12 || 0;
+    const powTerm1 = 528 * (2 ** num1);
+    const A = Math.sin(t / 204800 * 2 * Math.PI * powTerm1) * 6144 / 2;
+
+    const cond = mask16384 ? t & 16383 : t & 8191;
+    if (!cond) {
+        const str2 = "8CJ 8CJ 6AH 6AD 8CJ 8CJ BFM BFI";
+        const num2 = pI(str2[tShift13_31], 36) / 12 || 0;
+        const powTerm2 = 2 ** num2;
+        const s = Math.floor(81920 / (528 * powTerm2));
+        const S = Array.from({ length: s }, () => Math.random());
+        const modT = t % s;
+        S[modT] = S[modT] / 2 + S[(t + 1) % s] / 2;
+        const B = S[modT] - 0.5;
+
+        const t4095 = t & 4095;
+        const t256Mask = (t / 256) & 15;
+        const K = Math.sin(Math.cbrt(t4095) * 8) / (1 + t256Mask);
+        const H = (Math.random() - 0.5) * ((-t >> 4) & 255) / 256;
+        const str3 = "K SKH SK SKS ";
+        const C = pI(str3[tShift12_15]) || 0;
+        return [B + A, B + C][tShift19_1];
+    }
+    return A;
+})
+</textarea>
+<canvas id="canvas" width="900" height="160"></canvas>
+
+<script>
+let audioCtx;
+let scriptNode;
+let isPlaying = false;
+let t = 0n;
+let byteFunc;
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const playBtn = document.getElementById("playBtn");
+const codeArea = document.getElementById("code");
+const srInput = document.getElementById("sr");
+
+function compileCode(src){
+    // r函数简化：原r(val,scale)=Math.floor(val*scale)
+    const wrapped = new Function("t","x","v","z","r","parseInt","Math",`return (${src})(t,x,v,z,Math.floor,parseInt,Math)`);
+    return (tVal,x=0,v=12288,z=0.5)=>{
+        return wrapped(tVal,x,v,z,Math.floor,parseInt,Math);
+    }
+}
+
+function drawWave(buf){
+    ctx.fillStyle="#000";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle="#0f0";
+    ctx.beginPath();
+    const step = buf.length/canvas.width;
+    const mid = canvas.height/2;
+    for(let x=0;x<canvas.width;x++){
+        const idx = Math.floor(x*step);
+        const y = mid - buf[idx]*mid;
+        if(x===0) ctx.moveTo(x,y);
+        else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+}
+
+playBtn.onclick = async ()=>{
+    if(!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({sampleRate:+srInput.value});
+        scriptNode = audioCtx.createScriptProcessor(4096,0,1);
+        scriptNode.onaudioprocess = (e)=>{
+            const out = e.outputBuffer.getChannelData(0);
+            const buf = [];
+            for(let i=0;i<out.length;i++){
+                const res = byteFunc(Number(t));
+                out[i] = Math.max(-1,Math.min(1,res));
+                buf.push(out[i]);
+                t += 1n;
+            }
+            requestAnimationFrame(()=>drawWave(buf));
+        }
+        scriptNode.connect(audioCtx.destination);
+    }
+    byteFunc = compileCode(codeArea.value);
+    if(isPlaying){
+        scriptNode.disconnect();
+        isPlaying=false;
+        playBtn.textContent="Play / Pause";
+    }else{
+        scriptNode.connect(audioCtx.destination);
+        if(audioCtx.state==="suspended") await audioCtx.resume();
+        isPlaying=true;
+        playBtn.textContent="Stop";
+    }
+}
+</script>
+</body>
+</html>

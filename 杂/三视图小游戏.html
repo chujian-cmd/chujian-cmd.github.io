@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>旅人的冒险 · 灰阶时空</title>
+
+    <!-- 使用 import map 加载 Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <style>
+        /* ===== 全局重置 & 字体 ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: #ffffff;
+            font-family: 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+            touch-action: none;
+        }
+
+        /* ===== 3D 容器 ===== */
+        #three-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            background: #ffffff;
+        }
+
+        /* ===== 顶部 UI ===== */
+        .header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 10;
+            padding: 12px 16px 8px 16px;
+            display: flex;
+            flex-direction: column;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 60%, rgba(255, 255, 255, 0));
+            pointer-events: none;
+        }
+
+        .header-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            width: 100%;
+        }
+
+        .header-left {
+            display: flex;
+            flex-direction: column;
+            gap: 0px;
+        }
+
+        .chapter-title {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: #1a1a1a;
+            line-height: 1.2;
+        }
+
+        .chapter-sub {
+            font-size: 11px;
+            font-weight: 300;
+            color: #888;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-top: 1px;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 0, 0, 0.04);
+            padding: 4px 12px 4px 10px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            pointer-events: auto;
+        }
+
+        .energy-icon {
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        .energy-value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #222;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        .level-desc {
+            font-size: 12px;
+            color: #666;
+            letter-spacing: 0.5px;
+            margin-top: 4px;
+            font-weight: 400;
+            background: rgba(255, 255, 255, 0.6);
+            padding: 2px 10px 2px 8px;
+            border-radius: 12px;
+            display: inline-block;
+            backdrop-filter: blur(2px);
+            align-self: flex-start;
+            border: 0.5px solid rgba(0, 0, 0, 0.04);
+        }
+
+        /* ===== 底部 UI ===== */
+        .footer {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 10;
+            padding: 12px 20px 24px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(0deg, rgba(255, 255, 255, 0.92) 60%, rgba(255, 255, 255, 0));
+            pointer-events: none;
+        }
+
+        .footer-btn-group {
+            display: flex;
+            gap: 16px;
+            pointer-events: auto;
+        }
+
+        .footer-btn {
+            background: rgba(0, 0, 0, 0.04);
+            border: none;
+            border-radius: 30px;
+            padding: 8px 18px;
+            font-size: 13px;
+            font-weight: 450;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: 0.3px;
+            transition: 0.15s;
+            backdrop-filter: blur(4px);
+            border: 0.5px solid rgba(0, 0, 0, 0.04);
+            cursor: pointer;
+            touch-action: manipulation;
+        }
+
+        .footer-btn:active {
+            background: rgba(0, 0, 0, 0.10);
+            transform: scale(0.96);
+        }
+
+        .footer-btn .icon {
+            font-size: 16px;
+            line-height: 1;
+        }
+
+        .footer-btn .label {
+            font-size: 12px;
+        }
+
+        /* ===== 灰度选择器 (浮动在场景中) ===== */
+        .grayscale-picker {
+            position: absolute;
+            bottom: 88px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: flex;
+            gap: 14px;
+            background: rgba(255, 255, 255, 0.85);
+            padding: 8px 18px;
+            border-radius: 40px;
+            backdrop-filter: blur(8px);
+            border: 0.5px solid rgba(0, 0, 0, 0.06);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+            pointer-events: auto;
+            touch-action: manipulation;
+        }
+
+        .gray-option {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 2.5px solid rgba(0, 0, 0, 0.08);
+            cursor: pointer;
+            transition: 0.15s;
+            touch-action: manipulation;
+            position: relative;
+        }
+
+        .gray-option:active {
+            transform: scale(0.92);
+        }
+
+        .gray-option.active {
+            border-color: #222;
+            box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06);
+            transform: scale(1.04);
+        }
+
+        .gray-option .check {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            font-size: 14px;
+            color: #222;
+            display: none;
+        }
+
+        .gray-option.active .check {
+            display: block;
+        }
+
+        /* 三种灰度颜色 */
+        .gray-dark {
+            background: #2a2a2a;
+        }
+        .gray-mid {
+            background: #777777;
+        }
+        .gray-light {
+            background: #c0c0c0;
+        }
+
+        /* ===== 通关提示 ===== */
+        .toast {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.9);
+            z-index: 30;
+            background: rgba(0, 0, 0, 0.78);
+            backdrop-filter: blur(12px);
+            padding: 28px 40px 32px 40px;
+            border-radius: 24px;
+            text-align: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            border: 0.5px solid rgba(255, 255, 255, 0.10);
+            min-width: 200px;
+        }
+
+        .toast.show {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        .toast .emoji {
+            font-size: 44px;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .toast .msg {
+            color: #fff;
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 1px;
+        }
+
+        .toast .sub-msg {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+            margin-top: 6px;
+            font-weight: 300;
+        }
+
+        .toast .btn-next {
+            margin-top: 18px;
+            background: #fff;
+            border: none;
+            border-radius: 30px;
+            padding: 10px 32px;
+            font-size: 15px;
+            font-weight: 600;
+            color: #111;
+            cursor: pointer;
+            transition: 0.15s;
+            touch-action: manipulation;
+        }
+
+        .toast .btn-next:active {
+            transform: scale(0.96);
+            opacity: 0.8;
+        }
+
+        /* ===== 状态栏（关卡进度） ===== */
+        .level-progress {
+            position: absolute;
+            top: 78px;
+            right: 16px;
+            z-index: 10;
+            font-size: 12px;
+            color: #999;
+            background: rgba(255, 255, 255, 0.7);
+            padding: 4px 12px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            border: 0.5px solid rgba(0, 0, 0, 0.04);
+            letter-spacing: 0.5px;
+            pointer-events: none;
+        }
+
+        /* ===== 投影匹配指示 ===== */
+        .match-indicator {
+            position: absolute;
+            top: 78px;
+            left: 16px;
+            z-index: 10;
+            font-size: 12px;
+            color: #888;
+            background: rgba(255, 255, 255, 0.7);
+            padding: 4px 14px;
+            border-radius: 20px;
+            backdrop-filter: blur(4px);
+            border: 0.5px solid rgba(0, 0, 0, 0.04);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            pointer-events: none;
+        }
+
+        .match-indicator .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            transition: 0.3s;
+        }
+
+        .match-indicator .dot.fail {
+            background: #e74c3c;
+        }
+        .match-indicator .dot.success {
+            background: #2ecc71;
+        }
+
+        /* ===== 响应式适配 ===== */
+        @media (max-width: 420px) {
+            .chapter-title {
+                font-size: 17px;
+            }
+            .chapter-sub {
+                font-size: 10px;
+            }
+            .header {
+                padding: 10px 12px 6px 12px;
+            }
+            .footer {
+                padding: 10px 14px 18px 14px;
+            }
+            .footer-btn {
+                padding: 6px 14px;
+                font-size: 12px;
+            }
+            .footer-btn .label {
+                font-size: 11px;
+            }
+            .grayscale-picker {
+                bottom: 78px;
+                gap: 12px;
+                padding: 6px 14px;
+            }
+            .gray-option {
+                width: 30px;
+                height: 30px;
+            }
+            .energy-value {
+                font-size: 14px;
+            }
+            .level-desc {
+                font-size: 11px;
+            }
+            .toast {
+                padding: 22px 28px 26px 28px;
+                min-width: 160px;
+            }
+            .toast .emoji {
+                font-size: 36px;
+            }
+            .toast .msg {
+                font-size: 16px;
+            }
+            .match-indicator {
+                top: 72px;
+                left: 12px;
+                font-size: 11px;
+                padding: 3px 10px;
+            }
+            .level-progress {
+                top: 72px;
+                right: 12px;
+                font-size: 11px;
+                padding: 3px 10px;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .chapter-title {
+                font-size: 15px;
+            }
+            .footer-btn {
+                padding: 5px 10px;
+                font-size: 11px;
+            }
+            .footer-btn .label {
+                display: none;
+            }
+            .grayscale-picker {
+                gap: 10px;
+                padding: 6px 12px;
+            }
+            .gray-option {
+                width: 28px;
+                height: 28px;
+            }
+        }
+
+        /* 防止点击穿透 */
+        .click-catcher {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ===== 3D 容器 ===== -->
+    <div id="three-container"></div>
+
+    <!-- ===== 顶部 UI ===== -->
+    <div class="header">
+        <div class="header-top">
+            <div class="header-left">
+                <div class="chapter-title">灰阶时空</div>
+                <div class="chapter-sub">Grayscale Dimension</div>
+            </div>
+            <div class="header-right">
+                <span class="energy-icon">⚡</span>
+                <span class="energy-value" id="energyDisplay">12</span>
+            </div>
+        </div>
+        <div class="level-desc" id="levelDesc">在两面墙上投射出目标图案</div>
+    </div>
+
+    <!-- ===== 匹配指示 ===== -->
+    <div class="match-indicator" id="matchIndicator">
+        <span>投影匹配</span>
+        <span class="dot fail" id="matchDot"></span>
+    </div>
+
+    <!-- ===== 关卡进度 ===== -->
+    <div class="level-progress" id="levelProgress">第 1 / 6 关</div>
+
+    <!-- ===== 灰度选择器 ===== -->
+    <div class="grayscale-picker" id="grayPicker">
+        <div class="gray-option gray-dark active" data-gray="dark" data-value="0.25">
+            <span class="check">✓</span>
+        </div>
+        <div class="gray-option gray-mid" data-gray="mid" data-value="0.55">
+            <span class="check">✓</span>
+        </div>
+        <div class="gray-option gray-light" data-gray="light" data-value="0.82">
+            <span class="check">✓</span>
+        </div>
+    </div>
+
+    <!-- ===== 底部 UI ===== -->
+    <div class="footer">
+        <div class="footer-btn-group">
+            <button class="footer-btn" id="btnReset">
+                <span class="icon">↺</span>
+                <span class="label">重置</span>
+            </button>
+            <button class="footer-btn" id="btnSettings">
+                <span class="icon">⚙</span>
+                <span class="label">设置</span>
+            </button>
+            <button class="footer-btn" id="btnSupport">
+                <span class="icon">💬</span>
+                <span class="label">客服</span>
+            </button>
+        </div>
+        <div style="font-size:11px;color:#bbb;letter-spacing:1px;pointer-events:none;">
+            ✦ 旅人的冒险 ✦
+        </div>
+    </div>
+
+    <!-- ===== 通关弹窗 ===== -->
+    <div class="toast" id="toast">
+        <span class="emoji">✦</span>
+        <div class="msg">投影完美匹配！</div>
+        <div class="sub-msg">思维如水波般扩散 ✦</div>
+        <button class="btn-next" id="btnNext">下一关 →</button>
+    </div>
+
+    <!-- ===== Three.js 主脚本 ===== -->
+    <script type="module">
+        // ============================================================
+        //  模块导入
+        // ============================================================
+        import * as THREE from 'three';
+        import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+        // ============================================================
+        //  关卡数据
+        // ============================================================
+        // 每个关卡： leftTarget, rightTarget 为 5x5 数组
+        // 值: 0=空, 1=深灰, 2=中灰, 3=浅灰
+        // 同时包含初始摆放 (可选)
+
+        const LEVELS = [{
+            name: '初识投影',
+            desc: '在两面墙上投射出目标图案',
+            leftTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 0, 1, 0, 0],
+                [0, 0, 1, 0, 0],
+                [0, 0, 1, 0, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            rightTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 1, 1, 1, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            // 初始地面摆放 (x,z,灰度) 1=深 2=中 3=浅
+            init: [
+                [2, 2, 1]
+            ]
+        }, {
+            name: '双面镜像',
+            desc: '左右对称的投影之谜',
+            leftTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 1, 0, 1, 0],
+                [0, 0, 1, 0, 0],
+                [0, 1, 0, 1, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            rightTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 1, 0, 1, 0],
+                [0, 0, 1, 0, 0],
+                [0, 1, 0, 1, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            init: [
+                [1, 1, 1],
+                [3, 1, 1]
+            ]
+        }, {
+            name: '灰度阶梯',
+            desc: '不同灰度交织的剪影',
+            leftTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 2, 2, 0, 0],
+                [0, 2, 1, 2, 0],
+                [0, 0, 2, 2, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            rightTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 3, 3, 3, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            init: [
+                [1, 1, 2],
+                [2, 2, 1],
+                [3, 3, 2]
+            ]
+        }, {
+            name: '交错时空',
+            desc: '左右投影相互交织',
+            leftTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 1, 0, 2, 0],
+                [0, 0, 3, 0, 0],
+                [0, 2, 0, 1, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            rightTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 0, 3, 0, 0],
+                [0, 2, 0, 2, 0],
+                [0, 0, 3, 0, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            init: [
+                [2, 0, 1],
+                [0, 2, 2],
+                [3, 1, 3]
+            ]
+        }, {
+            name: '水波扩散',
+            desc: '像水波一样层层展开',
+            leftTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 3, 3, 3, 0],
+                [0, 3, 2, 3, 0],
+                [0, 3, 3, 3, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            rightTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 1, 0, 0],
+                [0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            init: [
+                [0, 0, 3],
+                [2, 2, 2],
+                [3, 1, 3]
+            ]
+        }, {
+            name: '终极灰阶',
+            desc: '三重灰度，双重投影',
+            leftTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 1, 2, 3, 0],
+                [0, 2, 3, 1, 0],
+                [0, 3, 1, 2, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            rightTarget: [
+                [0, 0, 0, 0, 0],
+                [0, 3, 2, 1, 0],
+                [0, 1, 3, 2, 0],
+                [0, 2, 1, 3, 0],
+                [0, 0, 0, 0, 0]
+            ],
+            init: [
+                [1, 1, 1],
+                [2, 2, 2],
+                [3, 3, 3]
+            ]
+        }];
+
+        // 灰度值映射
+        const GRAY_VALUES = {
+            1: 0.22, // 深灰
+            2: 0.55, // 中灰
+            3: 0.82 // 浅灰
+        };
+
+        const GRAY_NAMES = { 1: 'dark', 2: 'mid', 3: 'light' };
+
+        // ============================================================
+        //  游戏状态
+        // ============================================================
+        const state = {
+            currentLevel: 0,
+            energy: 12,
+            maxEnergy: 20,
+            // 地面方块: 存储 { x, z, gray }  gray: 1,2,3
+            blocks: [],
+            // 选中的灰度 (1深,2中,3浅)
+            selectedGray: 1,
+            // 是否通关
+            isComplete: false,
+            // 是否正在动画
+            isAnimating: false,
+            // 体力恢复计时
+            energyTimer: null,
+        };
+
+        // ============================================================
+        //  DOM 引用
+        // ============================================================
+        const container = document.getElementById('three-container');
+        const energyDisplay = document.getElementById('energyDisplay');
+        const levelDesc = document.getElementById('levelDesc');
+        const levelProgress = document.getElementById('levelProgress');
+        const matchDot = document.getElementById('matchDot');
+        const toast = document.getElementById('toast');
+        const btnNext = document.getElementById('btnNext');
+        const btnReset = document.getElementById('btnReset');
+        const btnSettings = document.getElementById('btnSettings');
+        const btnSupport = document.getElementById('btnSupport');
+        const grayOptions = document.querySelectorAll('.gray-option');
+
+        // ============================================================
+        //  Three.js 场景
+        // ============================================================
+        const GRID_SIZE = 5;
+        const HALF = GRID_SIZE / 2;
+        const CUBE_SIZE = 0.92;
+        const WALL_OFFSET = 2.8;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xffffff);
+
+        // 正交相机 (等轴测)
+        const frustumSize = 7.2;
+        const aspect = container.clientWidth / container.clientHeight;
+        let camera = new THREE.OrthographicCamera(
+            -frustumSize * aspect / 2,
+            frustumSize * aspect / 2,
+            frustumSize / 2,
+            -frustumSize / 2,
+            0.1,
+            30
+        );
+        camera.position.set(6.5, 7.0, 7.5);
+        camera.lookAt(0, 1.2, 0);
+        camera.up.set(0, 1, 0);
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: true
+        });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = false;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // ============================================================
+        //  灯光
+        // ============================================================
+        const ambient = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambient);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight.position.set(3, 8, 5);
+        scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        fillLight.position.set(-3, 4, -5);
+        scene.add(fillLight);
+
+        // ============================================================
+        //  地面 + 墙体
+        // ============================================================
+        const gridGroup = new THREE.Group();
+        scene.add(gridGroup);
+
+        // ---- 地面网格 ----
+        const groundMat = new THREE.LineBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.5 });
+        const groundGeo = new THREE.BufferGeometry();
+        const groundPoints = [];
+        const half = GRID_SIZE / 2;
+        for (let i = 0; i <= GRID_SIZE; i++) {
+            const pos = i - half;
+            groundPoints.push(-half, 0, pos, half, 0, pos);
+            groundPoints.push(pos, 0, -half, pos, 0, half);
+        }
+        groundGeo.setAttribute('position', new THREE.Float32BufferAttribute(groundPoints, 3));
+        const groundLines = new THREE.LineSegments(groundGeo, groundMat);
+        gridGroup.add(groundLines);
+
+        // 地面淡色填充 (半透明)
+        const planeMat = new THREE.MeshBasicMaterial({
+            color: 0xf5f5f5,
+            transparent: true,
+            opacity: 0.3,
+            side: THREE.DoubleSide
+        });
+        const planeGeo = new THREE.PlaneGeometry(GRID_SIZE, GRID_SIZE);
+        const planeMesh = new THREE.Mesh(planeGeo, planeMat);
+        planeMesh.rotation.x = -Math.PI / 2;
+        planeMesh.position.set(0, -0.005, 0);
+        gridGroup.add(planeMesh);
+
+        // ---- 左墙 (在 x = -HALF - 0.3) ----
+        const wallGroupL = new THREE.Group();
+        wallGroupL.position.set(-HALF - 0.3, 0, 0);
+        gridGroup.add(wallGroupL);
+
+        // 左墙面板
+        const wallMatL = new THREE.MeshBasicMaterial({
+            color: 0xf2f2f2,
+            transparent: true,
+            opacity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const wallGeo = new THREE.PlaneGeometry(GRID_SIZE, GRID_SIZE);
+        const wallMeshL = new THREE.Mesh(wallGeo, wallMatL);
+        wallMeshL.rotation.y = Math.PI / 2;
+        wallMeshL.position.set(0, HALF, 0);
+        wallGroupL.add(wallMeshL);
+
+        // 左墙网格线
+        const wallLineMat = new THREE.LineBasicMaterial({ color: 0xdddddd, transparent: true, opacity: 0.5 });
+        const wallPoints = [];
+        for (let i = 0; i <= GRID_SIZE; i++) {
+            const pos = i - half;
+            wallPoints.push(0, pos, -half, 0, pos, half);
+            wallPoints.push(0, -half, pos, 0, half, pos);
+        }
+        const wallLineGeo = new THREE.BufferGeometry();
+        wallLineGeo.setAttribute('position', new THREE.Float32BufferAttribute(wallPoints, 3));
+        const wallLinesL = new THREE.LineSegments(wallLineGeo, wallLineMat);
+        wallLinesL.position.set(0, HALF, 0);
+        wallGroupL.add(wallLinesL);
+
+        // ---- 右墙 (在 x = HALF + 0.3) ----
+        const wallGroupR = new THREE.Group();
+        wallGroupR.position.set(HALF + 0.3, 0, 0);
+        gridGroup.add(wallGroupR);
+
+        const wallMatR = new THREE.MeshBasicMaterial({
+            color: 0xf2f2f2,
+            transparent: true,
+            opacity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const wallMeshR = new THREE.Mesh(wallGeo, wallMatR);
+        wallMeshR.rotation.y = -Math.PI / 2;
+        wallMeshR.position.set(0, HALF, 0);
+        wallGroupR.add(wallMeshR);
+
+        const wallLinesR = new THREE.LineSegments(wallLineGeo.clone(), wallLineMat);
+        wallLinesR.position.set(0, HALF, 0);
+        wallGroupR.add(wallLinesR);
+
+        // ---- 墙体投影目标图案 (显示在墙上) ----
+        // 使用平面网格显示目标图案
+        const targetGroupL = new THREE.Group();
+        targetGroupL.position.set(0, HALF, 0);
+        wallGroupL.add(targetGroupL);
+
+        const targetGroupR = new THREE.Group();
+        targetGroupR.position.set(0, HALF, 0);
+        wallGroupR.add(targetGroupR);
+
+        // ---- 墙体投影 (实际投影显示) ----
+        const projGroupL = new THREE.Group();
+        projGroupL.position.set(0, HALF, 0);
+        wallGroupL.add(projGroupL);
+
+        const projGroupR = new THREE.Group();
+        projGroupR.position.set(0, HALF, 0);
+        wallGroupR.add(projGroupR);
+
+        // ============================================================
+        //  方块管理
+        // ============================================================
+        const blockGroup = new THREE.Group();
+        gridGroup.add(blockGroup);
+
+        // 存储所有方块的Mesh引用
+        const blockMeshes = [];
+
+        // 创建方块
+        function createBlockMesh(x, z, gray) {
+            const size = CUBE_SIZE;
+            const colorVal = GRAY_VALUES[gray] || 0.5;
+            const color = new THREE.Color(colorVal, colorVal, colorVal);
+
+            const geo = new THREE.BoxGeometry(size, size, size);
+            const mat = new THREE.MeshStandardMaterial({
+                color: color,
+                roughness: 0.6,
+                metalness: 0.05,
+                envMapIntensity: 0.2,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x - HALF + 0.5, size / 2, z - HALF + 0.5);
+            mesh.userData = { gridX: x, gridZ: z, gray: gray };
+            mesh.castShadow = true;
+            mesh.receiveShadow = false;
+
+            // 边框
+            const edgeGeo = new THREE.EdgesGeometry(geo);
+            const edgeMat = new THREE.LineBasicMaterial({
+                color: 0x888888,
+                transparent: true,
+                opacity: 0.2
+            });
+            const edge = new THREE.LineSegments(edgeGeo, edgeMat);
+            mesh.add(edge);
+
+            return mesh;
+        }
+
+        // 添加方块
+        function addBlock(x, z, gray) {
+            // 检查是否已有
+            const existing = state.blocks.find(b => b.x === x && b.z === z);
+            if (existing) {
+                // 更新灰度
+                existing.gray = gray;
+                // 移除旧的mesh
+                const idx = blockMeshes.findIndex(m =>
+                    m.userData.gridX === x && m.userData.gridZ === z
+                );
+                if (idx !== -1) {
+                    blockGroup.remove(blockMeshes[idx]);
+                    blockMeshes.splice(idx, 1);
+                }
+                // 创建新mesh
+                const mesh = createBlockMesh(x, z, gray);
+                blockGroup.add(mesh);
+                blockMeshes.push(mesh);
+                return;
+            }
+
+            const mesh = createBlockMesh(x, z, gray);
+            blockGroup.add(mesh);
+            blockMeshes.push(mesh);
+            state.blocks.push({ x, z, gray });
+        }
+
+        // 删除方块
+        function removeBlock(x, z) {
+            const idx = state.blocks.findIndex(b => b.x === x && b.z === z);
+            if (idx === -1) return false;
+            state.blocks.splice(idx, 1);
+            const meshIdx = blockMeshes.findIndex(m =>
+                m.userData.gridX === x && m.userData.gridZ === z
+            );
+            if (meshIdx !== -1) {
+                blockGroup.remove(blockMeshes[meshIdx]);
+                blockMeshes.splice(meshIdx, 1);
+            }
+            return true;
+        }
+
+        // 清空所有方块
+        function clearBlocks() {
+            state.blocks = [];
+            blockMeshes.forEach(m => blockGroup.remove(m));
+            blockMeshes.length = 0;
+        }
+
+        // 加载关卡初始状态
+        function loadLevel(levelIdx) {
+            const level = LEVELS[levelIdx];
+            if (!level) return;
+
+            clearBlocks();
+
+            // 放置初始方块
+            if (level.init) {
+                level.init.forEach(([x, z, g]) => {
+                    if (x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE) {
+                        addBlock(x, z, g);
+                    }
+                });
+            }
+
+            // 更新目标图案显示
+            renderTargets(level);
+
+            // 更新投影
+            updateProjections();
+
+            // 更新UI
+            updateUI(levelIdx);
+
+            // 检查匹配
+            checkMatch();
+
+            state.isComplete = false;
+            toast.classList.remove('show');
+        }
+
+        // ============================================================
+        //  目标图案渲染
+        // ============================================================
+        function renderTargets(level) {
+            // 清除旧目标
+            while (targetGroupL.children.length) {
+                const c = targetGroupL.children[0];
+                targetGroupL.remove(c);
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) c.material.dispose();
+            }
+            while (targetGroupR.children.length) {
+                const c = targetGroupR.children[0];
+                targetGroupR.remove(c);
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) c.material.dispose();
+            }
+
+            const size = 0.9;
+            const halfGrid = GRID_SIZE / 2;
+
+            // 左墙目标
+            const left = level.leftTarget;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let z = 0; z < GRID_SIZE; z++) {
+                    const val = left[y]?.[z] || 0;
+                    if (val === 0) continue;
+                    const grayVal = GRAY_VALUES[val] || 0.5;
+                    const color = new THREE.Color(grayVal, grayVal, grayVal);
+                    const geo = new THREE.PlaneGeometry(size, size);
+                    const mat = new THREE.MeshBasicMaterial({
+                        color: color,
+                        transparent: true,
+                        opacity: 0.25,
+                        side: THREE.DoubleSide,
+                        depthWrite: false,
+                    });
+                    const mesh = new THREE.Mesh(geo, mat);
+                    const px = 0;
+                    const py = y - halfGrid + 0.5;
+                    const pz = z - halfGrid + 0.5;
+                    mesh.position.set(px, py, pz);
+                    // 稍微偏移避免Z-fighting
+                    mesh.position.x += 0.001;
+                    targetGroupL.add(mesh);
+
+                    // 边框
+                    const edgeGeo = new THREE.EdgesGeometry(geo);
+                    const edgeMat = new THREE.LineBasicMaterial({
+                        color: 0xaaaaaa,
+                        transparent: true,
+                        opacity: 0.15,
+                    });
+                    const edge = new THREE.LineSegments(edgeGeo, edgeMat);
+                    edge.position.copy(mesh.position);
+                    targetGroupL.add(edge);
+                }
+            }
+
+            // 右墙目标
+            const right = level.rightTarget;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let z = 0; z < GRID_SIZE; z++) {
+                    const val = right[y]?.[z] || 0;
+                    if (val === 0) continue;
+                    const grayVal = GRAY_VALUES[val] || 0.5;
+                    const color = new THREE.Color(grayVal, grayVal, grayVal);
+                    const geo = new THREE.PlaneGeometry(size, size);
+                    const mat = new THREE.MeshBasicMaterial({
+                        color: color,
+                        transparent: true,
+                        opacity: 0.25,
+                        side: THREE.DoubleSide,
+                        depthWrite: false,
+                    });
+                    const mesh = new THREE.Mesh(geo, mat);
+                    const px = 0;
+                    const py = y - halfGrid + 0.5;
+                    const pz = z - halfGrid + 0.5;
+                    mesh.position.set(px, py, pz);
+                    mesh.position.x -= 0.001;
+                    targetGroupR.add(mesh);
+
+                    const edgeGeo = new THREE.EdgesGeometry(geo);
+                    const edgeMat = new THREE.LineBasicMaterial({
+                        color: 0xaaaaaa,
+                        transparent: true,
+                        opacity: 0.15,
+                    });
+                    const edge = new THREE.LineSegments(edgeGeo, edgeMat);
+                    edge.position.copy(mesh.position);
+                    targetGroupR.add(edge);
+                }
+            }
+        }
+
+        // ============================================================
+        //  投影计算 & 渲染
+        // ============================================================
+        function updateProjections() {
+            // 清除旧投影
+            while (projGroupL.children.length) {
+                const c = projGroupL.children[0];
+                projGroupL.remove(c);
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) c.material.dispose();
+            }
+            while (projGroupR.children.length) {
+                const c = projGroupR.children[0];
+                projGroupR.remove(c);
+                if (c.geometry) c.geometry.dispose();
+                if (c.material) c.material.dispose();
+            }
+
+            const halfGrid = GRID_SIZE / 2;
+            const size = 0.9;
+
+            // 收集每个 (y, z) 位置的灰度 (左墙投影: 从x负方向看)
+            const projL = {};
+            const projR = {};
+
+            state.blocks.forEach(({ x, z, gray }) => {
+                const y = 0; // 所有方块y=0 (地面层)
+                const key = `${y},${z}`;
+                // 左墙投影: 只看 (y, z) 位置, 灰度取所有方块中灰度最大的 (或者合并规则)
+                // 简单规则: 如果多个方块重叠, 取灰度值最大的 (浅色覆盖深色)
+                if (!projL[key] || gray > projL[key]) {
+                    projL[key] = gray;
+                }
+                // 右墙投影: 同样
+                if (!projR[key] || gray > projR[key]) {
+                    projR[key] = gray;
+                }
+            });
+
+            // 渲染左墙投影
+            for (const [key, gray] of Object.entries(projL)) {
+                const [y, z] = key.split(',').map(Number);
+                const grayVal = GRAY_VALUES[gray] || 0.5;
+                const color = new THREE.Color(grayVal, grayVal, grayVal);
+                const geo = new THREE.PlaneGeometry(size, size);
+                const mat = new THREE.MeshBasicMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.75,
+                    side: THREE.DoubleSide,
+                    depthWrite: false,
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                const px = 0;
+                const py = y - halfGrid + 0.5;
+                const pz = z - halfGrid + 0.5;
+                mesh.position.set(px, py, pz);
+                mesh.position.x += 0.002;
+                projGroupL.add(mesh);
+            }
+
+            // 渲染右墙投影
+            for (const [key, gray] of Object.entries(projR)) {
+                const [y, z] = key.split(',').map(Number);
+                const grayVal = GRAY_VALUES[gray] || 0.5;
+                const color = new THREE.Color(grayVal, grayVal, grayVal);
+                const geo = new THREE.PlaneGeometry(size, size);
+                const mat = new THREE.MeshBasicMaterial({
+                    color: color,
+                    transparent: true,
+                    opacity: 0.75,
+                    side: THREE.DoubleSide,
+                    depthWrite: false,
+                });
+                const mesh = new THREE.Mesh(geo, mat);
+                const px = 0;
+                const py = y - halfGrid + 0.5;
+                const pz = z - halfGrid + 0.5;
+                mesh.position.set(px, py, pz);
+                mesh.position.x -= 0.002;
+                projGroupR.add(mesh);
+            }
+        }
+
+        // ============================================================
+        //  匹配检测
+        // ============================================================
+        function checkMatch() {
+            const level = LEVELS[state.currentLevel];
+            if (!level) return false;
+
+            const leftTarget = level.leftTarget;
+            const rightTarget = level.rightTarget;
+
+            // 计算实际投影
+            const projL = {};
+            const projR = {};
+            state.blocks.forEach(({ x, z, gray }) => {
+                const y = 0;
+                const key = `${y},${z}`;
+                if (!projL[key] || gray > projL[key]) projL[key] = gray;
+                if (!projR[key] || gray > projR[key]) projR[key] = gray;
+            });
+
+            // 比较左墙
+            let matchL = true;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let z = 0; z < GRID_SIZE; z++) {
+                    const target = leftTarget[y]?.[z] || 0;
+                    const key = `${y},${z}`;
+                    const actual = projL[key] || 0;
+                    if (target !== actual) {
+                        matchL = false;
+                        break;
+                    }
+                }
+                if (!matchL) break;
+            }
+
+            // 比较右墙
+            let matchR = true;
+            for (let y = 0; y < GRID_SIZE; y++) {
+                for (let z = 0; z < GRID_SIZE; z++) {
+                    const target = rightTarget[y]?.[z] || 0;
+                    const key = `${y},${z}`;
+                    const actual = projR[key] || 0;
+                    if (target !== actual) {
+                        matchR = false;
+                        break;
+                    }
+                }
+                if (!matchR) break;
+            }
+
+            const matched = matchL && matchR;
+
+            // 更新指示器
+            if (matched) {
+                matchDot.className = 'dot success';
+                // 检查是否已经通关
+                if (!state.isComplete) {
+                    state.isComplete = true;
+                    // 显示通关弹窗 (延迟一下)
+                    setTimeout(() => {
+                        if (state.isComplete) {
+                            toast.classList.add('show');
+                        }
+                    }, 400);
+                }
+            } else {
+                matchDot.className = 'dot fail';
+                state.isComplete = false;
+                toast.classList.remove('show');
+            }
+
+            return matched;
+        }
+
+        // ============================================================
+        //  UI 更新
+        // ============================================================
+        function updateUI(levelIdx) {
+            const level = LEVELS[levelIdx];
+            if (!level) return;
+            levelDesc.textContent = level.desc || '在两面墙上投射出目标图案';
+            levelProgress.textContent = `第 ${levelIdx + 1} / ${LEVELS.length} 关`;
+            energyDisplay.textContent = state.energy;
+        }
+
+        // ============================================================
+        //  交互 (点击放置)
+        // ============================================================
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+
+        function getGridPosition(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            pointer.set(x, y);
+
+            raycaster.setFromCamera(pointer, camera);
+
+            // 检测地面平面
+            const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+            const intersectPoint = new THREE.Vector3();
+            const ray = raycaster.ray;
+            const intersect = ray.intersectPlane(plane, intersectPoint);
+
+            if (!intersect) return null;
+
+            // 计算网格坐标
+            let gx = Math.round(intersectPoint.x + HALF - 0.5);
+            let gz = Math.round(intersectPoint.z + HALF - 0.5);
+
+            // 边界检查
+            if (gx < 0 || gx >= GRID_SIZE || gz < 0 || gz >= GRID_SIZE) return null;
+
+            // 检查是否在方块区域内 (更精确的点击)
+            const distX = Math.abs(intersectPoint.x - (gx - HALF + 0.5));
+            const distZ = Math.abs(intersectPoint.z - (gz - HALF + 0.5));
+            if (distX > 0.55 || distZ > 0.55) return null;
+
+            return { x: gx, z: gz };
+        }
+
+        function handleClick(event) {
+            if (state.isAnimating) return;
+            if (state.isComplete) return;
+
+            const pos = getGridPosition(event);
+            if (!pos) return;
+
+            const { x, z } = pos;
+
+            // 检查是否已有方块
+            const existing = state.blocks.find(b => b.x === x && b.z === z);
+            if (existing) {
+                // 如果点击已有方块，删除它
+                if (removeBlock(x, z)) {
+                    updateProjections();
+                    checkMatch();
+                    // 不消耗体力
+                }
+                return;
+            }
+
+            // 消耗体力
+            if (state.energy <= 0) {
+                // 体力不足提示
+                showEnergyToast();
+                return;
+            }
+
+            // 放置方块
+            const gray = state.selectedGray;
+            addBlock(x, z, gray);
+            state.energy = Math.max(0, state.energy - 1);
+            energyDisplay.textContent = state.energy;
+
+            updateProjections();
+            checkMatch();
+            updateUI(state.currentLevel);
+
+            // 触感反馈
+            if (navigator.vibrate) navigator.vibrate(10);
+        }
+
+        // 体力不足提示
+        let energyToastTimer = null;
+
+        function showEnergyToast() {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                    background: rgba(0,0,0,0.7); color: #fff; padding: 16px 28px;
+                    border-radius: 16px; font-size: 14px; z-index: 40;
+                    backdrop-filter: blur(8px); pointer-events: none;
+                    opacity: 0; transition: 0.25s;
+                    text-align: center;
+                `;
+            toast.textContent = '⚡ 体力不足，稍后恢复';
+            document.body.appendChild(toast);
+            requestAnimationFrame(() => { toast.style.opacity = '1'; });
+            clearTimeout(energyToastTimer);
+            energyToastTimer = setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 1500);
+        }
+
+        // ============================================================
+        //  体力恢复
+        // ============================================================
+        function startEnergyRecovery() {
+            setInterval(() => {
+                if (state.energy < state.maxEnergy) {
+                    state.energy += 1;
+                    energyDisplay.textContent = state.energy;
+                }
+            }, 8000); // 每8秒恢复1点
+        }
+
+        // ============================================================
+        //  关卡切换
+        // ============================================================
+        function goToNextLevel() {
+            if (state.currentLevel < LEVELS.length - 1) {
+                state.currentLevel++;
+                loadLevel(state.currentLevel);
+                toast.classList.remove('show');
+                // 通关奖励体力
+                state.energy = Math.min(state.maxEnergy, state.energy + 3);
+                energyDisplay.textContent = state.energy;
+            } else {
+                // 所有关卡完成
+                toast.querySelector('.msg').textContent = '🎉 所有关卡完成！';
+                toast.querySelector('.sub-msg').textContent = '思维如水波，无限扩散 ✦';
+                btnNext.textContent = '重新开始 ↺';
+                btnNext.onclick = () => {
+                    state.currentLevel = 0;
+                    loadLevel(0);
+                    toast.classList.remove('show');
+                    btnNext.textContent = '下一关 →';
+                    btnNext.onclick = goToNextLevel;
+                    toast.querySelector('.msg').textContent = '投影完美匹配！';
+                    toast.querySelector('.sub-msg').textContent = '思维如水波般扩散 ✦';
+                };
+                toast.classList.add('show');
+            }
+        }
+
+        // ============================================================
+        //  重置关卡
+        // ============================================================
+        function resetLevel() {
+            if (state.isAnimating) return;
+            loadLevel(state.currentLevel);
+            toast.classList.remove('show');
+            // 重置时恢复一些体力
+            state.energy = Math.min(state.maxEnergy, state.energy + 2);
+            energyDisplay.textContent = state.energy;
+        }
+
+        // ============================================================
+        //  事件绑定
+        // ============================================================
+        // 点击3D场景
+        renderer.domElement.addEventListener('click', handleClick);
+        renderer.domElement.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            const event = new MouseEvent('click', {
+                clientX: touch.clientX,
+                clientY: touch.clientY,
+            });
+            renderer.domElement.dispatchEvent(event);
+        }, { passive: false });
+
+        // 灰度选择
+        grayOptions.forEach(el => {
+            el.addEventListener('click', () => {
+                grayOptions.forEach(o => o.classList.remove('active'));
+                el.classList.add('active');
+                const val = parseInt(el.dataset.value);
+                state.selectedGray = val;
+            });
+            el.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                grayOptions.forEach(o => o.classList.remove('active'));
+                el.classList.add('active');
+                const val = parseInt(el.dataset.value);
+                state.selectedGray = val;
+            });
+        });
+
+        // 按钮
+        btnNext.addEventListener('click', goToNextLevel);
+
+        btnReset.addEventListener('click', resetLevel);
+
+        btnSettings.addEventListener('click', () => {
+            // 简单设置弹窗
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                    background: rgba(0,0,0,0.8); color: #fff; padding: 24px 32px;
+                    border-radius: 20px; font-size: 14px; z-index: 40;
+                    backdrop-filter: blur(12px); text-align: center;
+                    min-width: 200px;
+                `;
+            toast.innerHTML = `
+                    <div style="font-size:18px;font-weight:500;margin-bottom:8px;">⚙ 设置</div>
+                    <div style="color:#aaa;font-size:13px;margin-bottom:12px;">体力恢复: 8秒/点</div>
+                    <div style="color:#aaa;font-size:13px;margin-bottom:16px;">当前关卡: ${state.currentLevel+1}/${LEVELS.length}</div>
+                    <button style="background:#fff;border:none;border-radius:30px;padding:8px 28px;font-size:14px;font-weight:500;color:#111;cursor:pointer;">
+                        关闭
+                    </button>
+                `;
+            document.body.appendChild(toast);
+            toast.querySelector('button').addEventListener('click', () => {
+                toast.remove();
+            });
+            toast.querySelector('button').addEventListener('touchend', (e) => {
+                e.preventDefault();
+                toast.remove();
+            });
+        });
+
+        btnSupport.addEventListener('click', () => {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                    background: rgba(0,0,0,0.8); color: #fff; padding: 24px 32px;
+                    border-radius: 20px; font-size: 14px; z-index: 40;
+                    backdrop-filter: blur(12px); text-align: center;
+                    min-width: 200px;
+                `;
+            toast.innerHTML = `
+                    <div style="font-size:18px;font-weight:500;margin-bottom:8px;">💬 客服</div>
+                    <div style="color:#aaa;font-size:13px;margin-bottom:8px;">旅人的冒险 · 灰阶时空</div>
+                    <div style="color:#888;font-size:12px;margin-bottom:16px;">如遇问题请联系我们</div>
+                    <button style="background:#fff;border:none;border-radius:30px;padding:8px 28px;font-size:14px;font-weight:500;color:#111;cursor:pointer;">
+                        关闭
+                    </button>
+                `;
+            document.body.appendChild(toast);
+            toast.querySelector('button').addEventListener('click', () => {
+                toast.remove();
+            });
+            toast.querySelector('button').addEventListener('touchend', (e) => {
+                e.preventDefault();
+                toast.remove();
+            });
+        });
+
+        // ============================================================
+        //  窗口自适应
+        // ============================================================
+        function onResize() {
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            const aspect = width / height;
+
+            const newFrustum = 7.2;
+            camera.left = -newFrustum * aspect / 2;
+            camera.right = newFrustum * aspect / 2;
+            camera.top = newFrustum / 2;
+            camera.bottom = -newFrustum / 2;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+        }
+
+        window.addEventListener('resize', onResize);
+
+        // ============================================================
+        //  动画循环
+        // ============================================================
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        // ============================================================
+        //  初始化
+        // ============================================================
+        loadLevel(0);
+        startEnergyRecovery();
+        animate();
+
+        // 延迟一帧调整相机
+        setTimeout(onResize, 50);
+
+        // 暴露一些调试
+        window.__game = { state, scene, camera, renderer, loadLevel, resetLevel };
+
+        console.log('✦ 旅人的冒险 · 灰阶时空 ✦');
+        console.log('思维如水波般扩散，锻炼三维空间想象能力。');
+    </script>
+</body>
+</html>

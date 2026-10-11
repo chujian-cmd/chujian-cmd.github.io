@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 移动端适配，禁止缩放和滚动 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Meowish Wireframe Creature (Mobile)</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #111;
+            /* 关键：阻止手机默认的滑动和长按选择行为 */
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // 适配移动端屏幕尺寸
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        });
+
+        // 触摸位置追踪
+        const mouse = { x: width / 2, y: height / 2 };
+
+        // 监听触摸开始和移动事件
+        function handleTouch(e) {
+            // 阻止默认行为（防止屏幕滑动或缩放）
+            e.preventDefault(); 
+            if (e.touches.length > 0) {
+                mouse.x = e.touches[0].clientX;
+                mouse.y = e.touches[0].clientY;
+            }
+        }
+
+        // { passive: false } 是必须的，否则 preventDefault 会失效
+        window.addEventListener('touchstart', handleTouch, { passive: false });
+        window.addEventListener('touchmove', handleTouch, { passive: false });
+
+        // （可选）保留鼠标事件，方便在电脑上调试
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        class Node {
+            constructor(x, y, size) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.angle = 0;
+            }
+        }
+
+        class Meowish {
+            constructor() {
+                this.nodes = [];
+                this.speed = 4; 
+                const nodeCount = 35; 
+                const segmentLength = 12; 
+
+                for (let i = 0; i < nodeCount; i++) {
+                    // 初始位置放在屏幕中心
+                    this.nodes.push(new Node(width / 2, height / 2, segmentLength));
+                }
+            }
+
+            update(targetX, targetY) {
+                let head = this.nodes[this.nodes.length - 1];
+                
+                let dist = Math.sqrt((targetX - head.x) ** 2 + (targetY - head.y) ** 2);
+                let len = Math.max(0, dist - this.speed);
+
+                let x = targetX;
+                let y = targetY;
+                
+                // 逆向运动学跟随逻辑
+                for (let i = this.nodes.length - 1; i >= 0; i--) {
+                    let node = this.nodes[i];
+                    let ang = Math.atan2(node.y - y, node.x - x);
+                    
+                    node.x = x + len * Math.cos(ang);
+                    node.y = y + len * Math.sin(ang);
+                    
+                    x = node.x;
+                    y = node.y;
+                    len = node.size;
+                }
+            }
+
+            draw() {
+                for (let i = 0; i < this.nodes.length - 1; i++) {
+                    let node = this.nodes[i];
+                    let nextNode = this.nodes[i + 1];
+                    node.angle = Math.atan2(nextNode.y - node.y, nextNode.x - node.x);
+                }
+                
+                let head = this.nodes[this.nodes.length - 1];
+                head.angle = Math.atan2(mouse.y - head.y, mouse.x - head.x);
+
+                ctx.strokeStyle = '#e0e0e0';
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+
+                // 1. 脊椎
+                ctx.beginPath();
+                ctx.moveTo(this.nodes[0].x, this.nodes[0].y);
+                for (let i = 1; i < this.nodes.length; i++) {
+                    ctx.lineTo(this.nodes[i].x, this.nodes[i].y);
+                }
+                ctx.stroke();
+
+                // 2. 肋骨
+                for (let i = 2; i < this.nodes.length - 1; i++) {
+                    let node = this.nodes[i];
+                    let perpAngle = node.angle + Math.PI / 2;
+                    let ribWidth = 18; 
+
+                    let leftX = node.x + Math.cos(perpAngle) * ribWidth;
+                    let leftY = node.y + Math.sin(perpAngle) * ribWidth;
+                    let rightX = node.x - Math.cos(perpAngle) * ribWidth;
+                    let rightY = node.y - Math.sin(perpAngle) * ribWidth;
+
+                    let controlX = node.x + Math.cos(node.angle) * 8;
+                    let controlY = node.y + Math.sin(node.angle) * 8;
+
+                    ctx.beginPath();
+                    ctx.moveTo(leftX, leftY);
+                    ctx.quadraticCurveTo(controlX, controlY, rightX, rightY);
+                    ctx.stroke();
+                }
+
+                // 3. 腿
+                for (let i = 5; i < this.nodes.length - 3; i += 4) {
+                    let node = this.nodes[i];
+                    let legLength = 22;
+                    let legBend = 0.6;
+
+                    // 左腿
+                    let legAngleL = node.angle + Math.PI / 2;
+                    let kneeXL = node.x + Math.cos(legAngleL) * legLength;
+                    let kneeYL = node.y + Math.sin(legAngleL) * legLength;
+                    let footAngleL = legAngleL + legBend;
+                    let footXL = kneeXL + Math.cos(footAngleL) * legLength;
+                    let footYL = kneeYL + Math.sin(footAngleL) * legLength;
+
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(kneeXL, kneeYL);
+                    ctx.lineTo(footXL, footYL);
+                    ctx.stroke();
+
+                    // 右腿
+                    let legAngleR = node.angle - Math.PI / 2;
+                    let kneeXR = node.x + Math.cos(legAngleR) * legLength;
+                    let kneeYR = node.y + Math.sin(legAngleR) * legLength;
+                    let footAngleR = legAngleR - legBend;
+                    let footXR = kneeXR + Math.cos(footAngleR) * legLength;
+                    let footYR = kneeYR + Math.sin(footAngleR) * legLength;
+
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(kneeXR, kneeYR);
+                    ctx.lineTo(footXR, footYR);
+                    ctx.stroke();
+                }
+
+                // 4. 触角
+                let antennaLength = 25;
+                let antennaSpread = Math.PI / 5;
+
+                let antAngleL = head.angle + antennaSpread;
+                ctx.beginPath();
+                ctx.moveTo(head.x, head.y);
+                ctx.lineTo(head.x + Math.cos(antAngleL) * antennaLength, head.y + Math.sin(antAngleL) * antennaLength);
+                ctx.stroke();
+
+                let antAngleR = head.angle - antennaSpread;
+                ctx.beginPath();
+                ctx.moveTo(head.x, head.y);
+                ctx.lineTo(head.x + Math.cos(antAngleR) * antennaLength, head.y + Math.sin(antAngleR) * antennaLength);
+                ctx.stroke();
+            }
+        }
+
+        const creature = new Meowish();
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+            creature.update(mouse.x, mouse.y);
+            creature.draw();
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

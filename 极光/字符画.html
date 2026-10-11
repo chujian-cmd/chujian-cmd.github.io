@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>字符画 ASCII Art</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#04070a;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(4,7,10,.85),rgba(4,7,10,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(87,255,143,.22);border-color:rgba(87,255,143,.6);color:#d6ffe2}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#5c7a65;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+    max-height:70vh;display:flex;flex-direction:column;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(87,255,143,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(87,255,143,.6);
+    background:rgba(87,255,143,.28);color:#04200f;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(87,255,143,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+
+  /* 文本面板 */
+  #textPanel{
+    position:fixed;left:0;right:0;top:0;bottom:0;z-index:30;
+    background:rgba(6,8,10,.96);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    display:flex;flex-direction:column;padding:16px;
+    padding-top:max(16px,env(safe-area-inset-top));
+    padding-bottom:max(16px,env(safe-area-inset-bottom));
+    transform:translateY(100%);transition:transform .3s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #textPanel.open{transform:translateY(0)}
+  #textPanel .tp-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  #textPanel .tp-head b{flex:1;font-size:15px}
+  #textPanel .tp-head button{
+    height:36px;padding:0 14px;border-radius:9px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #textPanel .tp-head button.pri{background:rgba(87,255,143,.24);border-color:rgba(87,255,143,.6);color:#d6ffe2}
+  #textPanel textarea{
+    flex:1;width:100%;padding:12px;border-radius:12px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
+    color:#c9ffd8;font:11px/1 ui-monospace,"SF Mono",Menlo,monospace;
+    outline:none;resize:none;white-space:pre;overflow:auto;letter-spacing:0;
+    -webkit-user-select:text;user-select:text;
+  }
+  #textPanel .tp-tip{color:#6a6f7a;font-size:11px;margin-top:8px;line-height:1.5}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">字符画 <b id="m">绿屏终端</b></div>
+  <button class="btn" id="btn-ramp">换字符集</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn" id="btn-copy">复制</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">按亮度映射成字符网格 · 点「复制」导出为文本</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<!-- 文本导出面板 -->
+<div id="textPanel">
+  <div class="tp-head">
+    <b>字符画文本</b>
+    <button id="tp-copy" class="pri">复制</button>
+    <button id="tp-close">关闭</button>
+  </div>
+  <textarea id="tp-text" spellcheck="false" readonly></textarea>
+  <div class="tp-tip">点击文本框 → 长按 / 全选 → 复制；或点上方「复制」按钮。建议等宽字体查看。</div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    charSize: 11,
+    ramp: 'standard',
+    invert: false,
+    colorMode: 'green',
+    color: '#57ff8f',
+    background: '#04070a'
+  };
+
+  var RAMPS = {
+    standard: ' .:-=+*#%@',
+    dense:    ' .\'`^",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$',
+    block:    ' ░▒▓█',
+    minimal:  ' .:oO@'
+  };
+  var RAMP_LIST = [
+    { key: 'standard', label: '标准' },
+    { key: 'dense',    label: '密集' },
+    { key: 'block',    label: '方块' },
+    { key: 'minimal',  label: '极简' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 生成字符画文本 ----------
+  function buildAsciiText() {
+    var ramp = RAMPS[CFG.ramp] || RAMPS.standard;
+    var charSize = CFG.charSize;
+    var charW = charSize * 0.55;
+    var charH = charSize;
+    var cols = Math.max(1, Math.round(W / charW));
+    var rows = Math.max(1, Math.round(H / charH));
+    var cellW = W / cols;
+    var cellH = H / rows;
+    var invert = CFG.invert;
+    var maxIdx = ramp.length - 1;
+
+    var outLines = [];
+    for (var r = 0; r < rows; r++) {
+      var line = '';
+      for (var c = 0; c < cols; c++) {
+        var sx = (c + 0.5) * cellW;
+        var sy = (r + 0.5) * cellH;
+        var lum = alphaAt(sx, sy);
+        if (invert) lum = 1 - lum;
+        var idx = Math.round(lum * maxIdx);
+        if (idx < 0) idx = 0;
+        if (idx > maxIdx) idx = maxIdx;
+        line += ramp.charAt(idx);
+      }
+      // 去掉行尾空格
+      outLines.push(line.replace(/\s+$/, ''));
+    }
+    // 去掉尾部空行
+    while (outLines.length && outLines[outLines.length - 1] === '') outLines.pop();
+    return outLines.join('\n');
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.charSize + '|' + CFG.ramp + '|' + CFG.invert + '|' +
+              CFG.colorMode + '|' + CFG.color + '|' + CFG.background;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var ramp = RAMPS[cfg.ramp] || RAMPS.standard;
+    var charSize = cfg.charSize;
+    var charW = charSize * 0.55;
+    var charH = charSize;
+    var cols = Math.max(1, Math.round(W / charW));
+    var rows = Math.max(1, Math.round(H / charH));
+    var cellW = W / cols;
+    var cellH = H / rows;
+
+    var color = hex2rgb(cfg.color);
+    var colorMode = cfg.colorMode;
+    var invert = cfg.invert;
+    var maxIdx = ramp.length - 1;
+
+    ctx.font = charSize + 'px ui-monospace, "SF Mono", Menlo, monospace';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var sx = (c + 0.5) * cellW;
+        var sy = (r + 0.5) * cellH;
+        var lum = alphaAt(sx, sy);
+        if (invert) lum = 1 - lum;
+
+        var idx = Math.round(lum * maxIdx);
+        if (idx < 0) idx = 0; if (idx > maxIdx) idx = maxIdx;
+        var ch = ramp.charAt(idx);
+        if (ch === ' ') continue;
+
+        if (colorMode === 'green') {
+          var v = 0.3 + lum * 0.7;
+          ctx.fillStyle = 'rgb(' + ((color[0] * v) | 0) + ',' + ((color[1] * v) | 0) + ',' + ((color[2] * v) | 0) + ')';
+        } else if (colorMode === 'mono') {
+          ctx.fillStyle = 'rgb(' + color[0] + ',' + color[1] + ',' + color[2] + ')';
+        } else {
+          var v2 = lum;
+          ctx.fillStyle = 'rgba(' + color[0] + ',' + color[1] + ',' + color[2] + ',' + v2.toFixed(3) + ')';
+        }
+
+        ctx.fillText(ch, c * cellW, r * cellH);
+      }
+    }
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 复制面板 ----------
+  var textPanel = document.getElementById('textPanel');
+  var tpText = document.getElementById('tp-text');
+
+  function openTextPanel() {
+    buildMask();
+    tpText.value = buildAsciiText();
+    textPanel.classList.add('open');
+  }
+  function closeTextPanel() {
+    textPanel.classList.remove('open');
+  }
+
+  document.getElementById('btn-copy').addEventListener('click', openTextPanel);
+  document.getElementById('tp-close').addEventListener('click', closeTextPanel);
+  document.getElementById('tp-copy').addEventListener('click', function () {
+    var txt = tpText.value;
+    var done = function () { toast('已复制到剪贴板'); };
+    var fail = function () {
+      // 降级：选中文本，引导用户长按复制
+      tpText.focus();
+      tpText.select();
+      toast('请长按 / 全选后手动复制');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(done).catch(fail);
+    } else {
+      try {
+        tpText.focus();
+        tpText.select();
+        var ok = document.execCommand('copy');
+        ok ? done() : fail();
+      } catch (e) { fail(); }
+    }
+  });
+
+  function toast(msg) {
+    var el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText = 'position:fixed;left:50%;top:12%;transform:translateX(-50%);' +
+      'padding:10px 18px;border-radius:10px;background:rgba(20,22,28,.95);color:#eef1ff;' +
+      'font:14px -apple-system,"PingFang SC",sans-serif;z-index:999;border:1px solid rgba(255,255,255,.14);' +
+      'box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;transition:opacity .2s';
+    document.body.appendChild(el);
+    requestAnimationFrame(function () { el.style.opacity = '1'; });
+    setTimeout(function () {
+      el.style.opacity = '0';
+      setTimeout(function () { el.remove(); }, 220);
+    }, 1600);
+  }
+
+  // ---------- 按钮 ----------
+  var rampIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-ramp').addEventListener('click', function () {
+    rampIdx = (rampIdx + 1) % RAMP_LIST.length;
+    CFG.ramp = RAMP_LIST[rampIdx].key;
+    mLabel.textContent = RAMP_LIST[rampIdx].label;
+    dirty = true;
+  });
+
+  var CONTENTS = [
+    { text: 'AURORA',   ramp: 'standard', color: '#57ff8f', background: '#04070a' },
+    { text: '字符画',   ramp: 'block',    color: '#ff5ac8', background: '#0a0510' },
+    { text: 'MATRIX',   ramp: 'dense',    color: '#5be0ff', background: '#020610' },
+    { text: 'MONO',     ramp: 'minimal',  color: '#eaf2ff', background: '#0a0a0d' },
+    { text: 'HACK\n2026', ramp: 'standard', color: '#ffd166', background: '#0a0700' }
+  ];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    var p = CONTENTS[contentIdx];
+    CFG.text = p.text;
+    CFG.ramp = p.ramp;
+    CFG.color = p.color;
+    CFG.background = p.background;
+    maskData = null; maskKey = '';
+    var ri = RAMP_LIST.findIndex(function (x) { return x.key === p.ramp; });
+    if (ri >= 0) { rampIdx = ri; mLabel.textContent = RAMP_LIST[ri].label; }
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>金属铬字 Chrome</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0d16;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(11,13,22,.85),rgba(11,13,22,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">金属铬字 <b id="m">银铬</b></div>
+  <button class="btn" id="btn-mat">换材质</button>
+  <button class="btn pri" id="btn-text">换文字</button>
+</div>
+<div id="hint">距离场伪法线 · 高光绕字扫动 · 四种金属材质</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1);
+
+  const CFG = {
+    text: 'AURORA',
+    material: 'silver',
+    round: 1.4,          // 圆润度
+    lightAngle: 115,     // 高光角度
+    sweep: 0.6,          // 扫光速度
+    crinkle: 0.2,        // 皱褶噪声
+    sharp: 0.55,         // 分界锐度
+    strokeW: 2,          // 外描边宽
+    strokeColor: '#0a1030',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    background: '#0b0d16'
+  };
+
+  // 4 条金属色带：[偏移, R, G, B]  —— offset 0..1
+  const MATS = {
+    silver: [
+      [0, 157,184,224],[.24, 42,64,144],[.42, 13,26,66],[.497, 6,16,40],
+      [.503, 79,134,232],[.62, 191,224,255],[.82, 238,248,255],[1, 255,255,255]
+    ],
+    gold: [
+      [0, 240,194,106],[.16, 138,90,16],[.34, 200,137,26],[.46, 90,52,4],
+      [.497, 60,34,2],[.503, 232,168,32],[.6, 255,226,122],[.74, 201,144,28],
+      [.9, 255,243,184],[1, 255,251,224]
+    ],
+    holo: null,   // 全息单独走色相
+    acid: [
+      [0, 18,0,42],[.2, 123,31,255],[.4, 196,255,0],[.497, 10,36,2],
+      [.503, 57,255,153],[.64, 13,13,32],[.82, 208,255,46],[1, 234,255,208]
+    ]
+  };
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.floor(W * dpr); cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fieldKey = '';
+  }
+
+  // ========== 距离场 ==========
+  const FM = 480;                 // 距离场长边上限
+  let gw = 2, gh = 2;             // 场尺寸
+  let dist = null;                // 有符号距离（内正外负）
+  let maxInside = 1;
+  let tArr = null, oxArr = null, oyArr = null, crA = null, crB = null;
+  let fieldKey = '';
+
+  const raster = document.createElement('canvas');
+  const rctx = raster.getContext('2d', { willReadFrequently: true });
+
+  function buildField() {
+    const k = Math.min(1, FM / Math.max(2, Math.max(W, H)));
+    const w = Math.max(2, Math.round(W * k));
+    const h = Math.max(2, Math.round(H * k));
+    const key = `${CFG.text}|${CFG.weight}|${w}x${h}`;
+    if (key === fieldKey && dist) return;
+    fieldKey = key;
+    gw = w; gh = h;
+
+    // 画字 → 白字黑底
+    raster.width = w; raster.height = h;
+    rctx.clearRect(0, 0, w, h);
+    rctx.fillStyle = '#fff';
+    rctx.textAlign = 'center';
+    rctx.textBaseline = 'middle';
+    const lines = CFG.text.split('\n').filter(l => l.length > 0);
+    const maxW = w * 0.9, maxH = h * 0.86;
+    const lh = maxH / Math.max(1, lines.length);
+    let size = Math.floor(lh * 0.8);
+    const setF = s => { rctx.font = `${CFG.weight} ${s}px ${CFG.font}`; };
+    setF(size);
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, rctx.measureText(l).width);
+    if (widest > maxW) { size = Math.max(6, Math.floor(size * maxW / widest)); setF(size); }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) { size = Math.max(6, Math.floor(size * maxH / totalH)); setF(size); }
+    const startY = h / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (let i = 0; i < lines.length; i++) {
+      rctx.fillText(lines[i], w / 2, startY + i * size * 1.15);
+    }
+
+    const img = rctx.getImageData(0, 0, w, h).data;
+    const inside = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) inside[i] = img[i * 4 + 3] > 128 ? 1 : 0;
+
+    // 两遍 chamfer 距离变换（内外各一遍）
+    const INF = 1e9;
+    const d1 = new Float32Array(w * h);
+    const d2 = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      d1[i] = inside[i] ? INF : 0;
+      d2[i] = inside[i] ? 0 : INF;
+    }
+    chamfer(d1, w, h);
+    chamfer(d2, w, h);
+    dist = new Float32Array(w * h);
+    maxInside = 1e-6;
+    for (let i = 0; i < w * h; i++) {
+      const v = inside[i] ? d1[i] : -d2[i];
+      dist[i] = v;
+      if (v > maxInside) maxInside = v;
+    }
+
+    // 预计算：t（0..1 内缩程度）、法线、噪声
+    tArr = new Float32Array(w * h);
+    oxArr = new Float32Array(w * h);
+    oyArr = new Float32Array(w * h);
+    crA = new Float32Array(w * h);
+    crB = new Float32Array(w * h);
+    const nz = new Noise(7);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (dist[i] <= 0) continue;
+      // 法线 = 距离场梯度取反（指向内部方向朝外 → 屏幕朝上）
+      const xl = x > 0 ? dist[i - 1] : dist[i];
+      const xr = x < w - 1 ? dist[i + 1] : dist[i];
+      const yu = y > 0 ? dist[i - w] : dist[i];
+      const yd = y < h - 1 ? dist[i + w] : dist[i];
+      let nx = -(xr - xl);
+      let ny = -(yd - yu);
+      const len = Math.hypot(nx, ny);
+      if (len > 1e-4) { oxArr[i] = nx / len; oyArr[i] = ny / len; }
+      tArr[i] = Math.min(1, dist[i] / maxInside);
+      crA[i] = nz.fbm2(x * 0.05, y * 0.05, 3);
+      crB[i] = nz.fbm2(x * 0.05 + 37.7, y * 0.05 + 91.3, 3);
+    }
+  }
+
+  function chamfer(d, w, h) {
+    const INF = 1e9;
+    // 前向
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let v = d[i];
+      if (x > 0) v = Math.min(v, d[i - 1] + 3);
+      if (y > 0) {
+        v = Math.min(v, d[i - w] + 3);
+        if (x > 0) v = Math.min(v, d[i - w - 1] + 4);
+        if (x < w - 1) v = Math.min(v, d[i - w + 1] + 4);
+      }
+      d[i] = v;
+    }
+    // 后向
+    for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      let v = d[i];
+      if (x < w - 1) v = Math.min(v, d[i + 1] + 3);
+      if (y < h - 1) {
+        v = Math.min(v, d[i + w] + 3);
+        if (x < w - 1) v = Math.min(v, d[i + w + 1] + 4);
+        if (x > 0) v = Math.min(v, d[i + w - 1] + 4);
+      }
+      d[i] = v;
+    }
+    for (let i = 0; i < w * h; i++) if (d[i] < INF) d[i] /= 3;
+  }
+
+  // ========== 简易噪声 ==========
+  class Noise {
+    constructor(seed) { this.p = new Uint8Array(512); const r = mulberry(seed); const arr = new Uint8Array(256); for (let i = 0; i < 256; i++) arr[i] = i; for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } for (let i = 0; i < 512; i++) this.p[i] = arr[i & 255]; }
+    noise2(x, y) {
+      const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+      x -= Math.floor(x); y -= Math.floor(y);
+      const u = x * x * (3 - 2 * x), v = y * y * (3 - 2 * y);
+      const p = this.p;
+      const a = p[X] + Y, b = p[X + 1] + Y;
+      return lerp(lerp(grad(p[a], x, y), grad(p[b], x - 1, y), u),
+                  lerp(grad(p[a + 1], x, y - 1), grad(p[b + 1], x - 1, y - 1), u), v) * 0.5;
+    }
+    fbm2(x, y, oct) {
+      let s = 0, a = 0.5, f = 1;
+      for (let i = 0; i < oct; i++) { s += a * this.noise2(x * f, y * f); f *= 2; a *= 0.5; }
+      return s;
+    }
+  }
+  function grad(h, x, y) { const u = (h & 1) ? -x : x; const v = (h & 2) ? -y : y; return u + v; }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+  // ========== 色带 LUT ==========
+  let lut = null, lutKey = '';
+  function buildLUT() {
+    if (CFG.material === 'holo') { lut = null; return; }
+    const stops = MATS[CFG.material] || MATS.silver;
+    const sharp = CFG.sharp;
+    const key = `${CFG.material}|${sharp}`;
+    if (key === lutKey && lut) return;
+    lutKey = key;
+    lut = new Uint8ClampedArray(768);
+    const s = 1 / (1 + sharp * 5);
+    for (let i = 0; i < 256; i++) {
+      let a = i / 255;
+      const n = a * 2 - 1;
+      a = 0.5 + 0.5 * Math.sign(n) * Math.pow(Math.abs(n), s);
+      let r = stops[stops.length - 1][1], g = stops[stops.length - 1][2], b = stops[stops.length - 1][3];
+      if (a <= stops[0][0]) { r = stops[0][1]; g = stops[0][2]; b = stops[0][3]; }
+      else for (let u = 1; u < stops.length; u++) {
+        if (a <= stops[u][0]) {
+          const [c0, r0, g0, b0] = stops[u - 1];
+          const [c1, r1, g1, b1] = stops[u];
+          const t = (a - c0) / (c1 - c0 || 1e-6);
+          r = r0 + (r1 - r0) * t; g = g0 + (g1 - g0) * t; b = b0 + (b1 - b0) * t;
+          break;
+        }
+      }
+      lut[i * 3] = r; lut[i * 3 + 1] = g; lut[i * 3 + 2] = b;
+    }
+  }
+
+  // ========== 离屏输出 ==========
+  const off = document.createElement('canvas');
+  const octx = off.getContext('2d');
+  let imgData = null;
+
+  // ========== 渲染 ==========
+  let time = 0, lastT = performance.now();
+
+  function render(now) {
+    const dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now; time += dt;
+
+    buildField();
+    buildLUT();
+
+    off.width = gw; off.height = gh;
+    if (!imgData || imgData.width !== gw || imgData.height !== gh) {
+      imgData = octx.createImageData(gw, gh);
+    }
+    const px = imgData.data;
+    const [bgR, bgG, bgB] = hex2rgb(CFG.background);
+    const [sR, sG, sB] = hex2rgb(CFG.strokeColor);
+
+    const strokeW = CFG.strokeW * (gw / W);          // 场里 1 CSS px 约等于 gw/W 场像素
+    const crinkle = CFG.crinkle * 0.9;
+    const roundInv = 1 / CFG.round;
+    const sweepPhase = CFG.lightAngle * Math.PI / 180 + time * CFG.sweep * 1.4;
+    let Lx = Math.cos(sweepPhase), Ly = -Math.sin(sweepPhase), Lz = 0.5;
+    { const len = Math.hypot(Lx, Ly, Lz); Lx /= len; Ly /= len; Lz /= len; }
+
+    const holo = CFG.material === 'holo';
+    const isAcid = CFG.material === 'acid';
+
+    for (let i = 0, o = 0; i < gw * gh; i++, o += 4) {
+      const d = dist[i];
+      if (d <= 0) {
+        // 字外：描边色渐变到背景
+        let t = 0;
+        if (strokeW > 0) t = Math.max(0, Math.min(1, (d + strokeW + 0.5) / 1));
+        px[o] = bgR + (sR - bgR) * t;
+        px[o + 1] = bgG + (sG - bgG) * t;
+        px[o + 2] = bgB + (sB - bgB) * t;
+        px[o + 3] = 255;
+        continue;
+      }
+      // 半球法线
+      const t = Math.pow(tArr[i], roundInv);
+      const z = t * Math.PI / 2;
+      const cosz = Math.cos(z);
+      let nx = cosz * oxArr[i] + crA[i] * crinkle;
+      let ny = cosz * oyArr[i] + crB[i] * crinkle;
+      let nz = Math.sin(z);
+      const nl = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz);
+      nx *= nl; ny *= nl; nz *= nl;
+
+      let r, g, b;
+      if (holo) {
+        // 全息：反射向量 → 色相
+        const refl = 0.5 - ny * 0.5;
+        const hue = (Math.atan2(ny, nx) / (Math.PI * 2) + time * CFG.sweep * 0.22 + t * 0.25 + 1) % 1;
+        const sat = 0.82;
+        const lig = 0.4 + refl * 0.5 + t * 0.15;
+        [r, g, b] = hsl2rgb(hue, sat, Math.min(1, lig));
+        r *= 255; g *= 255; b *= 255;
+      } else {
+        const v = Math.max(0, Math.min(1, 0.5 - ny * 0.5));
+        const idx = (v * 255 | 0) * 3;
+        r = lut[idx]; g = lut[idx + 1]; b = lut[idx + 2];
+      }
+
+      // 通用明暗：上方法线更亮
+      const shade = 0.82 + 0.18 * nz;
+      r *= shade; g *= shade; b *= shade;
+
+      // 主高光：Blinn-Phong
+      const spec = Math.max(0, nx * Lx + ny * Ly + nz * Lz);
+      const hi = spec > 0 ? Math.pow(spec, 20) * 320 : 0;
+      r += hi; g += hi; b += hi;
+
+      // 边缘抗锯齿
+      const aa = d < 1 ? d : 1;
+      px[o] = bgR + (r - bgR) * aa;
+      px[o + 1] = bgG + (g - bgG) * aa;
+      px[o + 2] = bgB + (b - bgB) * aa;
+      px[o + 3] = 255;
+    }
+
+    octx.putImageData(imgData, 0, 0);
+
+    // 合成到主画布
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(off, 0, 0, W, H);
+
+    requestAnimationFrame(render);
+  }
+
+  // ========== 工具 ==========
+  function hex2rgb(h) {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+  function hsl2rgb(h, s, l) {
+    h = (h % 1 + 1) % 1;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => {
+      const k = (n + h * 12) % 12;
+      return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    };
+    return [f(0), f(8), f(4)];
+  }
+
+  // ========== 按钮 ==========
+  const MATS_LIST = [
+    { key: 'silver', label: '银铬' },
+    { key: 'gold', label: '烫金' },
+    { key: 'holo', label: '全息' },
+    { key: 'acid', label: '酸性' }
+  ];
+  let matIdx = 0;
+  const mLabel = document.getElementById('m');
+
+  document.getElementById('btn-mat').addEventListener('click', () => {
+    matIdx = (matIdx + 1) % MATS_LIST.length;
+    CFG.material = MATS_LIST[matIdx].key;
+    mLabel.textContent = MATS_LIST[matIdx].label;
+    lutKey = '';
+  });
+
+  const CONTENTS = [
+    'AURORA',
+    'CHROME',
+    '金属字',
+    'Y2K\n2000',
+    'LIQUID\nMETAL',
+    '⚡HIGH⚡'
+  ];
+  let contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', () => {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    fieldKey = '';
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', () => setTimeout(resize, 80));
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>

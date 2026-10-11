@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D启动器 · 超级存档版 · 未命名系列56全收录</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none; /* 避免全屏误选，不影响输入 */
+        }
+
+        html, body {
+            height: 100%;
+            background: radial-gradient(circle at 20% 30%, #0a0f1e, #03060c);
+            color: #f0f3fa;
+            font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, 'Roboto', monospace;
+            overflow: hidden;
+        }
+
+        /* 玻璃质感顶栏 */
+        .top {
+            background: rgba(20, 25, 40, 0.75);
+            backdrop-filter: blur(14px);
+            border-bottom: 1px solid rgba(72, 187, 255, 0.25);
+            padding: 10px 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: flex-start;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.5);
+            z-index: 100;
+            position: relative;
+        }
+
+        select {
+            background: #11161f;
+            border: 1px solid #2d3e5f;
+            padding: 8px 14px;
+            border-radius: 32px;
+            color: white;
+            font-weight: 500;
+            font-size: 0.9rem;
+            min-width: 280px;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(4px);
+        }
+
+        select:hover {
+            background: #1a2538;
+            border-color: #3e7cb1;
+        }
+
+        button {
+            background: #1e2a3a;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+            color: #eef5ff;
+            cursor: pointer;
+            transition: 0.15s linear;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.05);
+        }
+
+        .btn-refresh { background: #2c3e4e; }
+        .btn-refresh:hover { background: #405e7a; }
+
+        .btn-full { background: #0f5c6b; }
+        .btn-full:hover { background: #148099; }
+
+        .btn-next { background: #1f6d49; }
+        .btn-next:hover { background: #2b9b68; }
+
+        /* 极简辅助小提示 */
+        .shortcut-hint {
+            margin-left: auto;
+            font-size: 0.7rem;
+            background: rgba(0,0,0,0.4);
+            padding: 4px 12px;
+            border-radius: 60px;
+            font-family: monospace;
+            letter-spacing: 0.3px;
+            backdrop-filter: blur(4px);
+        }
+
+        iframe {
+            width: 100%;
+            height: calc(100% - 64px);
+            border: none;
+            background: #000000;
+            transition: all 0.2s;
+            display: block;
+        }
+
+        /* 响应式微调 */
+        @media (max-width: 680px) {
+            .top { gap: 8px; padding: 8px 12px; }
+            select { min-width: 180px; font-size: 0.8rem; padding: 6px 10px; }
+            button { padding: 6px 12px; font-size: 0.75rem; }
+            .shortcut-hint { display: none; }
+        }
+
+        /* 加载丝滑效果 */
+        .iframe-loading {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+
+<div class="top">
+    <select id="fileList"></select>
+    <button class="btn-refresh" id="refreshBtn" title="刷新当前页面 (Ctrl+R 风格)">🔄 刷新</button>
+    <button class="btn-full" id="fullBtn">🗖 全屏 /</button>
+    <button class="btn-next" id="nextBtn">▶ 下一个</button>
+    <div class="shortcut-hint">
+        ⬅️ 上一个 &nbsp;&nbsp;|&nbsp;&nbsp; ➡️ 下一个 &nbsp;&nbsp;|&nbsp;&nbsp; 按 / 全屏
+    </div>
+</div>
+
+<iframe id="iframe" sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-fullscreen allow-modals allow-popups allow-forms" title="3D内容启动器"></iframe>
+
+<script>
+    (function() {
+        // ---------- 1. 配置区域 ----------
+        // 使用原始路径（保持不变，绝对路径完整保留用户原有结构）
+        // 注意：为了兼容 file 协议下的沙盒限制，iframe 的 sandbox 已添加必要权限
+        const base = 'file:///C:/Users/Administrator/Desktop/新建文件夹%20(2)/';
+        
+        // ---------- 2. 动态生成完整文件列表 (未命名增加到56 并且 保留原有所有文件) ----------
+        // 根据要求：“把未命名增加到56”
+        // 原始列表结构: 作品.html, 新建文本文档0.html, 未命名.html, 未命名1.html
+        // 之后 未命名 (1).html 到 未命名 (41).html  【原版最多41, 最终版本是未命名 (26).html】
+        // 现在需要扩展至 未命名 (56).html  并且保留未命名.html 与未命名1.html 的独立性但也要逻辑优雅
+        // 另外保留 web1.html 以及 web1 (1) ~ web1 (10).html 系列
+        // 为了清晰展示并且存档兼容，同时保证原最终版本标记未命名 (26).html 依旧高亮标记为【最终版本】
+        
+        // 定义数组构建
+        let fileOptions = [];
+        
+        // 第一部分：固定特殊文件（按照原顺序靠前更有辨识）
+        const specialFiles = [
+            "作品.html",
+            "新建文本文档0.html",
+            "未命名.html",
+            "未命名1.html"
+        ];
+        
+        // 第二部分：未命名 (n).html  n从1到56 （因为原版是1到41，现在扩展到56）
+        // 注意：原版中“未命名 (26).html” 被特别标记为最终版本，我们保留这个标记特性。
+        // 另外原版最后额外有 web1.html 和 web1(1-10)，所以整体顺序: 特殊文件 + 未命名系列1~56 + web系列.
+        const UNNAMED_START = 1;
+        const UNNAMED_END = 56;   // 增加到56！
+        
+        // 未命名系列占位
+        const unnamedSeries = [];
+        for (let i = UNNAMED_START; i <= UNNAMED_END; i++) {
+            let fileName = `未命名 (${i}).html`;
+            // 标记最终版本（仅当 i === 26 时显示特殊后缀）
+            let displaySuffix = (i === 26) ? '【最终版本】' : '';
+            unnamedSeries.push({
+                value: fileName,
+                label: `${fileName}${displaySuffix}`
+            });
+        }
+        
+        // 第三部分：web系列
+        const webSeries = [
+            { value: "web1.html", label: "web1.html" }
+        ];
+        // web1 (1) 到 web1 (10)
+        for (let i = 1; i <= 10; i++) {
+            webSeries.push({
+                value: `web1 (${i}).html`,
+                label: `web1 (${i}).html`
+            });
+        }
+        
+        // 构建总列表 (保留原顺序：特殊文件 → 未命名1~56 → web系列)
+        // 注意原先代码 在未命名循环之后还有 <option value="web1.html"> 和 web1 (x).html 循环，未命名与web不重叠。
+        
+        // 先加入特殊文件
+        specialFiles.forEach(f => {
+            fileOptions.push({ value: f, label: f });
+        });
+        
+        // 加入未命名系列 (1~56)
+        unnamedSeries.forEach(item => {
+            fileOptions.push({ value: item.value, label: item.label });
+        });
+        
+        // 加入web系列
+        webSeries.forEach(w => {
+            fileOptions.push({ value: w.value, label: w.label });
+        });
+        
+        // 附加安全: 检测是否有重复？几乎无影响
+        
+        // DOM 元素
+        const selectEl = document.getElementById('fileList');
+        const iframe = document.getElementById('iframe');
+        
+        // 弹出通知（简装轻提示，不干扰视觉，用于存档反馈）
+        function showToast(msg, duration = 1200) {
+            // 创建浮动toast，但无侵入，只做轻微提醒
+            let existToast = document.querySelector('.dynamic-toast');
+            if(existToast) existToast.remove();
+            const div = document.createElement('div');
+            div.className = 'dynamic-toast';
+            div.innerText = msg;
+            div.style.position = 'fixed';
+            div.style.bottom = '20px';
+            div.style.left = '50%';
+            div.style.transform = 'translateX(-50%)';
+            div.style.backgroundColor = '#1e2a47cc';
+            div.style.backdropFilter = 'blur(10px)';
+            div.style.color = '#bbf0ff';
+            div.style.padding = '6px 18px';
+            div.style.borderRadius = '40px';
+            div.style.fontSize = '0.75rem';
+            div.style.fontFamily = 'monospace';
+            div.style.zIndex = '9999';
+            div.style.border = '1px solid #3e6c9e';
+            div.style.pointerEvents = 'none';
+            document.body.appendChild(div);
+            setTimeout(() => {
+                if(div && div.remove) div.remove();
+            }, duration);
+        }
+        
+        // 生成下拉选项(保留最后选中记忆)
+        function buildSelectOptions() {
+            let html = '<option value="">— 选择 3D 项目 / 页面 —</option>';
+            for (let opt of fileOptions) {
+                let selectedAttr = '';
+                // 注意存档加载时后期动态选中，这里先不设selected，留给load逻辑
+                html += `<option value="${escapeHtml(opt.value)}">${escapeHtml(opt.label)}</option>`;
+            }
+            selectEl.innerHTML = html;
+        }
+        
+        // 简单防XSS
+        function escapeHtml(str) {
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
+                return c;
+            });
+        }
+        
+        // 核心加载函数: 根据文件名加载到iframe
+        function loadFileByValue(fileValue) {
+            if (!fileValue) {
+                iframe.src = 'about:blank';
+                // 保存空状态也可以，但不存档空
+                return false;
+            }
+            // 构建绝对路径 (保留原有base编码)
+            // 注意 encodeURIComponent 能处理中文和括号，保证路径安全性
+            const fullPath = base + encodeURIComponent(fileValue);
+            // 微效刷新：先清空再加载，提升可靠性（尤其对于file协议）
+            const tempSrc = iframe.src;
+            iframe.src = 'about:blank';
+            setTimeout(() => {
+                iframe.src = fullPath;
+                // 增加加载完成小提示（可选）
+                iframe.onload = () => { 
+                    // 加载成功啥也不做，但可轻提示文件名
+                    // 不用频繁toast避免打扰，可以静默
+                };
+                iframe.onerror = () => {
+                    showToast(`⚠️ 无法加载: ${fileValue}`, 1500);
+                };
+            }, 15);
+            return true;
+        }
+        
+        // 存档当前选中值到localStorage
+        function saveCurrentSelection() {
+            const currentVal = selectEl.value;
+            if (currentVal && currentVal !== "") {
+                localStorage.setItem('last3DLauncherFile', currentVal);
+                // 同时保存索引备份可选，但不必须
+            } else {
+                // 如果空值，不覆盖存档，但也可以清除？不清除更好允许恢复
+                // 但如果用户手动选了空白，不清除存档，下次仍然读之前的有效存档
+            }
+        }
+        
+        // 切换文件事件(改变下拉)
+        function onFileChange() {
+            const selected = selectEl.value;
+            if (!selected) {
+                iframe.src = 'about:blank';
+                saveCurrentSelection(); // 保存空白但通常不覆盖，但这里最好允许清屏不存空
+                localStorage.removeItem('last3DLauncherFile'); // 可选：不想删除也可。体验为主: 清空时仅清除存档感觉不友好，但保留之前存档也无影响。
+                // 我们决定：如果清空选项则清除存档，避免下次启动空白。
+                localStorage.removeItem('last3DLauncherFile');
+                showToast('已清空视图', 800);
+                return;
+            }
+            loadFileByValue(selected);
+            saveCurrentSelection();
+            // 显示简短的文件名提醒(仅提醒用户)
+            let displayName = selected;
+            if(selected.includes('未命名 (26).html')) displayName = '未命名 (26).html ★最终版本';
+            showToast(`📂 加载: ${displayName}`, 1000);
+        }
+        
+        // 下一个文件：基于fileOptions 循环
+        function nextFile() {
+            const currentVal = selectEl.value;
+            if (!currentVal && fileOptions.length > 0) {
+                // 如果当前未选择任何文件，默认选中第一个
+                selectEl.value = fileOptions[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            // 寻找当前索引
+            let idx = -1;
+            for (let i = 0; i < fileOptions.length; i++) {
+                if (fileOptions[i].value === currentVal) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx === -1 && fileOptions.length) {
+                // 未匹配则选第一个
+                selectEl.value = fileOptions[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let nextIdx = (idx + 1) % fileOptions.length;
+            selectEl.value = fileOptions[nextIdx].value;
+            selectEl.dispatchEvent(new Event('change'));
+        }
+        
+        // 上一个文件
+        function prevFile() {
+            const currentVal = selectEl.value;
+            if (!currentVal && fileOptions.length > 0) {
+                selectEl.value = fileOptions[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let idx = -1;
+            for (let i = 0; i < fileOptions.length; i++) {
+                if (fileOptions[i].value === currentVal) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx === -1 && fileOptions.length) {
+                selectEl.value = fileOptions[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let prevIdx = (idx - 1 + fileOptions.length) % fileOptions.length;
+            selectEl.value = fileOptions[prevIdx].value;
+            selectEl.dispatchEvent(new Event('change'));
+        }
+        
+        // 刷新iframe (不改变当前文件)
+        function refreshIframe() {
+            const currentSrc = iframe.src;
+            if (!currentSrc || currentSrc === 'about:blank' || currentSrc === '') {
+                // 如果有选中文件则重新加载当前选中的文件
+                if (selectEl.value) {
+                    loadFileByValue(selectEl.value);
+                    showToast('⟳ 重新加载', 800);
+                } else {
+                    showToast('没有可刷新的内容', 800);
+                }
+                return;
+            }
+            // 标准的刷新：记录当前src再重设
+            const temp = iframe.src;
+            iframe.src = 'about:blank';
+            setTimeout(() => {
+                iframe.src = temp;
+                showToast('刷新页面', 600);
+            }, 20);
+        }
+        
+        // 全屏切换
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    showToast(`全屏失败: ${err.message}`, 1000);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // 启动自动读档 (优先读取上次存档文件)
+        function loadStoredFile() {
+            const lastFile = localStorage.getItem('last3DLauncherFile');
+            if (lastFile) {
+                // 检查lastFile是否存在于 fileOptions 列表中，防止文件因更新而消失（如增加56后肯定存在）
+                const exists = fileOptions.some(opt => opt.value === lastFile);
+                if (exists) {
+                    // 设置下拉框的值
+                    for (let i = 0; i < selectEl.options.length; i++) {
+                        if (selectEl.options[i].value === lastFile) {
+                            selectEl.selectedIndex = i;
+                            break;
+                        }
+                    }
+                    // 手动触发change加载文件
+                    selectEl.dispatchEvent(new Event('change'));
+                    showToast(`💾 读档成功 → ${lastFile}`, 1500);
+                } else {
+                    // 存档文件可能由于列表更新不存在? 几乎不会因为我们保留了所有原文件并扩展到了56，并且原有web等都在
+                    // 但万一原始未命名(41)以上存在的话，现在扩展至56, 所有旧档全兼容
+                    console.warn('存档文件不在列表中, 可能已移除', lastFile);
+                    localStorage.removeItem('last3DLauncherFile');
+                    // 如果不存在，默认选择未命名(26)最终版本作为推荐? 但是按原版最终版高亮, 我们就选最终版本未命名 (26).html
+                    const defaultFinal = `未命名 (26).html`;
+                    const targetOpt = Array.from(selectEl.options).find(opt => opt.value === defaultFinal);
+                    if (targetOpt) {
+                        selectEl.value = defaultFinal;
+                        selectEl.dispatchEvent(new Event('change'));
+                        showToast(`✨ 默认加载最终版本: 未命名 (26).html`, 1200);
+                    } else if (fileOptions.length) {
+                        selectEl.value = fileOptions[0].value;
+                        selectEl.dispatchEvent(new Event('change'));
+                    }
+                }
+            } else {
+                // 第一次打开无存档, 根据原版“未命名 (26).html【最终版本】”作为启动页更惊艳
+                const defaultHighlight = `未命名 (26).html`;
+                const existHighlight = fileOptions.some(f => f.value === defaultHighlight);
+                if (existHighlight) {
+                    for (let i = 0; i < selectEl.options.length; i++) {
+                        if (selectEl.options[i].value === defaultHighlight) {
+                            selectEl.selectedIndex = i;
+                            break;
+                        }
+                    }
+                    selectEl.dispatchEvent(new Event('change'));
+                    showToast('🎮 欢迎回来 · 最终版本已加载', 1400);
+                } else if (fileOptions.length) {
+                    // fallback
+                    selectEl.selectedIndex = 1;
+                    selectEl.dispatchEvent(new Event('change'));
+                }
+            }
+        }
+        
+        // ---------- 绑定UI事件 和 快捷键 ----------
+        function bindEvents() {
+            selectEl.addEventListener('change', onFileChange);
+            document.getElementById('refreshBtn').addEventListener('click', refreshIframe);
+            document.getElementById('fullBtn').addEventListener('click', toggleFullscreen);
+            document.getElementById('nextBtn').addEventListener('click', nextFile);
+            
+            // 全局键盘快捷键
+            window.addEventListener('keydown', (e) => {
+                // 左右箭头切换 (不使用 Alt 等修饰)
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    nextFile();
+                } else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    prevFile();
+                } else if (e.key === '/') {
+                    e.preventDefault();
+                    toggleFullscreen();
+                } else if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+                    // 可选：F5 或者 Ctrl+R 刷新iframe, 避免浏览器刷新页面冲突
+                    if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+                        e.preventDefault();
+                        refreshIframe();
+                    }
+                }
+                // 增加上/下备用？ 但不需要额外，左右符合直觉
+            });
+        }
+        
+        // 额外增加一些视觉反馈，以及检测全屏变化
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) {
+                showToast('全屏模式已启用 (ESC退出)', 1000);
+            } else {
+                showToast('退出全屏', 800);
+            }
+        });
+        
+        // 初始化渲染下拉列表 + 启动读档
+        function init() {
+            buildSelectOptions();      // 生成所有选项 (未命名1~56)
+            bindEvents();              // 绑定交互
+            loadStoredFile();         // 自动读取上次启动存档，如果没有则加载最终版本 (未命名26)
+        }
+        
+        // 开始
+        init();
+        
+        // 额外添加防御：如果因为某种原因iframe加载file协议时被限制，再控制台友好提示但不影响功能，sandbox已做最大兼容
+        // 支持记住最后一次切换，确保手动存档不丢失
+        window.addEventListener('beforeunload', () => {
+            // 在关闭页面之前保存最后的选中状态（额外保险）
+            if (selectEl && selectEl.value && selectEl.value !== "") {
+                localStorage.setItem('last3DLauncherFile', selectEl.value);
+            }
+        });
+        
+        // 补充一个辅助函数： 若未来需要手动另存版本，无需额外修改，完全满足未命名扩充到56需求
+        // 验证总数展示（调试不输出，确保56个未命名都存在）
+        const unnamedCount = fileOptions.filter(opt => opt.value.match(/未命名 \(\d+\)\.html/)).length;
+        console.log(`3D启动器 · 已加载文件总数: ${fileOptions.length} 项 | 未命名系列数量: ${unnamedCount} (目标1~56个)`);
+        if (unnamedCount === 56) {
+            console.log("✅ 未命名系列已按要求增加到56个!");
+        } else {
+            console.warn(`警告: 未命名计数为${unnamedCount}，但要求为56，请检查。但实际上已严格生成56个。`);
+        }
+        
+        // 优雅确保未命名(26)标记视觉上看到最终版本字样
+        // 已经在生成label时标记【最终版本】，用户在下拉列表可清晰识别
+    })();
+</script>
+</body>
+</html>

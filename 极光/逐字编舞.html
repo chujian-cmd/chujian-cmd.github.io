@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>逐字编舞 Kinetic</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0a12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,10,18,.85),rgba(10,10,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(124,134,255,.28);border-color:rgba(124,134,255,.6);color:#eaf0ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  /* 文字输入面板 */
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:center}
+  #panel textarea{
+    flex:1;min-height:42px;max-height:120px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(124,134,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(124,134,255,.6);
+    background:rgba(124,134,255,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(124,134,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">逐字编舞 <b id="m">弹跳落下</b></div>
+  <button class="btn" id="btn-algo">换算法</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">预设循环 · 或点「自定义」输入任意文字</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行，中英文皆可）</label>
+  <div class="row">
+    <textarea id="inp" rows="1" spellcheck="false" placeholder="输入文字，回车换行…"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    algo: 'drop',
+    stiffness: 180,
+    damping: 11,
+    stagger: 0.07,
+    hold: 1.6,
+    gap: 0.6,
+    sustain: false,
+    squash: 0.5,
+    weight: 800,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    color: '#eef1ff',
+    background: '#0a0a12'
+  };
+
+  var ALGOS = [
+    { key: 'drop', label: '弹跳落下' },
+    { key: 'wave', label: '波浪浮现' },
+    { key: 'flip', label: '翻转' },
+    { key: 'blur', label: '模糊淡入' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    layoutKey = '';
+    return true;
+  }
+
+  // ---------- 布局 ----------
+  var glyphs = [];
+  var fontSize = 60;
+  var layoutKey = '';
+
+  function buildLayout() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === layoutKey && glyphs.length) return;
+    layoutKey = key;
+    glyphs = [];
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) return;
+
+    var fontStr = function (s) { return CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    ctx.font = fontStr(60);
+    var charGap = 0.08;
+
+    var cw = H * 0.76 / lines.length;
+    var size = Math.floor(Math.min(cw * 0.72, W * 0.3));
+    var measure = function (str, s) {
+      ctx.font = fontStr(s);
+      var g = s * charGap;
+      var total = 0, n = 0;
+      for (var i = 0; i < str.length; i++) {
+        total += ctx.measureText(str.charAt(i)).width + g;
+        n++;
+      }
+      return n ? total - g : 0;
+    };
+    var maxW = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = measure(lines[i], size);
+      if (m > maxW) maxW = m;
+    }
+    var maxAllowed = W * 0.84;
+    if (maxW > maxAllowed) {
+      size = Math.max(6, Math.floor(size * maxAllowed / maxW));
+    }
+    fontSize = size;
+    ctx.font = fontStr(fontSize);
+
+    var lh = fontSize * 1.3;
+    var startY = H / 2 - (lines.length - 1) * lh / 2;
+
+    var idx = 0;
+    for (var y = 0; y < lines.length; y++) {
+      var chars = lines[y].split('');
+      var widths = [];
+      for (var k = 0; k < chars.length; k++) {
+        widths.push(ctx.measureText(chars[k]).width);
+      }
+      var gap = fontSize * charGap;
+      var total = 0;
+      for (var w = 0; w < widths.length; w++) total += widths[w];
+      total += gap * Math.max(0, chars.length - 1);
+      var cx = W / 2 - total / 2;
+      for (var j = 0; j < chars.length; j++) {
+        var ww = widths[j];
+        glyphs.push({
+          ch: chars[j],
+          x: cx + ww / 2,
+          y: startY + y * lh,
+          ph: (idx * 0.37) % (Math.PI * 2),
+          i: idx,
+          s: 0, v: 0
+        });
+        cx += ww + gap;
+        idx++;
+      }
+    }
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+  var prevPhase = -1;
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildLayout();
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var n = glyphs.length;
+    if (!n) { requestAnimationFrame(render); return; }
+
+    var stagger = CFG.stagger;
+    var hold = CFG.hold;
+    var gap = CFG.gap;
+    var sustain = CFG.sustain;
+    var squash = CFG.squash;
+    var algo = CFG.algo;
+
+    var cycleLen = (n - 1) * stagger + 1.05 + hold + 0.6 + gap;
+
+    var x;
+    if (sustain) {
+      x = time;
+    } else {
+      x = time % cycleLen;
+      if (x < prevPhase) {
+        for (var i = 0; i < n; i++) { glyphs[i].s = 0; glyphs[i].v = 0; }
+      }
+      prevPhase = x;
+    }
+
+    var stiff = CFG.stiffness;
+    var damp = CFG.damping;
+    var step = Math.min(dt, 1 / 30);
+    var half = step / 2;
+
+    for (var g = 0; g < n; g++) {
+      var gl = glyphs[g];
+      var target;
+      if (sustain || x < (n - 1) * stagger + 1.05 + hold) {
+        target = x >= g * stagger ? 1 : 0;
+      } else if (x < (n - 1) * stagger + 1.05 + hold + 0.6) {
+        gl.s = 0;
+        gl.v = 0;
+        continue;
+      } else {
+        target = 0;
+      }
+      for (var e = 0; e < 2; e++) {
+        gl.v += (stiff * (target - gl.s) - damp * gl.v) * half;
+        gl.s += gl.v * half;
+      }
+    }
+
+    ctx.font = CFG.weight + ' ' + fontSize + 'px ' + CFG.font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = CFG.color;
+
+    for (var g2 = 0; g2 < n; g2++) {
+      var gl2 = glyphs[g2];
+      var s = gl2.s;
+      var v = gl2.v;
+
+      if (!sustain && s < 0.004 && Math.abs(v) < 0.02) continue;
+
+      var cl = Math.max(0, Math.min(1, s));
+      var dy = 0, sx = 1, sy = 1, alpha = 1;
+
+      switch (algo) {
+        case 'wave':
+          dy = (1 - s) * fontSize * 0.9;
+          alpha = cl * cl * (3 - 2 * cl);
+          break;
+        case 'flip':
+          sx = Math.max(0.03, s);
+          alpha = Math.max(0.15, s);
+          break;
+        case 'blur':
+          alpha = cl;
+          break;
+        case 'drop':
+        default:
+          dy = -(1 - s) * fontSize * 1.6;
+          sy = Math.max(0.55, Math.min(1.75, 1 + v * 0.045 * squash));
+          sx = 1 / sy;
+          alpha = Math.min(1, s * 4);
+          break;
+      }
+
+      if (sustain) {
+        var amp = (algo === 'wave' ? 0.16 : 0.11) * fontSize;
+        var prog = Math.min(1, (x - g2 * stagger) / 0.9);
+        dy += Math.sin(time * 2.6 - g2 * 0.62) * amp * prog * cl;
+      }
+
+      ctx.save();
+      ctx.translate(gl2.x, gl2.y + dy);
+      ctx.scale(sx, sy);
+
+      if (algo === 'blur' && cl < 0.98) {
+        var blurR = (1 - cl) * fontSize * 0.55;
+        ctx.globalAlpha = alpha * 0.22;
+        for (var k2 = 0; k2 < 4; k2++) {
+          ctx.fillText(gl2.ch,
+            Math.sin(g2 * 3.7 + k2 * 2.1) * blurR,
+            Math.cos(g2 * 2.9 + k2 * 1.7) * blurR);
+        }
+        ctx.globalAlpha = alpha * (0.35 + 0.65 * cl);
+        ctx.fillText(gl2.ch, 0, 0);
+      } else {
+        ctx.globalAlpha = alpha;
+        ctx.fillText(gl2.ch, 0, 0);
+      }
+
+      ctx.restore();
+    }
+
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(render);
+  }
+
+  // ---------- 预设文字循环 ----------
+  var CONTENTS = ['AURORA', '逐字编舞', 'KINETIC', '弹\n跳', 'TEXT', '⚡'];
+  var contentIdx = 0;
+
+  function applyText(t) {
+    if (!t || !t.length) t = 'AURORA';
+    CFG.text = t;
+    layoutKey = '';
+    time = 0;
+    prevPhase = -1;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    applyText(CONTENTS[contentIdx]);
+  });
+
+  // ---------- 自定义输入面板 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    applyText(inp.value);
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(120, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 换算法 ----------
+  var algoIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-algo').addEventListener('click', function () {
+    algoIdx = (algoIdx + 1) % ALGOS.length;
+    CFG.algo = ALGOS[algoIdx].key;
+    mLabel.textContent = ALGOS[algoIdx].label;
+    time = 0; prevPhase = -1;
+    for (var i = 0; i < glyphs.length; i++) { glyphs[i].s = 0; glyphs[i].v = 0; }
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

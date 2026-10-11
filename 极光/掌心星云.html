@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>掌心星云 Nebula</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #04050a;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(4,5,10,0.8), rgba(4,5,10,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; font-variant-numeric: tabular-nums; letter-spacing: 0.5px; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: background .15s, border-color .15s;
+  }
+  .btn:active { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.24); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">星云 <b id="m">双色</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 引力点 · 快速划过甩出彗尾</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    count: isMobile ? 3200 : 5500,   // 粒子数
+    size: isMobile ? 1.8 : 1.6,      // 粒子大小
+    pull: 1.0,                       // 引力强度
+    swirl: 1.2,                      // 旋绕强度
+    trail: 0.85,                     // 拖尾（0.85~0.95 好看；越大尾巴越长）
+    damping: 0.94,                   // 速度阻尼
+    spread: 1.0,                     // 张合响应
+
+    // 配色
+    scheme: 0,
+    schemes: [
+      { name: '双色',   a: '#7de0ff', b: '#ff9de0', bg: '#04050a' },
+      { name: '青焰',   a: '#5bffd0', b: '#1e6bff', bg: '#030508' },
+      { name: '暖金',   a: '#ffd86b', b: '#ff6a2c', bg: '#0a0603' },
+      { name: '紫电',   a: '#b26bff', b: '#5be0ff', bg: '#05030f' },
+      { name: '樱花',   a: '#ffc4dd', b: '#a06bff', bg: '#0a0510' }
+    ]
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ---------- 粒子池 ----------
+  const N = CFG.count;
+  const px = new Float32Array(N);
+  const py = new Float32Array(N);
+  const vx = new Float32Array(N);
+  const vy = new Float32Array(N);
+  const jitter = new Float32Array(N);   // 每粒一个固定随机数（半径系数）
+  const hueIdx = new Uint8Array(N);     // 0 或 1，用 a/b 两色
+
+  function seedParticles() {
+    for (let i = 0; i < N; i++) {
+      px[i] = Math.random() * W;
+      py[i] = Math.random() * H;
+      vx[i] = (Math.random() - 0.5) * 20;
+      vy[i] = (Math.random() - 0.5) * 20;
+      jitter[i] = 0.45 + Math.random() * 1.15;
+      hueIdx[i] = Math.random() < 0.5 ? 0 : 1;
+    }
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const prevPalm = { x: 0, y: 0, vx: 0, vy: 0 };
+
+  function setPointer(x, y, down) {
+    // 记录速度
+    prevPalm.vx = x - pointer.x;
+    prevPalm.vy = y - pointer.y;
+    pointer.x = x;
+    pointer.y = y;
+    pointer.down = down;
+    pointer.inside = true;
+  }
+
+  const rect = () => cv.getBoundingClientRect();
+
+  cv.addEventListener('touchstart', e => {
+    const r = rect();
+    const t = e.touches[0];
+    setPointer(t.clientX - r.left, t.clientY - r.top, true);
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchmove', e => {
+    const r = rect();
+    const t = e.touches[0];
+    setPointer(t.clientX - r.left, t.clientY - r.top, true);
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchend', () => { pointer.down = false; pointer.inside = false; });
+  cv.addEventListener('touchcancel', () => { pointer.down = false; pointer.inside = false; });
+
+  cv.addEventListener('mousedown', e => {
+    const r = rect();
+    setPointer(e.clientX - r.left, e.clientY - r.top, true);
+  });
+  cv.addEventListener('mousemove', e => {
+    const r = rect();
+    setPointer(e.clientX - r.left, e.clientY - r.top, pointer.down);
+  });
+  cv.addEventListener('mouseup', () => { pointer.down = false; pointer.inside = false; });
+  cv.addEventListener('mouseleave', () => { pointer.down = false; pointer.inside = false; });
+
+  // ---------- 配色 ----------
+  let colA = [0, 0, 0], colB = [0, 0, 0], bgRGB = [0, 0, 0];
+  function buildColors() {
+    const s = CFG.schemes[CFG.scheme];
+    colA = hex2rgb(s.a);
+    colB = hex2rgb(s.b);
+    bgRGB = hex2rgb(s.bg);
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  let starSprite = null;
+
+  // 预渲染一颗星（径向渐变）加速绘制
+  function buildStarSprite() {
+    const s = 24;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grad.addColorStop(0,   'rgba(255,255,255,1)');
+    grad.addColorStop(0.3, 'rgba(255,255,255,0.55)');
+    grad.addColorStop(0.7, 'rgba(255,255,255,0.12)');
+    grad.addColorStop(1,   'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+    starSprite = c;
+  }
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    // 背景（带拖尾）
+    const [br, bgc, bb] = bgRGB;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(${br},${bgc},${bb},${1 - CFG.trail})`;
+    ctx.fillRect(0, 0, W, H);
+
+    const pull = CFG.pull * 14;
+    const swr = CFG.swirl * 120;
+    const damp = CFG.damping;
+    const spread = CFG.spread;
+
+    // 指针产生的引力中心
+    const hasPalm = pointer.inside && pointer.down;
+    const palmX = pointer.x;
+    const palmY = pointer.y;
+    const pvx = prevPalm.vx;
+    const pvy = prevPalm.vy;
+
+    // 甩尾：手指快速移动时给粒子一个额外推力
+    const flingPower = Math.min(1, Math.hypot(pvx, pvy) * 0.06);
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    const z = clamp(dt * 60, 0, 3);
+    const [ar, ag, ab] = colA;
+    const [cr, cg, cb] = colB;
+
+    for (let i = 0; i < N; i++) {
+      let x = px[i], y = py[i];
+      let vX = vx[i], vY = vy[i];
+
+      if (hasPalm) {
+        // 相对手掌位置
+        const dx = x - palmX;
+        const dy = y - palmY;
+        const d2 = dx * dx + dy * dy + 40;
+        const d = Math.sqrt(d2);
+
+        // 引力：把手掌当成一个环（避免中心无限吸）
+        const ring = 60 * spread;
+        const radial = -(d - ring) * pull / d2 * 4;
+        vX += dx / d * radial;
+        vY += dy / d * radial;
+
+        // 旋绕：垂直方向的速度
+        const tx = -dy / d;
+        const ty = dx / d;
+        const swirl = swr / (d + 40);
+        vX += tx * swirl * 0.02;
+        vY += ty * swirl * 0.02;
+
+        // 甩尾：快速划动时推粒子一把
+        if (flingPower > 0.05) {
+          const dist = clamp(1 - d / 260, 0, 1);
+          vX += pvx * flingPower * dist * 0.6;
+          vY += pvy * flingPower * dist * 0.6;
+        }
+      } else {
+        // 没有手指时：轻微漂向屏幕中心，形成弥散星云
+        const dx = W * 0.5 - x;
+        const dy = H * 0.5 - y;
+        vX += dx * 0.00008;
+        vY += dy * 0.00008;
+      }
+
+      // 阻尼
+      vX *= damp;
+      vY *= damp;
+
+      // 积分
+      x += vX * z;
+      y += vY * z;
+
+      // 边界柔回
+      if (x < -20) { x = -20; vX *= -0.5; }
+      else if (x > W + 20) { x = W + 20; vX *= -0.5; }
+      if (y < -20) { y = -20; vY *= -0.5; }
+      else if (y > H + 20) { y = H + 20; vY *= -0.5; }
+
+      px[i] = x;
+      py[i] = y;
+      vx[i] = vX;
+      vy[i] = vY;
+
+      // 绘制
+      const speed = Math.hypot(vX, vY);
+      const sz = CFG.size * (1 + Math.min(2, speed * 0.02)) * jitter[i];
+      if (hueIdx[i] === 0) {
+        ctx.globalAlpha = 0.55 + Math.min(0.4, speed * 0.008);
+        ctx.fillStyle = `rgb(${ar},${ag},${ab})`;
+      } else {
+        ctx.globalAlpha = 0.55 + Math.min(0.4, speed * 0.008);
+        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+      }
+      // 用预渲染星点
+      ctx.drawImage(starSprite, x - sz, y - sz, sz * 2, sz * 2);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', seedParticles);
+  document.getElementById('btn-change').addEventListener('click', () => {
+    CFG.scheme = (CFG.scheme + 1) % CFG.schemes.length;
+    mEl.textContent = CFG.schemes[CFG.scheme].name;
+    buildColors();
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); seedParticles(); });
+  window.addEventListener('orientationchange', () => setTimeout(() => { resize(); seedParticles(); }, 200));
+
+  buildColors();
+  buildStarSprite();
+  seedParticles();
+  mEl.textContent = CFG.schemes[CFG.scheme].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

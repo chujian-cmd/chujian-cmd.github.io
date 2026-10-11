@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>线 · 星</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #fff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="c" width="600" height="400"></canvas>
+
+    <script>
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        const W = 600, H = 400;
+
+        // 目标星形（10个顶点，闭合）
+        const target = [
+            { x: 300, y: 60 },
+            { x: 350, y: 160 },
+            { x: 460, y: 170 },
+            { x: 380, y: 240 },
+            { x: 400, y: 350 },
+            { x: 300, y: 290 },
+            { x: 200, y: 350 },
+            { x: 220, y: 240 },
+            { x: 140, y: 170 },
+            { x: 250, y: 160 }
+        ];
+
+        // 采样点数（越多越平滑，但计算量略大）
+        const SAMPLE_COUNT = 120;
+
+        let phase = 'draw';
+        let points = [];
+        let drawing = false;
+
+        let startSamples = [];   // 用户线条的等距采样点
+        let endSamples = [];     // 目标星形的等距采样点
+        let progress = 0;
+        let rafId = null;
+
+        // 缓动函数：easeInOutCubic
+        function ease(t) {
+            return t < 0.5
+                ? 4 * t * t * t
+                : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+
+        // ---------- 采样工具 ----------
+
+        // 计算折线总长度
+        function totalLength(pts) {
+            let len = 0;
+            for (let i = 1; i < pts.length; i++) {
+                len += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+            }
+            return len;
+        }
+
+        // 把折线按弧长等距重采样成 n 个点
+        function resample(pts, n) {
+            if (pts.length === 0) return [];
+            if (pts.length === 1) return Array(n).fill().map(() => ({ ...pts[0] }));
+
+            const total = totalLength(pts);
+            if (total === 0) return Array(n).fill().map(() => ({ ...pts[0] }));
+
+            const step = total / (n - 1);
+            const out = [{ x: pts[0].x, y: pts[0].y }];
+
+            let segIdx = 0;
+            let segStart = pts[0];
+            let segEnd = pts[1];
+            let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+            let segDone = 0;
+
+            for (let i = 1; i < n; i++) {
+                const targetDist = i * step;
+                let ok = false;
+
+                while (segIdx < pts.length - 1) {
+                    if (segDone + segLen >= targetDist) {
+                        const t = segLen === 0 ? 0 : (targetDist - segDone) / segLen;
+                        out.push({
+                            x: segStart.x + (segEnd.x - segStart.x) * t,
+                            y: segStart.y + (segEnd.y - segStart.y) * t
+                        });
+                        ok = true;
+                        break;
+                    } else {
+                        segDone += segLen;
+                        segIdx++;
+                        if (segIdx >= pts.length - 1) break;
+                        segStart = pts[segIdx];
+                        segEnd = pts[segIdx + 1];
+                        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+                    }
+                }
+
+                if (!ok) {
+                    const last = pts[pts.length - 1];
+                    out.push({ x: last.x, y: last.y });
+                }
+            }
+
+            while (out.length < n) {
+                const last = pts[pts.length - 1];
+                out.push({ x: last.x, y: last.y });
+            }
+            return out.slice(0, n);
+        }
+
+        // 把闭合折线（无重复首尾）采样成 n 个点，首尾闭合
+        // 星形是闭合的，这里需要特殊处理
+        function resampleClosed(pts, n) {
+            // 闭合路径：在末尾补上起点，形成环
+            const closed = pts.concat([{ ...pts[0] }]);
+            // 采样 n 个点，但最后一点会和第一点重合，所以内部采样 n 个不重复点
+            // 简单起见：采样 n+1 个，去掉最后一个
+            const all = resample(closed, n + 1);
+            return all.slice(0, n);
+        }
+
+        // ---------- 渲染 ----------
+
+        function draw() {
+            ctx.clearRect(0, 0, W, H);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            if (phase === 'draw' && points.length > 0) {
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+                for (let i = 1; i < points.length; i++) {
+                    ctx.lineTo(points[i].x, points[i].y);
+                }
+                ctx.stroke();
+            }
+
+            if (phase === 'morph') {
+                const t = ease(progress);
+                ctx.beginPath();
+                for (let i = 0; i < startSamples.length; i++) {
+                    const s = startSamples[i];
+                    const e = endSamples[i];
+                    const x = s.x + (e.x - s.x) * t;
+                    const y = s.y + (e.y - s.y) * t;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            if (phase === 'done') {
+                ctx.beginPath();
+                ctx.moveTo(target[0].x, target[0].y);
+                for (let i = 1; i < target.length; i++) {
+                    ctx.lineTo(target[i].x, target[i].y);
+                }
+                ctx.closePath();
+                ctx.stroke();
+            }
+        }
+
+        // ---------- 动画 ----------
+
+        function animate() {
+            if (phase !== 'morph') return;
+
+            // 用时间驱动，保证不同刷新率下速度一致
+            progress += 0.018;
+            if (progress >= 1) {
+                progress = 1;
+                draw();
+                phase = 'done';
+                rafId = null;
+                return;
+            }
+
+            draw();
+            rafId = requestAnimationFrame(animate);
+        }
+
+        // ---------- 状态 ----------
+
+        function reset() {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = null;
+            phase = 'draw';
+            points = [];
+            drawing = false;
+            progress = 0;
+            startSamples = [];
+            endSamples = [];
+            draw();
+        }
+
+        function startMorph() {
+            if (points.length < 2) {
+                reset();
+                return;
+            }
+
+            // 采样用户线条
+            startSamples = resample(points, SAMPLE_COUNT);
+
+            // 采样目标星形（闭合路径）
+            endSamples = resampleClosed(target, SAMPLE_COUNT);
+
+            // 关键：对齐起点
+            // 让用户线条的起点与星形采样点中最近的点对齐，减少扭曲
+            // 找到 endSamples 中离 startSamples[0] 最近的点索引
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            const first = startSamples[0];
+            for (let i = 0; i < endSamples.length; i++) {
+                const d = Math.hypot(endSamples[i].x - first.x, endSamples[i].y - first.y);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestIdx = i;
+                }
+            }
+            // 旋转 endSamples，使 bestIdx 对齐到索引 0
+            if (bestIdx !== 0) {
+                endSamples = endSamples.slice(bestIdx).concat(endSamples.slice(0, bestIdx));
+            }
+
+            // 再检查一次：如果起点和终点方向相反（即用户画的线起点靠近星形终点），
+            // 可能需要反转 endSamples，让形变更自然
+            // 比较 startSamples[0] 到 endSamples[0] 和 endSamples[last] 的距离
+            // 这里简单处理：如果 endSamples 反转后首点更近，则反转
+            const dForward = Math.hypot(
+                endSamples[0].x - first.x,
+                endSamples[0].y - first.y
+            );
+            const dReverse = Math.hypot(
+                endSamples[endSamples.length - 1].x - first.x,
+                endSamples[endSamples.length - 1].y - first.y
+            );
+            if (dReverse < dForward) {
+                endSamples.reverse();
+                // 反转后需要把首点再对齐一次
+                let bestIdx2 = 0;
+                let bestDist2 = Infinity;
+                for (let i = 0; i < endSamples.length; i++) {
+                    const d = Math.hypot(endSamples[i].x - first.x, endSamples[i].y - first.y);
+                    if (d < bestDist2) {
+                        bestDist2 = d;
+                        bestIdx2 = i;
+                    }
+                }
+                if (bestIdx2 !== 0) {
+                    endSamples = endSamples.slice(bestIdx2).concat(endSamples.slice(0, bestIdx2));
+                }
+            }
+
+            progress = 0;
+            phase = 'morph';
+
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(animate);
+        }
+
+        // ---------- 事件 ----------
+
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const src = e.touches ? e.touches[0] : e;
+            return {
+                x: Math.min(Math.max((src.clientX - rect.left) * scaleX, 0), W),
+                y: Math.min(Math.max((src.clientY - rect.top) * scaleY, 0), H)
+            };
+        }
+
+        function down(e) {
+            e.preventDefault();
+            if (phase !== 'draw') reset();
+            drawing = true;
+            points = [getPos(e)];
+            draw();
+        }
+
+        function move(e) {
+            if (!drawing || phase !== 'draw') return;
+            e.preventDefault();
+            const p = getPos(e);
+            const last = points[points.length - 1];
+            if (Math.hypot(p.x - last.x, p.y - last.y) < 2) return;
+            points.push(p);
+            draw();
+        }
+
+        function up(e) {
+            if (!drawing) return;
+            e.preventDefault();
+            drawing = false;
+            if (phase !== 'draw') return;
+            if (points.length >= 2) startMorph();
+            else reset();
+        }
+
+        function leave(e) {
+            if (!drawing || phase !== 'draw') return;
+            drawing = false;
+            if (points.length >= 2) startMorph();
+            else reset();
+        }
+
+        canvas.addEventListener('mousedown', down);
+        canvas.addEventListener('mousemove', move);
+        canvas.addEventListener('mouseup', up);
+        canvas.addEventListener('mouseleave', leave);
+
+        canvas.addEventListener('touchstart', down, { passive: false });
+        canvas.addEventListener('touchmove', move, { passive: false });
+        canvas.addEventListener('touchend', up, { passive: false });
+
+        reset();
+    </script>
+</body>
+</html>

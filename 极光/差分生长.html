@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>差分生长 Differential Growth</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #0a0b12;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(10,11,18,0.8), rgba(10,11,18,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">差分生长 <b id="m">脑回</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 扰动曲线</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    maxNodes: isMobile ? 1200 : 2200,   // 节点上限
+    splitDist: isMobile ? 16 : 14,       // 插入阈值（越小曲线越密）
+    repulseR: 16,                        // 排斥半径
+    repulsion: 0.6,                      // 排斥强度
+    attraction: 0.5,                     // 吸引强度（沿切线方向）
+    speed: 1.0,                          // 演化速度（每帧迭代次数）
+    lineWidth: 1.4,
+    spacing: 6,                          // 排斥半径内的最大邻居数（用于限制计算量）
+    glow: true,                          // 辉光
+
+    // 配色
+    scheme: 0,
+    schemes: [
+      { name: '脑回', a: '#f0b8c8', b: '#5c1f38', bg: '#120a10', glow: true },
+      { name: '珊瑚', a: '#ff7a59', b: '#ffd166', bg: '#03121c', glow: true },
+      { name: '海岸线', a: '#2a6f97', b: '#e0c097', bg: '#04121a', glow: false },
+      { name: '藤蔓', a: '#5fbf6e', b: '#123c1a', bg: '#050f08', glow: false },
+      { name: '霓虹', a: '#5be0ff', b: '#ff2fd0', bg: '#05000a', glow: true }
+    ]
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const TAU = Math.PI * 2;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ---------- 曲线 ----------
+  let xs = null, ys = null;
+  let n = 0;
+  let capacity = 0;
+
+  const SEED_R = 8;      // 初始圆环半径
+  const SEED_N = 12;     // 初始圆环节点数
+
+  function seed() {
+    capacity = Math.max(SEED_N + 1, CFG.maxNodes);
+    xs = new Float32Array(capacity);
+    ys = new Float32Array(capacity);
+    n = SEED_N;
+    const cx = W / 2, cy = H / 2;
+    for (let i = 0; i < n; i++) {
+      const a = i / n * TAU;
+      xs[i] = cx + Math.cos(a) * SEED_R;
+      ys[i] = cy + Math.sin(a) * SEED_R;
+    }
+  }
+
+  // 双线性插值 + 环绕
+  function idxWrap(i) {
+    return ((i % n) + n) % n;
+  }
+
+  // ---------- 演化一步 ----------
+  function step() {
+    if (n < 3) return;
+    const maxN = CFG.maxNodes;
+    const sp = CFG.splitDist;
+    const sp2 = sp * sp;
+    const repR = CFG.repulseR;
+    const repR2 = repR * repR;
+    const rep = CFG.repulsion;
+    const atr = CFG.attraction;
+
+    // 力累积
+    const fx = new Float32Array(n);
+    const fy = new Float32Array(n);
+
+    // 排斥：所有节点两两近似（O(N²)）——为手机性能考虑，采样一个子集
+    // 用"上一半"的节点扫描所有邻居，超出就 break
+    const maxScan = 60;   // 每个节点最多扫 60 个邻居
+
+    for (let i = 0; i < n; i++) {
+      const xi = xs[i], yi = ys[i];
+      let scanned = 0;
+      // 从随机起点开始，避免总是采样到固定邻居
+      const start = (i + 1) % n;
+      for (let k = 0; k < n && scanned < maxScan; k++) {
+        const j = idxWrap(start + k);
+        if (j === i) continue;
+        const dx = xi - xs[j];
+        const dy = yi - ys[j];
+        const d2 = dx * dx + dy * dy;
+        if (d2 > repR2 || d2 === 0) continue;
+        const d = Math.sqrt(d2);
+        const f = (1 - d / repR) * rep;
+        fx[i] += (dx / d) * f;
+        fy[i] += (dy / d) * f;
+        scanned++;
+      }
+    }
+
+    // 吸引：朝"上一节点 + 下一节点"的中点靠拢（沿切线方向）
+    const afx = new Float32Array(n);
+    const afy = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const pi = idxWrap(i - 1);
+      const ni = idxWrap(i + 1);
+      const tx = (xs[pi] + xs[ni]) * 0.5 - xs[i];
+      const ty = (ys[pi] + ys[ni]) * 0.5 - ys[i];
+      afx[i] = tx * atr * 0.1;
+      afy[i] = ty * atr * 0.1;
+    }
+
+    // 应用：节点位置 += 力
+    const v = 0.4;
+    for (let i = 0; i < n; i++) {
+      xs[i] += (fx[i] + afx[i]) * v;
+      ys[i] += (fy[i] + afy[i]) * v;
+    }
+
+    // 插入新节点：相邻距离超过 splitDist 就在中间插一个
+    if (n < maxN) {
+      // 用临时数组记录新曲线
+      const nxs = new Float32Array(Math.min(maxN, n * 2 + 2));
+      const nys = new Float32Array(nxs.length);
+      let m = 0;
+      for (let i = 0; i < n; i++) {
+        const j = idxWrap(i + 1);
+        const x0 = xs[i], y0 = ys[i];
+        const x1 = xs[j], y1 = ys[j];
+        nxs[m] = x0; nys[m] = y0; m++;
+        const dx = x1 - x0, dy = y1 - y0;
+        if (dx * dx + dy * dy > sp2 && m < nxs.length - 1) {
+          // 在中间插入，并加一点随机扰动，让曲线不规则
+          const mx = (x0 + x1) * 0.5 + (Math.random() - 0.5) * 2;
+          const my = (y0 + y1) * 0.5 + (Math.random() - 0.5) * 2;
+          nxs[m] = mx; nys[m] = my; m++;
+        }
+      }
+      xs = nxs;
+      ys = nys;
+      n = m;
+      capacity = nxs.length;
+    }
+  }
+
+  // ---------- 指针扰动 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    pointer.down = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.down = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  function applyPointer() {
+    if (!pointer.down || !pointer.inside) return;
+    const R = 80;
+    const R2 = R * R;
+    for (let i = 0; i < n; i++) {
+      const dx = xs[i] - pointer.x;
+      const dy = ys[i] - pointer.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < R2 && d2 > 1) {
+        const d = Math.sqrt(d2);
+        const f = (1 - d / R) * 1.5;
+        xs[i] += dx / d * f;
+        ys[i] += dy / d * f;
+      }
+    }
+  }
+
+  // ---------- 渲染 ----------
+  function render() {
+    const s = CFG.schemes[CFG.scheme];
+    const [br, bg, bb] = hex2rgb(s.bg);
+    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+    ctx.fillRect(0, 0, W, H);
+
+    if (n < 2) return;
+
+    const [ar, ag, ab] = hex2rgb(s.a);
+    const [cr, cg, cb] = hex2rgb(s.b);
+
+    ctx.globalCompositeOperation = s.glow ? 'lighter' : 'source-over';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = CFG.lineWidth;
+
+    // 用二次贝塞尔平滑
+    const drawPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(
+        (xs[idxWrap(n - 1)] + xs[0]) / 2,
+        (ys[idxWrap(n - 1)] + ys[0]) / 2
+      );
+      for (let i = 0; i < n; i++) {
+        const x0 = xs[i], y0 = ys[i];
+        const x1 = xs[idxWrap(i + 1)], y1 = ys[idxWrap(i + 1)];
+        ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      }
+      ctx.closePath();
+    };
+
+    // 辉光（多次叠加绘制，越往外越淡）
+    if (s.glow) {
+      ctx.strokeStyle = `rgba(${ar},${ag},${ab},0.16)`;
+      ctx.lineWidth = CFG.lineWidth * 4.5;
+      drawPath();
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},0.28)`;
+      ctx.lineWidth = CFG.lineWidth * 2.2;
+      drawPath();
+      ctx.stroke();
+    }
+
+    // 主曲线
+    ctx.strokeStyle = `rgb(${ar},${ag},${ab})`;
+    ctx.lineWidth = CFG.lineWidth;
+    drawPath();
+    ctx.stroke();
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  function loop(now) {
+    lastTime = now;
+
+    const iters = Math.max(1, Math.round(CFG.speed));
+    for (let i = 0; i < iters; i++) {
+      step();
+      applyPointer();
+    }
+
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', seed);
+
+  const SCHEMES = [
+    { name: '脑回',   a: '#f0b8c8', b: '#5c1f38', bg: '#120a10', glow: true,
+      repulsion: 0.9, attraction: 0.75, splitDist: 14, lineWidth: 1.2 },
+    { name: '珊瑚',   a: '#ff7a59', b: '#ffd166', bg: '#03121c', glow: true,
+      repulsion: 0.7, attraction: 0.4, splitDist: 22, lineWidth: 1.6 },
+    { name: '海岸线', a: '#2a6f97', b: '#e0c097', bg: '#04121a', glow: false,
+      repulsion: 0.45, attraction: 0.6, splitDist: 28, lineWidth: 1.1 },
+    { name: '藤蔓',   a: '#5fbf6e', b: '#123c1a', bg: '#050f08', glow: false,
+      repulsion: 0.35, attraction: 0.85, splitDist: 15, lineWidth: 1.0 },
+    { name: '霓虹',   a: '#5be0ff', b: '#ff2fd0', bg: '#05000a', glow: true,
+      repulsion: 0.8, attraction: 0.5, splitDist: 12, lineWidth: 1.4 }
+  ];
+  let schemeIdx = 0;
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+    const s = SCHEMES[schemeIdx];
+    CFG.scheme = schemeIdx;
+    CFG.repulsion = s.repulsion;
+    CFG.attraction = s.attraction;
+    CFG.splitDist = s.splitDist;
+    CFG.lineWidth = s.lineWidth;
+    mEl.textContent = s.name;
+    seed();
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); seed(); });
+  window.addEventListener('orientationchange', () => setTimeout(() => { resize(); seed(); }, 200));
+
+  mEl.textContent = SCHEMES[0].name;
+  CFG.repulsion = SCHEMES[0].repulsion;
+  CFG.attraction = SCHEMES[0].attraction;
+  CFG.splitDist = SCHEMES[0].splitDist;
+  CFG.lineWidth = SCHEMES[0].lineWidth;
+  seed();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

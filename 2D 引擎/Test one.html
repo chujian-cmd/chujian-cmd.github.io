@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0f1319">
+<title>布娃娃</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#0f1319;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    position:fixed;inset:0;
+  }
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+  #tip{
+    position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
+    color:#7f8ea3;font-size:13px;pointer-events:none;
+    background:rgba(0,0,0,.35);padding:6px 14px;border-radius:16px;
+    white-space:nowrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="tip">点一下出布娃娃 · 拖它 · 它会自己站起来</div>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+"use strict";
+const { Engine, Composite, Bodies, Body, Constraint, Events } = Matter;
+
+/* =========================================================
+   引擎
+   ========================================================= */
+const engine = Engine.create();
+engine.gravity.y = 1.6;
+engine.positionIterations = 8;
+engine.velocityIterations = 6;
+const world = engine.world;
+
+/* =========================================================
+   场景：一片地面
+   ========================================================= */
+const GY = 500;              // 地面顶部
+Composite.add(world, Bodies.rectangle(0, GY + 200, 8000, 400, {
+  isStatic: true,
+  friction: 0.9,
+}));
+
+/* =========================================================
+   布娃娃
+   =========================================================
+   站立布局（脚底 = 0）：
+              head
+              torso
+          armL     armR
+              torso
+          legL     legR
+   ========================================================= */
+let _groupId = -1;
+const ragdolls = [];
+
+function makeRagdoll(cx, cy) {
+  // cy 是脚底位置
+  const gid = _groupId--;
+
+  // 尺寸
+  const headR = 14;
+  const torsoW = 30, torsoH = 48;
+  const armW = 10, armH = 40;
+  const legW = 12, legH = 46;
+
+  // 站立时的中心坐标
+  const legCY   = cy - legH / 2;                          // 腿中心
+  const torsoCY = legCY - legH / 2 - torsoH / 2;          // 躯干中心
+  const headCY  = torsoCY - torsoH / 2 - headR;           // 头中心
+  const armCY   = torsoCY - torsoH / 2 + armH / 2 + 4;    // 手臂中心
+
+  // 统一的物理参数
+  const common = {
+    friction: 0.7,
+    frictionAir: 0.015,
+    restitution: 0.05,
+    density: 0.0018,
+    collisionFilter: { group: gid },   // 同组不碰撞 → 绝不内爆
+  };
+
+  const mkRect = (x, y, w, h) => {
+    const b = Bodies.rectangle(x, y, w, h, common);
+    b.plugin = { color: '#e8b98f', color2: '#c08a5c' };
+    Composite.add(world, b);
+    return b;
+  };
+  const mkCircle = (x, y, r) => {
+    const b = Bodies.circle(x, y, r, common);
+    b.plugin = { color: '#e8b98f', color2: '#c08a5c' };
+    Composite.add(world, b);
+    return b;
+  };
+
+  const head  = mkCircle(cx, headCY, headR);
+  const torso = mkRect(cx, torsoCY, torsoW, torsoH);
+  const armL  = mkRect(cx - torsoW / 2 - armW / 2, armCY, armW, armH);
+  const armR  = mkRect(cx + torsoW / 2 + armW / 2, armCY, armW, armH);
+  const legL  = mkRect(cx - legW / 2 - 1, legCY, legW, legH);
+  const legR  = mkRect(cx + legW / 2 + 1, legCY, legW, legH);
+
+  // 关节：连接点的世界坐标在站立姿势下重合
+  const joints = [
+    // 头-躯干
+    { a: head,  b: torso, pa: { x: 0, y: headR },           pb: { x: 0, y: -torsoH / 2 },      stiff: 0.95 },
+    // 左臂-躯干
+    { a: armL,  b: torso, pa: { x: 0, y: -armH / 2 + 2 },   pb: { x: -torsoW / 2 + 2, y: -torsoH / 2 + 6 }, stiff: 0.7 },
+    // 右臂-躯干
+    { a: armR,  b: torso, pa: { x: 0, y: -armH / 2 + 2 },   pb: { x:  torsoW / 2 - 2, y: -torsoH / 2 + 6 }, stiff: 0.7 },
+    // 左腿-躯干
+    { a: legL,  b: torso, pa: { x: 0, y: -legH / 2 },       pb: { x: -legW / 2, y: torsoH / 2 }, stiff: 0.85 },
+    // 右腿-躯干
+    { a: legR,  b: torso, pa: { x: 0, y: -legH / 2 },       pb: { x:  legW / 2, y: torsoH / 2 }, stiff: 0.85 },
+  ];
+
+  const constraints = [];
+  for (const j of joints) {
+    const c = Constraint.create({
+      bodyA: j.a, bodyB: j.b,
+      pointA: j.pa, pointB: j.pb,
+      length: 0,
+      stiffness: j.stiff,
+      damping: 0.1,
+    });
+    c.plugin = { baseStiffness: j.stiff };
+    Composite.add(world, c);
+    constraints.push(c);
+  }
+
+  // 出生保护：前 0.4 秒高阻尼，避免初始抖动
+  for (const b of [head, torso, armL, armR, legL, legR]) {
+    b.frictionAir = 0.06;
+  }
+
+  const group = {
+    parts: { head, torso, armL, armR, legL, legR },
+    constraints,
+    alive: true,           // 站着
+    downAt: 0,             // 倒下时刻
+    spawnGuard: 0.4,
+  };
+  ragdolls.push(group);
+  return group;
+}
+
+/* =========================================================
+   布娃娃状态
+   ========================================================= */
+function downRagdoll(group) {
+  if (!group || !group.alive) return;
+  group.alive = false;
+  group.downAt = performance.now();
+  // 关节变软 → 自然瘫软
+  for (const c of group.constraints) c.stiffness = 0.1;
+}
+
+function standRagdoll(group) {
+  if (!group || group.alive) return;
+  group.alive = true;
+  group.downAt = 0;
+  for (const c of group.constraints) c.stiffness = c.plugin.baseStiffness;
+  // 给一个向上的冲量，配合刚度恢复撑起来
+  const torso = group.parts.torso;
+  Body.setVelocity(torso, { x: torso.velocity.x * 0.4, y: -4 });
+  Body.setAngularVelocity(torso, 0);
+}
+
+function findGroupOf(body) {
+  for (const g of ragdolls) {
+    if (g.parts.head === body || g.parts.torso === body ||
+        g.parts.armL === body || g.parts.armR === body ||
+        g.parts.legL === body || g.parts.legR === body) return g;
+  }
+  return null;
+}
+
+/* =========================================================
+   每帧检查：静置够久就起身
+   ========================================================= */
+const STAND_DELAY = 2500;    // 倒下后静置 2.5 秒
+function updateRagdolls(now) {
+  for (const g of ragdolls) {
+    // 出生保护结束，恢复低阻尼
+    if (g.spawnGuard > 0) {
+      g.spawnGuard -= 1 / 60;
+      if (g.spawnGuard <= 0) {
+        for (const k in g.parts) g.parts[k].frictionAir = 0.015;
+      }
+    }
+    if (g.alive) { g.downAt = 0; continue; }
+    if (g.downAt === 0) { g.downAt = now; continue; }
+
+    const torso = g.parts.torso;
+    if (!torso) continue;
+
+    // 还在明显运动 → 重新计时
+    const sp = Math.hypot(torso.velocity.x, torso.velocity.y);
+    if (sp > 5) { g.downAt = now; continue; }
+
+    // 静置够了 → 起身
+    if (now - g.downAt > STAND_DELAY) {
+      standRagdoll(g);
+    }
+  }
+}
+
+/* =========================================================
+   碰撞：撞得狠才倒
+   ========================================================= */
+const DOWN_THRESHOLD = 12;    // 相对速度阈值
+Events.on(engine, 'collisionStart', (ev) => {
+  for (const pair of ev.pairs) {
+    const A = pair.bodyA, B = pair.bodyB;
+    const rel = Math.hypot(A.velocity.x - B.velocity.x, A.velocity.y - B.velocity.y);
+    if (rel < DOWN_THRESHOLD) continue;
+
+    const gA = findGroupOf(A);
+    const gB = findGroupOf(B);
+    // 只处理"布娃娃 vs 非本组布娃娃"
+    if (gA && gA !== gB) downRagdoll(gA);
+    if (gB && gB !== gA) downRagdoll(gB);
+  }
+});
+
+/* =========================================================
+   输入：点空白出布娃娃，拖拽移动
+   ========================================================= */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+let dpr = 1, vw = 0, vh = 0;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  vw = window.innerWidth;
+  vh = window.innerHeight;
+  canvas.width = vw * dpr;
+  canvas.height = vh * dpr;
+  canvas.style.width = vw + 'px';
+  canvas.style.height = vh + 'px';
+}
+
+function screenToWorld(sx, sy) {
+  return {
+    x: (sx - vw / 2) + 0,
+    y: (sy - vh / 2) + GY - 260,
+  };
+}
+function worldToScreen(wx, wy) {
+  return {
+    x: wx + vw / 2,
+    y: wy - (GY - 260) + vh / 2,
+  };
+}
+
+function pickBody(sx, sy) {
+  const w = screenToWorld(sx, sy);
+  const bodies = Composite.allBodies(world);
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const b = bodies[i];
+    if (b.isStatic) continue;
+    if (b.circleRadius) {
+      const dx = w.x - b.position.x, dy = w.y - b.position.y;
+      if (dx * dx + dy * dy <= b.circleRadius * b.circleRadius) return b;
+    } else if (b.vertices) {
+      const vs = b.vertices;
+      let sign = 0, hit = true;
+      const n = vs.length;
+      for (let k = 0; k < n; k++) {
+        const a = vs[k], c2 = vs[(k + 1) % n];
+        const cr = (c2.x - a.x) * (w.y - a.y) - (c2.y - a.y) * (w.x - a.x);
+        if (cr > 1e-9) { if (sign < 0) { hit = false; break; } sign = 1; }
+        else if (cr < -1e-9) { if (sign > 0) { hit = false; break; } sign = -1; }
+      }
+      if (hit) return b;
+    }
+  }
+  return null;
+}
+
+const pointers = new Map();
+let dragBody = null, dragTarget = { x: 0, y: 0 };
+let isPanning = false, lastP = { x: 0, y: 0 };
+let pinchPrev = null;
+let downTime = 0, downPos = { x: 0, y: 0 }, moved = false;
+
+canvas.addEventListener('pointerdown', (e) => {
+  try { canvas.setPointerCapture(e.pointerId); } catch(_){}
+  const p = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
+  pointers.set(e.pointerId, p);
+
+  if (pointers.size === 1) {
+    moved = false;
+    downTime = performance.now();
+    downPos.x = e.clientX; downPos.y = e.clientY;
+    const hit = pickBody(e.clientX, e.clientY);
+    if (hit) {
+      dragBody = hit;
+      const w = screenToWorld(e.clientX, e.clientY);
+      dragTarget.x = w.x; dragTarget.y = w.y;
+    } else {
+      isPanning = true;
+      lastP.x = e.clientX; lastP.y = e.clientY;
+    }
+  } else {
+    dragBody = null;
+    isPanning = false;
+    pinchPrev = null;
+  }
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6) moved = true;
+
+  if (pointers.size >= 2) {
+    const pts = [...pointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const cx = (pts[0].x + pts[1].x) / 2;
+    const cy = (pts[0].y + pts[1].y) / 2;
+    if (!pinchPrev) { pinchPrev = { dist, cx, cy }; return; }
+    // 无缩放，仅忽略
+    pinchPrev = { dist, cx, cy };
+    return;
+  }
+
+  if (dragBody) {
+    const w = screenToWorld(e.clientX, e.clientY);
+    dragTarget.x = w.x; dragTarget.y = w.y;
+  } else if (isPanning) {
+    // 无平移，也忽略
+    lastP.x = e.clientX; lastP.y = e.clientY;
+  }
+});
+
+canvas.addEventListener('pointerup', (e) => {
+  pointers.delete(e.pointerId);
+  if (pointers.size === 0) {
+    if (!moved && performance.now() - downTime < 300) {
+      // 点空白 → 生成布娃娃
+      if (!dragBody) {
+        const w = screenToWorld(downPos.x, downPos.y);
+        makeRagdoll(w.x, w.y + 60);
+      }
+    }
+    dragBody = null;
+    isPanning = false;
+    pinchPrev = null;
+  }
+});
+
+canvas.addEventListener('pointercancel', (e) => {
+  pointers.delete(e.pointerId);
+  dragBody = null;
+  isPanning = false;
+  pinchPrev = null;
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+/* =========================================================
+   拖拽物理
+   ========================================================= */
+function updateDrag() {
+  if (!dragBody) return;
+  const dx = dragTarget.x - dragBody.position.x;
+  const dy = dragTarget.y - dragBody.position.y;
+  const k = 0.0008;
+  Body.applyForce(dragBody, dragBody.position, {
+    x: dx * k * dragBody.mass,
+    y: dy * k * dragBody.mass,
+  });
+  Body.setVelocity(dragBody, {
+    x: dragBody.velocity.x * 0.85,
+    y: dragBody.velocity.y * 0.85,
+  });
+}
+
+/* =========================================================
+   渲染
+   ========================================================= */
+function render() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // 背景
+  const bg = ctx.createLinearGradient(0, 0, 0, vh);
+  bg.addColorStop(0, '#131a26');
+  bg.addColorStop(1, '#0b0e13');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, vw, vh);
+
+  // 相机：世界原点映射到屏幕
+  const camY = GY - 260;
+  ctx.save();
+  ctx.translate(vw / 2, vh / 2 - camY);
+
+  // 地面
+  ctx.fillStyle = '#2b3444';
+  ctx.strokeStyle = '#1b2230';
+  ctx.lineWidth = 2;
+  ctx.fillRect(-4000, GY, 8000, 400);
+  ctx.beginPath();
+  ctx.moveTo(-4000, GY);
+  ctx.lineTo(4000, GY);
+  ctx.stroke();
+
+  // 网格
+  ctx.strokeStyle = 'rgba(255,255,255,.04)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = -4000; x <= 4000; x += 100) {
+    ctx.moveTo(x, -2000); ctx.lineTo(x, GY);
+  }
+  for (let y = GY; y >= -2000; y -= 100) {
+    ctx.moveTo(-4000, y); ctx.lineTo(4000, y);
+  }
+  ctx.stroke();
+
+  // 刚体
+  const bodies = Composite.allBodies(world);
+  for (const b of bodies) {
+    if (b.isStatic) continue;
+
+    const isRagdoll = findGroupOf(b) !== null;
+    let color = '#e8b98f', color2 = '#c08a5c';
+    if (b.plugin && b.plugin.color) { color = b.plugin.color; color2 = b.plugin.color2; }
+
+    ctx.lineWidth = 2;
+
+    if (isRagdoll) {
+      const g = findGroupOf(b);
+      if (g && g.alive) {
+        ctx.shadowColor = 'rgba(100,255,150,.55)';
+        ctx.shadowBlur = 8;
+      }
+    }
+
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color2;
+
+    if (b.circleRadius) {
+      ctx.beginPath();
+      ctx.arc(b.position.x, b.position.y, b.circleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (b.vertices && b.vertices.length) {
+      const vs = b.vertices;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+
+    // 拖拽中的高亮
+    if (dragBody === b) {
+      ctx.strokeStyle = '#66d9ff';
+      ctx.lineWidth = 3;
+      ctx.shadowColor = '#66d9ff';
+      ctx.shadowBlur = 12;
+      if (b.circleRadius) {
+        ctx.beginPath();
+        ctx.arc(b.position.x, b.position.y, b.circleRadius + 2, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        const vs = b.vertices;
+        ctx.beginPath();
+        ctx.moveTo(vs[0].x, vs[0].y);
+        for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+        ctx.closePath();
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // 拖拽指示线
+  if (dragBody) {
+    ctx.strokeStyle = 'rgba(120,200,255,.85)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.moveTo(dragBody.position.x, dragBody.position.y);
+    ctx.lineTo(dragTarget.x, dragTarget.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+/* =========================================================
+   主循环
+   ========================================================= */
+let lastTime = performance.now();
+let acc = 0;
+const FIXED = 1 / 60;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  acc += dt;
+  let steps = 0;
+  while (acc >= FIXED && steps < 4) {
+    updateDrag();
+    Engine.update(engine, FIXED * 1000);
+    acc -= FIXED;
+    steps++;
+  }
+  if (steps >= 4) acc = 0;
+
+  updateRagdolls(now);
+  render();
+}
+
+/* =========================================================
+   启动
+   ========================================================= */
+resize();
+window.addEventListener('resize', resize);
+
+// 开局来一个布娃娃
+makeRagdoll(0, GY - 10);
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

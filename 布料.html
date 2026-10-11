@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#06070a" />
+<title>Three.js · 移动端真实布料</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; overflow: hidden;
+    background: #06070a;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; touch-action: none; }
+  #hud {
+    position: fixed; left: 16px; bottom: 16px;
+    color: rgba(255,255,255,.42);
+    font-size: 12px; letter-spacing: .04em;
+    pointer-events: none; user-select: none;
+    line-height: 1.8;
+    text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  }
+  #hud b { color: rgba(255,255,255,.82); font-weight: 600; }
+  #fps {
+    position: fixed; right: 16px; top: 16px;
+    color: rgba(255,255,255,.42);
+    font-size: 12px; letter-spacing: .06em;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none; user-select: none;
+    text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <b>单指滑动</b> 扰动气流 &nbsp;·&nbsp; <b>双指拖动</b> 旋转 · <b>捏合</b> 缩放<br>
+  粒子 <b id="pcount">—</b> &nbsp;·&nbsp; GPU 求解 <b>7</b> 次约束迭代
+</div>
+<div id="fps">-- FPS</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js",
+    "three/addons/": "./node_modules/three/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ═══════════════════════════════════════════════════════════════
+   配置
+   ═══════════════════════════════════════════════════════════════ */
+const N            = 180;
+const ITER         = 7;
+const CLOTH_W      = 2.0;
+const CLOTH_H      = 2.0;
+const FIXED_DT     = 1 / 60;
+const DT2          = FIXED_DT * FIXED_DT;
+const MAX_SUBSTEPS = 3;
+
+// 安全上限
+const MAX_TOUCH_FORCE = 110;   // CPU 端：触摸力向量长度上限
+const MAX_ACC         = 240;   // 着色器：加速度上限（重力 9.8 的 ~24 倍）
+const MAX_VEL         = 0.085; // 着色器：每子步速度上限（位移量）
+const MAX_DISP        = 2.4;   // 着色器：粒子相对静止位置的最大位移
+
+/* ═══════════════════════════════════════════════════════════════
+   渲染器 / 场景 / 相机
+   ═══════════════════════════════════════════════════════════════ */
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  powerPreference: 'high-performance',
+  stencil: false,
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x06070a, 1);
+document.body.appendChild(renderer.domElement);
+
+const canvas = renderer.domElement;
+canvas.style.touchAction = 'none';
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0.55, 0.45, 4.0);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, -0.15, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.075;
+controls.minDistance = 1.2;
+controls.maxDistance = 12;
+controls.enablePan = false;
+controls.update();
+
+/* ═══════════════════════════════════════════════════════════════
+   GPGPU 基础设施
+   ═══════════════════════════════════════════════════════════════ */
+const rtParams = {
+  minFilter: THREE.NearestFilter,
+  magFilter: THREE.NearestFilter,
+  format: THREE.RGBAFormat,
+  type: THREE.FloatType,
+  depthBuffer: false,
+  stencilBuffer: false,
+  generateMipmaps: false,
+  wrapS: THREE.ClampToEdgeWrapping,
+  wrapT: THREE.ClampToEdgeWrapping,
+};
+
+const posRT  = new THREE.WebGLRenderTarget(N, N, rtParams);
+const prevRT = new THREE.WebGLRenderTarget(N, N, rtParams);
+const tmpRT  = new THREE.WebGLRenderTarget(N, N, rtParams);
+
+const simScene  = new THREE.Scene();
+const simCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const simQuad   = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial());
+simQuad.frustumCulled = false;
+simScene.add(simQuad);
+
+function blit(material, target) {
+  simQuad.material = material;
+  renderer.setRenderTarget(target);
+  renderer.render(simScene, simCamera);
+}
+
+const QUAD_VERT = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const SIM_MAT_OPTS = { depthTest: false, depthWrite: false };
+
+/* ─────────── 1) 初始化 ─────────── */
+const initMat = new THREE.ShaderMaterial({
+  ...SIM_MAT_OPTS,
+  uniforms: {
+    uGridW:  { value: N },
+    uGridH:  { value: N },
+    uWidth:  { value: CLOTH_W },
+    uHeight: { value: CLOTH_H },
+  },
+  vertexShader: QUAD_VERT,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    uniform float uGridW, uGridH, uWidth, uHeight;
+    varying vec2 vUv;
+    void main() {
+      vec2 uv = vUv;
+      float x = (uv.x - 0.5) * uWidth;
+      float y = 1.0 - uv.y * uHeight;
+      float z = sin(uv.x * 9.0) * 0.022 + cos(uv.y * 7.0) * 0.018;
+      float invMass = uv.y < 1.0 / uGridH ? 0.0 : 1.0;
+      gl_FragColor = vec4(x, y, z, invMass);
+    }
+  `,
+});
+
+/* ─────────── 2) 拷贝 ─────────── */
+const copyMat = new THREE.ShaderMaterial({
+  ...SIM_MAT_OPTS,
+  uniforms: { uTex: { value: null } },
+  vertexShader: QUAD_VERT,
+  fragmentShader: /* glsl */`
+    precision highp float;
+    uniform sampler2D uTex;
+    varying vec2 vUv;
+    void main() { gl_FragColor = texture2D(uTex, vUv); }
+  `,
+});
+
+/* ─────────── 3) 积分 + 触摸扰动（含全部安全钳制） ─────────── */
+const integrateMat = new THREE.ShaderMaterial({
+  ...SIM_MAT_OPTS,
+  uniforms: {
+    uPos:         { value: null },
+    uPrev:        { value: null },
+    uResolution:  { value: new THREE.Vector2(N, N) },
+    uDamping:     { value: 0.985 },
+    uGravity:     { value: new THREE.Vector3(0, -9.8, 0) },
+    uDt2:         { value: DT2 },
+    uWind:        { value: new THREE.Vector3(0, 0, 0) },
+    uTime:        { value: 0 },
+    uTouchPoint:  { value: new THREE.Vector3(0, 0, 0) },
+    uTouchForce:  { value: new THREE.Vector3(0, 0, 0) },
+    uTouchRadius: { value: 0.55 },
+    uClothW:      { value: CLOTH_W },
+    uClothH:      { value: CLOTH_H },
+    uMaxAcc:      { value: MAX_ACC },
+    uMaxVel:      { value: MAX_VEL },
+    uMaxDisp:     { value: MAX_DISP },
+  },
+  vertexShader: QUAD_VERT,
+  fragmentShader: /* glsl */`
+    precision highp float;
+
+    uniform sampler2D uPos;
+    uniform sampler2D uPrev;
+    uniform vec2  uResolution;
+    uniform float uDamping;
+    uniform vec3  uGravity;
+    uniform float uDt2;
+    uniform vec3  uWind;
+    uniform float uTime;
+    uniform vec3  uTouchPoint;
+    uniform vec3  uTouchForce;
+    uniform float uTouchRadius;
+    uniform float uClothW;
+    uniform float uClothH;
+    uniform float uMaxAcc;
+    uniform float uMaxVel;
+    uniform float uMaxDisp;
+
+    varying vec2 vUv;
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / uResolution;
+
+      vec4 p    = texture2D(uPos,  uv);
+      vec3 prev = texture2D(uPrev, uv).xyz;
+
+      if (p.w < 0.5) {
+        gl_FragColor = vec4(p.xyz, 0.0);
+        return;
+      }
+
+      /* ── 1) Verlet 速度 ── */
+      vec3 vel = (p.xyz - prev) * uDamping;
+
+      /* 速度上限：防止数值爆炸 */
+      float vLen = length(vel);
+      if (vLen > uMaxVel) vel *= uMaxVel / vLen;
+
+      /* ── 2) 风力 ── */
+      float n1 = sin(p.x * 2.1 + uTime * 1.9) * cos(p.y * 2.6 - uTime * 1.4);
+      float n2 = sin(p.z * 3.3 + uTime * 0.8);
+      vec3 wind = uWind * (0.70 + 0.30 * n1 * n2);
+
+      /* ── 3) 触摸扰动（直接作为加速度叠加） ── */
+      float x0 = (uv.x - 0.5) * uClothW;
+      float y0 = 1.0 - uv.y * uClothH;
+      vec2  dv = vec2(x0 - uTouchPoint.x, y0 - uTouchPoint.y);
+      float infl = exp(-dot(dv, dv) / (uTouchRadius * uTouchRadius));
+
+      vec3 acc = uGravity + wind + uTouchForce * infl;
+
+      /* 加速度上限：钳制触摸力 + 重力 + 风的合力 */
+      float aLen = length(acc);
+      if (aLen > uMaxAcc) acc *= uMaxAcc / aLen;
+
+      /* ── 4) 积分出候选新位置 ── */
+      vec3 np = p.xyz + vel + acc * uDt2;
+
+      /* ── 5) 位移硬上限：把粒子锚定在“静止平面”附近
+              哪怕加速度再离谱，粒子也跑不出这个球 */
+      vec3 rest  = vec3(x0, y0, 0.0);
+      vec3 disp  = np - rest;
+      float dLen = length(disp);
+      if (dLen > uMaxDisp) np = rest + disp * (uMaxDisp / dLen);
+
+      gl_FragColor = vec4(np, p.w);
+    }
+  `,
+});
+
+/* ─────────── 4) 约束 ─────────── */
+const constraintMat = new THREE.ShaderMaterial({
+  ...SIM_MAT_OPTS,
+  uniforms: {
+    uPos:        { value: null },
+    uResolution: { value: new THREE.Vector2(N, N) },
+    uRest:       { value: CLOTH_W / N },
+    uRestDiag:   { value: Math.SQRT2 * CLOTH_W / N },
+    uRelax:      { value: 0.40 },
+  },
+  vertexShader: QUAD_VERT,
+  fragmentShader: /* glsl */`
+    precision highp float;
+
+    uniform sampler2D uPos;
+    uniform vec2  uResolution;
+    uniform float uRest;
+    uniform float uRestDiag;
+    uniform float uRelax;
+
+    varying vec2 vUv;
+
+    vec3 constraint(vec2 uv, vec2 off, float rest, vec3 p) {
+      vec4 q = texture2D(uPos, uv + off);
+      vec3 d = q.xyz - p;
+      float len = length(d);
+      if (len < 1e-6) return vec3(0.0);
+      float diff = (len - rest) / len;
+      float w    = (q.w > 0.5) ? 0.5 : 1.0;
+      return d * diff * w;
+    }
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / uResolution;
+      vec4 p  = texture2D(uPos, uv);
+
+      if (p.w < 0.5) {
+        gl_FragColor = vec4(p.xyz, 0.0);
+        return;
+      }
+
+      vec2 e = 1.0 / uResolution;
+      vec3 corr = vec3(0.0);
+
+      corr += constraint(uv, vec2(-e.x,  0.0), uRest, p.xyz);
+      corr += constraint(uv, vec2( e.x,  0.0), uRest, p.xyz);
+      corr += constraint(uv, vec2( 0.0, -e.y), uRest, p.xyz);
+      corr += constraint(uv, vec2( 0.0,  e.y), uRest, p.xyz);
+
+      corr += constraint(uv, vec2(-e.x, -e.y), uRestDiag, p.xyz);
+      corr += constraint(uv, vec2( e.x, -e.y), uRestDiag, p.xyz);
+      corr += constraint(uv, vec2(-e.x,  e.y), uRestDiag, p.xyz);
+      corr += constraint(uv, vec2( e.x,  e.y), uRestDiag, p.xyz);
+
+      p.xyz += corr * uRelax;
+      gl_FragColor = p;
+    }
+  `,
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   布料几何体
+   ═══════════════════════════════════════════════════════════════ */
+const vertCount = N * N;
+const aRef      = new Float32Array(vertCount * 2);
+const positions = new Float32Array(vertCount * 3);
+
+for (let y = 0; y < N; y++) {
+  for (let x = 0; x < N; x++) {
+    const i = y * N + x;
+    aRef[i * 2    ] = (x + 0.5) / N;
+    aRef[i * 2 + 1] = (y + 0.5) / N;
+  }
+}
+
+const quadCount = (N - 1) * (N - 1);
+const indices = new Uint32Array(quadCount * 6);
+let ptr = 0;
+for (let y = 0; y < N - 1; y++) {
+  for (let x = 0; x < N - 1; x++) {
+    const a = y * N + x;
+    const b = a + 1;
+    const c = a + N;
+    const d = c + 1;
+    indices[ptr++] = a; indices[ptr++] = b; indices[ptr++] = c;
+    indices[ptr++] = b; indices[ptr++] = d; indices[ptr++] = c;
+  }
+}
+
+const clothGeo = new THREE.BufferGeometry();
+clothGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+clothGeo.setAttribute('aRef',     new THREE.BufferAttribute(aRef, 2));
+clothGeo.setIndex(new THREE.BufferAttribute(indices, 1));
+clothGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 10);
+
+/* ═══════════════════════════════════════════════════════════════
+   布料材质
+   ═══════════════════════════════════════════════════════════════ */
+const clothMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uPos:        { value: posRT.texture },
+    uTexel:      { value: new THREE.Vector2(1 / N, 1 / N) },
+
+    // ── 白色布料：基色略低于纯白，给高光留余量 ──
+    uBaseColor:  { value: new THREE.Color(0.92, 0.92, 0.90) },
+    uLightDir:   { value: new THREE.Vector3(0.55, 0.85, 0.62).normalize() },
+    uLightColor: { value: new THREE.Color(0.55, 0.54, 0.52) },   // 从 0.90 降到 0.55
+    uSkyColor:   { value: new THREE.Color(0.22, 0.26, 0.34) },   // 从 0.38 降到 0.22
+    uGroundCol:  { value: new THREE.Color(0.05, 0.05, 0.055) },  // 略降
+    uCamPos:     { value: new THREE.Vector3() },
+  },
+  vertexShader: /* glsl */`
+    precision highp float;
+
+    uniform sampler2D uPos;
+    uniform vec2 uTexel;
+
+    attribute vec2 aRef;
+
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+    varying vec2 vRef;
+
+    vec3 fetchPos(vec2 uv) {
+      return texture2D(uPos, uv).xyz;
+    }
+
+    void main() {
+      vec2 uv = aRef;
+
+      vec3 p  = fetchPos(uv);
+      vec3 pl = fetchPos(uv - vec2(uTexel.x, 0.0));
+      vec3 pr = fetchPos(uv + vec2(uTexel.x, 0.0));
+      vec3 pu = fetchPos(uv - vec2(0.0, uTexel.y));
+      vec3 pd = fetchPos(uv + vec2(0.0, uTexel.y));
+
+      vec3 n = normalize(cross(pd - pu, pr - pl));
+
+      vNormal = n;
+      vRef    = uv;
+
+      vec4 wp = modelMatrix * vec4(p, 1.0);
+      vWorldPos = wp.xyz;
+      gl_Position = projectionMatrix * viewMatrix * wp;
+    }
+  `,
+  fragmentShader: /* glsl */`
+    precision highp float;
+
+    uniform vec3 uBaseColor;
+    uniform vec3 uLightDir;
+    uniform vec3 uLightColor;
+    uniform vec3 uSkyColor;
+    uniform vec3 uGroundCol;
+    uniform vec3 uCamPos;
+
+    varying vec3 vNormal;
+    varying vec3 vWorldPos;
+    varying vec2 vRef;
+
+    void main() {
+      vec3 N = normalize(vNormal);
+      vec3 V = normalize(uCamPos - vWorldPos);
+
+      if (dot(N, V) < 0.0) N = -N;
+
+      vec3 L = normalize(uLightDir);
+
+      float wrap = 0.45;
+      float ndl  = dot(N, L);
+      float diff = max(0.0, (ndl + wrap) / (1.0 + wrap));
+      diff *= diff;
+
+      vec3  H    = normalize(L + V);
+      float spec = pow(max(dot(N, H), 0.0), 42.0) * 0.10;
+
+      float rim = pow(1.0 - max(dot(N, V), 0.0), 2.6);
+
+      float hemi    = N.y * 0.5 + 0.5;
+      vec3  ambient = mix(uGroundCol, uSkyColor, hemi);
+
+      vec3 col = uBaseColor * (ambient + uLightColor * diff);
+      col += uLightColor * spec;
+      col += uSkyColor * rim * 0.22;
+
+      float vig = length(vRef - 0.5);
+      col *= 1.0 - vig * 0.16;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+  side: THREE.DoubleSide,
+});
+
+const clothMesh = new THREE.Mesh(clothGeo, clothMat);
+clothMesh.frustumCulled = false;
+scene.add(clothMesh);
+
+/* ═══════════════════════════════════════════════════════════════
+   初始化 RT
+   ═══════════════════════════════════════════════════════════════ */
+blit(initMat, posRT);
+blit(initMat, prevRT);
+blit(initMat, tmpRT);
+
+/* ═══════════════════════════════════════════════════════════════
+   触摸状态
+   ═══════════════════════════════════════════════════════════════ */
+const activePointers = new Map();
+let touchMode = 'none';
+
+/* 单指扰动 */
+const touchPoint       = new THREE.Vector3(0, -0.15, 0);
+const touchForce       = new THREE.Vector3(0, 0, 0);
+const touchForceTarget = new THREE.Vector3(0, 0, 0);
+let   lastTouchTime    = 0;
+
+/* 双指旋转 + 捏合缩放 */
+const twoCenter     = { x: 0, y: 0 };
+let   prevPinchDist = 0;
+let   twoValid      = false;
+
+/* 屏幕 → z=0 平面投影 */
+const _raycaster = new THREE.Raycaster();
+const _plane     = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const _ndc       = new THREE.Vector2();
+const _hit       = new THREE.Vector3();
+
+function screenToPlane(clientX, clientY, out) {
+  _ndc.set(
+    (clientX / window.innerWidth) * 2 - 1,
+    -(clientY / window.innerHeight) * 2 + 1
+  );
+  _raycaster.setFromCamera(_ndc, camera);
+  if (_raycaster.ray.intersectPlane(_plane, _hit)) out.copy(_hit);
+  return out;
+}
+
+function getTwoFingerState() {
+  const pts = [...activePointers.values()];
+  if (pts.length < 2) return null;
+  const dx = pts[1].x - pts[0].x;
+  const dy = pts[1].y - pts[0].y;
+  return {
+    cx: (pts[0].x + pts[1].x) / 2,
+    cy: (pts[0].y + pts[1].y) / 2,
+    dist: Math.hypot(dx, dy),
+  };
+}
+
+function updateTouchMode() {
+  if (activePointers.size === 1) {
+    touchMode = 'disturb';
+    lastTouchTime = performance.now();
+  } else if (activePointers.size >= 2) {
+    touchMode = 'orbit';
+    const st = getTwoFingerState();
+    if (st) {
+      twoCenter.x = st.cx;
+      twoCenter.y = st.cy;
+      prevPinchDist = st.dist;
+      twoValid = true;
+    }
+    touchForceTarget.set(0, 0, 0);
+  } else {
+    touchMode = 'none';
+    twoValid = false;
+  }
+}
+
+/* 相机围绕 target 旋转 */
+const _offset    = new THREE.Vector3();
+const _spherical = new THREE.Spherical();
+
+function rotateCamera(dx, dy) {
+  _offset.copy(camera.position).sub(controls.target);
+  _spherical.setFromVector3(_offset);
+  _spherical.theta -= dx * 0.005;
+  _spherical.phi   -= dy * 0.005;
+  _spherical.phi = Math.max(0.12, Math.min(Math.PI - 0.12, _spherical.phi));
+  _offset.setFromSpherical(_spherical);
+  camera.position.copy(controls.target).add(_offset);
+  camera.lookAt(controls.target);
+}
+
+/* 推拉相机（缩放） */
+function zoomCamera(scale) {
+  _offset.copy(camera.position).sub(controls.target);
+  let len = _offset.length() / scale;
+  len = Math.max(controls.minDistance, Math.min(controls.maxDistance, len));
+  _offset.setLength(len);
+  camera.position.copy(controls.target).add(_offset);
+  camera.lookAt(controls.target);
+}
+
+/* ─────────── 指针事件 ─────────── */
+window.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch') return;
+  if (e.target !== canvas) return;
+
+  e.stopPropagation();
+
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  updateTouchMode();
+
+  if (activePointers.size === 1) {
+    screenToPlane(e.clientX, e.clientY, touchPoint);
+    lastTouchTime = performance.now();
+  }
+}, { capture: true, passive: true });
+
+window.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'touch') return;
+  if (!activePointers.has(e.pointerId)) return;
+
+  e.stopPropagation();
+
+  const prev = activePointers.get(e.pointerId);
+  const dx = e.clientX - prev.x;
+  const dy = e.clientY - prev.y;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  /* ── 单指：局部气流扰动 ── */
+  if (touchMode === 'disturb' && activePointers.size === 1) {
+    const now  = performance.now();
+    const dtMs = now - lastTouchTime;
+    lastTouchTime = now;
+
+    const dtSec = Math.max(dtMs / 1000, 0.004);
+    const vx    = dx / dtSec;
+    const vy    = dy / dtSec;
+    const speed = Math.hypot(vx, vy);
+
+    screenToPlane(e.clientX, e.clientY, touchPoint);
+
+    /* 灵敏度：k 越大越“冲”，但会被 MAX_TOUCH_FORCE 卡住 */
+    const k = 0.055;
+    touchForceTarget.set(
+       vx * k * 0.6,
+      -vy * k * 0.35,
+      -vy * k * 1.6
+    );
+
+    /* ── CPU 端第一道闸：直接钳制力向量的长度 ── */
+    if (touchForceTarget.length() > MAX_TOUCH_FORCE) {
+      touchForceTarget.setLength(MAX_TOUCH_FORCE);
+    }
+  }
+
+  /* ── 双指：旋转 + 捏合缩放 ── */
+  else if (touchMode === 'orbit') {
+    const st = getTwoFingerState();
+    if (st && twoValid) {
+      rotateCamera(st.cx - twoCenter.x, st.cy - twoCenter.y);
+      twoCenter.x = st.cx;
+      twoCenter.y = st.cy;
+
+      if (prevPinchDist > 4 && st.dist > 4) {
+        const scale = st.dist / prevPinchDist;
+        zoomCamera(scale);
+      }
+      prevPinchDist = st.dist;
+    }
+  }
+}, { capture: true, passive: true });
+
+function endPointer(e) {
+  if (e.pointerType !== 'touch') return;
+  if (!activePointers.has(e.pointerId)) return;
+  e.stopPropagation();
+  activePointers.delete(e.pointerId);
+  updateTouchMode();
+}
+window.addEventListener('pointerup',     endPointer, { capture: true, passive: true });
+window.addEventListener('pointercancel', endPointer, { capture: true, passive: true });
+
+/* 阻止 iOS 手势缩放页面 */
+['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => {
+  document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+});
+
+/* 桌面端鼠标：轻推气流 */
+let pointerX = 0;
+window.addEventListener('mousemove', (e) => {
+  if (e.pointerType === 'touch') return;
+  pointerX = (e.clientX / window.innerWidth) * 2 - 1;
+});
+
+/* ═══════════════════════════════════════════════════════════════
+   物理步进
+   ═══════════════════════════════════════════════════════════════ */
+let simTime = 0;
+const windVec = new THREE.Vector3(3.4, 0.0, 1.6);
+
+function simulate() {
+  simTime += FIXED_DT;
+
+  copyMat.uniforms.uTex.value = posRT.texture;
+  blit(copyMat, prevRT);
+
+  integrateMat.uniforms.uPos.value  = posRT.texture;
+  integrateMat.uniforms.uPrev.value = prevRT.texture;
+  integrateMat.uniforms.uTime.value = simTime;
+
+  const gust = 0.65 + 0.35 * Math.sin(simTime * 0.42) + 0.2 * Math.sin(simTime * 1.13);
+  integrateMat.uniforms.uWind.value.set(
+    windVec.x * gust + pointerX * 5.0,
+    windVec.y * gust + Math.sin(simTime * 0.31) * 0.9,
+    windVec.z * gust + 1.2
+  );
+
+  integrateMat.uniforms.uTouchPoint.value.copy(touchPoint);
+  integrateMat.uniforms.uTouchForce.value.copy(touchForce);
+
+  blit(integrateMat, tmpRT);
+
+  let src = tmpRT;
+  let dst = posRT;
+  for (let i = 0; i < ITER; i++) {
+    constraintMat.uniforms.uPos.value = src.texture;
+    blit(constraintMat, dst);
+    const t = src; src = dst; dst = t;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   主循环
+   ═══════════════════════════════════════════════════════════════ */
+let lastTime = performance.now();
+let accumulator = 0;
+let fpsAcc = 0, fpsFrames = 0;
+const fpsEl = document.getElementById('fps');
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const now = performance.now();
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  dt = Math.min(dt, 0.1);
+
+  /* ── 触摸力的更新（含第二道 CPU 端闸门） ── */
+  touchForce.lerp(touchForceTarget, 0.45);
+  touchForceTarget.multiplyScalar(0.78);
+  if (touchForceTarget.lengthSq() < 1e-6) touchForceTarget.set(0, 0, 0);
+
+  /* 保险：lerp 之后的 touchForce 再钳制一次 */
+  if (touchForce.length() > MAX_TOUCH_FORCE) {
+    touchForce.setLength(MAX_TOUCH_FORCE);
+  }
+  if (touchForce.lengthSq() < 1e-7) touchForce.set(0, 0, 0);
+
+  accumulator += dt;
+  let steps = 0;
+  while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
+    simulate();
+    accumulator -= FIXED_DT;
+    steps++;
+  }
+  if (steps === MAX_SUBSTEPS) accumulator = 0;
+
+  clothMat.uniforms.uPos.value = posRT.texture;
+  clothMat.uniforms.uCamPos.value.copy(camera.position);
+
+  controls.update();
+
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+
+  fpsAcc += dt; fpsFrames++;
+  if (fpsAcc >= 0.5) {
+    fpsEl.textContent = Math.round(fpsFrames / fpsAcc) + ' FPS';
+    fpsAcc = 0; fpsFrames = 0;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   自适应
+   ═══════════════════════════════════════════════════════════════ */
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }, 120);
+});
+
+document.getElementById('pcount').textContent = (N * N).toLocaleString();
+
+animate();
+</script>
+</body>
+</html>

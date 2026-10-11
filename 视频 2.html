@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>手机的虚无主义 · 60秒</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;700;900&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;background:#000;overflow:hidden;cursor:none}
+  #stage{
+    position:absolute;left:0;top:0;width:1920px;height:1080px;
+    transform-origin:0 0;background:#08080a;overflow:hidden;
+    font-family:"Noto Serif SC","Source Han Serif SC","Songti SC","SimSun",serif;
+  }
+  #scenes{position:absolute;inset:0;z-index:1}
+  .scene{position:absolute;inset:0;opacity:0;transition:opacity .75s ease}
+  #hud{position:absolute;inset:0;z-index:50;pointer-events:none}
+  #tl,#tr{
+    position:absolute;top:54px;font-size:26px;letter-spacing:.16em;
+    color:rgba(212,175,55,.88);opacity:0;transition:opacity .8s ease;
+    text-shadow:0 0 24px rgba(0,0,0,.95);
+  }
+  #tl{left:84px}
+  #tr{right:84px;text-align:right}
+  #tl.show,#tr.show{opacity:1}
+  #subs{
+    position:absolute;left:0;right:0;bottom:72px;text-align:center;
+    z-index:80;pointer-events:none;
+  }
+  .sub-line{
+    font-size:46px;font-weight:400;color:#eae7df;letter-spacing:.07em;
+    line-height:1.55;opacity:0;transform:translateY(16px);
+    transition:opacity .8s ease,transform .8s ease;
+    text-shadow:0 2px 20px rgba(0,0,0,.95),0 0 46px rgba(0,0,0,.8);
+  }
+  .sub-line.show{opacity:1;transform:none}
+  .sub-line .hl{
+    color:#f2cd5f;font-style:normal;
+    text-shadow:0 0 26px rgba(242,205,95,.6),0 2px 20px rgba(0,0,0,.95);
+  }
+  .vignette{
+    position:absolute;inset:0;z-index:90;pointer-events:none;
+    background:radial-gradient(ellipse at center,rgba(0,0,0,0) 38%,rgba(0,0,0,.55) 78%,rgba(0,0,0,.92) 100%);
+  }
+  .grain{
+    position:absolute;left:-50%;top:-50%;width:200%;height:200%;z-index:95;
+    pointer-events:none;opacity:.045;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    animation:grainMove .55s steps(3) infinite;
+  }
+  @keyframes grainMove{
+    0%{transform:translate(0,0)}
+    33%{transform:translate(-1.6%,1.2%)}
+    66%{transform:translate(1.2%,-1.6%)}
+    100%{transform:translate(0,0)}
+  }
+  #startOverlay{
+    position:absolute;inset:0;z-index:200;display:flex;
+    align-items:center;justify-content:center;flex-direction:column;
+    background:#08080a;transition:opacity .9s ease;cursor:none;
+  }
+  #startOverlay.hide{opacity:0;pointer-events:none}
+  #startOverlay .txt{
+    font-size:38px;letter-spacing:.55em;color:#d4af37;
+    text-indent:.55em;animation:pulse 2.6s ease-in-out infinite;
+  }
+  #startOverlay .line{
+    width:200px;height:1px;margin-top:38px;
+    background:linear-gradient(90deg,transparent,rgba(212,175,55,.7),transparent);
+  }
+  @keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="scenes"></div>
+  <div id="hud">
+    <div id="tl"></div>
+    <div id="tr"></div>
+  </div>
+  <div id="subs"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div id="startOverlay">
+    <div class="txt">点 击 开 始</div>
+    <div class="line"></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   基础常量与工具
+   ============================================================ */
+const W = 1920, H = 1080;
+const FONT = '"Noto Serif SC","Source Han Serif SC","Songti SC","SimSun",serif';
+const GOLD = '#d4af37';
+const GOLD_L = '#f2dd9a';
+const BG = '#08080a';
+
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const lerp  = (a, b, t) => a + (b - a) * t;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+const easeIn = t => t * t * t;
+
+function escapeHtml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function renderSub(text, hl){
+  if(!hl) return escapeHtml(text);
+  const i = text.indexOf(hl);
+  if(i < 0) return escapeHtml(text);
+  return escapeHtml(text.slice(0,i))
+       + '<em class="hl">' + escapeHtml(hl) + '</em>'
+       + escapeHtml(text.slice(i + hl.length));
+}
+function newCtx(layer){
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;display:block';
+  layer.appendChild(c);
+  const g = c.getContext('2d');
+  g.lineCap = 'round';
+  g.lineJoin = 'round';
+  return g;
+}
+function shuffle(a){
+  const r = a.slice();
+  for(let i = r.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = r[i]; r[i] = r[j]; r[j] = t;
+  }
+  return r;
+}
+
+/* ============================================================
+   场景定义
+   ============================================================ */
+const scenes = [];
+
+/* ---------- 第 1 幕 · 刷完更空 ---------- */
+scenes.push({
+  dur: 5,
+  tl: '此刻 · 你', tr: '',
+  subs: [
+    { text: '刷了两个小时手机，', hl: null, at: 0.40 },
+    { text: '为什么更空了？', hl: '更空', at: 1.20 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    // 快速闪过的滑动碎片
+    const cards = [];
+    let acc = 0;
+    const cardColors = [
+      'rgba(212,175,55,0.14)',
+      'rgba(120,150,190,0.14)',
+      'rgba(190,120,150,0.12)',
+      'rgba(140,190,150,0.12)'
+    ];
+    return (t, dur, dt) => {
+      acc += dt;
+      while(acc > 0.07){
+        acc -= 0.07;
+        if(t < 3.4 && cards.length < 40){
+          cards.push({
+            x: 380 + Math.random() * 1160,
+            y: 1080 + 60,
+            w: 260 + Math.random() * 300,
+            h: 420 + Math.random() * 260,
+            vy: 620 + Math.random() * 420,
+            a: 0.6 + Math.random() * 0.4,
+            c: cardColors[Math.floor(Math.random() * cardColors.length)]
+          });
+        }
+      }
+      for(let i = cards.length - 1; i >= 0; i--){
+        const c = cards[i];
+        c.y -= c.vy * dt;
+        if(c.y + c.h < -60) cards.splice(i, 1);
+      }
+
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 背景冷光
+      const rg = g.createRadialGradient(960, 400, 60, 960, 400, 1000);
+      const glow = 0.10 + 0.15 * Math.sin(t * 2.2);
+      rg.addColorStop(0, `rgba(110,150,200,${Math.max(0, glow)})`);
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, W, H);
+
+      // 滑动的卡片
+      for(const c of cards){
+        g.save();
+        g.globalAlpha = c.a * (1 - clamp((c.y - 200) / 800, 0, 1) * 0.5);
+        g.fillStyle = c.c;
+        g.fillRect(c.x, c.y, c.w, c.h);
+        g.strokeStyle = 'rgba(212,175,55,0.20)';
+        g.lineWidth = 1.4;
+        g.strokeRect(c.x, c.y, c.w, c.h);
+        // 内部假元素
+        g.fillStyle = 'rgba(230,225,210,0.10)';
+        g.fillRect(c.x + 24, c.y + 30, c.w * 0.5, 14);
+        g.fillRect(c.x + 24, c.y + 62, c.w * 0.7, 10);
+        g.fillRect(c.x + 24, c.y + 88, c.w * 0.35, 10);
+        g.restore();
+      }
+
+      // 中央手机
+      const pw = 400, ph = 800;
+      const plx = 960 - pw / 2, ply = 540 - ph / 2;
+      g.save();
+      // 手机外壳
+      g.fillStyle = 'rgba(14,15,20,0.98)';
+      g.beginPath();
+      const rr = 40;
+      g.moveTo(plx + rr, ply);
+      g.lineTo(plx + pw - rr, ply);
+      g.quadraticCurveTo(plx + pw, ply, plx + pw, ply + rr);
+      g.lineTo(plx + pw, ply + ph - rr);
+      g.quadraticCurveTo(plx + pw, ply + ph, plx + pw - rr, ply + ph);
+      g.lineTo(plx + rr, ply + ph);
+      g.quadraticCurveTo(plx, ply + ph, plx, ply + ph - rr);
+      g.lineTo(plx, ply + rr);
+      g.quadraticCurveTo(plx, ply, plx + rr, ply);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = 'rgba(212,175,55,0.85)';
+      g.lineWidth = 3;
+      g.stroke();
+
+      // 屏幕
+      const sx = plx + 22, sy = ply + 34, sw = pw - 44, sh = ph - 68;
+      g.save();
+      g.beginPath();
+      g.rect(sx, sy, sw, sh);
+      g.clip();
+
+      const screenDark = clamp((t - 2.8) / 1.6, 0, 1);
+      const sg = g.createLinearGradient(sx, sy, sx, sy + sh);
+      sg.addColorStop(0, `rgba(${Math.round(24 - 14 * screenDark)},${Math.round(32 - 18 * screenDark)},${Math.round(48 - 26 * screenDark)},1)`);
+      sg.addColorStop(1, `rgba(${Math.round(10 - 6 * screenDark)},${Math.round(12 - 7 * screenDark)},${Math.round(18 - 10 * screenDark)},1)`);
+      g.fillStyle = sg;
+      g.fillRect(sx, sy, sw, sh);
+
+      // 屏幕上快速闪过的滑动条
+      for(let i = 0; i < 8; i++){
+        const off = (t * 380 + i * 90) % (sh + 160);
+        const yy = sy + sh - off + 80;
+        const alpha = Math.max(0, 1 - Math.abs(yy - (sy + sh * 0.5)) / (sh * 0.6)) * (1 - screenDark);
+        g.fillStyle = `rgba(200,215,235,${alpha * 0.16})`;
+        g.fillRect(sx + 20, yy, sw - 40, 8);
+      }
+
+      // 中央空白对话框
+      if(t > 2.4){
+        const boxA = clamp((t - 2.4) / 1.0, 0, 1);
+        g.globalAlpha = boxA;
+        g.strokeStyle = 'rgba(212,175,55,0.6)';
+        g.lineWidth = 2;
+        const bx = sx + 60, by = sy + sh * 0.42, bw = sw - 120, bh = 90;
+        g.strokeRect(bx, by, bw, bh);
+        // 三个跳动的点
+        for(let i = 0; i < 3; i++){
+          const pp = (Math.sin(t * 4 + i * 1.2) * 0.5 + 0.5);
+          g.fillStyle = `rgba(242,205,95,${0.4 + 0.6 * pp})`;
+          g.beginPath();
+          g.arc(bx + bw / 2 - 26 + i * 26, by + bh / 2, 5, 0, Math.PI * 2);
+          g.fill();
+        }
+        g.globalAlpha = 1;
+      }
+      g.restore();
+
+      // 屏幕上方微光
+      const faceGlow = g.createRadialGradient(960, 540, 30, 960, 540, 520);
+      faceGlow.addColorStop(0, `rgba(150,190,235,${0.20 * (1 - screenDark)})`);
+      faceGlow.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = faceGlow;
+      g.fillRect(0, 0, W, H);
+
+      // 主体人物轮廓
+      g.save();
+      g.globalAlpha = 0.35 + 0.25 * (1 - screenDark);
+      g.fillStyle = 'rgba(60,68,82,0.9)';
+      g.beginPath();
+      g.ellipse(960, 1080, 460, 260, 0, Math.PI, 0);
+      g.fill();
+      g.restore();
+
+      // 逐渐压暗
+      const darkA = clamp((t - 3.2) / 1.6, 0, 1);
+      g.fillStyle = `rgba(0,0,0,${darkA * 0.65})`;
+      g.fillRect(0, 0, W, H);
+    };
+  }
+});
+
+/* ---------- 第 2 幕 · 片名 · 虚无主义入口 ---------- */
+scenes.push({
+  dur: 5,
+  tl: '概念 · 当下', tr: '',
+  subs: [
+    { text: '这不是虚无主义，', hl: null, at: 0.40 },
+    { text: '但它是入口', hl: '入口', at: 1.70 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    return (t, dur) => {
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 背景冷光
+      const rg = g.createRadialGradient(960, 540, 40, 960, 540, 900);
+      rg.addColorStop(0, 'rgba(110,150,200,0.12)');
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, W, H);
+
+      // 蛛网裂纹
+      const crackA = easeOut(clamp(t / 2.4, 0, 1));
+      const cx = 960, cy = 540;
+      const branches = 14;
+      for(let b = 0; b < branches; b++){
+        const ang = (b / branches) * Math.PI * 2 + 0.15;
+        const segs = 5 + (b % 3);
+        let px = cx, py = cy;
+        g.beginPath();
+        g.moveTo(px, py);
+        for(let s = 0; s < segs; s++){
+          const len = (60 + Math.random() * 80) * crackA;
+          const na = ang + (Math.random() - 0.5) * 0.5;
+          px += Math.cos(na) * len;
+          py += Math.sin(na) * len;
+          g.lineTo(px, py);
+        }
+        g.strokeStyle = `rgba(200,220,245,${0.55 * crackA})`;
+        g.lineWidth = 1.6;
+        g.stroke();
+      }
+
+      // 裂纹内金色光
+      const goldA = clamp((t - 0.8) / 1.6, 0, 1);
+      for(let b = 0; b < 10; b++){
+        const ang = (b / 10) * Math.PI * 2 + 0.3;
+        const len = 240 * easeOut(clamp((t - 0.8) / 2.2, 0, 1));
+        g.beginPath();
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(ang) * len, cy + Math.sin(ang) * len);
+        g.strokeStyle = `rgba(242,205,95,${0.30 * goldA})`;
+        g.lineWidth = 3;
+        g.stroke();
+      }
+
+      // 中心光晕
+      const glowA = clamp((t - 0.5) / 1.5, 0, 1);
+      const cg = g.createRadialGradient(cx, cy, 4, cx, cy, 320 * glowA);
+      cg.addColorStop(0, `rgba(242,205,95,${0.75 * glowA})`);
+      cg.addColorStop(1, 'rgba(242,205,95,0)');
+      g.fillStyle = cg;
+      g.fillRect(0, 0, W, H);
+
+      // 片名
+      const titleA = clamp((t - 1.2) / 1.4, 0, 1);
+      if(titleA > 0.01){
+        g.save();
+        g.globalAlpha = titleA;
+        g.font = `700 108px ${FONT}`;
+        g.fillStyle = GOLD_L;
+        g.shadowColor = 'rgba(242,205,95,0.75)';
+        g.shadowBlur = 42;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText('手 机 的 虚 无 主 义', 960, 540);
+        g.restore();
+      }
+
+      // 年份滚动
+      const yrA = clamp((t - 2.0) / 1.4, 0, 1);
+      if(yrA > 0.01){
+        const yr = Math.round(lerp(1990, 2026, easeOut(clamp((t - 2.0) / 2.0, 0, 1))));
+        g.save();
+        g.globalAlpha = yrA * 0.7;
+        g.font = `300 42px ${FONT}`;
+        g.fillStyle = 'rgba(212,175,55,0.9)';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText(String(yr), 960, 660);
+        g.restore();
+      }
+    };
+  }
+});
+
+/* ---------- 第 3 幕 · 多巴胺曲线 ---------- */
+scenes.push({
+  dur: 7,
+  tl: '神经科学 · 多巴胺', tr: '',
+  subs: [
+    { text: '每一次滑动，', hl: null, at: 0.40 },
+    { text: '多巴胺都给你一个小高潮', hl: '多巴胺', at: 1.40 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    const spikes = [0.14, 0.28, 0.40, 0.50, 0.585, 0.655, 0.71, 0.755, 0.79, 0.82];
+    return (t, dur) => {
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 坐标轴
+      const ox = 220, oy = 880, ex = 1740, ey = 240;
+      g.strokeStyle = 'rgba(212,175,55,0.35)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(ox, oy); g.lineTo(ox, ey); g.stroke();
+      g.beginPath();
+      g.moveTo(ox, oy); g.lineTo(ex, oy); g.stroke();
+
+      // 网格
+      g.strokeStyle = 'rgba(212,175,55,0.08)';
+      g.lineWidth = 1;
+      for(let i = 1; i <= 6; i++){
+        const y = oy - (oy - ey) * i / 6;
+        g.beginPath();
+        g.moveTo(ox, y); g.lineTo(ex, y); g.stroke();
+      }
+      for(let i = 1; i <= 8; i++){
+        const x = ox + (ex - ox) * i / 8;
+        g.beginPath();
+        g.moveTo(x, oy); g.lineTo(x, ey); g.stroke();
+      }
+
+      // 多巴胺曲线
+      const progress = clamp((t - 0.3) / 5.5, 0, 1);
+      const drawn = spikes.filter(s => s <= progress);
+      if(drawn.length > 0){
+        g.beginPath();
+        g.moveTo(ox, oy);
+        for(const s of drawn){
+          const x = ox + (ex - ox) * s;
+          // 高度随每次递减
+          const idx = spikes.indexOf(s);
+          const h = (1 - idx * 0.06) * (oy - ey) * 0.85;
+          const prevX = ox + (ex - ox) * (spikes[idx - 1] || 0);
+          const prevH = idx === 0 ? 0 : (1 - (idx - 1) * 0.06) * (oy - ey) * 0.85;
+          // 上一个峰谷
+          g.lineTo((prevX + x) / 2, oy - prevH * 0.15);
+          g.lineTo(x, oy - h);
+        }
+        g.strokeStyle = GOLD_L;
+        g.lineWidth = 3;
+        g.shadowColor = 'rgba(242,205,95,0.65)';
+        g.shadowBlur = 18;
+        g.stroke();
+        g.shadowBlur = 0;
+      }
+
+      // 峰值点
+      for(const s of drawn){
+        const x = ox + (ex - ox) * s;
+        const idx = spikes.indexOf(s);
+        const h = (1 - idx * 0.06) * (oy - ey) * 0.85;
+        g.fillStyle = GOLD_L;
+        g.beginPath();
+        g.arc(x, oy - h, 6, 0, Math.PI * 2);
+        g.fill();
+        // 滑动图标
+        g.fillStyle = 'rgba(200,215,235,0.35)';
+        g.fillRect(x - 10, oy - h - 30, 20, 12);
+      }
+
+      // 轴标签
+      g.font = `300 24px ${FONT}`;
+      g.fillStyle = 'rgba(212,175,55,0.75)';
+      g.textAlign = 'right';
+      g.textBaseline = 'middle';
+      g.fillText('多巴胺', ox - 20, oy - 60);
+
+      g.textAlign = 'center';
+      g.textBaseline = 'top';
+      g.fillText('时间', (ox + ex) / 2, oy + 18);
+
+      // 整体压暗
+      g.fillStyle = `rgba(0,0,0,${0.15 * clamp((t - 4) / 3, 0, 1)})`;
+      g.fillRect(0, 0, W, H);
+    };
+  }
+});
+
+/* ---------- 第 4 幕 · 意义曲线 ---------- */
+scenes.push({
+  dur: 7,
+  tl: '对照 · 多巴胺 vs 意义', tr: '',
+  subs: [
+    { text: '但意义曲线，', hl: null, at: 0.40 },
+    { text: '横着不动，甚至往下走', hl: '横着不动', at: 1.40 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    const spikes = [0.14, 0.28, 0.40, 0.50, 0.585, 0.655, 0.71, 0.755, 0.79, 0.82];
+    return (t, dur) => {
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      const ox = 220, oy = 880, ex = 1740, ey = 240;
+      // 坐标轴
+      g.strokeStyle = 'rgba(212,175,55,0.35)';
+      g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox, ey); g.stroke();
+      g.beginPath(); g.moveTo(ox, oy); g.lineTo(ex, oy); g.stroke();
+
+      // 网格
+      g.strokeStyle = 'rgba(212,175,55,0.08)';
+      g.lineWidth = 1;
+      for(let i = 1; i <= 6; i++){
+        const y = oy - (oy - ey) * i / 6;
+        g.beginPath(); g.moveTo(ox, y); g.lineTo(ex, y); g.stroke();
+      }
+      for(let i = 1; i <= 8; i++){
+        const x = ox + (ex - ox) * i / 8;
+        g.beginPath(); g.moveTo(x, oy); g.lineTo(x, ey); g.stroke();
+      }
+
+      // 上一幕多巴胺曲线淡影
+      g.save();
+      g.globalAlpha = 0.18;
+      g.beginPath();
+      g.moveTo(ox, oy);
+      for(let i = 0; i < spikes.length; i++){
+        const s = spikes[i];
+        const x = ox + (ex - ox) * s;
+        const h = (1 - i * 0.06) * (oy - ey) * 0.85;
+        g.lineTo(x, oy - h);
+      }
+      g.strokeStyle = 'rgba(160,200,240,0.9)';
+      g.lineWidth = 2;
+      g.stroke();
+      g.restore();
+
+      // 意义曲线 —— 缓慢下行
+      const prog = clamp((t - 0.4) / 5.5, 0, 1);
+      const startY = oy - (oy - ey) * 0.42;
+      const endY = oy - (oy - ey) * 0.20;
+
+      g.beginPath();
+      g.moveTo(ox, startY);
+      const segs = Math.floor(prog * 60);
+      for(let i = 1; i <= segs; i++){
+        const p = i / 60;
+        const x = ox + (ex - ox) * p;
+        // 缓慢波动 + 下行
+        const y = lerp(startY, endY, p) + Math.sin(p * 9) * 18 * (1 - p * 0.3);
+        g.lineTo(x, y);
+      }
+      g.strokeStyle = GOLD_L;
+      g.lineWidth = 3.5;
+      g.shadowColor = 'rgba(242,205,95,0.7)';
+      g.shadowBlur = 22;
+      g.stroke();
+      g.shadowBlur = 0;
+
+      // 末端点
+      if(segs > 0){
+        const p = prog;
+        const xEnd = ox + (ex - ox) * p;
+        const yEnd = lerp(startY, endY, p) + Math.sin(p * 9) * 18 * (1 - p * 0.3);
+        g.fillStyle = GOLD_L;
+        g.beginPath();
+        g.arc(xEnd, yEnd, 8, 0, Math.PI * 2);
+        g.fill();
+      }
+
+      // 轴标签
+      g.font = `300 24px ${FONT}`;
+      g.fillStyle = 'rgba(212,175,55,0.75)';
+      g.textAlign = 'right';
+      g.textBaseline = 'middle';
+      g.fillText('意义', ox - 20, oy - (oy - ey) * 0.5);
+      g.textAlign = 'center';
+      g.textBaseline = 'top';
+      g.fillText('时间', (ox + ex) / 2, oy + 18);
+
+      // 差距标记
+      if(t > 3){
+        const a = clamp((t - 3) / 1.4, 0, 1);
+        g.save();
+        g.globalAlpha = a * 0.9;
+        g.strokeStyle = 'rgba(242,205,95,0.6)';
+        g.lineWidth = 1.5;
+        g.setLineDash([6, 8]);
+        const x = ox + (ex - ox) * clamp(prog * 0.9, 0, 1);
+        const yTop = oy - (oy - ey) * 0.55;
+        const yBot = endY;
+        g.beginPath();
+        g.moveTo(x, yTop); g.lineTo(x, yBot);
+        g.stroke();
+        g.setLineDash([]);
+
+        g.font = `300 26px ${FONT}`;
+        g.fillStyle = 'rgba(242,205,95,0.9)';
+        g.textAlign = 'left';
+        g.textBaseline = 'middle';
+        g.fillText('越离越远', x + 16, (yTop + yBot) / 2);
+        g.restore();
+      }
+    };
+  }
+});
+
+/* ---------- 第 5 幕 · 叔本华钟摆 ---------- */
+scenes.push({
+  dur: 8,
+  tl: '德国 · 叔本华', tr: '《作为意志和表象的世界》 · 1818',
+  subs: [
+    { text: '叔本华说：人生在', hl: null, at: 0.40 },
+    { text: '痛苦和无聊之间摇摆', hl: '痛苦', at: 2.40 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    const cx = 960, cy = 260;
+    const L = 560;
+
+    return (t, dur) => {
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 背景光晕
+      const rg = g.createRadialGradient(cx, cy + L, 60, cx, cy + L, 850);
+      rg.addColorStop(0, 'rgba(140,100,40,0.14)');
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, W, H);
+
+      // 天花板支点
+      g.fillStyle = 'rgba(212,175,55,0.6)';
+      g.beginPath();
+      g.arc(cx, cy, 14, 0, Math.PI * 2);
+      g.fill();
+
+      // 两端标签
+      g.font = `700 54px ${FONT}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+
+      // 痛苦（左）
+      const leftA = clamp((t - 0.4) / 1.0, 0, 1);
+      g.save();
+      g.globalAlpha = leftA;
+      g.fillStyle = 'rgba(220,120,90,0.9)';
+      g.fillText('痛 苦', cx - L * 0.78, cy + L + 80);
+      g.restore();
+
+      // 无聊（右）
+      const rightA = clamp((t - 0.8) / 1.0, 0, 1);
+      g.save();
+      g.globalAlpha = rightA;
+      g.fillStyle = 'rgba(120,150,190,0.9)';
+      g.fillText('无 聊', cx + L * 0.78, cy + L + 80);
+      g.restore();
+
+      // 弧线轨迹
+      const arcA = clamp((t - 0.8) / 1.2, 0, 1);
+      g.save();
+      g.globalAlpha = arcA * 0.4;
+      g.strokeStyle = 'rgba(212,175,55,0.6)';
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.arc(cx, cy, L, Math.PI * 0.25, Math.PI * 0.75);
+      g.stroke();
+      g.restore();
+
+      // 摆动角度
+      let angle;
+      const pinned = clamp((t - 4.2) / 1.8, 0, 1);
+      if(pinned <= 0){
+        // 前 4.2 秒自由摆动，幅度递减
+        const damp = Math.max(0, 1 - t / 4.5);
+        angle = Math.sin(t * 2.0) * 0.52 * damp;
+      }else{
+        // 被钉在"无聊"端
+        const before = Math.sin(4.2 * 2.0) * 0.52 * Math.max(0, 1 - 4.2 / 4.5);
+        angle = lerp(before, 0.46, easeOut(pinned));
+      }
+
+      const bx = cx + Math.sin(angle) * L;
+      const by = cy + Math.cos(angle) * L;
+
+      // 摆线
+      g.strokeStyle = 'rgba(212,175,55,0.85)';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(cx, cy);
+      g.lineTo(bx, by);
+      g.stroke();
+
+      // 摆球
+      g.save();
+      g.shadowColor = 'rgba(242,205,95,0.7)';
+      g.shadowBlur = 30;
+      const bg2 = g.createRadialGradient(bx - 10, by - 10, 4, bx, by, 44);
+      bg2.addColorStop(0, '#f2dd9a');
+      bg2.addColorStop(1, '#8a6d24');
+      g.fillStyle = bg2;
+      g.beginPath();
+      g.arc(bx, by, 42, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+
+      // 4.2 秒后，手机伸出一只手把摆钉住
+      if(t > 4.2){
+        const handA = clamp((t - 4.2) / 1.0, 0, 1);
+        g.save();
+        g.globalAlpha = handA * 0.9;
+        // 从右下角伸出的手机轮廓
+        const px = 1480, py = 900;
+        g.strokeStyle = 'rgba(212,175,55,0.85)';
+        g.lineWidth = 3;
+        g.strokeRect(px, py, 180, 320);
+        // 屏幕
+        g.fillStyle = 'rgba(20,26,40,0.95)';
+        g.fillRect(px + 12, py + 24, 156, 272);
+
+        // 从手机伸出的手（简化剪影）
+        g.fillStyle = 'rgba(230,220,200,0.85)';
+        g.beginPath();
+        g.moveTo(px, py + 160);
+        g.bezierCurveTo(px - 120, py + 130, px - 260, py + 60, bx + 40, by + 10);
+        g.lineTo(bx + 20, by + 40);
+        g.bezierCurveTo(px - 240, py + 100, px - 100, py + 180, px + 10, py + 200);
+        g.closePath();
+        g.fill();
+        g.restore();
+
+        // 钉住的闪光
+        const flashA = clamp((t - 5.0) / 0.5, 0, 1) * (1 - clamp((t - 5.6) / 0.5, 0, 1));
+        if(flashA > 0.01){
+          const fg = g.createRadialGradient(bx, by, 4, bx, by, 200);
+          fg.addColorStop(0, `rgba(242,205,95,${0.8 * flashA})`);
+          fg.addColorStop(1, 'rgba(242,205,95,0)');
+          g.fillStyle = fg;
+          g.fillRect(0, 0, W, H);
+        }
+      }
+    };
+  }
+});
+
+/* ---------- 第 6 幕 · 注意力被抽走 ---------- */
+scenes.push({
+  dur: 8,
+  tl: '媒介 · 注意力经济', tr: '',
+  subs: [
+    { text: '你每一次滑动，', hl: null, at: 0.40 },
+    { text: '都在为别人的意义投票', hl: '滑动', at: 1.40 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    const parts = [];
+    let acc = 0;
+    const icons = [];
+    for(let i = 0; i < 24; i++){
+      icons.push({
+        x: 200 + (i % 8) * 210 + (i > 15 ? 100 : 0),
+        y: 200 + Math.floor(i / 8) * 240,
+        sz: 60 + (i % 3) * 18,
+        shape: i % 4
+      });
+    }
+    return (t, dur, dt) => {
+      acc += dt;
+      while(acc > 0.012){
+        acc -= 0.012;
+        if(t > 0.4 && parts.length < 800){
+          // 从人眼位置出发
+          const ex = 960, ey = 880;
+          const ang = -Math.PI / 2 + (Math.random() - 0.5) * 1.2;
+          const spd = 320 + Math.random() * 320;
+          parts.push({
+            x: ex + (Math.random() - 0.5) * 60,
+            y: ey + (Math.random() - 0.5) * 20,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd,
+            life: 0,
+            max: 1.2 + Math.random() * 0.9,
+            sz: 1.5 + Math.random() * 2.4
+          });
+        }
+      }
+      for(let i = parts.length - 1; i >= 0; i--){
+        const p = parts[i];
+        p.life += dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        if(p.life > p.max || p.x < 0 || p.x > W || p.y < 0 || p.y > H) parts.splice(i, 1);
+      }
+
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 背景光
+      const rg = g.createRadialGradient(960, 660, 60, 960, 660, 900);
+      rg.addColorStop(0, 'rgba(150,180,220,0.10)');
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, W, H);
+
+      // App 图标
+      for(let i = 0; i < icons.length; i++){
+        const ic = icons[i];
+        const appear = clamp((t - 0.2 - i * 0.03) / 1.0, 0, 1);
+        if(appear <= 0) continue;
+        g.save();
+        g.globalAlpha = appear * 0.55;
+        g.strokeStyle = 'rgba(212,175,55,0.55)';
+        g.lineWidth = 1.6;
+
+        if(ic.shape === 0){
+          g.strokeRect(ic.x, ic.y, ic.sz, ic.sz);
+        }else if(ic.shape === 1){
+          g.beginPath();
+          g.arc(ic.x + ic.sz / 2, ic.y + ic.sz / 2, ic.sz / 2, 0, Math.PI * 2);
+          g.stroke();
+        }else if(ic.shape === 2){
+          g.beginPath();
+          g.moveTo(ic.x + ic.sz / 2, ic.y);
+          g.lineTo(ic.x + ic.sz, ic.y + ic.sz);
+          g.lineTo(ic.x, ic.y + ic.sz);
+          g.closePath();
+          g.stroke();
+        }else{
+          g.beginPath();
+          g.moveTo(ic.x, ic.y + ic.sz / 2);
+          g.lineTo(ic.x + ic.sz / 2, ic.y);
+          g.lineTo(ic.x + ic.sz, ic.y + ic.sz / 2);
+          g.lineTo(ic.x + ic.sz / 2, ic.y + ic.sz);
+          g.closePath();
+          g.stroke();
+        }
+        g.restore();
+      }
+
+      // 流动的粒子
+      for(const p of parts){
+        const a = Math.max(0, 1 - p.life / p.max) * 0.85;
+        const g3 = Math.round(lerp(242, 160, p.life / p.max));
+        const b3 = Math.round(lerp(205, 210, p.life / p.max));
+        g.fillStyle = `rgba(${g3},${b3},${Math.round(lerp(95, 230, p.life / p.max))},${a})`;
+        g.beginPath();
+        g.arc(p.x, p.y, p.sz, 0, Math.PI * 2);
+        g.fill();
+      }
+
+      // 下方人形
+      const figA = easeOut(clamp(t / 1.0, 0, 1)) * 0.95;
+      g.save();
+      g.globalAlpha = figA;
+      // 头部
+      g.fillStyle = 'rgba(60,66,80,0.95)';
+      g.beginPath();
+      g.arc(960, 950, 62, 0, Math.PI * 2);
+      g.fill();
+      // 身体
+      g.beginPath();
+      g.moveTo(820, 1080);
+      g.quadraticCurveTo(960, 990, 1100, 1080);
+      g.closePath();
+      g.fill();
+
+      // 眼睛
+      const eyeA = 0.8 + 0.2 * Math.sin(t * 6);
+      g.fillStyle = `rgba(242,205,95,${eyeA})`;
+      g.beginPath();
+      g.arc(940, 946, 6, 0, Math.PI * 2);
+      g.fill();
+      g.beginPath();
+      g.arc(980, 946, 6, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+
+      // 人形逐渐变空：叠加与背景同色的半透明块
+      const hollowA = clamp((t - 4.5) / 3.0, 0, 1);
+      if(hollowA > 0){
+        g.save();
+        g.globalAlpha = hollowA * 0.85;
+        g.fillStyle = 'rgba(8,8,10,0.95)';
+        g.beginPath();
+        g.arc(960, 950, 62, 0, Math.PI * 2);
+        g.fill();
+        g.beginPath();
+        g.moveTo(820, 1080);
+        g.quadraticCurveTo(960, 990, 1100, 1080);
+        g.closePath();
+        g.fill();
+        g.restore();
+      }
+    };
+  }
+});
+
+/* ---------- 第 7 幕 · 萨特 · 他人即地狱 ---------- */
+scenes.push({
+  dur: 7,
+  tl: '法国 · 萨特', tr: '《存在与虚无》 · 1943',
+  subs: [
+    { text: '萨特说：他人即地狱，', hl: null, at: 0.40 },
+    { text: '但手机里没有他人', hl: '没有他人', at: 1.60 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+
+    // 生成头像位置
+    const avatars = [];
+    for(let i = 0; i < 60; i++){
+      // 用正圆排列，拼成一张脸的大致轮廓
+      const ang = (i / 60) * Math.PI * 2;
+      const radX = 380 + Math.random() * 60;
+      const radY = 460 + Math.random() * 60;
+      avatars.push({
+        x: 960 + Math.cos(ang) * radX * (0.9 + Math.random() * 0.2),
+        y: 500 + Math.sin(ang) * radY * (0.9 + Math.random() * 0.2),
+        r: 22 + Math.random() * 14,
+        seed: Math.random() * 100,
+        ang: ang
+      });
+    }
+    // 补一些内部
+    for(let i = 0; i < 40; i++){
+      avatars.push({
+        x: 960 + (Math.random() - 0.5) * 620,
+        y: 500 + (Math.random() - 0.5) * 700,
+        r: 14 + Math.random() * 12,
+        seed: Math.random() * 100,
+        ang: Math.random() * Math.PI * 2
+      });
+    }
+
+    return (t, dur) => {
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 背景冷光
+      const rg = g.createRadialGradient(960, 500, 60, 960, 500, 900);
+      rg.addColorStop(0, 'rgba(90,120,170,0.14)');
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, W, H);
+
+      // 头像聚拢
+      for(let i = 0; i < avatars.length; i++){
+        const av = avatars[i];
+        const appear = clamp((t - 0.2 - (i % 20) * 0.05) / 1.2, 0, 1);
+        if(appear <= 0) continue;
+        const drift = Math.sin(t * 0.8 + av.seed) * 6;
+
+        // 头像本身
+        g.save();
+        g.globalAlpha = appear * 0.85;
+        g.translate(av.x + drift, av.y);
+
+        // 头圆形
+        g.fillStyle = 'rgba(60,72,92,0.9)';
+        g.beginPath();
+        g.arc(0, -av.r * 0.4, av.r * 0.55, 0, Math.PI * 2);
+        g.fill();
+
+        // 身体
+        g.fillStyle = 'rgba(48,58,76,0.9)';
+        g.beginPath();
+        g.arc(0, av.r * 0.9, av.r * 0.75, Math.PI, 0);
+        g.fill();
+
+        // 边框
+        g.strokeStyle = 'rgba(212,175,55,0.4)';
+        g.lineWidth = 1;
+        g.beginPath();
+        g.arc(0, 0, av.r, 0, Math.PI * 2);
+        g.stroke();
+
+        g.restore();
+      }
+
+      // 加载圈（空的眼睛）
+      const loadA = clamp((t - 3.0) / 1.4, 0, 1);
+      if(loadA > 0){
+        const eyes = [
+          { x: 960 - 110, y: 440 },
+          { x: 960 + 110, y: 440 }
+        ];
+        for(const e of eyes){
+          g.save();
+          g.globalAlpha = loadA;
+          // 空心底
+          g.fillStyle = 'rgba(8,8,10,0.95)';
+          g.beginPath();
+          g.arc(e.x, e.y, 58, 0, Math.PI * 2);
+          g.fill();
+
+          // 加载圈
+          g.strokeStyle = 'rgba(212,175,55,0.35)';
+          g.lineWidth = 3;
+          g.beginPath();
+          g.arc(e.x, e.y, 40, 0, Math.PI * 2);
+          g.stroke();
+
+          // 转动中的弧
+          const rot = t * 2.4;
+          g.strokeStyle = 'rgba(242,205,95,0.95)';
+          g.lineWidth = 3.5;
+          g.beginPath();
+          g.arc(e.x, e.y, 40, rot, rot + Math.PI * 0.55);
+          g.stroke();
+
+          g.restore();
+        }
+      }
+
+      // 整体压暗 + 字幕即将出现
+      g.fillStyle = `rgba(0,0,0,${0.28 * clamp((t - 4.8) / 2.2, 0, 1)})`;
+      g.fillRect(0, 0, W, H);
+    };
+  }
+});
+
+/* ---------- 第 8 幕 · 回到观众 ---------- */
+scenes.push({
+  dur: 5,
+  tl: '屏幕 · 此刻', tr: '',
+  subs: [
+    { text: '你正在看这条视频，', hl: null, at: 0.40 },
+    { text: '此刻也是', hl: '此刻', at: 1.40 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    return (t, dur) => {
+      const z = lerp(3.0, 1.0, easeOut(clamp(t / 3.4, 0, 1)));
+
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      g.save();
+      g.translate(960, 540);
+      g.scale(z, z);
+      g.translate(-960, -540);
+
+      // 屏幕光晕
+      const glowA = 0.18 + 0.5 * clamp(t / 3, 0, 1);
+      const rg = g.createRadialGradient(960, 620, 30, 960, 620, 520);
+      rg.addColorStop(0, `rgba(150,190,255,${glowA})`);
+      rg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rg;
+      g.fillRect(0, 0, W, H);
+
+      // 手机
+      const pw = 420, ph = 830;
+      const plx = 960 - pw / 2, ply = 620 - ph / 2;
+
+      g.save();
+      g.fillStyle = 'rgba(12,14,20,0.98)';
+      g.beginPath();
+      const rr = 34;
+      g.moveTo(plx + rr, ply);
+      g.lineTo(plx + pw - rr, ply);
+      g.quadraticCurveTo(plx + pw, ply, plx + pw, ply + rr);
+      g.lineTo(plx + pw, ply + ph - rr);
+      g.quadraticCurveTo(plx + pw, ply + ph, plx + pw - rr, ply + ph);
+      g.lineTo(plx + rr, ply + ph);
+      g.quadraticCurveTo(plx, ply + ph, plx, ply + ph - rr);
+      g.lineTo(plx, ply + rr);
+      g.quadraticCurveTo(plx, ply, plx + rr, ply);
+      g.closePath();
+      g.fill();
+
+      g.strokeStyle = 'rgba(212,175,55,0.8)';
+      g.lineWidth = 3;
+      g.stroke();
+
+      // 屏幕内容
+      const sx = plx + 22, sy = ply + 34, sw = pw - 44, sh = ph - 68;
+      g.save();
+      g.beginPath();
+      g.rect(sx, sy, sw, sh);
+      g.clip();
+
+      const cg = g.createLinearGradient(sx, sy, sx, sy + sh);
+      cg.addColorStop(0, 'rgba(24,32,48,1)');
+      cg.addColorStop(1, 'rgba(10,12,18,1)');
+      g.fillStyle = cg;
+      g.fillRect(sx, sy, sw, sh);
+
+      for(let i = 0; i < 6; i++){
+        const ph2 = t * 1.3 + i * 0.9;
+        const yy = sy + (Math.sin(ph2) * 0.5 + 0.5) * sh;
+        const gg3 = g.createLinearGradient(sx, yy, sx + sw, yy);
+        gg3.addColorStop(0, 'rgba(212,175,55,0)');
+        gg3.addColorStop(.5, `rgba(242,205,95,${0.10 + 0.06 * i})`);
+        gg3.addColorStop(1, 'rgba(212,175,55,0)');
+        g.fillStyle = gg3;
+        g.fillRect(sx, yy - 14, sw, 28);
+      }
+      const rr2 = (t * 90) % 240;
+      g.strokeStyle = `rgba(180,215,255,${0.35 * (1 - rr2 / 240)})`;
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(sx + sw / 2, sy + sh / 2, rr2, 0, Math.PI * 2);
+      g.stroke();
+
+      g.restore();
+      g.restore();
+
+      // 屏幕光照脸
+      g.save();
+      g.globalAlpha = 0.35;
+      const fg = g.createRadialGradient(960, 250, 20, 960, 250, 460);
+      fg.addColorStop(0, 'rgba(150,190,255,0.55)');
+      fg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = fg;
+      g.fillRect(0, 0, W, H);
+      g.restore();
+
+      g.restore();
+
+      // 周围人群轮廓
+      const crowdA = clamp((t - 2.4) / 1.8, 0, 1);
+      if(crowdA > 0.01){
+        for(let i = 0; i < 26; i++){
+          const ang = (i / 26) * Math.PI * 2;
+          const rad = 620 + (i % 5) * 95;
+          const cx2 = 960 + Math.cos(ang) * rad;
+          const cy2 = 540 + Math.sin(ang) * rad * 0.6;
+          const sz = 0.55 + (i % 4) * 0.12;
+          const a = crowdA * (0.16 + (i % 3) * 0.08);
+          g.save();
+          g.globalAlpha = a;
+          // 简化人形
+          g.fillStyle = '#6f5a28';
+          g.beginPath();
+          g.arc(cx2, cy2 - 40 * sz, 22 * sz, 0, Math.PI * 2);
+          g.fill();
+          g.beginPath();
+          g.moveTo(cx2 - 30 * sz, cy2 + 90 * sz);
+          g.quadraticCurveTo(cx2, cy2 + 10 * sz, cx2 + 30 * sz, cy2 + 90 * sz);
+          g.closePath();
+          g.fill();
+          g.restore();
+        }
+      }
+    };
+  }
+});
+
+/* ---------- 第 9 幕 · 收尾 · 然后呢 ---------- */
+scenes.push({
+  dur: 5,
+  tl: '', tr: '',
+  subs: [
+    { text: '关掉它，然后问自己：', hl: null, at: 0.50 },
+    { text: '然后呢？', hl: '然后呢', at: 1.60 }
+  ],
+  mount(layer){
+    const g = newCtx(layer);
+    const refs = [
+      '叔本华《作为意志和表象的世界》1818',
+      '萨特《存在与虚无》1943',
+      '尼采《快乐的科学》1882',
+      '加缪《西西弗神话》1942'
+    ];
+    return (t, dur) => {
+      g.fillStyle = BG;
+      g.fillRect(0, 0, W, H);
+
+      // 屏幕熄灭过程
+      const offA = clamp(t / 1.2, 0, 1);
+      const pw = 460, ph = 880;
+      const plx = 960 - pw / 2, ply = 560 - ph / 2;
+
+      // 手机外壳淡出
+      g.save();
+      g.globalAlpha = 1 - offA * 0.9;
+      g.fillStyle = 'rgba(12,14,20,0.98)';
+      g.beginPath();
+      const rr = 36;
+      g.moveTo(plx + rr, ply);
+      g.lineTo(plx + pw - rr, ply);
+      g.quadraticCurveTo(plx + pw, ply, plx + pw, ply + rr);
+      g.lineTo(plx + pw, ply + ph - rr);
+      g.quadraticCurveTo(plx + pw, ply + ph, plx + pw - rr, ply + ph);
+      g.lineTo(plx + rr, ply + ph);
+      g.quadraticCurveTo(plx, ply + ph, plx, ply + ph - rr);
+      g.lineTo(plx, ply + rr);
+      g.quadraticCurveTo(plx, ply, plx + rr, ply);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = `rgba(212,175,55,${0.8 * (1 - offA)})`;
+      g.lineWidth = 3;
+      g.stroke();
+      g.restore();
+
+      // 屏幕熄灭：从亮到暗
+      const sx = plx + 24, sy = ply + 36, sw = pw - 48, sh = ph - 72;
+      g.save();
+      g.beginPath();
+      g.rect(sx, sy, sw, sh);
+      g.clip();
+      const sg = g.createLinearGradient(sx, sy, sx, sy + sh);
+      const dim = 1 - offA;
+      sg.addColorStop(0, `rgba(${Math.round(24 * dim)},${Math.round(32 * dim)},${Math.round(48 * dim)},1)`);
+      sg.addColorStop(1, `rgba(${Math.round(6 * dim)},${Math.round(8 * dim)},${Math.round(12 * dim)},1)`);
+      g.fillStyle = sg;
+      g.fillRect(sx, sy, sw, sh);
+      g.restore();
+
+      // 倒映出窗
+      const winA = clamp((t - 0.9) / 1.4, 0, 1);
+      if(winA > 0.01){
+        g.save();
+        g.globalAlpha = winA * 0.95;
+
+        // 窗外光
+        const wg = g.createRadialGradient(960, 560, 30, 960, 560, 460);
+        wg.addColorStop(0, `rgba(255,224,150,${0.6 * winA})`);
+        wg.addColorStop(1, 'rgba(255,224,150,0)');
+        g.fillStyle = wg;
+        g.fillRect(0, 0, W, H);
+
+        // 窗框
+        g.strokeStyle = 'rgba(242,205,95,0.9)';
+        g.lineWidth = 3;
+        const wx = 780, wy = 380, ww = 360, wh = 400;
+        g.strokeRect(wx, wy, ww, wh);
+
+        // 十字窗框
+        g.beginPath();
+        g.moveTo(wx + ww / 2, wy);
+        g.lineTo(wx + ww / 2, wy + wh);
+        g.moveTo(wx, wy + wh / 2);
+        g.lineTo(wx + ww, wy + wh / 2);
+        g.stroke();
+
+        // 窗内渐变光
+        const inA = clamp((t - 1.4) / 1.6, 0, 1);
+        g.globalAlpha = winA * inA * 0.8;
+        const ig = g.createLinearGradient(wx, wy, wx, wy + wh);
+        ig.addColorStop(0, 'rgba(255,224,150,0.55)');
+        ig.addColorStop(1, 'rgba(255,224,150,0.05)');
+        g.fillStyle = ig;
+        g.fillRect(wx + 3, wy + 3, ww - 6, wh - 6);
+
+        g.restore();
+      }
+
+      // 片名
+      const titleA = clamp((t - 1.6) / 1.4, 0, 1);
+      if(titleA > 0.01){
+        g.save();
+        g.globalAlpha = titleA * 0.75;
+        g.font = `700 78px ${FONT}`;
+        g.fillStyle = GOLD_L;
+        g.shadowColor = 'rgba(242,205,95,0.65)';
+        g.shadowBlur = 32;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText('手 机 的 虚 无 主 义', 960, 220);
+        g.restore();
+      }
+
+      // 参考书目滚动
+      const scrollA = clamp((t - 2.2) / 1.0, 0, 1);
+      if(scrollA > 0.01){
+        const startY = 1060;
+        const travel = 380;
+        const sy2 = startY - travel * clamp((t - 2.2) / 2.8, 0, 1);
+
+        g.save();
+        g.globalAlpha = scrollA * 0.7;
+        g.font = `300 24px ${FONT}`;
+        g.fillStyle = 'rgba(220,205,160,0.9)';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        for(let i = 0; i < refs.length; i++){
+          const y = sy2 + i * 44;
+          if(y < 640 || y > 1040) continue;
+          g.fillText(refs[i], 960, y);
+        }
+        g.restore();
+      }
+    };
+  }
+});
+
+/* ============================================================
+   播放引擎
+   ============================================================ */
+const stage    = document.getElementById('stage');
+const scenesEl = document.getElementById('scenes');
+const subsEl   = document.getElementById('subs');
+const tlEl     = document.getElementById('tl');
+const trEl     = document.getElementById('tr');
+const startOv  = document.getElementById('startOverlay');
+
+let current = -1;
+let sceneStart = 0;
+let playing = false;
+let mounted = new Array(scenes.length).fill(null);
+let subLines = [];
+
+function resize(){
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  stage.style.transform =
+    `translate(${(window.innerWidth - W * s) / 2}px, ${(window.innerHeight - H * s) / 2}px) scale(${s})`;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function getMounted(i){
+  if(!mounted[i]){
+    const el = document.createElement('div');
+    el.className = 'scene';
+    scenesEl.appendChild(el);
+    const update = scenes[i].mount(el);
+    mounted[i] = { el, update, prevT: 0 };
+  }
+  return mounted[i];
+}
+
+function goTo(i){
+  if(i < 0 || i >= scenes.length) return;
+  if(current >= 0 && mounted[current]){
+    mounted[current].el.style.opacity = '0';
+  }
+  current = i;
+  const m = getMounted(i);
+  m.prevT = 0;
+  void m.el.offsetWidth;
+  m.el.style.opacity = '1';
+  sceneStart = performance.now();
+
+  const sc = scenes[i];
+  tlEl.classList.remove('show');
+  trEl.classList.remove('show');
+  tlEl.textContent = sc.tl || '';
+  trEl.textContent = sc.tr || '';
+  if(sc.tl || sc.tr){
+    requestAnimationFrame(() => {
+      if(sc.tl) tlEl.classList.add('show');
+      if(sc.tr) trEl.classList.add('show');
+    });
+  }
+
+  subsEl.innerHTML = '';
+  subLines = (sc.subs || []).map(s => {
+    const d = document.createElement('div');
+    d.className = 'sub-line';
+    d.innerHTML = renderSub(s.text, s.hl);
+    subsEl.appendChild(d);
+    return { el: d, at: s.at };
+  });
+}
+
+function updateSubs(t){
+  for(const l of subLines){
+    if(t >= l.at) l.el.classList.add('show');
+  }
+}
+
+let rafId = null;
+function loop(now){
+  rafId = requestAnimationFrame(loop);
+  if(!playing || current < 0) return;
+
+  const sc = scenes[current];
+  const m = mounted[current];
+  if(!m) return;
+
+  const t = (now - sceneStart) / 1000;
+  const tt = Math.min(t, sc.dur);
+  const dt = Math.min(0.05, (now - (m.prevT || now)) / 1000);
+  m.prevT = now;
+
+  m.update(tt, sc.dur, dt);
+  updateSubs(tt);
+
+  if(t >= sc.dur){
+    if(current < scenes.length - 1){
+      goTo(current + 1);
+    }else{
+      playing = false;
+    }
+  }
+}
+rafId = requestAnimationFrame(loop);
+
+function restart(){
+  for(const m of mounted){
+    if(m) m.el.style.opacity = '0';
+  }
+  current = -1;
+  playing = true;
+  goTo(0);
+}
+
+function jumpTo(i){
+  if(i < 0 || i >= scenes.length) return;
+  playing = true;
+  goTo(i);
+}
+
+window.addEventListener('keydown', e => {
+  const k = e.key;
+  if(k === 'r' || k === 'R'){ e.preventDefault(); restart(); }
+  else if(k === 'ArrowLeft'){ e.preventDefault(); jumpTo(Math.max(0, current - 1)); }
+  else if(k === 'ArrowRight'){ e.preventDefault(); jumpTo(Math.min(scenes.length - 1, current + 1)); }
+});
+
+startOv.addEventListener('click', () => {
+  if(startOv.classList.contains('hide')) return;
+  startOv.classList.add('hide');
+  restart();
+});
+</script>
+</body>
+</html>

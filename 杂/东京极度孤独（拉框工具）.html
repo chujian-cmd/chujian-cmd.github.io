@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>触摸拉框 · 丝滑版</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body {
+            background: #0a0a0f;
+            overflow: hidden;
+            touch-action: none;
+            font-family: 'Segoe UI', monospace;
+            height: 100vh;
+            width: 100vw;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(ellipse at center, #1a1a2e, #0a0a0f);
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            cursor: none;
+        }
+        #status {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(12px);
+            color: #7ecfff;
+            padding: 12px 28px;
+            border-radius: 50px;
+            font-size: 14px;
+            border: 1px solid rgba(0, 200, 255, 0.15);
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+            min-width: 180px;
+            letter-spacing: 0.3px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.3);
+        }
+        #status span {
+            color: #ff6b9d;
+            font-weight: bold;
+        }
+        .hint {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.2);
+            font-size: 12px;
+            background: rgba(0,0,0,0.4);
+            padding: 6px 18px;
+            border-radius: 20px;
+            pointer-events: none;
+            z-index: 10;
+            white-space: nowrap;
+            backdrop-filter: blur(4px);
+            letter-spacing: 0.5px;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: rgba(255,255,255,0.12);
+            font-size: 11px;
+            font-family: monospace;
+            pointer-events: none;
+            z-index: 10;
+            text-align: right;
+            line-height: 1.8;
+        }
+        .touch-guide {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.08);
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 5;
+            text-align: center;
+            line-height: 1.6;
+            letter-spacing: 0.5px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <canvas id="canvas"></canvas>
+    <div id="status">👆 用 <span>两根手指</span> 触摸拉框</div>
+    <div class="hint">✋ 双指触摸 · 张开拉框</div>
+    <div class="info" id="info">-- × --</div>
+    <div class="touch-guide">双指触摸屏幕 · 张开/捏合控制</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const status = document.getElementById('status');
+    const info = document.getElementById('info');
+
+    // ---------- 状态 ----------
+    let touches = [];
+    let indexTip = null;
+    let thumbTip = null;
+    let isDrawing = false;
+    let smoothIndex = null;
+    let smoothThumb = null;
+    const SMOOTH = 0.6;
+
+    // ---------- 画布适配 ----------
+    function resizeCanvas() {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+    }
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 300));
+
+    // ---------- 触摸事件 ----------
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        touches = e.touches;
+        updateFingers();
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        touches = e.touches;
+        updateFingers();
+    });
+
+    canvas.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        touches = e.touches;
+        if (touches.length < 2) {
+            isDrawing = false;
+            indexTip = null;
+            thumbTip = null;
+            smoothIndex = null;
+            smoothThumb = null;
+            status.innerHTML = '👆 用 <span>两根手指</span> 触摸拉框';
+            info.textContent = '-- × --';
+        } else {
+            updateFingers();
+        }
+    });
+
+    canvas.addEventListener('touchcancel', (e) => {
+        touches = [];
+        isDrawing = false;
+        indexTip = null;
+        thumbTip = null;
+        smoothIndex = null;
+        smoothThumb = null;
+        status.innerHTML = '👆 用 <span>两根手指</span> 触摸拉框';
+        info.textContent = '-- × --';
+    });
+
+    // ---------- 鼠标模拟（电脑调试） ----------
+    let mouseDown = false;
+    let mousePos = null;
+    let mouseOffset = null;
+
+    canvas.addEventListener('mousedown', (e) => {
+        mouseDown = true;
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width * canvas.width;
+        const y = (e.clientY - rect.top) / rect.height * canvas.height;
+        mousePos = { x, y };
+        mouseOffset = { x: 80 * (canvas.width / 800), y: 50 * (canvas.height / 600) };
+        updateMouseFingers();
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!mouseDown) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width * canvas.width;
+        const y = (e.clientY - rect.top) / rect.height * canvas.height;
+        mousePos = { x, y };
+        updateMouseFingers();
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        mouseDown = false;
+        mousePos = null;
+        isDrawing = false;
+        indexTip = null;
+        thumbTip = null;
+        smoothIndex = null;
+        smoothThumb = null;
+        status.innerHTML = '👆 用 <span>两根手指</span> 触摸拉框';
+        info.textContent = '-- × --';
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        if (mouseDown) {
+            mouseDown = false;
+            mousePos = null;
+            isDrawing = false;
+            indexTip = null;
+            thumbTip = null;
+            smoothIndex = null;
+            smoothThumb = null;
+            status.innerHTML = '👆 用 <span>两根手指</span> 触摸拉框';
+            info.textContent = '-- × --';
+        }
+    });
+
+    function updateMouseFingers() {
+        if (!mousePos) return;
+        const rawIndex = { x: mousePos.x, y: mousePos.y };
+        const rawThumb = {
+            x: mousePos.x - mouseOffset.x,
+            y: mousePos.y - mouseOffset.y
+        };
+        rawThumb.x = Math.max(0, Math.min(canvas.width, rawThumb.x));
+        rawThumb.y = Math.max(0, Math.min(canvas.height, rawThumb.y));
+        
+        indexTip = smoothIndex 
+            ? { x: smoothIndex.x * SMOOTH + rawIndex.x * (1 - SMOOTH),
+                y: smoothIndex.y * SMOOTH + rawIndex.y * (1 - SMOOTH) }
+            : rawIndex;
+        thumbTip = smoothThumb
+            ? { x: smoothThumb.x * SMOOTH + rawThumb.x * (1 - SMOOTH),
+                y: smoothThumb.y * SMOOTH + rawThumb.y * (1 - SMOOTH) }
+            : rawThumb;
+        
+        smoothIndex = indexTip;
+        smoothThumb = thumbTip;
+        isDrawing = true;
+    }
+
+    // ---------- 更新手指位置 ----------
+    function updateFingers() {
+        if (touches.length < 2) {
+            isDrawing = false;
+            return;
+        }
+
+        // 取前两个触摸点
+        const t1 = touches[0];
+        const t2 = touches[1];
+        const rect = canvas.getBoundingClientRect();
+        
+        const p1 = {
+            x: (t1.clientX - rect.left) / rect.width * canvas.width,
+            y: (t1.clientY - rect.top) / rect.height * canvas.height
+        };
+        const p2 = {
+            x: (t2.clientX - rect.left) / rect.width * canvas.width,
+            y: (t2.clientY - rect.top) / rect.height * canvas.height
+        };
+
+        // 按 X 轴排序（左=食指，右=拇指，或反过来）
+        const sorted = [p1, p2].sort((a, b) => a.x - b.x);
+        
+        // 平滑
+        const rawIndex = sorted[0];
+        const rawThumb = sorted[1];
+        
+        indexTip = smoothIndex 
+            ? { x: smoothIndex.x * SMOOTH + rawIndex.x * (1 - SMOOTH),
+                y: smoothIndex.y * SMOOTH + rawIndex.y * (1 - SMOOTH) }
+            : rawIndex;
+        thumbTip = smoothThumb
+            ? { x: smoothThumb.x * SMOOTH + rawThumb.x * (1 - SMOOTH),
+                y: smoothThumb.y * SMOOTH + rawThumb.y * (1 - SMOOTH) }
+            : rawThumb;
+        
+        smoothIndex = indexTip;
+        smoothThumb = thumbTip;
+        isDrawing = true;
+    }
+
+    // ---------- 绘制 ----------
+    function draw() {
+        const w = canvas.width;
+        const h = canvas.height;
+
+        ctx.clearRect(0, 0, w, h);
+
+        // ---- 背景网格 ----
+        ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+        ctx.lineWidth = 1;
+        const gridSize = 50;
+        for (let x = gridSize; x < w; x += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+        }
+        for (let y = gridSize; y < h; y += gridSize) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+        }
+
+        // ---- 画框 ----
+        if (isDrawing && indexTip && thumbTip) {
+            const x1 = Math.min(indexTip.x, thumbTip.x);
+            const y1 = Math.min(indexTip.y, thumbTip.y);
+            const x2 = Math.max(indexTip.x, thumbTip.x);
+            const y2 = Math.max(indexTip.y, thumbTip.y);
+            const rw = x2 - x1;
+            const rh = y2 - y1;
+
+            // 背景光晕
+            const centerX = (x1 + x2) / 2;
+            const centerY = (y1 + y2) / 2;
+            const maxDim = Math.max(rw, rh);
+            const grad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, maxDim * 0.8);
+            grad.addColorStop(0, 'rgba(0, 200, 255, 0.04)');
+            grad.addColorStop(1, 'rgba(0, 200, 255, 0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(x1 - maxDim * 0.2, y1 - maxDim * 0.2, rw + maxDim * 0.4, rh + maxDim * 0.4);
+
+            // 半透明填充
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(0, 200, 255, 0.05)';
+            ctx.fillRect(x1, y1, rw, rh);
+
+            // 发光边框
+            ctx.shadowColor = '#00e5ff';
+            ctx.shadowBlur = 40;
+            ctx.strokeStyle = '#00e5ff';
+            ctx.lineWidth = Math.max(3, Math.min(w, h) * 0.004);
+            ctx.strokeRect(x1, y1, rw, rh);
+
+            // 内层虚线
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([8, 12]);
+            ctx.strokeRect(x1 + 12, y1 + 12, rw - 24, rh - 24);
+            ctx.setLineDash([]);
+
+            // 四角装饰
+            const cornerLen = Math.min(30, Math.min(rw, rh) * 0.12);
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#00e5ff';
+            ctx.strokeStyle = '#00e5ff';
+            ctx.lineWidth = 2.5;
+            const corners = [
+                [x1, y1, 1, 1],
+                [x2, y1, -1, 1],
+                [x2, y2, -1, -1],
+                [x1, y2, 1, -1]
+            ];
+            corners.forEach(([cx, cy, dx, dy]) => {
+                ctx.beginPath();
+                ctx.moveTo(cx + dx * cornerLen, cy);
+                ctx.lineTo(cx, cy);
+                ctx.lineTo(cx, cy + dy * cornerLen);
+                ctx.stroke();
+            });
+
+            // 尺寸文字（大号）
+            ctx.shadowBlur = 0;
+            const label = `${Math.round(rw)} × ${Math.round(rh)}`;
+            const fs = Math.max(28, Math.min(w, h) * 0.045);
+            ctx.font = `bold ${fs}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            const metrics = ctx.measureText(label);
+            const tw = metrics.width + 36;
+            const th = fs + 28;
+            const tx = (x1 + x2) / 2 - tw / 2;
+            const ty = (y1 + y2) / 2 - th / 2;
+            
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = 'rgba(0,0,0,0.9)';
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(tx, ty, tw, th);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#00e5ff';
+            ctx.fillText(label, (x1 + x2) / 2, (y1 + y2) / 2);
+
+            // ---- 画指尖 ----
+            const radius = Math.max(14, Math.min(w, h) * 0.022);
+            
+            // 食指光晕
+            const grad1 = ctx.createRadialGradient(indexTip.x, indexTip.y, 0, indexTip.x, indexTip.y, radius * 3);
+            grad1.addColorStop(0, 'rgba(255, 80, 150, 0.5)');
+            grad1.addColorStop(0.5, 'rgba(255, 80, 150, 0.1)');
+            grad1.addColorStop(1, 'rgba(255, 80, 150, 0)');
+            ctx.fillStyle = grad1;
+            ctx.beginPath();
+            ctx.arc(indexTip.x, indexTip.y, radius * 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 拇指光晕
+            const grad2 = ctx.createRadialGradient(thumbTip.x, thumbTip.y, 0, thumbTip.x, thumbTip.y, radius * 3);
+            grad2.addColorStop(0, 'rgba(255, 180, 50, 0.5)');
+            grad2.addColorStop(0.5, 'rgba(255, 180, 50, 0.1)');
+            grad2.addColorStop(1, 'rgba(255, 180, 50, 0)');
+            ctx.fillStyle = grad2;
+            ctx.beginPath();
+            ctx.arc(thumbTip.x, thumbTip.y, radius * 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 指尖核心
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(indexTip.x, indexTip.y, radius * 0.5, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ff4d8f';
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(thumbTip.x, thumbTip.y, radius * 0.5, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ffa500';
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 标签
+            const fs2 = Math.max(13, Math.min(w, h) * 0.02);
+            ctx.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.font = `${fs2}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillText('食指', indexTip.x, indexTip.y - radius - 12);
+            ctx.fillText('拇指', thumbTip.x, thumbTip.y - radius - 12);
+
+            // 更新状态
+            status.innerHTML = `🔲 <span>${Math.round(rw)}×${Math.round(rh)}</span> · 双指拉框`;
+            info.textContent = `${Math.round(rw)} × ${Math.round(rh)}`;
+        } else {
+            // 没检测到双指
+            const fs = Math.max(18, Math.min(w, h) * 0.025);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(255,255,255,0.04)';
+            ctx.font = `${fs}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('👆 用两根手指触摸屏幕', w / 2, h / 2 - 10);
+            ctx.fillStyle = 'rgba(255,255,255,0.08)';
+            ctx.font = `${fs * 0.5}px monospace`;
+            ctx.fillText('张开手指拉框 · 捏合停止', w / 2, h / 2 + 30);
+        }
+
+        requestAnimationFrame(draw);
+    }
+
+    // ---------- 启动 ----------
+    function init() {
+        resizeCanvas();
+        draw();
+        // 适配旋转
+        setInterval(resizeCanvas, 2000);
+    }
+
+    init();
+
+    // 防误触
+    document.addEventListener('touchmove', (e) => {
+        if (e.target === canvas) e.preventDefault();
+    }, { passive: false });
+</script>
+</body>
+</html>

@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - Ammo.js专业版 | 坐标追踪</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      overflow: hidden;
+      font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+      background: #111;
+    }
+    #info-panel {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(12px);
+      border-radius: 24px;
+      padding: 12px 20px;
+      color: white;
+      font-size: 14px;
+      font-weight: 500;
+      pointer-events: none;
+      z-index: 10;
+      border: 1px solid rgba(255,255,255,0.2);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      font-family: monospace;
+      letter-spacing: 0.5px;
+    }
+    #info-panel span {
+      color: #ffaa66;
+      font-weight: bold;
+    }
+    #controls-hint {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(8px);
+      border-radius: 20px;
+      padding: 8px 16px;
+      color: #ddd;
+      font-size: 12px;
+      font-family: monospace;
+      pointer-events: none;
+      z-index: 10;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    #crosshair {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 24px;
+      height: 24px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(255,255,255,0.9);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 20;
+      transition: 0.05s linear;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: white;
+    }
+    #crosshair::before {
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      transform: translateY(-50%);
+    }
+    #crosshair::after {
+      top: 0;
+      left: 50%;
+      width: 1px;
+      height: 100%;
+      transform: translateX(-50%);
+    }
+    .toolbar {
+      position: fixed;
+      bottom: 30px;
+      right: 20px;
+      display: flex;
+      gap: 12px;
+      z-index: 15;
+      background: rgba(20,20,30,0.85);
+      backdrop-filter: blur(16px);
+      padding: 12px 20px;
+      border-radius: 48px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    .tool-btn {
+      background: rgba(0,0,0,0.6);
+      border: none;
+      color: white;
+      font-size: 20px;
+      cursor: pointer;
+      width: 48px;
+      height: 48px;
+      border-radius: 60px;
+      transition: 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      font-weight: bold;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .tool-btn.active {
+      background: #ff884d;
+      color: white;
+      box-shadow: 0 0 12px rgba(255,136,77,0.6);
+      transform: scale(1.02);
+    }
+    .tool-btn:active { transform: scale(0.96); }
+    .action-btn {
+      background: #2c3e66;
+    }
+    .action-btn.reset-btn { background: #8b3c2c; }
+    .status-badge {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(12px);
+      padding: 8px 16px;
+      border-radius: 32px;
+      font-size: 13px;
+      font-weight: bold;
+      color: #ffdd99;
+      pointer-events: none;
+      z-index: 10;
+      font-family: monospace;
+    }
+    /* 坐标面板 - 新增功能，保持原有风格 */
+    #coord-panel {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(12px);
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-family: monospace;
+      font-size: 13px;
+      font-weight: bold;
+      color: #aaffdd;
+      pointer-events: none;
+      z-index: 10;
+      border: 1px solid rgba(255,255,255,0.2);
+      letter-spacing: 0.5px;
+      text-shadow: 0 0 2px black;
+    }
+    @media (max-width: 600px) {
+      .tool-btn { width: 44px; height: 44px; font-size: 18px; }
+      #info-panel { font-size: 10px; top: 12px; left: 12px; }
+      #coord-panel { font-size: 10px; bottom: 12px; right: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="info-panel">
+    📦 物体: <span id="obj-count">0</span> &nbsp;| ⚡ FPS: <span id="fps-val">-</span>
+  </div>
+  <div id="controls-hint">
+    🖱️ WASD移动 | 鼠标环顾 | 左键放置 | 右键删除 | R重置 | T 冻结物理 | Z 清除所有
+  </div>
+  <div id="crosshair"></div>
+  <div class="toolbar">
+    <button class="tool-btn" data-type="cube" style="background:#d46b4a;">🧊</button>
+    <button class="tool-btn" data-type="sphere" style="background:#5f9e6e;">⚪</button>
+    <button class="tool-btn" data-type="cylinder" style="background:#6a8daf;">▮</button>
+    <button class="action-btn" id="freezeBtn">⏸️</button>
+    <button class="action-btn reset-btn" id="clearBtn">🗑️</button>
+  </div>
+  <div class="status-badge" id="statusText">⚡ 物理活跃</div>
+  <!-- 坐标显示面板 -->
+  <div id="coord-panel">
+    📍 玩家坐标: X:<span id="coord-x">0.00</span> Y:<span id="coord-y">0.00</span> Z:<span id="coord-z">0.00</span>
+  </div>
+
+  <script type="importmap">
+    { 
+      "imports": { 
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "ammojs": "https://cdn.jsdelivr.net/npm/ammojs-typed@1.0.8/build/ammo.js"
+      } 
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import Ammo from 'ammojs';
+
+    // --- 全局游戏对象，重构为基于 Ammo.js 的专业物理引擎 ---
+    const game = {
+      physicsWorld: null,           // Ammo 动态世界
+      rigidBodies: [],              // 存储 { mesh, body, shape }
+      scene: new THREE.Scene(),
+      camera: new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 200),
+      renderer: new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" }),
+      raycaster: new THREE.Raycaster(),
+      clock: new THREE.Clock(),
+      cache: {
+        geometries: {},
+        placedShapes: [],           // 存储统一条目 { mesh, body }
+        allPlaceables: [],
+        previewMesh: null,
+        currentType: 'cube',
+        colors: { cube: '#e67e4a', sphere: '#6ab04c', cylinder: '#5498c7' }
+      },
+      player: {
+        camera: null,
+        yaw: -Math.PI / 4,
+        pitch: 0,
+        position: new THREE.Vector3(0, 1.2, 6),
+        moveState: { w: false, s: false, a: false, d: false },
+        speed: 5.6,
+        mouseLock: false
+      },
+      timeFreeze: false,            // 物理冻结 (停止世界模拟)
+      activeBtnType: 'cube',
+      ammoReady: false
+    };
+
+    // --- 初始化 Ammo 物理世界 (基于Bullet) ---
+    async function initAmmoPhysics() {
+      return new Promise((resolve) => {
+        Ammo().then((AmmoLib) => {
+          const collisionConfiguration = new AmmoLib.btDefaultCollisionConfiguration();
+          const dispatcher = new AmmoLib.btCollisionDispatcher(collisionConfiguration);
+          const overlappingPairCache = new AmmoLib.btDbvtBroadphase();
+          const solver = new AmmoLib.btSequentialImpulseConstraintSolver();
+          const dynamicsWorld = new AmmoLib.btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
+          dynamicsWorld.setGravity(new AmmoLib.btVector3(0, -18.0, 0));
+          dynamicsWorld.getSolverInfo().set_m_splitImpulsePenetrationThreshold(0.02);
+          dynamicsWorld.getSolverInfo().set_m_globalCfm(0.00001);
+          game.physicsWorld = dynamicsWorld;
+          game.ammoReady = true;
+          resolve();
+        });
+      });
+    }
+
+    // --- 辅助: 创建 Ammo 刚体 (标准球体/立方体/圆柱近似) ---
+    function createRigidBody(type, mass, pos, quat = null, restitution = 0.55, friction = 0.4) {
+      if (!game.physicsWorld) return null;
+      const AmmoLib = Ammo; // 已被初始化的全局Ammo对象
+      let shape;
+      const radius = 0.52;
+      const halfExtents = new AmmoLib.btVector3(0.48, 0.48, 0.48);
+      switch(type) {
+        case 'sphere':
+          shape = new AmmoLib.btSphereShape(radius);
+          break;
+        case 'cylinder':
+          shape = new AmmoLib.btCylinderShape(new AmmoLib.btVector3(0.48, 0.48, 0.48));
+          break;
+        default: // cube
+          shape = new AmmoLib.btBoxShape(halfExtents);
+          break;
+      }
+      // 计算 inertia
+      let localInertia = new AmmoLib.btVector3(0, 0, 0);
+      if (mass !== 0) shape.calculateLocalInertia(mass, localInertia);
+      
+      const transform = new AmmoLib.btTransform();
+      transform.setIdentity();
+      transform.setOrigin(new AmmoLib.btVector3(pos.x, pos.y, pos.z));
+      if (quat) {
+        transform.setRotation(new AmmoLib.btQuaternion(quat.x, quat.y, quat.z, quat.w));
+      }
+      
+      const motionState = new AmmoLib.btDefaultMotionState(transform);
+      const rbInfo = new AmmoLib.btRigidBodyConstructionInfo(mass, motionState, shape, localInertia);
+      const body = new AmmoLib.btRigidBody(rbInfo);
+      body.setRestitution(restitution);
+      body.setFriction(friction);
+      body.setRollingFriction(0.25);
+      body.setUserIndex(0); // 标记为动态物体
+      
+      game.physicsWorld.addRigidBody(body);
+      return { body, shape, motionState };
+    }
+
+    // 创建地面 (静态刚体)
+    function createGroundPhysics() {
+      const AmmoLib = Ammo;
+      const groundShape = new AmmoLib.btBoxShape(new AmmoLib.btVector3(55, 0.2, 55));
+      const groundTransform = new AmmoLib.btTransform();
+      groundTransform.setIdentity();
+      groundTransform.setOrigin(new AmmoLib.btVector3(0, -0.32, 0));
+      const mass = 0;
+      const localInertia = new AmmoLib.btVector3(0, 0, 0);
+      const motionState = new AmmoLib.btDefaultMotionState(groundTransform);
+      const rbInfo = new AmmoLib.btRigidBodyConstructionInfo(mass, motionState, groundShape, localInertia);
+      const body = new AmmoLib.btRigidBody(rbInfo);
+      body.setRestitution(0.5);
+      body.setFriction(0.7);
+      game.physicsWorld.addRigidBody(body);
+      return body;
+    }
+
+    // 创建可放置物体的可视化+物理，完全基于Ammo
+    function createPlacedShapeAmmo(type, color, position, mass = 1) {
+      const { geometries } = game.cache;
+      let geo;
+      if (type === 'cube') geo = geometries.cube;
+      else if (type === 'sphere') geo = geometries.sphere;
+      else geo = geometries.cylinder;
+      
+      const mat = new THREE.MeshStandardMaterial({
+        color: color,
+        roughness: 0.5,
+        metalness: 0.2,
+        emissive: 0x000000
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = 'placed-shape';
+      
+      // 创建刚体 (mass > 0)
+      const rbData = createRigidBody(type, mass, position, null, 0.62, 0.35);
+      if (!rbData) return null;
+      
+      // 存储关联
+      mesh.userData.bodyPtr = rbData.body;
+      rbData.body.setUserPointer(mesh);
+      
+      game.scene.add(mesh);
+      const entry = { mesh, body: rbData.body, shape: rbData.shape, motionState: rbData.motionState, type };
+      game.cache.placedShapes.push(entry);
+      game.cache.allPlaceables.push(mesh);
+      return entry;
+    }
+
+    // 冻结/解冻物理：通过更改全局标志，step时跳过模拟，但保留物体位置
+    function toggleFreeze() {
+      game.timeFreeze = !game.timeFreeze;
+      const statusDiv = document.getElementById('statusText');
+      const freezeBtn = document.getElementById('freezeBtn');
+      if (game.timeFreeze) {
+        statusDiv.innerHTML = '❄️ 物理冻结';
+        freezeBtn.style.background = '#3a6ea5';
+        freezeBtn.textContent = '▶️';
+      } else {
+        statusDiv.innerHTML = '⚡ 物理活跃';
+        freezeBtn.style.background = '#2c3e66';
+        freezeBtn.textContent = '⏸️';
+      }
+    }
+    
+    function clearAllShapes() {
+      for (let ent of game.cache.placedShapes.slice()) {
+        game.scene.remove(ent.mesh);
+        if (game.physicsWorld && ent.body) {
+          game.physicsWorld.removeRigidBody(ent.body);
+          // 清理 Ammo 内存 (简易)
+          Ammo.destroy(ent.body);
+          if (ent.motionState) Ammo.destroy(ent.motionState);
+          if (ent.shape) Ammo.destroy(ent.shape);
+        }
+      }
+      game.cache.placedShapes = [];
+      game.cache.allPlaceables = game.cache.allPlaceables.filter(obj => obj.name === 'ground' || obj.name === 'grid' || obj === game.cache.previewMesh);
+      document.getElementById('obj-count').textContent = 0;
+    }
+    
+    function resetScene() {
+      clearAllShapes();
+      game.player.position.set(0, 1.35, 5);
+      game.player.yaw = -0.8;
+      game.player.pitch = 0.1;
+      // 可选重置相机仰角
+    }
+
+    // --- 放置预览: 基于射线获取放置点 (与原有逻辑完全一致，仅移除对physics旧系统的依赖) ---
+    function getPlacement() {
+      const camera = game.camera;
+      const direction = new THREE.Vector3();
+      camera.getWorldDirection(direction);
+      const start = camera.position.clone();
+      const end = start.clone().add(direction.clone().multiplyScalar(5.8));
+      game.raycaster.set(start, direction);
+      const intersects = game.raycaster.intersectObjects(game.cache.allPlaceables.filter(obj => obj !== game.cache.previewMesh));
+      let hitPoint = null;
+      let normal = null;
+      if (intersects.length > 0) {
+        const hit = intersects[0];
+        hitPoint = hit.point;
+        normal = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 1, 0);
+        if (hit.object.name === 'ground') normal = new THREE.Vector3(0, 1, 0);
+        const offset = normal.clone().multiplyScalar(0.55);
+        const finalPos = hitPoint.clone().add(offset);
+        let valid = true;
+        for (let p of game.cache.placedShapes) {
+          if (p.mesh.position.distanceTo(finalPos) < 0.95) {
+            valid = false;
+            break;
+          }
+        }
+        if (finalPos.y - 0.5 < -0.1) valid = false;
+        // 边界避免穿透地面太深
+        if (finalPos.y < 0.1) valid = false;
+        return { pos: finalPos, valid: valid, normal };
+      }
+      return { pos: null, valid: false };
+    }
+
+    // --- 替换物理步进：使用 Ammo 的 stepSimulation ---
+    function updatePhysics(deltaTime) {
+      if (!game.physicsWorld || game.timeFreeze) return;
+      // 固定时间步长最大限制 0.033 秒，保持稳定
+      let dt = Math.min(deltaTime, 0.033);
+      if (dt < 0.003) dt = 0.016;
+      game.physicsWorld.stepSimulation(dt, 8, 1/60);
+      
+      // 同步所有动态刚体到 Mesh
+      for (let i = 0; i < game.cache.placedShapes.length; i++) {
+        const entry = game.cache.placedShapes[i];
+        if (!entry.body) continue;
+        const ms = entry.body.getMotionState();
+        if (ms) {
+          const transform = new Ammo.btTransform();
+          ms.getWorldTransform(transform);
+          const origin = transform.getOrigin();
+          const rotation = transform.getRotation();
+          entry.mesh.position.set(origin.x(), origin.y(), origin.z());
+          entry.mesh.quaternion.set(rotation.x(), rotation.y(), rotation.z(), rotation.w());
+        }
+      }
+    }
+
+    // --- Three.js 场景初始化 (保持光照，阴影增强) ---
+    function initRenderer() {
+      const { renderer } = game;
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.physicallyCorrectLights = true;
+      renderer.setClearColor('#87CEEB');
+      document.body.appendChild(renderer.domElement);
+    }
+
+    function initScene() {
+      const { scene, camera } = game;
+      scene.background = new THREE.Color('#87CEEB');
+      scene.fog = new THREE.Fog('#87CEEB', 45, 130);
+      camera.position.set(0, 1.6, 10);
+      
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+      scene.add(ambientLight);
+      
+      const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.25);
+      dirLight.position.set(18, 38, 12);
+      dirLight.castShadow = true;
+      dirLight.shadow.mapSize.width = 2048;
+      dirLight.shadow.mapSize.height = 2048;
+      dirLight.shadow.camera.near = 0.5;
+      dirLight.shadow.camera.far = 130;
+      dirLight.shadow.camera.left = -70;
+      dirLight.shadow.camera.right = 70;
+      dirLight.shadow.camera.top = 70;
+      dirLight.shadow.camera.bottom = -70;
+      dirLight.shadow.bias = -0.0008;
+      dirLight.shadow.radius = 2.2;
+      scene.add(dirLight);
+      
+      const fillLight = new THREE.PointLight(0xffaa77, 0.6);
+      fillLight.position.set(3, 5, 6);
+      fillLight.castShadow = false;
+      scene.add(fillLight);
+      
+      const backLight = new THREE.PointLight(0x88aaff, 0.4);
+      backLight.position.set(-4, 5, -6);
+      scene.add(backLight);
+      
+      const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(110, 110),
+        new THREE.MeshStandardMaterial({ color: '#cab88c', roughness: 0.85, metalness: 0.05 })
+      );
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.position.y = -0.22;
+      groundMesh.receiveShadow = true;
+      groundMesh.castShadow = false;
+      groundMesh.name = 'ground';
+      scene.add(groundMesh);
+      
+      const gridHelper = new THREE.GridHelper(44, 32, '#b7a673', '#dfd0aa');
+      gridHelper.position.y = -0.18;
+      scene.add(gridHelper);
+      
+      game.cache.allPlaceables.push(groundMesh);
+      
+      const outlineDeco = new THREE.Mesh(
+        new THREE.BoxGeometry(22, 0.1, 22),
+        new THREE.MeshStandardMaterial({ color: '#aa9466', roughness: 0.4, metalness: 0.2 })
+      );
+      outlineDeco.position.set(0, -0.3, 0);
+      outlineDeco.receiveShadow = true;
+      scene.add(outlineDeco);
+    }
+
+    function initGeometries() {
+      const { geometries } = game.cache;
+      geometries.cube = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+      geometries.sphere = new THREE.SphereGeometry(0.52, 32, 32);
+      geometries.cylinder = new THREE.CylinderGeometry(0.52, 0.52, 0.96, 28);
+      const previewGeo = new THREE.SphereGeometry(0.52, 24, 24);
+      const previewMat = new THREE.MeshStandardMaterial({ color: 0x88aaff, emissive: 0x224466, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
+      game.cache.previewMesh = new THREE.Mesh(previewGeo, previewMat);
+      game.cache.previewMesh.castShadow = false;
+      game.cache.previewMesh.receiveShadow = false;
+      game.scene.add(game.cache.previewMesh);
+    }
+
+    // --- 玩家控制 ---
+    function initPlayerControls() {
+      document.addEventListener('click', () => {
+        if (!game.player.mouseLock && game.renderer.domElement) {
+          game.renderer.domElement.requestPointerLock();
+        }
+      });
+      document.addEventListener('pointerlockchange', lockChange);
+      function lockChange() {
+        if (document.pointerLockElement === game.renderer.domElement) {
+          game.player.mouseLock = true;
+          document.body.style.cursor = 'none';
+        } else {
+          game.player.mouseLock = false;
+          document.body.style.cursor = 'default';
+        }
+      }
+      window.addEventListener('mousemove', (e) => {
+        if (!game.player.mouseLock) return;
+        const sens = 0.0022;
+        game.player.yaw -= e.movementX * sens;
+        game.player.pitch -= e.movementY * sens;
+        if (game.player.pitch > Math.PI / 2.2) game.player.pitch = Math.PI / 2.2;
+        if (game.player.pitch < -Math.PI / 2.2) game.player.pitch = -Math.PI / 2.2;
+      });
+      window.addEventListener('keydown', (e) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w') game.player.moveState.w = true;
+        if (key === 's') game.player.moveState.s = true;
+        if (key === 'a') game.player.moveState.a = true;
+        if (key === 'd') game.player.moveState.d = true;
+        if (key === 'r') resetScene();
+        if (key === 't') toggleFreeze();
+        if (key === 'z') clearAllShapes();
+      });
+      window.addEventListener('keyup', (e) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w') game.player.moveState.w = false;
+        if (key === 's') game.player.moveState.s = false;
+        if (key === 'a') game.player.moveState.a = false;
+        if (key === 'd') game.player.moveState.d = false;
+      });
+    }
+
+    function updatePlayerMovement(delta) {
+      const camDir = game.camera.getWorldDirection(new THREE.Vector3());
+      const forward = new THREE.Vector3(camDir.x, 0, camDir.z).normalize();
+      const right = new THREE.Vector3(-forward.z, 0, forward.x);
+      let move = new THREE.Vector3(0, 0, 0);
+      if (game.player.moveState.w) move.add(forward);
+      if (game.player.moveState.s) move.sub(forward);
+      if (game.player.moveState.d) move.add(right);
+      if (game.player.moveState.a) move.sub(right);
+      move.normalize();
+      const speed = game.player.speed * delta;
+      game.player.position.x += move.x * speed;
+      game.player.position.z += move.z * speed;
+      const limit = 38;
+      game.player.position.x = Math.min(limit, Math.max(-limit, game.player.position.x));
+      game.player.position.z = Math.min(limit, Math.max(-limit, game.player.position.z));
+      game.player.position.y = 1.35;
+      game.camera.position.copy(game.player.position);
+      const euler = new THREE.Euler(game.player.pitch, game.player.yaw, 0, 'YXZ');
+      game.camera.quaternion.setFromEuler(euler);
+      
+      // 更新坐标显示 (新增坐标功能)
+      const px = game.player.position.x.toFixed(2);
+      const py = game.player.position.y.toFixed(2);
+      const pz = game.player.position.z.toFixed(2);
+      document.getElementById('coord-x').textContent = px;
+      document.getElementById('coord-y').textContent = py;
+      document.getElementById('coord-z').textContent = pz;
+    }
+
+    function handlePlaceRemoveEvents() {
+      window.addEventListener('mousedown', (e) => {
+        if (!game.player.mouseLock || game.timeFreeze) return;
+        if (e.button === 0) {
+          const placement = getPlacement();
+          if (placement.pos && placement.valid) {
+            const type = game.cache.currentType;
+            const color = game.cache.colors[type] || '#e67e4a';
+            createPlacedShapeAmmo(type, color, placement.pos, 1);
+            document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+          }
+        } else if (e.button === 2) {
+          e.preventDefault();
+          const direction = new THREE.Vector3();
+          game.camera.getWorldDirection(direction);
+          game.raycaster.set(game.camera.position, direction);
+          const intersects = game.raycaster.intersectObjects(game.cache.placedShapes.map(s => s.mesh));
+          if (intersects.length > 0) {
+            const hitMesh = intersects[0].object;
+            const entry = game.cache.placedShapes.find(ent => ent.mesh === hitMesh);
+            if (entry && game.physicsWorld) {
+              game.scene.remove(entry.mesh);
+              game.physicsWorld.removeRigidBody(entry.body);
+              if (entry.shape) Ammo.destroy(entry.shape);
+              if (entry.motionState) Ammo.destroy(entry.motionState);
+              Ammo.destroy(entry.body);
+              const idx = game.cache.placedShapes.indexOf(entry);
+              if (idx !== -1) game.cache.placedShapes.splice(idx, 1);
+              const idxAll = game.cache.allPlaceables.indexOf(entry.mesh);
+              if (idxAll !== -1) game.cache.allPlaceables.splice(idxAll, 1);
+              document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+            }
+          }
+        }
+      });
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+    
+    function initUIEvents() {
+      document.querySelectorAll('.tool-btn[data-type]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const type = btn.dataset.type;
+          game.cache.currentType = type;
+          game.activeBtnType = type;
+          document.querySelectorAll('.tool-btn[data-type]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+      document.getElementById('freezeBtn').addEventListener('click', toggleFreeze);
+      document.getElementById('clearBtn').addEventListener('click', clearAllShapes);
+      document.querySelector('.tool-btn[data-type="cube"]').classList.add('active');
+    }
+
+    // 地面刚体单独在物理世界创建，保证碰撞
+    let groundBodyRef = null;
+    async function setupPhysicsGround() {
+      if (!game.physicsWorld) return;
+      groundBodyRef = createGroundPhysics();
+    }
+
+    // 动画循环
+    let lastTime = performance.now();
+    let fpsCounter = 0;
+    let fpsLastUpdate = performance.now();
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      const now = performance.now();
+      let delta = Math.min(0.033, (now - lastTime) / 1000);
+      lastTime = now;
+      if (delta < 0.003) delta = 0.016;
+      
+      // 更新物理 (使用 Ammo)
+      updatePhysics(delta);
+      // 更新玩家移动
+      updatePlayerMovement(delta);
+      
+      // 预览更新
+      if (game.player.mouseLock && !game.timeFreeze) {
+        const placement = getPlacement();
+        if (placement.pos && placement.valid) {
+          game.cache.previewMesh.position.copy(placement.pos);
+          game.cache.previewMesh.visible = true;
+          game.cache.previewMesh.material.color.setHex(placement.valid ? 0xaaddff : 0xff8888);
+        } else {
+          game.cache.previewMesh.visible = false;
+        }
+      } else {
+        game.cache.previewMesh.visible = false;
+      }
+      
+      // fps 计数
+      fpsCounter++;
+      if (now - fpsLastUpdate >= 1000) {
+        document.getElementById('fps-val').textContent = fpsCounter;
+        fpsCounter = 0;
+        fpsLastUpdate = now;
+      }
+      document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+      game.renderer.render(game.scene, game.camera);
+    }
+    
+    async function start() {
+      await initAmmoPhysics();
+      initRenderer();
+      initScene();
+      initGeometries();
+      await setupPhysicsGround();
+      initPlayerControls();
+      initUIEvents();
+      handlePlaceRemoveEvents();
+      animate();
+    }
+    
+    window.addEventListener('load', start);
+  </script>
+</body>
+</html>

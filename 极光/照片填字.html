@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>照片填字 PhotoText</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#101018;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(16,16,24,.85),rgba(16,16,24,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">照片填字 <b id="m">模糊底</b></div>
+  <button class="btn" id="btn-mode">换模式</button>
+  <button class="btn pri" id="btn-upload">上传素材</button>
+</div>
+<div id="hint">拖入图片/视频 · 照片只在字内显现 · 字内视差游移</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1);
+
+  const CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    spacing: 0.02,        // 字距（相对字号）
+    drift: 1,             // 视差速度
+    amp: 0.5,             // 视差幅度
+    outside: 'blur',      // solid | blur | dark
+    strokeW: 5,           // 描边宽（相对字号 %）
+    strokeColor: '#ffffff',
+    shadow: 0.5,          // 投影
+    background: '#101018'
+  };
+
+  const MODES = [
+    { key: 'blur',   label: '模糊底' },
+    { key: 'solid',  label: '纯色背景' },
+    { key: 'dark',   label: '暗化同图' }
+  ];
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.floor(W * dpr); cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dprCanvas.width = cv.width; dprCanvas.height = cv.height;
+    dprCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    maskKey = ''; strokeKey = ''; bgKey = '';
+  }
+
+  // ========== 素材 ==========
+  let media = null;
+  let mediaIsVideo = false;
+  let mediaAspect = 16 / 9;
+  let mediaLabel = '内置占位';
+  let mediaVersion = 0;
+
+  function loadFile(file) {
+    const url = URL.createObjectURL(file);
+    if (file.type.startsWith('video/')) {
+      const v = document.createElement('video');
+      v.src = url; v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
+      v.addEventListener('loadeddata', () => {
+        media = v; mediaIsVideo = true;
+        mediaAspect = v.videoWidth / v.videoHeight;
+        mediaLabel = file.name;
+        mediaVersion++;
+        maskKey = ''; strokeKey = ''; bgKey = '';
+        v.play().catch(() => {});
+      });
+    } else if (file.type.startsWith('image/')) {
+      const im = new Image();
+      im.onload = () => {
+        media = im; mediaIsVideo = false;
+        mediaAspect = im.naturalWidth / im.naturalHeight;
+        mediaLabel = file.name;
+        mediaVersion++;
+        maskKey = ''; strokeKey = ''; bgKey = '';
+      };
+      im.src = url;
+    }
+  }
+
+  function pick() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,video/*';
+    input.addEventListener('change', () => {
+      const f = input.files && input.files[0];
+      if (f) loadFile(f);
+    });
+    input.click();
+  }
+
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    const f = e.dataTransfer?.files?.[0];
+    if (f) loadFile(f);
+  });
+
+  // 把素材画到目标 context 覆盖区
+  function drawMedia(c, x, y, w, h, zoom = 1, ox = 0, oy = 0) {
+    if (!media) {
+      // 占位渐变
+      const g = c.createLinearGradient(x, y, x + w, y + h);
+      g.addColorStop(0, '#6ea8ff');
+      g.addColorStop(0.5, '#b98cff');
+      g.addColorStop(1, '#ff7de0');
+      c.fillStyle = g;
+      c.fillRect(x, y, w, h);
+      return;
+    }
+    const srcAspect = mediaAspect;
+    let dw, dh;
+    if (srcAspect > w / h) {
+      dh = h * zoom; dw = dh * srcAspect;
+    } else {
+      dw = w * zoom; dh = dw / srcAspect;
+    }
+    const dx = x + (w - dw) / 2 + ox;
+    const dy = y + (h - dh) / 2 + oy;
+    try {
+      c.drawImage(media, dx, dy, dw, dh);
+    } catch {}
+  }
+
+  // ========== 主画布 & 上传帧 ==========
+  const dprCanvas = document.createElement('canvas');
+  const dprCtx = dprCanvas.getContext('2d');
+
+  // ========== 掩膜（字）==========
+  const mask = document.createElement('canvas');
+  const maskCtx = mask.getContext('2d');
+  let maskKey = '';
+  let fontSize = 10;
+
+  function buildMask(cw, ch) {
+    const key = `${CFG.text}|${cw}x${ch}|${CFG.weight}|${CFG.spacing}`;
+    if (key === maskKey) return;
+    maskKey = key;
+    mask.width = cw; mask.height = ch;
+    maskCtx.clearRect(0, 0, cw, ch);
+    maskCtx.fillStyle = '#fff';
+    maskCtx.textAlign = 'center';
+    maskCtx.textBaseline = 'middle';
+    const lines = CFG.text.split('\n').filter(l => l.length > 0);
+    if (!lines.length) return;
+    const maxW = cw * 0.9, maxH = ch * 0.86;
+    const lh = maxH / lines.length;
+    let size = Math.floor(lh * 0.8);
+    const setF = s => {
+      if ('letterSpacing' in maskCtx) maskCtx.letterSpacing = `${Math.round(CFG.spacing * s)}px`;
+      maskCtx.font = `${CFG.weight} ${s}px ${CFG.font}`;
+    };
+    setF(size);
+    for (let pass = 0; pass < 3; pass++) {
+      let widest = 0;
+      for (const l of lines) widest = Math.max(widest, maskCtx.measureText(l).width);
+      if (widest <= maxW) break;
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    const startY = ch / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (let i = 0; i < lines.length; i++) {
+      maskCtx.fillText(lines[i], cw / 2, startY + i * size * 1.15);
+    }
+    if ('letterSpacing' in maskCtx) maskCtx.letterSpacing = '0px';
+    fontSize = size;
+  }
+
+  // ========== 描边层 ==========
+  const stroke = document.createElement('canvas');
+  const strokeCtx = stroke.getContext('2d');
+  let strokeKey = '';
+
+  function buildStroke(cw, ch) {
+    const key = `${maskKey}|${CFG.strokeW}|${CFG.strokeColor}`;
+    if (key === strokeKey) return;
+    strokeKey = key;
+    stroke.width = cw; stroke.height = ch;
+    const c = strokeCtx;
+    c.globalCompositeOperation = 'source-over';
+    const r = CFG.strokeW / 100 * fontSize;
+    if (r > 0) {
+      for (let s = r; s > 0.5; s *= 0.55) {
+        for (let k = 0; k < 16; k++) {
+          const ang = k / 16 * Math.PI * 2;
+          c.drawImage(mask, Math.cos(ang) * s, Math.sin(ang) * s);
+        }
+      }
+    }
+    c.drawImage(mask, 0, 0);
+    c.globalCompositeOperation = 'source-in';
+    c.fillStyle = CFG.strokeColor;
+    c.fillRect(0, 0, cw, ch);
+    c.globalCompositeOperation = 'source-over';
+  }
+
+  // ========== 背景层 ==========
+  const bg = document.createElement('canvas');
+  const bgCtx = bg.getContext('2d');
+  let bgKey = '';
+
+  function buildBg(cw, ch, force) {
+    const key = `${CFG.outside}|${CFG.background}|${cw}x${ch}|${mediaVersion}`;
+    if (key === bgKey && !force) return;
+    bgKey = key;
+    bg.width = cw; bg.height = ch;
+    const c = bgCtx;
+    c.fillStyle = CFG.background;
+    c.fillRect(0, 0, cw, ch);
+    if (CFG.outside === 'solid' || !media) return;
+
+    // 覆盖全区绘制素材
+    if (CFG.outside === 'blur') {
+      // 缩小 → 模糊 → 放大
+      const bw = 40, bh = Math.max(2, Math.round(40 * ch / cw));
+      blurTmp.width = bw; blurTmp.height = bh;
+      const bt = blurCtx;
+      const srcA = mediaAspect;
+      let dw, dh;
+      if (srcA > bw / bh) { dh = bh; dw = dh * srcA; } else { dw = bw; dh = dw / srcA; }
+      const dx = (bw - dw) / 2, dy = (bh - dh) / 2;
+      try { bt.drawImage(media, dx, dy, dw, dh); } catch {}
+      c.imageSmoothingEnabled = true;
+      c.drawImage(blurTmp, 0, 0, cw, ch);
+      c.fillStyle = 'rgba(4,5,10,0.45)';
+      c.fillRect(0, 0, cw, ch);
+    } else {
+      // dark
+      drawMedia(c, 0, 0, cw, ch);
+      c.fillStyle = 'rgba(4,5,10,0.62)';
+      c.fillRect(0, 0, cw, ch);
+    }
+  }
+
+  const blurTmp = document.createElement('canvas');
+  const blurCtx = blurTmp.getContext('2d');
+
+  // ========== 字内层 ==========
+  const letter = document.createElement('canvas');
+  const letterCtx = letter.getContext('2d');
+
+  function buildLetter(cw, ch, t) {
+    letter.width = cw; letter.height = ch;
+    const c = letterCtx;
+    c.clearRect(0, 0, cw, ch);
+
+    if (media) {
+      // 呼吸缩放 + 平移视差
+      const zoom = 1 + CFG.amp * 0.1 * (0.5 + 0.5 * Math.sin(t * 0.6 * CFG.drift));
+      const scale = 1 + CFG.amp * 0.12 * zoom;
+      const ox = Math.sin(t * 0.37 * CFG.drift + 1.7) * CFG.amp * 0.045 * cw;
+      const oy = Math.cos(t * 0.29 * CFG.drift) * CFG.amp * 0.045 * ch;
+      drawMedia(c, 0, 0, cw, ch, scale, ox, oy);
+    } else {
+      // 占位渐变
+      const g = c.createLinearGradient(0, 0, cw, ch);
+      g.addColorStop(0, '#6ea8ff');
+      g.addColorStop(0.5, '#b98cff');
+      g.addColorStop(1, '#ff7de0');
+      c.fillStyle = g;
+      c.fillRect(0, 0, cw, ch);
+    }
+
+    // destination-in 用掩膜裁剪
+    c.globalCompositeOperation = 'destination-in';
+    c.drawImage(mask, 0, 0);
+    c.globalCompositeOperation = 'source-over';
+  }
+
+  // ========== 渲染 ==========
+  let time = 0, lastT = performance.now();
+  let lastLetter = 0;
+
+  function render(now) {
+    const dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now; time += dt;
+
+    const cw = W, ch = H;
+
+    buildMask(cw, ch);
+    buildStroke(cw, ch);
+    buildBg(cw, ch, false);
+
+    // 视频或视差：每帧重建；图片静止时视差也需要更新
+    const needLetter = mediaIsVideo || time - lastLetter > 0.016;
+    if (needLetter) {
+      buildLetter(cw, ch, time);
+      lastLetter = time;
+    }
+
+    ctx.fillStyle = '#06070b';
+    ctx.fillRect(0, 0, W, H);
+
+    // 背景
+    ctx.drawImage(bg, 0, 0, W, H);
+
+    // 描边 + 投影 + 字内照片
+    ctx.save();
+    const sh = CFG.shadow;
+    if (CFG.strokeW > 0 || sh > 0) {
+      if (sh > 0) {
+        ctx.shadowColor = `rgba(0,0,0,${0.65 * sh})`;
+        ctx.shadowBlur = 26 * sh;
+        ctx.shadowOffsetY = 12 * sh;
+      }
+      ctx.drawImage(stroke, 0, 0, W, H);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+    }
+    ctx.drawImage(letter, 0, 0, W, H);
+    ctx.restore();
+
+    requestAnimationFrame(render);
+  }
+
+  // ========== 按钮 ==========
+  let modeIdx = 0;
+  const mLabel = document.getElementById('m');
+
+  document.getElementById('btn-mode').addEventListener('click', () => {
+    modeIdx = (modeIdx + 1) % MODES.length;
+    CFG.outside = MODES[modeIdx].key;
+    mLabel.textContent = MODES[modeIdx].label;
+    bgKey = '';
+  });
+
+  document.getElementById('btn-upload').addEventListener('click', pick);
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', () => setTimeout(resize, 80));
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>

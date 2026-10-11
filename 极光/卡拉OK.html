@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>卡拉OK Karaoke</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0c0b10;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(12,11,16,.85),rgba(12,11,16,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(255,224,102,.24);border-color:rgba(255,224,102,.6);color:#fff4c2}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(255,224,102,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(255,224,102,.6);
+    background:rgba(255,224,102,.3);color:#2a1e00;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(255,224,102,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">卡拉OK <b id="m">从左扫过</b></div>
+  <button class="btn" id="btn-mode">换高亮</button>
+  <button class="btn" id="btn-text">换歌词</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">逐字点亮 · 已唱保持 · 多行轮播</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>歌词内容（每行一句，逐行轮唱）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="第一句&#10;第二句"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: '跟着节奏一起唱\nAURORA KARAOKE',
+    mode: 'wipe',       // wipe | bounce | zoom
+    speed: 3,           // 每秒唱几个字
+    highlight: '#ffe066',
+    glow: 0.6,
+    unsungColor: '#565c6a',
+    sungColor: '#ffc836',
+    charGap: 0.05,      // 字间停顿（秒）
+    linePause: 0.8,     // 行间停顿（秒）
+    loop: true,
+    weight: 800,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    background: '#0c0b10'
+  };
+
+  var MODES = [
+    { key: 'wipe',   label: '从左扫过' },
+    { key: 'bounce', label: '整字弹起' },
+    { key: 'zoom',   label: '放大点亮' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    layoutKey = '';
+    return true;
+  }
+
+  // ---------- 布局：每行 → 逐字 glyph ----------
+  var lines = [];      // { chars: [{ch,x,w}], y }
+  var fontSize = 32;
+  var layoutKey = '';
+
+  function buildLayout() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === layoutKey && lines.length) return;
+    layoutKey = key;
+    lines = [];
+
+    var arr = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!arr.length) return;
+
+    var fontStr = function (s) { return CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    ctx.font = fontStr(60);
+
+    // 字号适配
+    var size = Math.floor(Math.min(H * 0.58 / arr.length, H * 0.2));
+    ctx.font = fontStr(size);
+    var widest = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var w = ctx.measureText(arr[i]).width;
+      if (w > widest) widest = w;
+    }
+    var maxW = W * 0.86;
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      ctx.font = fontStr(size);
+    }
+    fontSize = size;
+
+    var lh = fontSize * 1.5;
+    var startY = H / 2 - (arr.length - 1) * lh / 2;
+
+    for (var y = 0; y < arr.length; y++) {
+      var line = arr[y];
+      var chars = [];
+      var x = 0;
+      for (var k = 0; k < line.length; k++) {
+        var ch = line.charAt(k);
+        var cw = ctx.measureText(ch).width;
+        chars.push({ ch: ch, x: x, w: cw });
+        x += cw;
+      }
+      var totalW = x;
+      var ox = W / 2 - totalW / 2;
+      for (var m = 0; m < chars.length; m++) {
+        chars[m].x += ox + chars[m].w / 2;  // 中心点
+      }
+      lines.push({ chars: chars, y: startY + y * lh });
+    }
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildLayout();
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    if (!lines.length) { requestAnimationFrame(render); return; }
+
+    var speed = CFG.speed;
+    var charDur = 1 / Math.max(0.1, speed);
+    var charGap = CFG.charGap;
+    var perChar = charDur + charGap;
+    var linePause = CFG.linePause;
+    var loop = CFG.loop;
+
+    // 每行时长（整行唱完 + 行间停顿）
+    var lineDur = [];
+    var total = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var d = lines[i].chars.length * perChar + linePause;
+      lineDur.push(d);
+      total += d;
+    }
+
+    // 当前唱到哪
+    var t = loop ? (time % total) : Math.min(time, total - 1e-4);
+    var li = 0;
+    var acc = 0;
+    for (var l = 0; l < lines.length; l++) {
+      if (t < acc + lineDur[l]) { li = l; break; }
+      acc += lineDur[l];
+    }
+    var lt = t - acc;
+
+    var line = lines[li];
+    var n = line.chars.length;
+    var curIdx = Math.min(Math.floor(lt / perChar), n);
+    var curProg = curIdx < n ? Math.min(1, Math.max(0, (lt - curIdx * perChar) / charDur)) : 1;
+
+    // ---------- 绘制 ----------
+    ctx.font = CFG.weight + ' ' + fontSize + 'px ' + CFG.font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    var colHi = CFG.highlight;
+    var colSung = CFG.sungColor;
+    var colUn = CFG.unsungColor;
+    var glow = CFG.glow;
+    var mode = CFG.mode;
+
+    for (var ln = 0; ln < lines.length; ln++) {
+      var L = lines[ln];
+      var isCurrent = ln === li;
+      ctx.globalAlpha = isCurrent ? 1 : 0.88;
+
+      for (var c = 0; c < L.chars.length; c++) {
+        var g = L.chars[c];
+        var state;
+        if (ln < li) state = 'sung';
+        else if (ln > li) state = 'unsung';
+        else if (c < curIdx) state = 'sung';
+        else if (c === curIdx && curIdx < n) state = 'cur';
+        else state = 'unsung';
+
+        if (state === 'unsung') {
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = colUn;
+          ctx.fillText(g.ch, g.x, L.y);
+        } else if (state === 'sung') {
+          if (glow > 0) {
+            ctx.shadowColor = colSung;
+            ctx.shadowBlur = glow * 8;
+          } else {
+            ctx.shadowBlur = 0;
+          }
+          ctx.fillStyle = colSung;
+          ctx.fillText(g.ch, g.x, L.y);
+        } else {
+          // 当前字：三种模式
+          drawCurrent(g, L.y, curProg, mode, colHi, colUn, glow);
+        }
+      }
+    }
+
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+
+    requestAnimationFrame(render);
+  }
+
+  function drawCurrent(g, y, prog, mode, hi, un, glow) {
+    if (mode === 'wipe') {
+      // 底色画暗版
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = un;
+      ctx.fillText(g.ch, g.x, y);
+      // 裁剪左侧部分画亮色
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(g.x - g.w / 2 - 1, y - fontSize * 0.8, (g.w + 2) * prog, fontSize * 1.6);
+      ctx.clip();
+      if (glow > 0) {
+        ctx.shadowColor = hi;
+        ctx.shadowBlur = glow * 24;
+      }
+      ctx.fillStyle = hi;
+      ctx.fillText(g.ch, g.x, y);
+      ctx.restore();
+      return;
+    }
+
+    // bounce / zoom
+    var h = Math.sin(Math.PI * Math.max(0, Math.min(1, mode === 'bounce' ? prog * 1.15 : prog)));
+    var scale = 1 + (mode === 'bounce' ? 0.38 : 0.26) * h;
+    var dy = mode === 'bounce' ? -fontSize * 0.18 * h : 0;
+
+    ctx.save();
+    ctx.translate(g.x, y + dy);
+    ctx.scale(scale, scale);
+
+    if (glow > 0) {
+      ctx.shadowColor = hi;
+      ctx.shadowBlur = mode === 'zoom' ? glow * 34 * (0.35 + 0.65 * h) : glow * 14;
+    }
+    ctx.fillStyle = hi;
+    ctx.fillText(g.ch, 0, 0);
+    ctx.restore();
+  }
+
+  // ---------- 预设歌词 ----------
+  var PRESETS = [
+    { text: '跟着节奏一起唱\nAURORA KARAOKE', mode: 'wipe' },
+    { text: '爱你 爱你 爱你\n就像老鼠爱大米', mode: 'bounce' },
+    { text: '我要 你在我身旁\n我要 你为我梳妆', mode: 'zoom' },
+    { text: '夜空中最亮的星\n能否听清', mode: 'wipe' },
+    { text: '从前从前 有个人爱你很久\n但偏偏 雨渐渐', mode: 'bounce' }
+  ];
+  var presetIdx = 0;
+
+  function applyText(t, mode) {
+    CFG.text = t;
+    if (mode) CFG.mode = mode;
+    layoutKey = '';
+    time = 0;
+    // 更新按钮标签
+    var mm = MODES.find(function (m) { return m.key === CFG.mode; });
+    if (mm) mLabel.textContent = mm.label;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyText(PRESETS[presetIdx].text, PRESETS[presetIdx].mode);
+  });
+
+  // ---------- 换高亮方式 ----------
+  var modeIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-mode').addEventListener('click', function () {
+    modeIdx = (modeIdx + 1) % MODES.length;
+    CFG.mode = MODES[modeIdx].key;
+    mLabel.textContent = MODES[modeIdx].label;
+    time = 0;
+  });
+
+  // ---------- 自定义输入 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    applyText(v);
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

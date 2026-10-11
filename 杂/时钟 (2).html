@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>极简 · 荧光指针时钟</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #f0f2f5;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      padding: 20px;
+    }
+    .clock {
+      background: #ffffff;
+      border-radius: 48px;
+      padding: 32px;
+      max-width: 340px;
+      width: 100%;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1/1;
+      border-radius: 40px;
+      background: #eef0f3;
+      margin-bottom: 20px;
+    }
+    .digital {
+      text-align: center;
+      font-size: 2.6rem;
+      font-weight: 350;
+      letter-spacing: 3px;
+      color: #1a2634;
+      padding: 4px 0;
+    }
+    .digital .sec {
+      opacity: 0.5;
+      font-weight: 300;
+    }
+    .label {
+      text-align: center;
+      margin-top: 12px;
+      font-size: 0.7rem;
+      color: #8a9aaa;
+      letter-spacing: 2px;
+      border-top: 1px solid rgba(0, 0, 0, 0.04);
+      padding-top: 14px;
+    }
+    @media (max-width: 420px) {
+      .clock {
+        padding: 24px;
+        border-radius: 36px;
+      }
+      .digital {
+        font-size: 2.2rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="clock">
+    <canvas id="clockCanvas" width="400" height="400"></canvas>
+    <div class="digital" id="digitalDisplay">
+      <span id="hh">00</span>:<span id="mm">00</span>:<span id="ss" class="sec">00</span>
+    </div>
+    <div class="label">北京时间 · UTC+8</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('clockCanvas');
+    const ctx = canvas.getContext('2d');
+    const hh = document.getElementById('hh');
+    const mm = document.getElementById('mm');
+    const ss = document.getElementById('ss');
+
+    const cx = 200,
+      cy = 200,
+      radius = 180;
+
+    // ----- 荧光绘制辅助 (带发光) -----
+    function drawGlowHand(angle, length, width, color, glowColor, glowWidth) {
+      // 1. 先绘制发光层 (半透明+大宽度)
+      ctx.save();
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = glowWidth || 18;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      const x = cx + Math.cos(angle) * length;
+      const y = cy + Math.sin(angle) * length;
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+
+      // 2. 再绘制一次核心线条 (实心, 确保清晰)
+      ctx.save();
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawClock() {
+      const now = new Date();
+      const h = now.getHours() % 12;
+      const m = now.getMinutes();
+      const s = now.getSeconds();
+
+      // 更新数字时间
+      hh.textContent = String(now.getHours()).padStart(2, '0');
+      mm.textContent = String(m).padStart(2, '0');
+      ss.textContent = String(s).padStart(2, '0');
+
+      // 清空画布
+      ctx.clearRect(0, 0, 400, 400);
+
+      // --- 表盘 ---
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#eef0f3';
+      ctx.fill();
+
+      // --- 刻度 (小时) ---
+      for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2 - Math.PI / 2;
+        const len = i % 3 === 0 ? 20 : 14;
+        const outer = radius - 6;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * (outer - len), cy + Math.sin(angle) * (outer - len));
+        ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+        ctx.strokeStyle = i % 3 === 0 ? '#1a2634' : '#8a9aaa';
+        ctx.lineWidth = i % 3 === 0 ? 2.5 : 1.2;
+        ctx.stroke();
+      }
+
+      // --- 分钟刻度 (每5分钟) ---
+      for (let i = 0; i < 60; i += 5) {
+        if (i % 15 === 0) continue;
+        const angle = (i / 60) * Math.PI * 2 - Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(angle) * (radius - 10), cy + Math.sin(angle) * (radius - 10));
+        ctx.lineTo(cx + Math.cos(angle) * (radius - 6), cy + Math.sin(angle) * (radius - 6));
+        ctx.strokeStyle = '#b0bcc8';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+
+      // --- 计算指针角度 ---
+      const hAngle = (h / 12) * Math.PI * 2 + (m / 60) * (Math.PI / 6) - Math.PI / 2;
+      const mAngle = (m / 60) * Math.PI * 2 + (s / 60) * (Math.PI / 30) - Math.PI / 2;
+      const sAngle = (s / 60) * Math.PI * 2 - Math.PI / 2;
+
+      // --- 绘制荧光指针 ---
+      // 时针 (荧光: 淡蓝)
+      drawGlowHand(hAngle, radius * 0.5, 5, '#1a2634', 'rgba(70, 130, 255, 0.5)', 22);
+      // 分针 (荧光: 淡紫)
+      drawGlowHand(mAngle, radius * 0.72, 3, '#2c3d50', 'rgba(160, 120, 255, 0.45)', 20);
+      // 秒针 (荧光: 暖红)
+      drawGlowHand(sAngle, radius * 0.82, 1.6, '#c04a4a', 'rgba(255, 80, 80, 0.6)', 24);
+
+      // --- 中心装饰点 (带微光) ---
+      ctx.save();
+      ctx.shadowColor = 'rgba(26, 38, 52, 0.3)';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a2634';
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.shadowColor = 'rgba(192, 74, 74, 0.4)';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#c04a4a';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    drawClock();
+    setInterval(drawClock, 1000);
+  </script>
+</body>
+</html>

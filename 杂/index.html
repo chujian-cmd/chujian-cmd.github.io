@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 项目启动器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0b0e14;
+            color: #e0e5ee;
+            font-family: -apple-system, system-ui, sans-serif;
+            padding: 16px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            font-size: 24px;
+            padding: 20px 0;
+            background: linear-gradient(135deg, #f7c948, #f5a623);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .sub {
+            text-align: center;
+            color: #7b8ba3;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+        .status-bar {
+            background: #1a212a;
+            border-radius: 12px;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            border: 1px solid #2f3845;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .led {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4caf50;
+            transition: 0.3s;
+        }
+        .led.off { background: #5f6b7a; }
+        .search-box {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 30px;
+            border: 1px solid #2f3845;
+            background: #141b24;
+            color: #e0e5ee;
+            font-size: 14px;
+            margin-bottom: 12px;
+            outline: none;
+        }
+        .search-box:focus { border-color: #f5a623; }
+        .project-item {
+            background: #141b24;
+            border-radius: 10px;
+            padding: 12px 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border: 1px solid #25303c;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: 0.15s;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .project-item:hover { background: #1b2532; border-color: #3f4e62; }
+        .project-item.active { border-color: #f5b342; background: #1f2a38; }
+        .project-item .info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .project-item .index {
+            color: #5f6b7a;
+            font-size: 12px;
+            min-width: 28px;
+        }
+        .project-item .name { font-size: 15px; font-weight: 500; }
+        .project-item .port {
+            background: #1f2937;
+            padding: 0 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: #8ea0b9;
+            font-family: monospace;
+        }
+        .btn {
+            border: none;
+            padding: 5px 14px;
+            border-radius: 30px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            background: #2d3746;
+            color: #bcc9de;
+            border: 1px solid #3d4a5e;
+            transition: 0.15s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn-start.running {
+            background: #2a5f4a;
+            border-color: #3e9c74;
+            color: #d4f0e0;
+        }
+        .btn-stop-all {
+            background: #3f2e33;
+            border-color: #6d4242;
+            color: #f0b9b9;
+        }
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e2a38;
+            padding: 10px 24px;
+            border-radius: 40px;
+            border: 1px solid #3a4a60;
+            font-size: 14px;
+            opacity: 0;
+            transition: 0.3s;
+            pointer-events: none;
+            z-index: 999;
+            white-space: nowrap;
+            max-width: 90%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .toast.visible { opacity: 1; }
+        .loading { text-align: center; color: #7b8ba3; padding: 40px 0; }
+        .count { color: #7b8ba3; font-size: 13px; margin-left: 8px; }
+    </style>
+</head>
+<body>
+
+<h1>📁 项目启动器</h1>
+<div class="sub">点击项目启动 · 自动跳转浏览器</div>
+
+<div class="status-bar">
+    <div>
+        <span class="led off" id="statusLed"></span>
+        <span id="statusText">加载中...</span>
+        <span class="count" id="countText"></span>
+    </div>
+    <button class="btn btn-stop-all" id="stopAllBtn">⏹ 全部停止</button>
+</div>
+
+<input class="search-box" id="searchBox" placeholder="🔍 搜索项目..." oninput="filterProjects()">
+
+<div id="projectList"><div class="loading">⏳ 加载项目中...</div></div>
+
+<div id="toast" class="toast">📡</div>
+
+<script>
+const API = window.location.origin + '/start.php';
+
+let projects = {};
+let runningPorts = new Set();
+let toastTimer = null;
+
+// ========== 核心功能 ==========
+
+async function loadProjects() {
+    try {
+        const res = await fetch(`${API}?action=list`);
+        projects = await res.json();
+        renderProjects();
+        await checkStatus();
+        document.getElementById('statusText').textContent = '就绪';
+    } catch (e) {
+        document.getElementById('projectList').innerHTML = 
+            '<div class="loading">❌ 无法连接后端<br><small>请确保 start.php 存在</small></div>';
+        document.getElementById('statusText').textContent = '⚠️ 连接失败';
+    }
+}
+
+async function checkStatus() {
+    try {
+        const res = await fetch(`${API}?action=status`);
+        const data = await res.json();
+        runningPorts = new Set(data.running || []);
+        updateUI();
+        const led = document.getElementById('statusLed');
+        led.className = 'led' + (runningPorts.size > 0 ? '' : ' off');
+        document.getElementById('statusText').textContent = 
+            runningPorts.size > 0 ? `运行中 (${runningPorts.size}个)` : '就绪';
+    } catch (e) {}
+}
+
+async function startProject(key) {
+    const p = projects[key];
+    if (!p) return;
+    
+    if (runningPorts.has(p.port)) {
+        showToast(`⚠️ 端口 ${p.port} 已在运行`);
+        return;
+    }
+    
+    showToast(`🚀 正在启动 ${p.name}...`);
+    
+    try {
+        const res = await fetch(`${API}?action=start&key=${key}`);
+        const data = await res.json();
+        showToast(data.message);
+        if (data.success) {
+            await checkStatus();
+            setTimeout(() => {
+                window.open(data.url, '_blank');
+            }, 500);
+        }
+    } catch (e) {
+        showToast('❌ 启动失败: ' + e.message);
+    }
+}
+
+async function stopAll() {
+    try {
+        const res = await fetch(`${API}?action=stop`);
+        const data = await res.json();
+        showToast(data.message);
+        await checkStatus();
+    } catch (e) {
+        showToast('❌ 操作失败');
+    }
+}
+
+// ========== UI ==========
+
+function renderProjects(filter = '') {
+    const container = document.getElementById('projectList');
+    const keys = Object.keys(projects).sort((a, b) => Number(a) - Number(b));
+    let html = '';
+    let visibleCount = 0;
+    
+    for (const key of keys) {
+        const p = projects[key];
+        const match = p.name.toLowerCase().includes(filter.toLowerCase()) || 
+                     p.port.includes(filter) ||
+                     key.includes(filter);
+        if (!match) continue;
+        visibleCount++;
+        
+        const isRunning = runningPorts.has(p.port);
+        html += `
+            <div class="project-item ${isRunning ? 'active' : ''}" data-key="${key}">
+                <div class="info">
+                    <span class="index">#${key}</span>
+                    <span class="name">${p.name}</span>
+                    <span class="port">${p.port}</span>
+                </div>
+                <button class="btn ${isRunning ? 'btn-start running' : ''}" 
+                        onclick="event.stopPropagation(); startProject('${key}')">
+                    ${isRunning ? '● 运行中' : '▶ 启动'}
+                </button>
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html || '<div style="text-align:center;color:#5f6b7a;padding:40px;">没有找到项目</div>';
+    document.getElementById('countText').textContent = `(${visibleCount}个)`;
+}
+
+function updateUI() {
+    document.querySelectorAll('.project-item').forEach(item => {
+        const key = item.dataset.key;
+        const p = projects[key];
+        if (!p) return;
+        const isRunning = runningPorts.has(p.port);
+        const btn = item.querySelector('.btn');
+        if (isRunning) {
+            item.classList.add('active');
+            btn.textContent = '● 运行中';
+            btn.classList.add('running');
+        } else {
+            item.classList.remove('active');
+            btn.textContent = '▶ 启动';
+            btn.classList.remove('running');
+        }
+    });
+}
+
+function filterProjects() {
+    renderProjects(document.getElementById('searchBox').value);
+}
+
+function showToast(msg, dur = 2500) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('visible'), dur);
+}
+
+// ========== 事件 ==========
+
+document.getElementById('stopAllBtn').addEventListener('click', stopAll);
+document.getElementById('searchBox').addEventListener('input', filterProjects);
+
+// 定时刷新状态
+setInterval(checkStatus, 3000);
+
+// 启动
+loadProjects();
+
+setTimeout(() => {
+    showToast('💡 点击项目启动，自动跳转浏览器', 2000);
+}, 500);
+</script>
+</body>
+</html>

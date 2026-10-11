@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <!-- 保留你原有的head内容 -->
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - 冻结悬浮版</title>
+  <style>
+    <!-- 保留你原有的样式 -->
+  </style>
+</head>
+<body>
+  <!-- 保留你原有的DOM结构 -->
+
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+  </script>
+
+  <script>
+    <!-- 保留你原有的OptimizedPhysics类 -->
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    // 全局变量管理（优化：模块化）
+    const game = {
+      // 核心对象
+      physics: new OptimizedPhysics(),
+      scene: new THREE.Scene(),
+      camera: new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 200),
+      renderer: new THREE.WebGLRenderer({ 
+        antialias: true, 
+        powerPreference: "high-performance",
+        shadowMap: { enabled: true } // 显式启用阴影
+      }),
+      raycaster: new THREE.Raycaster(),
+      clock: new THREE.Clock(),
+      
+      // 其他原有属性...
+      // （保留你原有的game对象其他属性）
+    };
+
+    // 初始化渲染器（优化阴影配置）
+    function initRenderer() {
+      const { renderer } = game;
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      
+      // 关键：完善阴影渲染设置
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap; // 软阴影（更自然）
+      renderer.shadowMap.autoUpdate = true; // 自动更新阴影（取消手动控制）
+      renderer.shadowMap.needsUpdate = true;
+      
+      // 启用颜色空间校正（P3色域，提升光影色彩）
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.physicallyCorrectLights = true; // 物理正确的光照计算
+      
+      renderer.autoClear = true;
+      renderer.setClearColor('#87CEEB');
+      document.body.appendChild(renderer.domElement);
+    }
+
+    // 初始化场景（完善光照和阴影）
+    function initScene() {
+      const { scene, camera } = game;
+      
+      // 场景优化：雾效和背景
+      scene.background = new THREE.Color('#87CEEB');
+      scene.fog = new THREE.Fog('#87CEEB', 45, 130);
+      
+      // 相机位置
+      camera.position.set(0, 1.6, 10);
+      
+      // 环境光（提升暗部细节，避免纯黑）
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+      scene.add(ambientLight);
+      
+      // 方向光（太阳）- 核心光源（投射阴影）
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+      dirLight.position.set(20, 40, 15); // 调整位置（更高更远，阴影更自然）
+      dirLight.castShadow = true; // 启用阴影投射
+      
+      // 关键：方向光阴影参数配置
+      dirLight.shadow.mapSize.width = 2048; // 阴影贴图分辨率（越大越清晰）
+      dirLight.shadow.mapSize.height = 2048;
+      dirLight.shadow.camera.near = 0.5; // 阴影相机近裁切面
+      dirLight.shadow.camera.far = 150; // 阴影相机远裁切面（覆盖更大范围）
+      dirLight.shadow.camera.left = -80; // 阴影相机左边界
+      dirLight.shadow.camera.right = 80; // 右边界
+      dirLight.shadow.camera.top = 80; // 上边界
+      dirLight.shadow.camera.bottom = -80; // 下边界
+      dirLight.shadow.bias = -0.001; // 阴影偏移（解决阴影锯齿/漏光）
+      dirLight.shadow.radius = 2; // 阴影模糊半径（软阴影）
+      
+      scene.add(dirLight);
+      
+      // 可选：添加点光源（比如玩家周围的光源）
+      const pointLight = new THREE.PointLight(0xffe0b2, 0.8, 20);
+      pointLight.position.set(0, 2, 8); // 跟随玩家初始位置
+      pointLight.castShadow = true; // 点光源也投射阴影
+      pointLight.shadow.mapSize.width = 1024;
+      pointLight.shadow.mapSize.height = 1024;
+      pointLight.shadow.bias = -0.002;
+      scene.add(pointLight);
+      
+      // 地面（确保接收阴影）
+      const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(100, 100), // 扩大地面（避免阴影超出范围）
+        new THREE.MeshStandardMaterial({ 
+          color: '#d5c4a1', 
+          roughness: 0.8, // 地面粗糙度（影响反光）
+          metalness: 0.1 
+        })
+      );
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.position.y = -0.2;
+      groundMesh.receiveShadow = true; // 地面接收阴影（关键）
+      groundMesh.castShadow = false; // 地面不投射阴影
+      groundMesh.name = 'ground';
+      scene.add(groundMesh);
+      
+      // 网格辅助
+      scene.add(new THREE.GridHelper(36, 36, '#c4b99a', '#e0d5c0'));
+      
+      // 添加到可放置列表
+      game.cache.allPlaceables.push(groundMesh);
+    }
+
+    // 创建放置的形状（确保阴影属性正确）
+    function createPlacedShape(type, color, position, isStatic = false) {
+      const { geometries } = game.cache;
+      const geo = geometries[type] || geometries.cube;
+      
+      // 材质优化（物理正确的材质参数）
+      const mat = new THREE.MeshStandardMaterial({
+        color: color,
+        roughness: 0.6, // 粗糙度（0=镜面，1=哑光）
+        metalness: 0.1, // 金属度
+        colorSpace: THREE.SRGBColorSpace // 颜色空间校正
+      });
+      
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+      
+      // 关键：启用阴影投射和接收
+      mesh.castShadow = true; // 物体投射阴影
+      mesh.receiveShadow = true; // 物体接收阴影
+      mesh.name = 'placed-shape';
+      
+      // 创建物理体（原有逻辑）
+      const body = game.physics.createBody(position.x, position.y, position.z, isStatic ? 0 : 1, 0.48);
+      mesh.userData.body = body;
+      body.userData = { mesh };
+      
+      game.scene.add(mesh);
+      
+      const entry = { mesh, body };
+      game.cache.placedShapes.push(entry);
+      game.cache.allPlaceables.push(mesh);
+      
+      return entry;
+    }
+
+    // 保留你原有的其他函数（initGeometries、initPlayer、updateHUD等）
+    // ...
+
+    // 动画循环（确保阴影随帧更新）
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      const delta = Math.min(game.clock.getDelta(), 0.016); // 限制最大delta（避免卡顿）
+      
+      // 物理步进（原有逻辑）
+      if (!game.isDead && !game.timeFreeze) {
+        game.physics.step(delta);
+        
+        // 更新所有物体位置（原有逻辑）
+        game.cache.placedShapes.forEach(({ mesh, body }) => {
+          mesh.position.copy(body.position);
+          mesh.quaternion.copy(body.quaternion || new THREE.Quaternion());
+        });
+        
+        // 玩家移动逻辑（原有）
+        // ...
+      }
+      
+      // 更新预览（原有逻辑）
+      if (game.isLocked && !game.isDead) {
+        const placement = getPlacement();
+        if (placement.pos) {
+          game.cache.previewMesh.position.copy(placement.pos);
+          game.cache.previewMesh.visible = placement.valid;
+        } else {
+          game.cache.previewMesh.visible = false;
+        }
+      }
+      
+      // 更新性能统计（原有）
+      document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+      document.getElementById('fps-val').textContent = Math.round(renderer.getFps());
+      
+      // 渲染场景
+      game.renderer.render(game.scene, game.camera);
+    }
+
+    // 初始化所有内容
+    function init() {
+      initRenderer();
+      initScene();
+      initGeometries();
+      initPlayer();
+      initEvents();
+      
+      // 隐藏加载界面
+      game.ui.loadingOverlay.style.opacity = 0;
+      setTimeout(() => {
+        game.ui.loadingOverlay.style.display = 'none';
+      }, 500);
+      
+      // 启动动画循环
+      animate();
+    }
+
+    // 启动游戏
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Voronoi 细胞</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #0a0b12;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(10,11,18,0.8), rgba(10,11,18,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">细胞 <b id="m">琉璃</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换模式</button>
+</div>
+
+<div id="hint">按住屏幕 = 附近细胞加速游动</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+              || (navigator.maxTouchPoints > 1);
+
+// ---------- 参数 ----------
+const CFG = {
+  density: 9,        // 密度（每屏多少细胞）
+  speed: 0.5,        // 游动速度
+  edgeWidth: 0.06,   // 边界宽度
+  brightness: 1.1,   // 亮度
+  mode: 0,           // 0=细胞 1=边界 2=光点
+  colorA: '#6a4cff',
+  colorB: '#4ecb8d',
+  background: '#0a0b12'
+};
+
+const PIXEL_RATIO = isMobile ? 0.6 : 0.9;
+
+// ---------- three.js ----------
+const canvasEl = document.getElementById('cv');
+
+const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: false });
+renderer.setPixelRatio(PIXEL_RATIO);
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const frag = /* glsl */`
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+  uniform float uTime;
+  uniform float uDensity;
+  uniform float uSpeed;
+  uniform float uEdgeWidth;
+  uniform float uBrightness;
+  uniform int   uMode;
+  uniform vec3  uColorA;
+  uniform vec3  uColorB;
+  uniform vec3  uBackground;
+
+  #define TAU 6.28318530718
+
+  // 2D hash → 每格一个随机 2D 向量
+  vec2 hash2(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)),
+             dot(p, vec2(269.5, 183.3)));
+    return fract(sin(p) * 43758.5453123);
+  }
+
+  // 用 A/B 两色构造 cos 调色板
+  vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+  }
+
+  // 单元格配色
+  vec3 cellPalette(float t) {
+    vec3 a = (uColorA + uColorB) * 0.5;
+    vec3 b = (uColorB - uColorA) * 0.5;
+    return palette(t, a, b, vec3(1.0), vec3(0.0));
+  }
+
+  void main() {
+    vec2 uv = (vUv - 0.5) * 2.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    // 指针影响：附近特征点游动更快
+    vec2 mouseNdc = (uMouse - 0.5) * 2.0;
+    mouseNdc.x *= uResolution.x / uResolution.y;
+    float md = length(uv - mouseNdc);
+    float mouseBoost = smoothstep(1.2, 0.0, md) * 2.0;
+
+    vec2 p = uv * uDensity;
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+
+    float d1 = 8.0;         // 最近特征点距离
+    float d2 = 8.0;         // 次近特征点距离
+    float nearestHash = 0.0;
+
+    // 3x3 邻格
+    for (int oy = -1; oy <= 1; oy++) {
+      for (int ox = -1; ox <= 1; ox++) {
+        vec2 g = vec2(float(ox), float(oy));
+        vec2 cellId = i + g;
+        vec2 h = hash2(cellId);
+
+        // 特征点在格内游动（本地时间 + 格相位）
+        float t = uTime * uSpeed * (1.0 + mouseBoost);
+        vec2 featurePoint = g + 0.5 + 0.5 * sin(t + TAU * h);
+
+        float d = length(featurePoint - f);
+        if (d < d1) {
+          d2 = d1;
+          d1 = d;
+          nearestHash = h.x;
+        } else if (d < d2) {
+          d2 = d;
+        }
+      }
+    }
+
+    // 三种分量
+    vec3 cellsLayer = cellPalette(nearestHash);
+    float edgesLayer = 1.0 - smoothstep(0.0, uEdgeWidth, d2 - d1);
+    float dotsLayer = 1.0 - smoothstep(0.0, uEdgeWidth * 1.6, d1);
+    dotsLayer *= dotsLayer;
+
+    vec3 col;
+
+    if (uMode == 0) {
+      // 细胞平色
+      col = mix(uBackground, cellsLayer, 0.92);
+      col = mix(col, vec3(1.0), edgesLayer * 0.35);
+    } else if (uMode == 1) {
+      // 边界网络
+      col = mix(uBackground, cellsLayer * 0.4, 0.4);
+      col = mix(col, vec3(1.0), edgesLayer * 0.9);
+    } else {
+      // 光点
+      col = mix(uBackground, cellsLayer * 0.25, 0.5);
+      col += cellsLayer * dotsLayer * 1.6;
+      col = mix(col, vec3(1.0), edgesLayer * 0.15);
+    }
+
+    col *= uBrightness;
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    uTime: { value: 0 },
+    uDensity: { value: CFG.density },
+    uSpeed: { value: CFG.speed },
+    uEdgeWidth: { value: CFG.edgeWidth },
+    uBrightness: { value: CFG.brightness },
+    uMode: { value: CFG.mode },
+    uColorA: { value: new THREE.Color(CFG.colorA) },
+    uColorB: { value: new THREE.Color(CFG.colorB) },
+    uBackground: { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+// ---------- 尺寸 ----------
+function resize() {
+  const W = innerWidth;
+  const H = innerHeight;
+  renderer.setPixelRatio(PIXEL_RATIO);
+  renderer.setSize(W, H, false);
+  material.uniforms.uResolution.value.set(W * PIXEL_RATIO, H * PIXEL_RATIO);
+}
+resize();
+
+// ---------- 指针 ----------
+const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5, down: false };
+const rect = () => canvasEl.getBoundingClientRect();
+
+const onDown = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  pointer.down = true;
+  if (e.touches) e.preventDefault();
+};
+const onMove = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onUp = () => { pointer.down = false; };
+
+canvasEl.addEventListener('touchstart', onDown, { passive: false });
+canvasEl.addEventListener('touchmove', onMove, { passive: false });
+canvasEl.addEventListener('touchend', onUp);
+canvasEl.addEventListener('touchcancel', onUp);
+canvasEl.addEventListener('mousedown', onDown);
+canvasEl.addEventListener('mousemove', onMove);
+canvasEl.addEventListener('mouseup', onUp);
+canvasEl.addEventListener('mouseleave', onUp);
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+
+  pointer.x += (pointer.targetX - pointer.x) * 0.08;
+  pointer.y += (pointer.targetY - pointer.y) * 0.08;
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uMouse.value.set(pointer.x, pointer.y);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+// ---------- 按钮 ----------
+const mEl = document.getElementById('m');
+
+const MODES = [
+  { name: '琉璃', mode: 0, density: 10, speed: 0.6, edgeWidth: 0.10, brightness: 1.2,
+    colorA: '#0d2b3a', colorB: '#7fe8d4', background: '#04141c' },
+  { name: '熔融细胞', mode: 0, density: 6, speed: 0.4, edgeWidth: 0.08, brightness: 1.3,
+    colorA: '#3d0a05', colorB: '#ff7a1a', background: '#150402' },
+  { name: '裂纹网', mode: 1, density: 16, speed: 0.25, edgeWidth: 0.03, brightness: 0.9,
+    colorA: '#1a1a22', colorB: '#e8ecf5', background: '#050507' },
+  { name: '萤点',   mode: 2, density: 20, speed: 1.1, edgeWidth: 0.05, brightness: 1.5,
+    colorA: '#123018', colorB: '#c8ff5a', background: '#02040a' },
+  { name: '琥珀',   mode: 1, density: 12, speed: 0.35, edgeWidth: 0.04, brightness: 1.15,
+    colorA: '#2a1808', colorB: '#ffb64a', background: '#0a0603' }
+];
+let modeIdx = 0;
+
+function applyMode(s) {
+  CFG.mode = s.mode;
+  CFG.density = s.density;
+  CFG.speed = s.speed;
+  CFG.edgeWidth = s.edgeWidth;
+  CFG.brightness = s.brightness;
+  CFG.colorA = s.colorA;
+  CFG.colorB = s.colorB;
+  CFG.background = s.background;
+
+  const u = material.uniforms;
+  u.uMode.value = CFG.mode;
+  u.uDensity.value = CFG.density;
+  u.uSpeed.value = CFG.speed;
+  u.uEdgeWidth.value = CFG.edgeWidth;
+  u.uBrightness.value = CFG.brightness;
+  u.uColorA.value.set(CFG.colorA);
+  u.uColorB.value.set(CFG.colorB);
+  u.uBackground.value.set(CFG.background);
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  startTime = performance.now();
+});
+
+document.getElementById('btn-change').addEventListener('click', () => {
+  modeIdx = (modeIdx + 1) % MODES.length;
+  applyMode(MODES[modeIdx]);
+  mEl.textContent = MODES[modeIdx].name;
+});
+
+// ---------- 启动 ----------
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+applyMode(MODES[0]);
+mEl.textContent = MODES[0].name;
+requestAnimationFrame(startLoop());
+
+function startLoop() {
+  startTime = performance.now();
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,2016 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0b1020">
+  <title>历史 Wordle</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🀄</text></svg>">
+  <style>
+    :root {
+      --bg-0: #0b1020;
+      --bg-1: #141b38;
+      --card: rgba(255, 255, 255, 0.055);
+      --card-border: rgba(255, 255, 255, 0.12);
+      --text: #f3f4ff;
+      --muted: #9aa3c7;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --violet: #8b5cf6;
+      --cyan: #22d3ee;
+      --correct-1: #34d399;
+      --correct-2: #059669;
+      --present-1: #fbbf24;
+      --present-2: #d97706;
+      --absent-1: #3d4a63;
+      --absent-2: #232c42;
+      --key: rgba(255, 255, 255, 0.07);
+      --key-border: rgba(255, 255, 255, 0.1);
+      --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.35);
+      --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { height: 100%; }
+
+    body {
+      font-family: "Segoe UI Variable Display", "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow-x: hidden;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      background:
+        radial-gradient(1100px 560px at 85% -10%, rgba(124, 58, 237, 0.28), transparent 60%),
+        radial-gradient(900px 520px at 8% 112%, rgba(34, 211, 238, 0.14), transparent 55%),
+        linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 100%);
+      background-attachment: fixed;
+    }
+
+    /* 漂浮光斑 */
+    .orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(95px);
+      opacity: 0.32;
+      pointer-events: none;
+      z-index: 0;
+      animation: drift 20s ease-in-out infinite alternate;
+    }
+    .orb-1 {
+      width: 360px;
+      height: 360px;
+      left: -130px;
+      top: 6%;
+      background: radial-gradient(circle, rgba(139, 92, 246, 0.85), transparent 65%);
+    }
+    .orb-2 {
+      width: 320px;
+      height: 320px;
+      right: -110px;
+      bottom: 4%;
+      background: radial-gradient(circle, rgba(34, 211, 238, 0.7), transparent 65%);
+      animation-delay: -9s;
+    }
+    @keyframes drift {
+      from { transform: translate(0, 0) scale(1); }
+      to   { transform: translate(28px, -22px) scale(1.12); }
+    }
+
+    /* ---------- 顶栏 ---------- */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      width: 100%;
+      max-width: 600px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 14px;
+      background: rgba(11, 16, 32, 0.55);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+    h1 {
+      font-size: 22px;
+      letter-spacing: 1px;
+      white-space: nowrap;
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+    }
+    h1 .cn { font-weight: 800; }
+    h1 .en {
+      font-weight: 800;
+      background: linear-gradient(90deg, var(--amber), var(--rose), var(--violet));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 0 14px rgba(251, 191, 36, 0.35));
+    }
+
+    .modes {
+      display: flex;
+      gap: 3px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      padding: 3px;
+    }
+    .mode {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 5px 13px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+    }
+    .mode:hover { color: #fff; }
+    .mode.active {
+      background: linear-gradient(135deg, #f59e0b, #f97316);
+      color: #1c1203;
+      box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4);
+    }
+    .mode:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .mode:active { transform: scale(0.96); }
+    .reroll-big {
+      width: 100%;
+      max-width: 400px;
+      height: 46px;
+      margin: 4px auto 0;
+      border: 1px solid rgba(251, 191, 36, 0.45);
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(251, 191, 36, 0.16), rgba(249, 115, 22, 0.16));
+      color: var(--amber);
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .reroll-big:hover {
+      background: linear-gradient(135deg, rgba(251, 191, 36, 0.28), rgba(249, 115, 22, 0.28));
+      border-color: rgba(251, 191, 36, 0.85);
+      box-shadow: 0 6px 20px rgba(251, 191, 36, 0.22);
+    }
+    .reroll-big:active { transform: scale(0.97); }
+    .stats-big {
+      width: 100%;
+      max-width: 400px;
+      height: 44px;
+      margin: 4px auto 0;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+    }
+    .stats-big:hover {
+      background: rgba(255, 255, 255, 0.13);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+    .stats-big:active { transform: scale(0.97); }
+
+    .actions { display: flex; gap: 8px; }
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--text);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s ease, transform 0.08s ease, border-color 0.15s ease;
+    }
+    .icon-btn:hover { background: rgba(255, 255, 255, 0.14); border-color: rgba(251, 191, 36, 0.5); }
+    .icon-btn:active { transform: scale(0.92); }
+
+    /* ---------- 主区域 ---------- */
+    main {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      width: 100%;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px;
+      animation: fade-up 0.5s ease;
+    }
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    #board {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: center;
+    }
+    .row { display: flex; justify-content: center; gap: 6px; }
+
+    #sub-hint {
+      min-height: 15px;
+      font-size: 12px;
+      color: rgba(154, 163, 199, 0.72);
+      letter-spacing: 0.5px;
+      text-align: center;
+    }
+    .type-tag {
+      display: inline-block;
+      color: var(--amber);
+      font-weight: 700;
+      font-size: 11px;
+      background: rgba(251, 191, 36, 0.12);
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      border-radius: 999px;
+      padding: 1px 9px;
+      margin-right: 6px;
+      vertical-align: 1px;
+    }
+
+    #hint-box {
+      flex-direction: column;
+      gap: 4px;
+    }
+    .clue-line {
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .cell {
+      flex: 1;
+      min-width: 0;
+      max-width: 72px;
+      aspect-ratio: 1;
+      border: 2px solid rgba(255, 255, 255, 0.14);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--cell-font, 34px);
+      font-weight: 800;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.035);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.25);
+      position: relative;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .row.active .cell {
+      border-color: rgba(255, 255, 255, 0.3);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06),
+        0 0 0 1px rgba(251, 191, 36, 0.12), 0 6px 16px rgba(0, 0, 0, 0.25);
+    }
+    .row.active .cell.filled { border-color: rgba(255, 255, 255, 0.55); }
+
+    .cell.next::after {
+      content: "";
+      position: absolute;
+      bottom: 15%;
+      left: 20%;
+      right: 20%;
+      height: 3px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--amber), var(--rose));
+      box-shadow: 0 0 10px rgba(251, 191, 36, 0.55);
+      animation: blink 1s steps(1) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .cell.pop { animation: pop 0.18s ease; }
+    @keyframes pop {
+      0%   { transform: scale(0.85); }
+      60%  { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
+    .row.shake { animation: shake 0.5s ease; }
+    @keyframes shake {
+      10%, 90% { transform: translateX(-3px); }
+      20%, 80% { transform: translateX(5px); }
+      30%, 50%, 70% { transform: translateX(-6px); }
+      40%, 60% { transform: translateX(6px); }
+    }
+
+    .cell.flip { animation: flip 0.5s ease; animation-fill-mode: both; }
+    @keyframes flip {
+      0% {
+        transform: rotateX(0);
+        background: rgba(255, 255, 255, 0.035);
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+      45% {
+        transform: rotateX(90deg);
+        background: rgba(255, 255, 255, 0.035);
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+      55% { transform: rotateX(90deg); }
+      100% { transform: rotateX(0); }
+    }
+
+    .cell.state-correct {
+      background: linear-gradient(145deg, var(--correct-1), var(--correct-2));
+      border-color: var(--correct-2);
+      box-shadow: 0 0 20px rgba(52, 211, 153, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+    .cell.state-present {
+      background: linear-gradient(145deg, var(--present-1), var(--present-2));
+      border-color: var(--present-2);
+      box-shadow: 0 0 20px rgba(251, 191, 36, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    }
+    .cell.state-absent {
+      background: linear-gradient(145deg, var(--absent-1), var(--absent-2));
+      border-color: var(--absent-2);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .cell.hint-used {
+      font-size: 55%;
+      opacity: 0.75;
+    }
+
+    .row.win .cell { animation: win-pulse 0.7s ease; }
+    @keyframes win-pulse {
+      0%   { transform: scale(1); }
+      35%  { transform: scale(1.14); }
+      60%  { transform: scale(0.96); }
+      100% { transform: scale(1); }
+    }
+
+    #message {
+      min-height: 26px;
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #message:empty { display: none; }
+    #message.error, #message.success {
+      border-radius: 999px;
+      padding: 6px 16px;
+      animation: fade-up 0.25s ease;
+      box-shadow: var(--shadow-sm);
+    }
+    #message.error {
+      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.14);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+    #message.success {
+      color: #86efac;
+      background: rgba(16, 185, 129, 0.16);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    #candidates {
+      width: 100%;
+      max-width: 420px;
+      min-height: 50px;
+      max-height: 96px;
+      overflow-y: auto;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 5px;
+      align-items: center;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    #candidates::-webkit-scrollbar { width: 4px; }
+    #candidates::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 4px; }
+
+    .cand-hint {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+      padding: 8px;
+      line-height: 1.5;
+    }
+    .cand-count {
+      width: 100%;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 2px 0;
+    }
+    .cand {
+      width: 44px;
+      height: 44px;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      font-size: 23px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .cand:hover {
+      border-color: rgba(251, 191, 36, 0.65);
+      background: rgba(251, 191, 36, 0.12);
+      transform: translateY(-2px) scale(1.05);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+    }
+    .cand:active { transform: scale(0.92); }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      max-width: 400px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .ctrl {
+      height: 44px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.07);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    }
+    .ctrl:hover { background: rgba(255, 255, 255, 0.12); }
+    .ctrl:active { transform: scale(0.96); }
+    .ctrl.enter {
+      background: linear-gradient(135deg, #34d399, #059669);
+      border-color: transparent;
+      box-shadow: 0 6px 18px rgba(5, 150, 105, 0.35);
+    }
+    .ctrl.enter:hover { filter: brightness(1.12); background: linear-gradient(135deg, #34d399, #059669); }
+    .ctrl.hint {
+      background: linear-gradient(135deg, #f59e0b, #f97316);
+      border-color: transparent;
+      color: #1c1203;
+      box-shadow: 0 6px 18px rgba(245, 158, 11, 0.3);
+    }
+    .ctrl.hint:hover { filter: brightness(1.12); background: linear-gradient(135deg, #f59e0b, #f97316); }
+    .ctrl.hint:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+
+    #hint-box {
+      min-height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--amber);
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      border-radius: 999px;
+      padding: 5px 16px;
+      box-shadow: 0 0 18px rgba(251, 191, 36, 0.12);
+      animation: fade-up 0.25s ease;
+    }
+
+    #typer {
+      width: 100%;
+      max-width: 400px;
+      height: 54px;
+      ime-mode: disabled;
+      border: 2px solid rgba(251, 191, 36, 0.45);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+      color: var(--text);
+      font-size: 24px;
+      font-weight: 600;
+      text-align: center;
+      outline: none;
+      caret-color: var(--amber);
+      box-shadow: 0 0 24px rgba(251, 191, 36, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1),
+        0 10px 28px rgba(0, 0, 0, 0.35);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    #typer::placeholder {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 400;
+    }
+    #typer:focus {
+      border-color: rgba(251, 191, 36, 0.85);
+      box-shadow: 0 0 30px rgba(251, 191, 36, 0.28), 0 0 0 4px rgba(251, 191, 36, 0.14),
+        inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 10px 28px rgba(0, 0, 0, 0.35);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
+    }
+    #typer:disabled {
+      opacity: 0.45;
+    }
+
+    /* ---------- 弹窗 ---------- */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 8, 20, 0.62);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 50;
+      animation: fade-in 0.2s ease;
+    }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(400px, 92vw);
+      max-height: 86dvh;
+      overflow-y: auto;
+      background: linear-gradient(180deg, rgba(31, 40, 74, 0.97), rgba(18, 24, 48, 0.98));
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 20px;
+      padding: 22px;
+      z-index: 60;
+      box-shadow: var(--shadow-md), 0 0 0 1px rgba(255, 255, 255, 0.04);
+      animation: modal-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+    }
+    @keyframes modal-in {
+      from { opacity: 0; transform: translate(-50%, -46%) scale(0.94); }
+      to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+    .modal h2 {
+      font-size: 20px;
+      text-align: center;
+      margin-bottom: 16px;
+      background: linear-gradient(90deg, var(--amber), var(--rose));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .modal ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #d6daf2;
+    }
+    .modal b { color: #fff; }
+
+    .sw {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      text-align: center;
+      line-height: 20px;
+      font-size: 11px;
+      color: #fff;
+      vertical-align: middle;
+      margin-right: 5px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+    .sw.correct { background: linear-gradient(145deg, var(--correct-1), var(--correct-2)); }
+    .sw.present { background: linear-gradient(145deg, var(--present-1), var(--present-2)); }
+    .sw.absent { background: linear-gradient(145deg, var(--absent-1), var(--absent-2)); }
+
+    .modal-btn {
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border-radius: 12px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease;
+    }
+    .modal-btn:hover { background: rgba(255, 255, 255, 0.14); }
+    .modal-btn:active { transform: scale(0.96); }
+    .modal-btn.primary {
+      background: linear-gradient(135deg, #34d399, #059669);
+      border-color: transparent;
+      box-shadow: 0 6px 18px rgba(5, 150, 105, 0.35);
+    }
+    .modal-btn.primary:hover { filter: brightness(1.12); }
+    .modal-btn.danger {
+      background: linear-gradient(135deg, #f43f5e, #e11d48);
+      border-color: transparent;
+      box-shadow: 0 6px 18px rgba(225, 29, 72, 0.35);
+    }
+    .modal-btn.danger:hover { filter: brightness(1.12); }
+    .modal-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .modal-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .share-preview {
+      max-height: 56dvh;
+      overflow: auto;
+      text-align: center;
+      margin: 4px 0 2px;
+    }
+    .share-preview img {
+      max-width: 100%;
+      max-height: 54dvh;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+    a.modal-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      box-sizing: border-box;
+    }
+
+    #stats-result {
+      text-align: center;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--amber);
+      margin-bottom: 12px;
+      text-shadow: 0 0 16px rgba(251, 191, 36, 0.35);
+    }
+    .stats-last {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .sl-head {
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 3px;
+      margin-bottom: 6px;
+    }
+    .sl-answer {
+      font-size: 20px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .sl-outcome {
+      margin-top: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--amber);
+    }
+    #hint-pop-info, #reroll-info, #win-info {
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 14px;
+    }
+    #reroll-title {
+      font-size: 17px;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .stat {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 14px;
+      padding: 12px 4px;
+      text-align: center;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    .stat b {
+      display: block;
+      font-size: 22px;
+      background: linear-gradient(90deg, var(--amber), var(--rose));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .stat span { font-size: 12px; color: var(--muted); }
+
+    .dist-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 5px 0;
+    }
+    .dist-label {
+      width: 16px;
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .dist-bar-wrap {
+      flex: 1;
+      height: 22px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .dist-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--correct-1), #0ea5b7);
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      transition: width 0.5s ease;
+      border-radius: 0 6px 6px 0;
+    }
+    .dist-bar.zero {
+      background: transparent;
+      padding-right: 0;
+    }
+
+    .hidden { display: none !important; }
+
+    .confetti {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 90;
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--amber);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 430px) {
+      header { padding: 8px 10px; gap: 6px; }
+      h1 { font-size: 19px; }
+      .brand { gap: 8px; }
+      .mode { padding: 4px 10px; font-size: 12px; }
+      .icon-btn { width: 33px; height: 33px; font-size: 14px; }
+    }
+
+    @media (max-width: 380px) {
+      .cand { width: 36px; height: 36px; font-size: 19px; }
+    }
+
+    @media (max-height: 760px) {
+      .cell { max-width: 58px; }
+      .ctrl { height: 40px; }
+      .cand { width: 36px; height: 36px; font-size: 19px; }
+      #candidates { max-height: 84px; }
+      main { gap: 8px; }
+    }
+
+    @media (max-height: 870px) and (min-height: 761px) {
+      .cell { max-width: 60px; }
+      #typer { height: 48px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+
+  <header>
+    <div class="brand">
+      <h1><span class="cn">历史</span><span class="en">Wordle</span></h1>
+      <div class="modes" role="tablist" aria-label="游戏模式">
+        <button id="btn-daily" class="mode active" role="tab" aria-selected="true">每日</button>
+        <button id="btn-random" class="mode" role="tab" aria-selected="false">测测need学</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btn-help" class="icon-btn" title="玩法说明" aria-label="玩法说明">?</button>
+      <button id="btn-stats" class="icon-btn" title="统计" aria-label="统计">&#128202;</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="board" aria-label="猜词棋盘"></div>
+    <div id="sub-hint" title="开局显示第一条线索（时间/类别）"></div>
+    <div id="hint-box" class="hidden"></div>
+    <div id="message" role="status"></div>
+    <input id="typer" inputmode="latin" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="输入拼音，如 ji">
+    <div id="candidates"></div>
+    <div class="controls">
+      <button id="btn-hint" class="ctrl hint" title="查看下一条线索">&#128161; 提示</button>
+      <button id="btn-backspace" class="ctrl" title="退格">&#9003; 删除</button>
+      <button id="btn-clear-py" class="ctrl" title="清空拼音">清空拼音</button>
+      <button id="btn-enter" class="ctrl enter" title="提交">确定</button>
+    </div>
+    <button id="btn-reroll" class="reroll-big" title="换一个新词">&#128260; 换一题</button>
+    <button id="btn-stats-big" class="stats-big" title="查看统计">&#128202; 查看统计</button>
+  </main>
+
+  <div id="overlay" class="overlay hidden"></div>
+  <div id="modal-help" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <h2 id="help-title">怎么玩</h2>
+    <ul>
+      <li>答案是一个<b>历史事件或历史人物</b>（中国史 + 世界史），<b>字数不固定</b>，共 <b>6</b> 次机会；开局会先标明答案是<b>人物</b>还是<b>事件</b>。</li>
+      <li>点输入框输入<b>拼音</b>（如 ji），候选字自动出现，点选上屏（已禁用中文输入法，避免遮挡线索）。</li>
+      <li><span class="sw correct">绿</span>这个字在答案里，位置正确</li>
+      <li><span class="sw present">黄</span>这个字在答案里，但位置不对</li>
+      <li><span class="sw absent">灰</span>答案里没有这个字</li>
+      <li>「每日」模式每天同一道题，完成后当天<b>锁定</b>（防止重复刷）；「测测need学」模式每局换题。</li>
+      <li>猜错后会自动弹窗问是否需要<b>提示</b>：事件按 <b>时间→人物→地点→影响→雑魚就是雑魚</b>，人物按 <b>类别→身份→成就→特征→雑魚就是雑魚</b>（<b>看提示会消耗当前那次尝试</b>：本行判定失败，输入次数 -1；只剩最后一次尝试时提示变为「雑魚认证」认输）。</li>
+      <li>5 条线索全部放完后可点<b>「雑魚认证」</b>认输，本题计为失败。</li>
+      <li>「测测need学」模式可用「换一题」按钮（题目未结束时需确认「我是雑魚」，中途放弃会按已用尝试次数嘲讽，结束后直接换题）；猜对后自动进入下一题。</li>
+      <li>统计：<b>连胜</b>与<b>最佳</b>在所有模式通用——连胜指连续答对的局数（输了清零），最佳指历史最大连胜。</li>
+    </ul>
+    <div class="modal-buttons">
+      <button id="btn-help-close" class="modal-btn primary">开始</button>
+    </div>
+  </div>
+
+  <div id="modal-stats" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="stats-title">
+    <h2 id="stats-title">统计</h2>
+    <div id="stats-last" class="stats-last hidden">
+      <div class="sl-head">上 一 题</div>
+      <div class="sl-answer"><span id="sl-answer">—</span><span id="sl-cat" class="type-tag">—</span></div>
+      <div id="sl-outcome" class="sl-outcome">—</div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat"><b id="st-played">0</b><span>局数</span></div>
+      <div class="stat"><b id="st-winrate">0%</b><span id="st-nickname">纯雑魚</span></div>
+      <div class="stat"><b id="st-streak">0</b><span>连胜</span></div>
+      <div class="stat"><b id="st-best">0</b><span>最佳</span></div>
+      <div class="stat"><b id="st-misses">0</b><span>回答错误</span></div>
+      <div class="stat"><b id="st-giveups">0</b><span>看答案</span></div>
+    </div>
+    <div id="st-dist"></div>
+    <div class="modal-buttons">
+      <button id="btn-share-card" class="modal-btn primary">生成分享图</button>
+      <button id="btn-stats-close" class="modal-btn">关闭</button>
+    </div>
+  </div>
+
+  <div id="modal-share" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="share-title">
+    <h2 id="share-title">分享图</h2>
+    <div class="share-preview"><img id="share-img" alt="战绩分享图"></div>
+    <div class="modal-buttons">
+      <a id="btn-share-download" class="modal-btn primary" download="历史Wordle战绩.png">下载图片</a>
+      <button id="btn-share-close" class="modal-btn">关闭</button>
+    </div>
+  </div>
+
+  <div id="modal-hint" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="hint-pop-title">
+    <h2 id="hint-pop-title">雑魚ざこ！</h2>
+    <div id="hint-pop-info">已放出 0/5 条线索</div>
+    <div class="modal-buttons">
+      <button id="btn-hint-yes" class="modal-btn primary">&#128161; 要提示</button>
+      <button id="btn-hint-no" class="modal-btn">我是猛男口牙</button>
+    </div>
+  </div>
+
+  <div id="modal-reroll" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reroll-title">
+    <h2 id="reroll-title">雑魚大哥哥连这都不会吗，真是雑魚呢</h2>
+    <div id="reroll-info">承认自己是雑魚，才能换一题哦～</div>
+    <div class="modal-buttons">
+      <button id="btn-reroll-yes" class="modal-btn primary">我是雑魚</button>
+      <button id="btn-reroll-no" class="modal-btn">我才不是雑魚</button>
+    </div>
+  </div>
+
+  <div id="modal-win" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="win-title">
+    <h2 id="win-title">历史大师就是你！</h2>
+    <div id="win-info">第 1 次猜中：一次命中，天选之人！</div>
+    <div class="modal-buttons">
+      <button id="btn-win-dismiss" class="modal-btn">就这样吧</button>
+      <button id="btn-win-mode" class="modal-btn primary" style="display:none">测测need学</button>
+      <button id="btn-win-next" class="modal-btn primary" style="display:none">立即下一题</button>
+      <button id="btn-win-stats" class="modal-btn" style="display:none">查看统计</button>
+    </div>
+  </div>
+
+  <script>const HISTORY_ENTRIES = [["孔子","中国史·人物",["古代·男·真实","思想家、教育家，儒家创始人","《论语》，“己所不欲勿施于人”","春秋鲁国人，尊称至圣先师","春秋鲁国人，姓孔名丘，创立儒家学说，被尊为至圣先师。"]],["老子","中国史·人物",["古代·男·真实","思想家，道家创始人","《道德经》，五千言","骑青牛出函谷关","著《道德经》、骑青牛出关的道家学派创始人。"]],["孟子","中国史·人物",["古代·男·真实","思想家，儒家亚圣","《孟子》，性善论","孟母三迁，鱼与熊掌","继承孔子学说、主张民贵君轻，被尊为亚圣的思想家。"]],["荀子","中国史·人物",["古代·男·真实","思想家，儒家代表","《劝学》，“青出于蓝”","性恶论，隆礼重法","主张性恶论、写下《劝学》的儒家思想家。"]],["墨子","中国史·人物",["古代·男·真实","思想家，墨家创始人","兼爱非攻，《墨子》","反对战争，提倡节用","主张兼爱非攻、反对不义战争的墨家学派创始人。"]],["屈原","中国史·人物",["古代·男·真实","楚国诗人，政治家","《离骚》《天问》","端午节投汨罗江","楚国贵族出身，写下《离骚》，投汨罗江殉国的爱国诗人。"]],["项羽","中国史·人物",["古代·男·真实","西楚霸王，秦末将领","巨鹿之战破釜沉舟","力能扛鼎，乌江自刎","破釜沉舟大败秦军、自封西楚霸王，最终在乌江自刎的末路英雄。"]],["刘邦","中国史·人物",["古代·男·真实","汉朝开国皇帝","楚汉之争胜出，建立汉朝","约法三章，大风歌","从泗水亭长起兵，楚汉之争击败项羽，建立汉朝的开国皇帝。"]],["刘备","中国史·人物",["古代·男·真实","蜀汉开国皇帝","三顾茅庐请诸葛亮","桃园结义，仁义之名","以仁德闻名、三顾茅庐请出诸葛亮，建立蜀汉的昭烈皇帝。"]],["曹操","中国史·人物",["古代·男·真实","东汉末年政治家、军事家、诗人","官渡之战，统一北方","宁我负人，挟天子以令诸侯","挟天子以令诸侯、官渡之战统一北方，也是建安文学的代表诗人。"]],["孙权","中国史·人物",["古代·男·真实","吴国开国皇帝","赤壁之战联刘抗曹","生子当如孙仲谋","继承父兄基业坐镇江东，赤壁之战联刘抗曹的吴国开国皇帝。"]],["关羽","中国史·人物",["古代·男·真实","蜀汉名将","过五关斩六将，水淹七军","温酒斩华雄，义释曹操","温酒斩华雄、过五关斩六将，被后人尊为武圣的忠义名将。"]],["张飞","中国史·人物",["古代·男·真实","蜀汉名将","长坂坡一声喝退曹军","桃园结义，猛张飞","长坂坡一声怒吼吓退曹军、与刘备桃园结义的猛将。"]],["赵云","中国史·人物",["古代·男·真实","蜀汉名将","长坂坡七进七出","常山赵子龙，一身是胆","长坂坡七进七出救阿斗、一身是胆的常山名将。"]],["周瑜","中国史·人物",["古代·男·真实","东吴大都督","赤壁之战火烧曹军","既生瑜何生亮","赤壁之战火烧曹军、精通音律的东吴大都督。"]],["岳飞","中国史·人物",["古代·男·真实","南宋抗金名将","精忠报国，岳家军","直捣黄龙，风波亭遇害","精忠报国、率岳家军抗金，却被以莫须有罪名害死的民族英雄。"]],["秦桧","中国史·人物",["古代·男·真实","南宋奸臣","以莫须有罪名害死岳飞","跪像千年，遗臭万年","以莫须有罪名害死岳飞、至今跪在岳飞墓前的南宋奸臣。"]],["郑和","中国史·人物",["古代·男·真实","明朝航海家","七下西洋","宝船船队，太监出身","率庞大宝船队七下西洋、远达非洲东海岸的航海家。"]],["康熙","中国史·人物",["古代·男·真实","清朝皇帝","擒鳌拜，平三藩，收台湾","康熙字典，多伦会盟","擒鳌拜、平三藩、收台湾，开创康乾盛世的一代雄主。"]],["雍正","中国史·人物",["古代·男·真实","清朝皇帝","设立军机处，推行摊丁入亩","九子夺嫡胜出","设立军机处、推行摊丁入亩，以勤政著称的清朝皇帝。"]],["乾隆","中国史·人物",["古代·男·真实","清朝皇帝","十全武功，编修四库全书","六下江南，闭关锁国","六下江南、编纂四库全书，自称十全老人的清朝皇帝。"]],["慈禧","中国史·人物",["古代·女·真实","晚清掌权者，太后","垂帘听政近半个世纪","挪用海军军费过寿，戊戌政变","垂帘听政近半个世纪、挪用军费过寿的晚清实际掌权者。"]],["光绪","中国史·人物",["古代·男·真实","清朝皇帝","支持戊戌变法","被慈禧软禁瀛台","支持戊戌变法、却被慈禧软禁至死的清朝皇帝。"]],["溥仪","中国史·人物",["现代·男·真实","清朝末代皇帝","三岁登基，辛亥退位","伪满洲国傀儡皇帝","三岁登基、经历退位和傀儡生涯，是中国最后一位皇帝。"]],["雷锋","中国史·人物",["现代·男·真实","解放军战士，道德楷模","做好事不留名","三月学雷锋","全心全意为人民服务、好事做了一火车的解放军战士。"]],["李白","中国史·人物",["古代·男·真实","唐朝诗人","《将进酒》《静夜思》","斗酒诗百篇，诗仙","斗酒诗百篇、留下《将进酒》等名篇，被称诗仙的大唐诗人。"]],["杜甫","中国史·人物",["古代·男·真实","唐朝诗人","《春望》《三吏三别》","安史之乱中流离","历经安史之乱、写下《春望》等诗篇，被尊为诗圣的诗人。"]],["鲁迅","中国史·人物",["现代·男·真实","文学家、思想家","《狂人日记》《阿Q正传》","横眉冷对千夫指","写《狂人日记》《阿Q正传》、以笔为枪的现代文学奠基人。"]],["蔡伦","中国史·人物",["古代·男·真实","东汉宦官，发明家","改进造纸术","用树皮麻头造纸","用树皮麻头等原料改进造纸术，推动文化传播的东汉宦官。"]],["毕昇","中国史·人物",["古代·男·真实","北宋发明家","发明活字印刷术","泥活字，四大发明之一","发明泥活字印刷术、推动世界文明传播的北宋发明家。"]],["张衡","中国史·人物",["古代·男·真实","东汉科学家，文学家","发明地动仪，浑天仪","《二京赋》作者","发明地动仪和浑天仪，又善辞赋的东汉大科学家。"]],["华佗","中国史·人物",["古代·男·真实","东汉名医","发明麻沸散，创五禽戏","刮骨疗毒（传说）","发明麻沸散、创编五禽戏，被后世尊为外科鼻祖的神医。"]],["扁鹊","中国史·人物",["古代·男·真实","春秋战国名医","望闻问切四诊法","见齐桓侯知病入膏肓","首创望闻问切四诊法，被尊为中医脉诊奠基人的名医。"]],["班超","中国史·人物",["古代·男·真实","东汉外交家、军事家","投笔从戎，经营西域三十一年","不入虎穴焉得虎子","投笔从戎、不入虎穴焉得虎子，经营西域三十一年的东汉名将。"]],["卫青","中国史·人物",["古代·男·真实","西汉名将","七战七捷，收复河套","从骑奴到将军","从骑奴成长为大将军，七次出击匈奴收复河套的名将。"]],["张骞","中国史·人物",["古代·男·真实","西汉外交家","出使西域，开辟丝绸之路","持汉节不失，被扣十余年","持汉节出使西域十余年，开辟丝绸之路的汉朝使者。"]],["苏武","中国史·人物",["古代·男·真实","西汉使臣","北海牧羊十九年","持节不屈，吞毡饮雪","被匈奴扣留十九年、在北海牧羊仍持汉节不屈的汉朝使臣。"]],["玄奘","中国史·人物",["古代·男·真实","唐朝高僧，旅行家","西行天竺取经","《大唐西域记》","西行天竺取经十余年、著《大唐西域记》，是《西游记》唐僧的原型。"]],["鉴真","中国史·人物",["古代·男·真实","唐朝高僧","六次东渡日本","双目失明仍坚持传法","六次东渡日本、双目失明仍坚持传播佛法的高僧。"]],["西施","中国史·人物",["古代·女·虚构","越国美女","浣纱沉鱼，助越灭吴","四大美女之首","浣纱沉鱼、为越国复国献身，位列四大美女之首的传奇女子。"]],["貂蝉","中国史·人物",["古代·女·虚构","三国演义美女","连环计离间董卓吕布","闭月之貌","以连环计离间董卓吕布、闭月羞花的三国美女。"]],["诸葛亮","中国史·人物",["古代·男·真实","蜀汉丞相，政治家、军事家","隆中对，七擒孟获","鞠躬尽瘁，死而后已","隆中对策、六出祁山，鞠躬尽瘁死而后已的蜀汉丞相。"]],["司马懿","中国史·人物",["古代·男·真实","三国魏国重臣","高平陵之变夺权","鹰视狼顾，隐忍多年","隐忍数十年，最终通过高平陵之变掌握曹魏大权的谋略家。"]],["辛弃疾","中国史·人物",["古代·男·真实","南宋词人、将领","《破阵子》《永遇乐》","醉里挑灯看剑，词中之龙","文武双全，写《破阵子》等豪放词，一生志在收复失地的南宋词人。"]],["文天祥","中国史·人物",["古代·男·真实","南宋丞相，抗元英雄","《过零丁洋》","人生自古谁无死","抗元兵败被俘，写下人生自古谁无死的诗句从容就义。"]],["张居正","中国史·人物",["古代·男·真实","明朝首辅，政治家","推行一条鞭法，万历新政","十年改革，明朝中兴","推行一条鞭法、主持万历新政十年，让明朝一度中兴的首辅。"]],["林则徐","中国史·人物",["古代·男·真实","清朝官员，民族英雄","虎门销烟","开眼看世界第一人","虎门销烟、开眼看世界，写下苟利国家生死以的爱国名臣。"]],["曾国藩","中国史·人物",["古代·男·真实","晚清名臣","组建湘军，镇压太平天国","《曾国藩家书》，洋务派代表","组建湘军平定太平天国、写下《曾国藩家书》的晚清名臣。"]],["李鸿章","中国史·人物",["古代·男·真实","晚清重臣，外交家","创办北洋水师，洋务运动","签订马关条约，裱糊匠","创办北洋水师、代表清廷签订诸多条约的晚清重臣。"]],["左宗棠","中国史·人物",["古代·男·真实","晚清名将，洋务派","收复新疆","抬棺出征，楚军","抬棺出征、收复新疆一百六十万平方公里土地的晚清名将。"]],["康有为","中国史·人物",["古代·男·真实","晚清维新派领袖","公车上书，戊戌变法","《新学伪经考》，保皇派","发起公车上书、领导戊戌变法的维新派领袖。"]],["梁启超","中国史·人物",["现代·男·真实","近代思想家、文学家","《少年中国说》","戊戌变法，饮冰室主人","写下《少年中国说》、提倡少年强则国强的近代思想家。"]],["孙中山","中国史·人物",["现代·男·真实","革命家，中华民国国父","辛亥革命，三民主义","推翻帝制，建立民国","领导辛亥革命推翻帝制、创立三民主义的中华民国国父。"]],["袁世凯","中国史·人物",["现代·男·真实","北洋军阀首领","窃取辛亥革命果实，称帝","小站练兵，二十一条","窃取辛亥革命成果、复辟帝制仅八十三天的北洋军阀首领。"]],["蒋介石","中国史·人物",["现代·男·真实","民国总统，国民党领袖","北伐战争，抗战时期最高统帅","退守台湾，四大家族","国民党领袖、抗战时期最高统帅，后败退台湾的民国总统。"]],["毛泽东","中国史·人物",["现代·男·真实","革命家，新中国缔造者","领导中国革命，建立新中国","《沁园春·雪》，两万五千里长征","领导中国人民经过长期奋斗建立新中国、开创新时代的一代伟人。"]],["周恩来","中国史·人物",["现代·男·真实","政治家、外交家","万隆会议求同存异，新中国总理","鞠躬尽瘁，十里长街送总理","新中国首任总理，在万隆会议提出求同存异的杰出外交家。"]],["邓小平","中国史·人物",["现代·男·真实","政治家，改革开放总设计师","十一届三中全会，一国两制","春天的故事，南巡讲话","提出改革开放和一国两制，引领中国走向富强的总设计师。"]],["邓世昌","中国史·人物",["现代·男·真实","晚清海军将领","甲午海战撞向日舰吉野","致远舰管带","甲午海战中指挥致远舰撞向日舰、与舰同沉的爱国将领。"]],["戚继光","中国史·人物",["古代·男·真实","明朝抗倭名将","组建戚家军，扫平倭寇","鸳鸯阵，台州大捷","组建戚家军、用鸳鸯阵扫平东南沿海倭患的抗倭名将。"]],["郑成功","中国史·人物",["古代·男·真实","明末清初将领","收复台湾，驱逐荷兰殖民者","国姓爷，反清复明","率军东渡，从荷兰殖民者手中收复台湾的民族英雄。"]],["谭嗣同","中国史·人物",["现代·男·真实","维新志士","参与戊戌变法，慷慨就义","我自横刀向天笑","参与戊戌变法、高唱我自横刀向天笑从容就义的维新志士。"]],["李大钊","中国史·人物",["现代·男·真实","马克思主义者","《庶民的胜利》，传播马列","在绞刑架前从容就义","最早系统传播马克思主义、从容就义的革命先驱。"]],["陈独秀","中国史·人物",["现代·男·真实","新文化运动领袖","创办《新青年》，五四运动","中共主要创始人","创办《新青年》、发起新文化运动的中共主要创始人。"]],["彭德怀","中国史·人物",["现代·男·真实","开国元帅","百团大战，抗美援朝总司令","谁敢横刀立马，唯我彭大将军","指挥百团大战、任志愿军司令抗美援朝的开国元帅。"]],["祖冲之","中国史·人物",["古代·男·真实","南北朝数学家、天文学家","将圆周率精确到小数点后七位","大明历，指南车","把圆周率精确到小数点后七位，领先世界近千年的南北朝科学家。"]],["李时珍","中国史·人物",["古代·男·真实","明朝医学家","《本草纲目》","跋山涉水尝百草","跋山涉水尝百草、编成药物学巨著《本草纲目》的医学家。"]],["徐霞客","中国史·人物",["古代·男·真实","明代地理学家、旅行家","《徐霞客游记》","游历三十余年，足迹遍及大半个中国","游历三十余年、著《徐霞客游记》的明代地理学家。"]],["王羲之","中国史·人物",["古代·男·真实","东晋书法家","《兰亭集序》天下第一行书","入木三分，东床快婿","写下天下第一行书《兰亭集序》，被尊为书圣的东晋书法家。"]],["吴道子","中国史·人物",["古代·男·真实","唐代画家","《送子天王图》","吴带当风，画圣","吴带当风、被尊为画圣的唐代画家。"]],["顾恺之","中国史·人物",["古代·男·真实","东晋画家","《洛神赋图》","传神写照，画绝痴绝","画《洛神赋图》、讲究传神写照的东晋画家。"]],["司马迁","中国史·人物",["古代·男·真实","西汉史学家","《史记》，史家之绝唱","忍辱负重写《史记》","身受宫刑仍发愤著书，写下纪传体通史《史记》的史学家。"]],["霍去病","中国史·人物",["古代·男·真实","西汉名将","封狼居胥，匈奴未灭何以家为","十七岁封冠军侯","十七岁封侯、封狼居胥，喊出匈奴未灭何以家为的少年战神。"]],["王昭君","中国史·人物",["古代·女·真实","西汉宫女，和亲使者","出塞和亲，维护和平","落雁之美，昭君出塞","自愿出塞和亲、为汉匈和平做出贡献的四大美女之一。"]],["杨玉环","中国史·人物",["古代·女·真实","唐玄宗贵妃","羞花之貌，霓裳羽衣舞","一骑红尘妃子笑","羞花之貌、善舞霓裳羽衣，在马嵬坡香消玉殒的贵妃。"]],["武则天","中国史·人物",["古代·女·真实","唐朝皇帝，中国唯一女皇","建立武周，开创殿试","无字碑，酷吏政治","从才人一步步登上皇位，成为中国历史上唯一的女皇帝。"]],["唐太宗","中国史·人物",["古代·男·真实","唐朝皇帝","贞观之治","以人为镜，虚心纳谏","发动玄武门之变登基，开创贞观之治、虚心纳谏的明君。"]],["汉武帝","中国史·人物",["古代·男·真实","西汉皇帝","北击匈奴，开疆拓土","独尊儒术，张骞通西域","北击匈奴、开拓疆土、独尊儒术，把汉朝推向鼎盛的皇帝。"]],["秦始皇","中国史·人物",["古代·男·真实","秦朝开国皇帝","统一六国，书同文车同轨","修筑长城，兵马俑","扫灭六国、统一文字度量衡，建立中国历史上第一个统一王朝的皇帝。"]],["唐玄宗","中国史·人物",["古代·男·真实","唐朝皇帝","开元盛世，重用姚崇宋璟","与杨贵妃的故事","开创开元盛世又引发安史之乱，让唐朝由盛转衰的皇帝。"]],["宋太祖","中国史·人物",["古代·男·真实","宋朝开国皇帝","陈桥兵变黄袍加身，杯酒释兵权","重文轻武，赵匡胤","陈桥兵变建立宋朝、杯酒释兵权的开国皇帝。"]],["忽必烈","中国史·人物",["古代·男·真实","元朝开国皇帝","建立元朝，灭亡南宋","定都大都（今北京）","建立元朝、灭亡南宋，定都大都的蒙古皇帝。"]],["花木兰","中国史·人物",["古代·女·虚构","北朝传说女英雄","代父从军十二载","木兰辞，女扮男装","女扮男装代父从军十二载，木兰诗传唱的传奇女英雄。"]],["成吉思汗","中国史·人物",["古代·男·真实","蒙古帝国大汗","统一蒙古，建立蒙古帝国","一代天骄，西征欧亚","统一蒙古各部、建立横跨欧亚的蒙古帝国的铁木真。"]],["努尔哈赤","中国史·人物",["古代·男·真实","后金开国大汗","统一女真，建立后金","萨尔浒之战大败明军","统一女真各部、建立后金，为清朝奠基的杰出领袖。"]],["文成公主","中国史·人物",["古代·女·真实","唐朝公主","入藏和亲，嫁给松赞干布","带去中原文化技术，建大昭寺","远嫁吐蕃、带去中原文化，为唐蕃和平做出贡献的公主。"]],["凯撒","世界史·人物",["古代·男·真实","古罗马统帅、政治家","征服高卢，改革历法","渡卢比孔河，遇刺身亡","征服高卢、越过卢比孔河夺取政权，遇刺身亡的罗马独裁官。"]],["牛顿","世界史·人物",["古代·男·真实","物理学家、数学家","万有引力定律，三大运动定律","被苹果砸中的传说","发现万有引力和三大运动定律，奠定经典物理学基础的科学家。"]],["瓦特","世界史·人物",["现代·男·真实","发明家、工程师","改良蒸汽机","功率单位以他命名","改良蒸汽机、推动工业革命，功率单位以他命名的工程师。"]],["林肯","世界史·人物",["现代·男·真实","美国第16任总统","废除奴隶制，南北战争获胜","葛底斯堡演说，遇刺身亡","领导美国南北战争、废除奴隶制，后遇刺身亡的总统。"]],["列宁","世界史·人物",["现代·男·真实","苏联缔造者","领导十月革命，建立苏联","帝国主义论，新经济政策","领导十月革命、缔造世界上第一个社会主义国家苏联。"]],["甘地","世界史·人物",["现代·男·真实","印度国父","非暴力不合作运动","纺车与食盐进军","以非暴力不合作运动领导印度独立，被尊为圣雄。"]],["霍金","世界史·人物",["现代·男·真实","物理学家","《时间简史》，黑洞理论","渐冻症，轮椅上的科学家","身患渐冻症仍研究黑洞、写下《时间简史》的物理学家。"]],["梵高","世界史·人物",["现代·男·真实","后印象派画家","《向日葵》《星月夜》","割耳事件，生前无人赏识","画《向日葵》《星月夜》却生前无人赏识，死后成名的后印象派画家。"]],["康德","世界史·人物",["现代·男·真实","哲学家","《纯粹理性批判》","三大批判，星云假说","写下三大批判、提出星云假说，德国古典哲学的代表人物。"]],["尼采","世界史·人物",["现代·男·真实","哲学家","《查拉图斯特拉如是说》","上帝死了，超人哲学","宣告上帝死了、提出超人哲学的德国思想家。"]],["卢梭","世界史·人物",["现代·男·真实","启蒙思想家","《社会契约论》《忏悔录》","天赋人权，主权在民","主张人生而自由、主权在民，写下《社会契约论》的启蒙思想家。"]],["普京","世界史·人物",["现代·男·真实","俄罗斯总统","克格勃出身，连任多届","硬汉形象，柔道高手","克格勃出身、以硬汉形象连任多届的俄罗斯领导人。"]],["柏拉图","世界史·人物",["古代·男·真实","古希腊哲学家","《理想国》，创办学园","洞穴隐喻，理念论","苏格拉底的学生，写下《理想国》，创办雅典学园的哲学家。"]],["哥伦布","世界史·人物",["古代·男·真实","航海家","横渡大西洋发现美洲","把印第安人当印度人","1492年率船队横渡大西洋，误打误撞发现美洲大陆的航海家。"]],["麦哲伦","世界史·人物",["古代·男·真实","航海家","率船队完成首次环球航行","死于菲律宾，船队继续西行","率船队完成人类首次环球航行，最终客死菲律宾的航海家。"]],["达芬奇","世界史·人物",["古代·男·真实","画家、科学家、发明家","《蒙娜丽莎》《最后的晚餐》","文艺复兴全才，手稿密码","画出蒙娜丽莎和最后的晚餐，兼通科学与发明的文艺复兴全才。"]],["华盛顿","世界史·人物",["现代·男·真实","美国开国总统","领导独立战争，主持制宪","连任两届后主动卸任","领导美国独立战争、主持制宪，连任两届后主动卸任的国父。"]],["拿破仑","世界史·人物",["现代·男·真实","法国皇帝，军事家","法兰西第一帝国，民法典","滑铁卢战役惨败","从科西嘉小个子崛起为法国皇帝，滑铁卢一败涂地的军事天才。"]],["达尔文","世界史·人物",["现代·男·真实","生物学家","进化论，《物种起源》","加拉帕戈斯群岛考察","提出进化论、著《物种起源》，揭示生物演化规律的科学家。"]],["马克思","世界史·人物",["现代·男·真实","思想家，马克思主义创始人","《共产党宣言》《资本论》","与恩格斯并肩战斗","与恩格斯合著《共产党宣言》，创立科学社会主义的思想家。"]],["恩格斯","世界史·人物",["现代·男·真实","思想家，革命家","《自然辩证法》，资助马克思","马克思的亲密战友","马克思的挚友和资助者，共同创立马克思主义的革命家。"]],["斯大林","世界史·人物",["现代·男·真实","苏联领导人","五年计划，卫国战争胜利","大清洗，集体农庄","领导苏联赢得卫国战争、与美英并称二战三巨头的领导人。"]],["罗斯福","世界史·人物",["现代·男·真实","美国第32任总统","新政应对大萧条，领导二战","轮椅总统，连任四届","推行新政度过大萧条、领导美国参加二战，连任四届的总统。"]],["丘吉尔","世界史·人物",["现代·男·真实","英国首相","领导英国赢得二战","雪茄不离手，铁幕演说","在二战最艰难时刻领导英国、以雪茄和V字手势闻名的首相。"]],["希特勒","世界史·人物",["现代·男·真实","纳粹德国元首","发动第二次世界大战","种族灭绝，自杀身亡","发动第二次世界大战、实施种族灭绝，最终自杀的纳粹头目。"]],["萨达姆","世界史·人物",["现代·男·真实","伊拉克前总统","海湾战争，被美军抓获处决","两伊战争发动者","长期执政伊拉克、发动两伊战争和海湾战争，后被处决的总统。"]],["特斯拉","世界史·人物",["现代·男·真实","发明家、物理学家","交流电系统，特斯拉线圈","与爱迪生电流之争","发明交流电系统、与爱迪生展开电流之战的天才发明家。"]],["爱迪生","世界史·人物",["现代·男·真实","发明家","电灯、留声机，一千多项专利","门洛帕克的奇才","发明电灯留声机等一千多项成果，被称为发明大王的科学家。"]],["乔布斯","世界史·人物",["现代·男·真实","企业家，苹果创始人","iPhone、iPad、MacBook","斯坦福演讲，Stay Hungry","苹果公司的灵魂人物，重新定义手机和数字生活的企业家。"]],["诺贝尔","世界史·人物",["现代·男·真实","化学家、企业家","发明炸药，设立诺贝尔奖","硝化甘油，和平主义者","发明炸药、设立以自己名字命名的世界最高奖项的化学家。"]],["贝多芬","世界史·人物",["现代·男·真实","作曲家","《命运交响曲》《月光奏鸣曲》","失聪后仍创作","双耳失聪仍创作命运交响曲，扼住命运咽喉的音乐大师。"]],["莫扎特","世界史·人物",["古代·男·真实","作曲家","《费加罗的婚礼》《安魂曲》","音乐神童，5岁作曲","五岁作曲、留下《费加罗的婚礼》等杰作的奥地利音乐神童。"]],["毕加索","世界史·人物",["现代·男·真实","画家","《格尔尼卡》，立体主义","蓝色时期，和平鸽","开创立体主义、画下《格尔尼卡》的现代艺术大师。"]],["伏尔泰","世界史·人物",["现代·男·真实","启蒙思想家","《哲学通信》，批判教会","自由平等，开明君主","以笔为剑批判教会、倡导自由平等的法国启蒙旗手。"]],["黑格尔","世界史·人物",["现代·男·真实","哲学家","《精神现象学》，辩证法","绝对精神，正反合","集德国古典哲学之大成、创立辩证法体系的哲学家。"]],["屋大维","世界史·人物",["古代·男·真实","罗马帝国首任皇帝","结束内战，建立元首制","奥古斯都，罗马和平","凯撒的养子，结束内战建立罗马帝国，被尊为奥古斯都。"]],["曼德拉","世界史·人物",["现代·男·真实","南非总统，反种族隔离领袖","狱中27年，废除种族隔离","彩虹国，和解典范","为废除种族隔离坐牢二十七年，后当选南非首位黑人总统。"]],["苏格拉底","世界史·人物",["古代·男·真实","古希腊哲学家","助产术式问答，无著作传世","被判饮鸩而死","雅典城邦的哲学家，以问答启发人，因被控腐蚀青年而饮鸩就义。"]],["释迦牟尼","世界史·人物",["古代·男·真实","佛教创始人","菩提树下悟道，创立佛教","乔达摩·悉达多，王子出家","本是王子，菩提树下悟道，创立佛教、被尊为如来佛祖。"]],["穆罕默德","世界史·人物",["古代·男·真实","伊斯兰教创始人","创立伊斯兰教，统一阿拉伯半岛","《古兰经》，迁徙麦地那","在阿拉伯半岛创立伊斯兰教，并统一各部落的先知。"]],["富兰克林","世界史·人物",["现代·男·真实","科学家、政治家","风筝实验引雷，参与独立宣言","百元美钞头像","放风筝引雷、发明避雷针，参与起草《独立宣言》的美国元勋。"]],["墨索里尼","世界史·人物",["现代·男·真实","意大利法西斯头目","与希特勒结盟，进军罗马","被处决后倒挂米兰","创立法西斯主义、与希特勒结盟，最终被处决倒挂的意大利独裁者。"]],["东条英机","世界史·人物",["现代·男·真实","日本首相，甲级战犯","发动太平洋战争，偷袭珍珠港","二战日本军事独裁","任日本首相期间发动太平洋战争，战后被处绞刑的甲级战犯。"]],["居里夫人","世界史·人物",["现代·女·真实","物理学家、化学家","发现镭和钋，两获诺奖","放射性研究，死于辐射","发现镭和钋、两度获诺贝尔奖，因放射性研究献身的科学家。"]],["爱因斯坦","世界史·人物",["现代·男·真实","物理学家","相对论，质能方程E=mc²","吐舌头照片，诺贝尔奖","提出相对论、写出质能方程，20世纪最伟大的物理学家。"]],["莎士比亚","世界史·人物",["古代·男·真实","英国剧作家、诗人","《哈姆雷特》《罗密欧与朱丽叶》","生存还是毁灭","写下哈姆雷特、罗密欧与朱丽叶等不朽剧作的英国文豪。"]],["孟德斯鸠","世界史·人物",["现代·男·真实","启蒙思想家","《论法的精神》","三权分立学说","提出三权分立学说、著《论法的精神》的启蒙思想家。"]],["弗洛伊德","世界史·人物",["现代·男·真实","心理学家","《梦的解析》，精神分析学派","潜意识，俄狄浦斯情结","著《梦的解析》、创立精神分析学派的心理学家。"]],["比尔盖茨","世界史·人物",["现代·男·真实","企业家，微软创始人","Windows系统，世界首富","慈善基金会，裸捐","创立微软、开发Windows系统，后投身慈善的世界首富。"]],["阿拉法特","世界史·人物",["现代·男·真实","巴勒斯坦领导人","领导巴解组织，获诺贝尔和平奖","头巾与橄榄枝","领导巴勒斯坦解放事业、获诺贝尔和平奖的巴勒斯坦领袖。"]],["牧野之战","中国史·事件",["公元前11世纪，商周之际","周武王、商纣王","牧野（今河南新乡）","商朝灭亡，西周建立","周武王在牧野与商军决战，商军倒戈，商朝灭亡、西周建立。"]],["春秋争霸","中国史·事件",["春秋时期","齐桓公、晋文公、楚庄王等","中原","诸侯兼并，周王室衰微","齐桓公等霸主先后尊王攘夷，中原诸侯在争霸中逐渐走向兼并。"]],["战国七雄","中国史·事件",["战国时期","齐楚燕韩赵魏秦","中原各地","兼并战争，秦最终统一","齐楚燕韩赵魏秦七国长期混战，最终由秦国完成统一。"]],["商鞅变法","中国史·事件",["战国时期（公元前4世纪）","商鞅、秦孝公","秦国","秦国富强，为统一奠基","商鞅在秦国推行变法二十余年，使秦国富强并为统一奠定基础。"]],["百家争鸣","中国史·事件",["战国时期","孔子、孟子、老子等诸子","中原各国","思想文化空前繁荣","战国时期诸子百家自由争辩，迎来中国思想文化空前繁荣。"]],["焚书坑儒","中国史·事件",["秦朝（公元前213—前212年）","秦始皇、李斯","咸阳","文化浩劫，思想被钳制","秦始皇为钳制思想下令焚毁典籍、坑杀方士儒生，造成文化浩劫。"]],["楚汉之争","中国史·事件",["秦末汉初（公元前206—前202年）","刘邦、项羽","中原及关中地区","刘邦胜出建立汉朝","刘邦与项羽争夺天下四年，最终刘邦胜出建立汉朝。"]],["文景之治","中国史·事件",["西汉（公元前2世纪）","汉文帝、汉景帝","长安","休养生息，国力恢复","汉文帝景帝推行休养生息，开创了国库充盈、社会安定的治世。"]],["七国之乱","中国史·事件",["西汉（公元前154年）","吴王刘濞、汉景帝","吴楚七国","中央集权加强","汉景帝削藩引发吴楚七国联合叛乱，三个月内被平定，中央集权加强。"]],["丝绸之路","中国史·事件",["西汉至唐宋","张骞、商旅驼队","长安—河西走廊—中亚—欧洲","东西方贸易文化交流","从长安出发连通中亚欧洲的商路，促进了东西方贸易与文化交流。"]],["官渡之战","中国史·事件",["东汉末年（公元200年）","曹操、袁绍","官渡（今河南中牟）","曹操统一北方","曹操在官渡奇袭乌巢、以少胜多击败袁绍，奠定统一北方的基础。"]],["赤壁之战","中国史·事件",["东汉末年（公元208年）","孙刘联军、曹操","赤壁（长江沿岸）","奠定三国鼎立局面","孙刘联军在赤壁火烧曹军战船，大败曹操，奠定三国鼎立局面。"]],["淝水之战","中国史·事件",["东晋（公元383年）","谢玄、苻坚","淝水（今安徽）","前秦崩溃，东晋偏安","东晋以八万精兵在淝水击溃前秦百万大军，保住偏安局面。"]],["三国鼎立","中国史·事件",["公元220—280年","魏蜀吴三国","洛阳、成都、建业","三分天下，后归于晋","魏蜀吴三分天下对峙四十余年，最终归于西晋统一。"]],["八王之乱","中国史·事件",["西晋（公元291—306年）","司马氏诸王","洛阳","西晋衰落，五胡乱华","西晋宗室诸王为争权混战十六年，国力大衰，随即引发五胡乱华。"]],["贞观之治","中国史·事件",["唐朝（公元627—649年）","唐太宗李世民","长安","政治清明，国力强盛","唐太宗虚心纳谏、轻徭薄赋，开创了政治清明的盛世。"]],["开元盛世","中国史·事件",["唐朝（公元713—741年）","唐玄宗李隆基","长安","唐朝极盛，万国来朝","唐玄宗前期励精图治，使唐朝达到国力鼎盛、万国来朝。"]],["安史之乱","中国史·事件",["唐朝（公元755—763年）","安禄山、史思明","范阳—长安","唐朝由盛转衰","安禄山史思明起兵叛乱八年，唐朝由此由盛转衰、藩镇割据。"]],["黄巢起义","中国史·事件",["唐末（公元875—884年）","黄巢","山东、关中","唐朝名存实亡","黄巢率起义军转战大半个中国、攻入长安，唐朝名存实亡。"]],["陈桥兵变","中国史·事件",["北宋（公元960年）","赵匡胤","陈桥驿（今河南封丘）","后周灭亡，宋朝建立","赵匡胤在陈桥驿被将士黄袍加身，取代后周建立宋朝。"]],["澶渊之盟","中国史·事件",["北宋（公元1004年）","宋真宗、辽圣宗","澶州（今河南濮阳）","宋辽百年和平","宋辽在澶州订立盟约、宋每年送岁币，换来百年和平。"]],["靖康之变","中国史·事件",["北宋末年（1127年）","宋徽宗、宋钦宗、金军","汴京（今开封）","北宋灭亡，二帝被掳北去","金军攻破汴京掳走徽钦二帝，北宋灭亡，史称靖康之耻。"]],["岳飞抗金","中国史·事件",["南宋（公元1130—1141年）","岳飞、金兀术","郾城、朱仙镇","收复失地，却被陷害","岳飞率岳家军北伐连战连捷，却被十二道金牌召回、冤死风波亭。"]],["元朝建立","中国史·事件",["1271年","忽必烈","大都（今北京）","蒙古帝国改国号为元","忽必烈定国号为大元、定都大都，蒙古帝国进入中国王朝序列。"]],["土木之变","中国史·事件",["明朝（1449年）","明英宗、瓦剌也先","土木堡（今河北怀来）","英宗被俘，明军主力尽丧","明英宗亲征瓦剌在土木堡兵败被俘，明朝元气大伤。"]],["靖难之役","中国史·事件",["1399—1402年，明朝","朱棣、建文帝","北京—南京","朱棣夺位，迁都北京","燕王朱棣起兵四年攻入南京夺位，史称靖难之役。"]],["康乾盛世","中国史·事件",["清朝（17—18世纪）","康熙、雍正、乾隆","北京","清朝国力顶峰，人口大增","康熙雍正乾隆三代励精图治，清朝疆域和国力达到顶峰。"]],["虎门销烟","中国史·事件",["1839年","林则徐","广东虎门","向列强宣示禁烟决心，成战争导火索","林则徐在虎门海滩当众销毁鸦片两万余箱，向列强宣示禁烟决心。"]],["鸦片战争","中国史·事件",["1840—1842年，清朝","林则徐、道光帝、英国","广东沿海、南京","中国开始沦为半殖民地半封建社会","英国以武力打开中国大门，中国开始沦为半殖民地半封建社会。"]],["太平天国","中国史·事件",["1851—1864年，晚清","洪秀全","金田、南京（天京）","沉重打击清王朝","洪秀全领导的农民政权定都天京，坚持十四年沉重打击清王朝。"]],["洋务运动","中国史·事件",["1860—1890年代，晚清","李鸿章、曾国藩、张之洞","上海、天津等地","师夷长技，开启近代化","洋务派以自强求富为口号兴办近代工业，开启中国近代化进程。"]],["甲午战争","中国史·事件",["1894—1895年，晚清","李鸿章、邓世昌、日本","黄海、辽东、威海卫","北洋水师覆灭，签订马关条约","中日黄海决战，北洋水师全军覆没，清政府被迫签订马关条约。"]],["戊戌变法","中国史·事件",["1898年，晚清","康有为、梁启超、光绪帝","北京","维新运动失败，六君子就义","光绪帝支持维新派变法一百零三天，最终失败、六君子就义。"]],["百日维新","中国史·事件",["1898年，晚清","光绪帝、康有为、梁启超","北京","变法失败，光绪被囚","光绪帝发布上百道变法诏令，戊戌变法持续一百零三天后失败。"]],["辛亥革命","中国史·事件",["1911年","孙中山、黄兴","武昌","推翻清王朝，结束两千年帝制","武昌起义推翻清王朝，结束了延续两千多年的君主专制制度。"]],["五四运动","中国史·事件",["1919年","青年学生、工人阶级","北京、上海","新民主主义革命开端","青年学生和工人为抗议巴黎和会丧权辱国掀起爱国运动，成为新民主主义革命开端。"]],["南昌起义","中国史·事件",["1927年8月1日","周恩来、贺龙、朱德","南昌","打响武装反抗第一枪，建军节由来","周恩来等领导起义打响武装反抗国民党反动派的第一枪。"]],["秋收起义","中国史·事件",["1927年9月","毛泽东","湘赣边界","开辟农村包围城市道路","毛泽东领导湘赣边界起义，随后开辟农村包围城市的道路。"]],["红军长征","中国史·事件",["1934—1936年","毛泽东、周恩来、朱德","瑞金出发，到达陕北","战略转移，保存革命火种","红军两万五千里长征克服雪山草地，胜利到达陕北保存革命力量。"]],["遵义会议","中国史·事件",["1935年1月","毛泽东、周恩来、张闻天","贵州遵义","确立毛泽东领导地位，挽救红军","长征途中召开会议纠正错误军事路线，事实上确立毛泽东的领导地位。"]],["西安事变","中国史·事件",["1936年12月","张学良、杨虎城、蒋介石","西安","促成第二次国共合作，共同抗日","张学良杨虎城兵谏蒋介石，逼其停止内战、一致抗日。"]],["七七事变","中国史·事件",["1937年7月7日","日本侵华军队","北京卢沟桥","全面抗战爆发","日军在卢沟桥挑起事端，中国全民族抗日战争由此全面爆发。"]],["抗日战争","中国史·事件",["1937—1945年","国共两党、全体中国人民","中国全境","近代以来反抗外敌首次完全胜利","全民族浴血奋战八年，取得近代以来反抗外敌入侵的首次完全胜利。"]],["百团大战","中国史·事件",["1940年","彭德怀","华北地区","八路军主动出击，振奋全国","八路军出动上百个团破袭日军交通线，振奋了全国抗战信心。"]],["解放战争","中国史·事件",["1946—1949年","毛泽东、蒋介石","中国全境","国民党败退台湾，新中国成立","人民解放军通过三大战役和渡江战役，推翻国民党统治解放全国。"]],["三大战役","中国史·事件",["1948—1949年","毛泽东、林彪、粟裕等","辽沈、淮海、平津","国民党主力基本被消灭","辽沈、淮海、平津三大战役基本消灭国民党军主力，奠定全国胜利基础。"]],["开国大典","中国史·事件",["1949年10月1日","毛泽东","北京天安门广场","中华人民共和国成立","1949年10月1日天安门广场举行盛大典礼，宣告新中国诞生。"]],["抗美援朝","中国史·事件",["1950—1953年","彭德怀、中国人民志愿军","朝鲜半岛","保家卫国，赢得和平","中国人民志愿军跨过鸭绿江，保家卫国，赢得抗美援朝战争的胜利。"]],["人民公社","中国史·事件",["1958年","中国共产党","全国农村","大跃进时期的农村组织","大跃进时期农村普遍建立一大二公的人民公社，很快暴露弊端被调整。"]],["改革开放","中国史·事件",["1978年起","邓小平","深圳等经济特区","中国经济腾飞，融入世界","以经济建设为中心、创办经济特区，中国从此走上富强之路。"]],["土地改革","中国史·事件",["1950—1952年","中国共产党、广大农民","全国农村","废除封建土地所有制","新中国废除封建土地所有制，让三亿多农民分到土地。"]],["公私合营","中国史·事件",["1953—1956年","民族资本家","全国工商业","社会主义改造完成","国家通过和平赎买方式对资本主义工商业进行社会主义改造。"]],["一五计划","中国史·事件",["1953—1957年","新中国政府","全国，重点是东北","奠定工业化基础","第一个五年计划重点建设重工业，奠定新中国工业化初步基础。"]],["中共一大","中国史·事件",["1921年7月","毛泽东、董必武等13人","上海、嘉兴南湖","中国共产党成立","1921年7月中国共产党第一次全国代表大会在上海召开，标志建党。"]],["三大改造","中国史·事件",["1953—1956年","中国共产党","全国","社会主义制度基本确立","对农业、手工业和资本主义工商业的改造完成，社会主义制度基本确立。"]],["文艺复兴","世界史·事件",["14—16世纪，意大利起源","达芬奇、米开朗基罗、但丁","佛罗伦萨、威尼斯、罗马","人文主义兴起，近代文明曙光","意大利兴起的文化运动重新发现古希腊罗马文明，迎来人文主义曙光。"]],["宗教改革","世界史·事件",["16世纪","马丁·路德","德意志、瑞士","天主教分裂，新教诞生","马丁·路德张贴九十五条论纲，基督教世界由此分裂出新教。"]],["光荣革命","世界史·事件",["1688年","威廉三世、玛丽二世","英国伦敦","《权利法案》颁布，君主立宪确立","英国几乎不流血地更换国王并颁布《权利法案》，议会主权确立。"]],["工业革命","世界史·事件",["18世纪60年代，英国起源","瓦特、斯蒂芬逊","英国曼彻斯特","机器大生产取代手工，世界巨变","蒸汽机取代人力，机器大生产兴起，世界从此进入工业时代。"]],["启蒙运动","世界史·事件",["17—18世纪","伏尔泰、卢梭、孟德斯鸠","法国为中心","理性之光，为大革命提供思想武器","法国思想家高扬理性旗帜，为资产阶级革命提供了思想武器。"]],["明治维新","世界史·事件",["1868年","明治天皇、西乡隆盛","日本","日本走上资本主义道路，迅速强大","日本全面学习西方改革，迅速崛起为亚洲强国。"]],["十月革命","世界史·事件",["1917年11月","列宁、布尔什维克","俄国彼得格勒","建立世界上第一个社会主义国家","列宁领导布尔什维克起义，建立世界上第一个社会主义国家。"]],["黑奴贸易","世界史·事件",["16—19世纪","欧洲殖民者","非洲—美洲大西洋航线","上亿非洲人沦为奴隶","欧洲殖民者将上千万非洲人贩卖到美洲，大西洋航线上白骨累累。"]],["三角贸易","世界史·事件",["16—19世纪","欧洲商人","欧洲—非洲—美洲","黑奴与原材料交换，罪恶贸易","欧洲商人在欧非美三洲间贩运黑奴和原料，是充满血泪的罪恶贸易。"]],["人权宣言","世界史·事件",["1789年","法国制宪会议","法国巴黎","宣布天赋人权，自由平等","法国制宪会议宣布人生而自由平等，成为近代人权观念的里程碑。"]],["独立宣言","世界史·事件",["1776年7月4日","杰斐逊","费城","宣告美国独立，天赋人权","北美殖民地宣告脱离英国，首次以文件形式宣示天赋人权。"]],["柏林战役","世界史·事件",["1945年4—5月","苏军、希特勒","德国柏林","纳粹德国覆灭，欧洲战事结束","苏军攻克柏林，希特勒自杀，纳粹德国彻底覆灭。"]],["开罗会议","世界史·事件",["1943年11月","罗斯福、丘吉尔、蒋介石","埃及开罗","决定战后日本归还中国领土","中英美三国首脑会晤，决定战后日本必须归还侵占的中国领土。"]],["巴黎和会","世界史·事件",["1919年","美英法等战胜国","法国巴黎凡尔赛宫","签订凡尔赛条约，埋下二战祸根","一战后战胜国在凡尔赛宫重新瓜分世界，埋下新的战争祸根。"]],["北约成立","世界史·事件",["1949年","美国、西欧国家","华盛顿","西方军事同盟，对抗苏联","美国联合西欧国家建立北大西洋公约组织，与苏联阵营对峙。"]],["华约成立","世界史·事件",["1955年","苏联、东欧国家","华沙","与北约对峙，两极格局形成","苏联与东欧国家缔结华沙条约，两大军事集团正式对立。"]],["万隆会议","世界史·事件",["1955年","周恩来、亚非各国","印尼万隆","亚非团结，求同存异","亚非二十九国在万隆集会，周恩来提出求同存异促成团结。"]],["朝鲜战争","世界史·事件",["1950—1953年","中朝、美韩","朝鲜半岛","停战协议，三八线分治","中朝人民并肩作战迫使美国在停战协定上签字，三八线分治延续至今。"]],["越南战争","世界史·事件",["1955—1975年","美国、北越","越南","美国失败撤军，越南统一","美国深陷越南战争泥潭二十年，最终撤军，越南实现统一。"]],["两伊战争","世界史·事件",["1980—1988年","萨达姆、霍梅尼","伊拉克、伊朗","八年消耗战，两败俱伤","伊拉克和伊朗打了八年消耗战，两败俱伤、国力大损。"]],["海湾战争","世界史·事件",["1991年","美国为首多国部队","波斯湾、伊拉克","伊拉克撤出科威特，冷战后期大战","多国部队以沙漠风暴行动解放科威特，伊拉克被迫撤军。"]],["美苏冷战","世界史·事件",["1947—1991年","美国、苏联","全球","两极对峙，未直接开战","美苏在政治经济军事各领域对抗四十年，但始终没有直接开战。"]],["柏林危机","世界史·事件",["1948—1949年","美苏","柏林","苏联封锁西柏林，空运救援","苏联封锁西柏林，英美发动柏林空运，持续一年打破封锁。"]],["苏联解体","世界史·事件",["1991年12月","戈尔巴乔夫、叶利钦","莫斯科","两极格局终结，冷战结束","苏联十五个加盟共和国先后独立，存在七十四年的超级大国宣告解体。"]],["东欧剧变","世界史·事件",["1989—1991年","东欧各国人民","东欧各国","社会主义政权相继更迭","东欧各国政权接连更迭，社会主义阵营迅速瓦解。"]],["欧洲联盟","世界史·事件",["1993年","欧洲各国","欧洲","欧洲一体化，欧元流通","欧洲各国走向一体化，建立统一市场和共同货币欧元。"]],["德国统一","世界史·事件",["1990年10月","科尔、戈尔巴乔夫","柏林","东西德合并，冷战终结标志","1990年东西德正式合并，分裂四十多年的德国重新统一。"]],["大化改新","世界史·事件",["646年，日本","孝德天皇、中臣镰足","日本","仿唐朝制度，日本进入封建社会","日本仿照唐朝制度进行改革，从奴隶社会跨入封建社会。"]],["黄帝","中国史·人物",["古代·男·真实","华夏部落联盟首领，传说人物","统一中原，奠定华夏文明","人文初祖，与炎帝并称","传说中统一中原各部落的华夏始祖，被尊为中华民族的人文初祖。"]],["大禹","中国史·人物",["古代·男·真实","夏朝开国君主，治水英雄","治水十三年，三过家门不入","铸九鼎，定九州","治理洪水十三年、三过家门而不入，后建立夏朝的治水英雄。"]],["商汤","中国史·人物",["古代·男·真实","商朝开国君主","灭夏建商，任用伊尹","网开一面，仁德之君","起兵讨伐暴君、灭夏建商，开创商朝基业的开国明君。"]],["周文王","中国史·人物",["古代·男·真实","西周奠基人，诸侯领袖","访贤姜子牙，为周朝奠基","演《周易》，勤政爱民","访贤渭水、演《周易》，为周朝取代商朝奠定基础的西伯侯。"]],["周武王","中国史·人物",["古代·男·真实","西周开国君主","牧野之战灭商建周","分封诸侯，礼乐之始","率诸侯在牧野一战灭商建周，开启西周八百年天下的开国君主。"]],["姜子牙","中国史·人物",["古代·男·真实","西周开国功臣，军事家","辅佐武王灭商，封于齐国","愿者上钩，渭水垂钓","辅佐周武王灭商建周，被封于齐地的开国功臣和传奇军师。"]],["孙子","中国史·人物",["古代·男·真实","军事家，兵家鼻祖","《孙子兵法》十三篇","吴国名将，西破强楚","著《孙子兵法》、提出知己知彼百战不殆的兵家鼻祖。"]],["伍子胥","中国史·人物",["古代·男·真实","吴国大夫，军事家","辅佐吴王阖闾称霸","一夜白头，过昭关","一夜白头过昭关、辅佐吴王阖闾称霸的吴国名臣。"]],["勾践","中国史·人物",["古代·男·真实","越国国君，春秋霸主","卧薪尝胆，灭吴称霸","十年生聚十年教训","被吴国打败后卧薪尝胆、最终灭吴复国的越国国君。"]],["庄子","中国史·人物",["古代·男·真实","思想家，道家代表","《庄子》，“逍遥游”","庄周梦蝶，濠梁之辩","写下《逍遥游》、梦见自己化作蝴蝶的道家代表人物。"]],["蔺相如","中国史·人物",["古代·男·真实","赵国上卿，政治家","完璧归赵，渑池会","负荆请罪的主角之一","完璧归赵、渑池会上不辱使命，又与廉颇将相和的赵国贤臣。"]],["廉颇","中国史·人物",["古代·男·真实","赵国名将","长平之战前期主将","负荆请罪，老当益壮","与蔺相如负荆请罪、老当益壮的战国赵国名将。"]],["李斯","中国史·人物",["古代·男·真实","秦朝丞相，政治家","助秦始皇统一文字度量衡","《谏逐客书》作者","辅佐秦始皇统一天下的秦朝丞相，也是《谏逐客书》的作者。"]],["蒙恬","中国史·人物",["古代·男·真实","秦朝名将","北击匈奴，修筑长城","毛笔传说为其所造","率三十万大军北击匈奴、修筑万里长城的秦朝大将。"]],["陈胜","中国史·人物",["古代·男·真实","秦末起义领袖","大泽乡起义","燕雀安知鸿鹄之志","喊出王侯将相宁有种乎、在大泽乡揭竿而起的秦末起义领袖。"]],["吴广","中国史·人物",["古代·男·真实","秦末起义领袖","与陈胜共举大泽乡起义","鱼腹藏书，篝火狐鸣","与陈胜一同发动大泽乡起义、点燃反秦烽火的农民领袖。"]],["萧何","中国史·人物",["古代·男·真实","西汉开国丞相","月下追韩信","制定汉律，治理国家","月下追韩信、为汉朝制定律令的汉初三杰之一。"]],["张良","中国史·人物",["古代·男·真实","西汉谋士，政治家","运筹帷幄，决胜千里","圯上受书，孺子可教","运筹帷幄之中、决胜千里之外，辅佐刘邦建汉的谋圣。"]],["韩信","中国史·人物",["古代·男·真实","西汉开国名将","背水一战，明修栈道","胯下之辱，成也萧何败也萧何","忍受胯下之辱、以背水一战等奇谋助刘邦定天下的兵仙。"]],["吕后","中国史·人物",["古代·女·真实","西汉皇后，掌权者","汉高祖皇后，临朝称制","人彘事件，残害戚夫人","刘邦之妻，刘邦死后临朝称制，是中国历史上第一位执掌大权的女性。"]],["张仲景","中国史·人物",["古代·男·真实","东汉医学家","《伤寒杂病论》","坐堂行医的太守","著《伤寒杂病论》、奠定中医辨证论治体系的医圣。"]],["陶渊明","中国史·人物",["古代·男·真实","东晋诗人","《桃花源记》《饮酒》","不为五斗米折腰","不为五斗米折腰、写下《桃花源记》的田园诗派鼻祖。"]],["郦道元","中国史·人物",["古代·男·真实","北魏地理学家","《水经注》","为《水经》作注","遍访山川、著成古代地理名著《水经注》的北魏地理学家。"]],["隋文帝","中国史·人物",["古代·男·真实","隋朝开国皇帝","结束南北朝分裂，统一全国","开创开皇之治，创立科举雏形","结束近三百年分裂、建立隋朝并开创开皇之治的皇帝。"]],["隋炀帝","中国史·人物",["古代·男·真实","隋朝皇帝","开凿大运河，创立科举制","三征高句丽，穷奢极欲","开凿大运河、创立科举制，却因劳民伤财而亡国的皇帝。"]],["魏征","中国史·人物",["古代·男·真实","唐朝名相，谏臣","直言敢谏，辅佐太宗","以人为镜可以明得失","直言敢谏、被唐太宗称为自己镜子的著名谏臣。"]],["白居易","中国史·人物",["古代·男·真实","唐朝诗人","《长恨歌》《琵琶行》","新乐府运动，卖炭翁","写《长恨歌》《琵琶行》、倡导新乐府运动的大唐诗人。"]],["孙思邈","中国史·人物",["古代·男·真实","唐朝医学家","《千金方》","悬壶济世，活百岁","著《千金方》、活到百余岁，被后世尊为药王的名医。"]],["安禄山","中国史·人物",["古代·男·真实","唐朝叛将","发动安史之乱","认杨贵妃为母，胡旋舞","起兵范阳发动安史之乱，导致唐朝由盛转衰的叛将。"]],["赵匡胤","中国史·人物",["古代·男·真实","宋朝开国皇帝","陈桥兵变，黄袍加身","杯酒释兵权","陈桥兵变黄袍加身建立宋朝，又杯酒释兵权的开国皇帝。"]],["王安石","中国史·人物",["古代·男·真实","北宋政治家、文学家","主持王安石变法","《伤仲永》，唐宋八大家","主持变法图强、写下春风又绿江南岸的北宋政治家、文学家。"]],["苏轼","中国史·人物",["古代·男·真实","北宋文学家、书画家","《赤壁赋》《水调歌头》","东坡肉，乌台诗案","写下《赤壁赋》《水调歌头》、号东坡居士的北宋大文豪。"]],["司马光","中国史·人物",["古代·男·真实","北宋政治家、史学家","《资治通鉴》","司马光砸缸","幼时砸缸救人、长大后主持编纂《资治通鉴》的史学家。"]],["关汉卿","中国史·人物",["古代·男·真实","元朝戏曲家","《窦娥冤》","元曲四大家之首","著《窦娥冤》、位列元曲四大家之首的戏曲家。"]],["朱元璋","中国史·人物",["古代·男·真实","明朝开国皇帝","驱逐蒙元，建立明朝","乞丐皇帝，废除丞相","从放牛娃和乞丐一路打拼，驱逐蒙元建立明朝的布衣天子。"]],["朱棣","中国史·人物",["古代·男·真实","明朝皇帝","靖难之役夺位，迁都北京","派郑和下西洋，修永乐大典","通过靖难之役夺位、迁都北京并派郑和下西洋的明成祖。"]],["王阳明","中国史·人物",["古代·男·真实","明朝思想家、军事家","心学，知行合一","龙场悟道，平定宁王之乱","龙场悟道、创立心学，主张知行合一的思想家和军事家。"]],["海瑞","中国史·人物",["古代·男·真实","明朝清官","抬棺上疏骂嘉靖","海青天，两袖清风","抬棺上疏、两袖清风，被百姓称为海青天的明朝清官。"]],["徐光启","中国史·人物",["古代·男·真实","明朝科学家","《农政全书》","与利玛窦合译《几何原本》","著《农政全书》、与利玛窦合译《几何原本》的科学家。"]],["吴承恩","中国史·人物",["古代·男·真实","明朝小说家","《西游记》","花果山，九九八十一难","把唐僧取经故事写成神魔小说《西游记》的小说家。"]],["施耐庵","中国史·人物",["古代·男·真实","元末明初小说家","《水浒传》","梁山一百单八将","著《水浒传》、塑造梁山一百单八将形象的元末明初小说家。"]],["罗贯中","中国史·人物",["古代·男·真实","元末明初小说家","《三国演义》","桃园结义，赤壁之战","著《三国演义》、把三国故事推向文学高峰的小说家。"]],["曹雪芹","中国史·人物",["古代·男·真实","清朝小说家","《红楼梦》","批阅十载增删五次","批阅十载写《红楼梦》，留下满纸荒唐言一把辛酸泪的小说家。"]],["黄兴","中国史·人物",["现代·男·真实","辛亥革命元勋","黄花岗起义，武昌起义","孙黄并称，陆军总长","组织黄花岗起义、与孙中山并称孙黄的辛亥革命元勋。"]],["蔡锷","中国史·人物",["现代·男·真实","护国军将领","护国战争讨袁","小凤仙的知己","发动护国战争讨伐袁世凯、再造共和的名将。"]],["詹天佑","中国史·人物",["现代·男·真实","铁路工程师","主持修建京张铁路","人字形铁路，青龙桥","主持修建京张铁路、设计人字形线路的中国铁路之父。"]],["朱德","中国史·人物",["现代·男·真实","开国元帅","井冈山会师，红军总司令","南昌起义领导人","参加南昌起义、任红军总司令，被尊为红军之父的开国元帅。"]],["钱学森","中国史·人物",["现代·男·真实","科学家","两弹一星元勋，中国航天之父","归国途中被美国软禁五年","冲破阻挠归国，领导两弹一星工程的中国航天之父。"]],["邓稼先","中国史·人物",["现代·男·真实","科学家","中国原子弹之父","两弹元勋，隐姓埋名28年","隐姓埋名二十八年，主持研制原子弹氢弹的两弹元勋。"]],["袁隆平","中国史·人物",["现代·男·真实","农业科学家","杂交水稻之父","禾下乘凉梦","培育杂交水稻、让中国人端稳饭碗的农业科学家。"]],["屠呦呦","中国史·人物",["现代·女·真实","药学家","发现青蒿素，获诺贝尔奖","从古籍《肘后备急方》获灵感","发现青蒿素、成为中国首位获诺贝尔医学奖的药学家。"]],["李四光","中国史·人物",["现代·男·真实","地质学家","创立地质力学理论","推翻中国贫油论，找到大庆油田","创立地质力学理论、打破中国贫油论的地质学家。"]],["华罗庚","中国史·人物",["现代·男·真实","数学家","华氏定理，自学成才","中国解析数论奠基人","自学成才、奠定中国解析数论基础的大数学家。"]],["大禹治水","中国史·事件",["上古时期","大禹","黄河流域","治水成功，奠定夏朝基础","大禹用疏导之法治理洪水十三年，三过家门而不入，最终平定水患。"]],["烽火戏诸侯","中国史·事件",["西周","周幽王、褒姒","骊山","失信于诸侯，西周灭亡","周幽王为博褒姒一笑点燃烽火戏弄诸侯，失信于天下而亡国。"]],["春秋五霸","中国史·事件",["春秋时期（公元前770—前476年）","齐桓公、晋文公等","中原地区","诸侯争霸，周王室衰微","春秋时期齐桓公、晋文公等相继称霸，周王室权威日渐衰落。"]],["卧薪尝胆","中国史·事件",["春秋时期","越王勾践、吴王夫差","越国、吴国","勾践复国灭吴","越王勾践战败后睡柴草尝苦胆、励精图治，最终灭吴雪耻。"]],["长平之战","中国史·事件",["战国末年（公元前260年）","白起、赵括","长平（今山西高平）","赵国元气大伤，秦统一加速","秦国在长平大败赵国、坑杀降卒四十万，加速了秦统一六国。"]],["荆轲刺秦","中国史·事件",["战国末年","荆轲、秦王嬴政","秦国咸阳宫","刺杀失败，秦加速统一","荆轲携地图匕首刺杀秦王未遂，图穷匕见，反而加速秦国灭燕。"]],["陈胜吴广起义","中国史·事件",["秦末（公元前209年）","陈胜、吴广","大泽乡（今安徽宿州）","秦朝统治动摇，首开起义先河","陈胜吴广在大泽乡揭竿而起，是中国历史上第一次大规模农民起义。"]],["张骞出使西域","中国史·事件",["西汉（公元前138年）","张骞、汉武帝","河西走廊、西域","打通丝绸之路","张骞两次出使西域，打通中原通往中亚的通道，开辟丝绸之路。"]],["王莽篡汉","中国史·事件",["西汉末（公元9年）","王莽","长安","新朝建立，改制失败","外戚王莽篡夺西汉政权建立新朝，改制失败很快被推翻。"]],["光武中兴","中国史·事件",["东汉初","刘秀","洛阳","重建汉朝，天下大治","刘秀重建汉朝定都洛阳，整顿吏治使东汉走向安定繁荣。"]],["黄巾起义","中国史·事件",["东汉末年（公元184年）","张角","冀州、中原","东汉统治瓦解，群雄并起","张角率太平道发动起义，沉重打击东汉统治，引发群雄割据。"]],["三顾茅庐","中国史·事件",["东汉末年","刘备、诸葛亮","隆中","诸葛亮出山辅佐刘备","刘备三次登门拜访，请出诸葛亮，得到隆中对策和天下大计。"]],["孝文帝改革","中国史·事件",["北魏（公元5世纪末）","北魏孝文帝","洛阳","民族融合，北方发展","北魏孝文帝迁都洛阳、推行汉化，促进北方民族大融合。"]],["隋朝统一","中国史·事件",["公元589年","隋文帝杨坚","南方陈朝","结束近三百年分裂","隋文帝出兵灭陈，结束南北朝分裂，重新统一全国。"]],["开凿大运河","中国史·事件",["隋朝（公元605年起）","隋炀帝","洛阳为中心，北至涿郡南至余杭","沟通南北，沿用至今","隋炀帝征发民力开凿南北大运河，沟通五大水系沿用千年。"]],["科举制度","中国史·事件",["隋唐至清末","隋炀帝首创，武则天完善","长安、洛阳","打破门第，选拔人才","隋朝创立、唐朝完善的考试选官制度，打破门第限制延续一千三百年。"]],["玄奘西行","中国史·事件",["唐朝（公元629年起）","玄奘","长安—天竺（印度）","取回佛经，写成《大唐西域记》","玄奘历经艰险西行天竺取经，带回并翻译了大量佛经。"]],["武周代唐","中国史·事件",["唐朝（公元690年）","武则天","洛阳","中国唯一女皇执政","武则天改唐为周、登上皇位，成为中国唯一的女皇帝。"]],["王安石变法","中国史·事件",["北宋（公元1069年起）","王安石、宋神宗","汴京","富国强兵，最终失败","王安石推行青苗法等新法试图富国强兵，最终在反对声中失败。"]],["靖康之耻","中国史·事件",["北宋末年（公元1127年）","宋徽宗、宋钦宗、金军","汴京（今开封）","北宋灭亡，南宋建立","金军攻破汴京掳走徽钦二帝，北宋灭亡，史称靖康之变。"]],["蒙古灭宋","中国史·事件",["13世纪（1279年）","忽必烈、文天祥","崖山（今广东）","南宋灭亡，元朝统一全国","元军攻破崖山，南宋十万军民殉国，中国再度统一于元朝。"]],["郑和下西洋","中国史·事件",["明朝（1405—1433年）","郑和","南京出发，远达非洲东海岸","世界航海壮举，宣扬国威","明朝船队七次远航西洋，最远到达非洲东海岸，堪称航海壮举。"]],["土木堡之变","中国史·事件",["明朝（1449年）","明英宗、瓦剌也先","土木堡（今河北怀来）","英宗被俘，明朝由盛转衰","明英宗亲征瓦剌在土木堡兵败被俘，明朝由盛转衰。"]],["戚继光抗倭","中国史·事件",["明朝（16世纪）","戚继光","浙江、福建沿海","扫平倭患，海疆安宁","戚继光率戚家军以鸳鸯阵扫平东南倭患，保沿海安宁。"]],["张居正改革","中国史·事件",["明朝（16世纪后期）","张居正","北京","一条鞭法，明朝中兴","张居正推行一条鞭法等改革，为明朝续命近六十年。"]],["李自成起义","中国史·事件",["明末（1644年）","李自成","陕北—北京","攻破北京，明朝灭亡","李自成率起义军攻破北京，崇祯自缢，明朝灭亡。"]],["清军入关","中国史·事件",["1644年","多尔衮、吴三桂","山海关","清朝定鼎中原","吴三桂引清军入山海关，清朝自此入主中原。"]],["义和团运动","中国史·事件",["1899—1901年，晚清","义和团民众、慈禧","华北地区","引发八国联军侵华","义和团扶清灭洋抗击列强，最终招致八国联军武装入侵。"]],["八国联军侵华","中国史·事件",["1900年，晚清","英法德美日俄意奥联军","天津、北京","签订辛丑条约，中国完全沦为半殖民地","八国联军攻陷北京，清政府签订辛丑条约，完全沦为列强工具。"]],["中华民国成立","中国史·事件",["1912年1月1日","孙中山","南京","亚洲第一个共和国","孙中山在南京就任临时大总统，亚洲第一个共和国诞生。"]],["中国共产党成立","中国史·事件",["1921年","陈独秀、李大钊等","上海（后转嘉兴南湖）","中国革命面貌焕然一新","中共一大在上海召开，中国革命的航船从南湖红船起航。"]],["南京大屠杀","中国史·事件",["1937年12月","侵华日军","南京","三十万同胞遇难，国殇","侵华日军占领南京后屠杀三十万同胞，是人类文明史上的暴行。"]],["重庆谈判","中国史·事件",["1945年8—10月","毛泽东、蒋介石","重庆","签订双十协定","毛泽东赴重庆与蒋介石谈判，签订双十协定但内战仍不可避免。"]],["中华人民共和国成立","中国史·事件",["1949年10月1日","毛泽东、周恩来等","北京天安门","中国人民从此站起来了","1949年10月1日毛泽东在天安门宣告中华人民共和国中央人民政府成立。"]],["香港回归","中国史·事件",["1997年7月1日","邓小平、中英谈判","香港","一国两制成功实践","1997年7月1日香港结束英国殖民统治，回到祖国怀抱。"]],["澳门回归","中国史·事件",["1999年12月20日","中葡谈判","澳门","中国恢复对澳门行使主权","1999年12月20日澳门回归祖国，一国两制再获成功实践。"]],["神舟五号","中国史·事件",["2003年10月","杨利伟","酒泉发射，太空飞行","中国首次载人航天","杨利伟乘神舟五号进入太空，中国成为第三个独立掌握载人航天技术的国家。"]],["北京奥运会","中国史·事件",["2008年8月","中国体育代表团","北京","向世界展示中国，金牌第一","第29届夏季奥运会在北京举行，中国代表团金牌数首次登顶世界第一。"]],["亚里士多德","世界史·人物",["古代·男·真实","古希腊哲学家、科学家","百科全书式学者，形式逻辑奠基","吾爱吾师吾更爱真理","百科全书式的学者，创立形式逻辑，也是亚历山大的老师。"]],["亚历山大大帝","世界史·人物",["古代·男·真实","马其顿国王，军事家","建立横跨欧亚非的帝国","远征波斯，战无不胜","二十岁即位、十年间建立起横跨欧亚非三大洲的庞大帝国。"]],["阿基米德","世界史·人物",["古代·男·真实","古希腊科学家","浮力定律，杠杆原理","给我一个支点撬动地球","洗澡时发现浮力定律、喊出尤里卡的古希腊科学家。"]],["耶稣","世界史·人物",["古代·男·真实","基督教创始人","十二门徒，传道三年","被钉十字架，复活传说","在巴勒斯坦传道、被钉十字架，成为基督教信仰核心的人物。"]],["君士坦丁","世界史·人物",["古代·男·真实","罗马皇帝","颁布米兰敕令，定都君士坦丁堡","承认基督教地位","颁布米兰敕令承认基督教、迁都君士坦丁堡的罗马皇帝。"]],["查理曼","世界史·人物",["古代·男·真实","法兰克国王，神圣罗马帝国奠基人","统一西欧大部，被加冕称帝","查理大帝，扑克牌红桃K原型","统一西欧大部、被教皇加冕称帝，被后世称为欧洲之父。"]],["马可波罗","世界史·人物",["古代·男·真实","意大利旅行家","《马可·波罗游记》","沿丝绸之路来中国，见忽必烈","沿丝绸之路来到中国、写下游记向欧洲介绍东方的旅行家。"]],["米开朗基罗","世界史·人物",["古代·男·真实","雕塑家、画家","《大卫》雕像，西斯廷天顶画","文艺复兴三杰之一","雕出大卫像、绘成西斯廷天顶画的文艺复兴艺术巨匠。"]],["哥白尼","世界史·人物",["古代·男·真实","天文学家","日心说，《天体运行论》","挑战地心说，晚年出版","提出日心说、挑战地心说，改变人类宇宙观的天文学家。"]],["伽利略","世界史·人物",["古代·男·真实","物理学家、天文学家","比萨斜塔实验，改良望远镜","被宗教法庭审判","用望远镜观测星空、支持日心说，被教会审判的近代科学之父。"]],["杰斐逊","世界史·人物",["现代·男·真实","美国第三任总统","《独立宣言》起草人","弗吉尼亚大学创办者","起草《独立宣言》、创办弗吉尼亚大学的美国第三任总统。"]],["俾斯麦","世界史·人物",["现代·男·真实","德意志宰相","铁血政策统一德国","三次王朝战争","以铁血政策通过三次王朝战争统一德意志的宰相。"]],["贝尔","世界史·人物",["现代·男·真实","发明家、科学家","发明电话","聋哑教育先驱","发明电话、开启人类远距离通话时代的科学家。"]],["戈尔巴乔夫","世界史·人物",["现代·男·真实","苏联末任领导人","改革与新思维，苏联解体","诺贝尔和平奖","推行改革与新思维，最终见证苏联解体的末任领导人。"]],["史蒂夫乔布斯","世界史·人物",["现代·男·真实","企业家，苹果公司创始人","iPhone，Mac，皮克斯","苹果logo，发布会黑T恤","创立苹果公司、推出iPhone，改变世界的科技企业家。"]],["特洛伊战争","世界史·事件",["公元前12世纪，古希腊","阿喀琉斯、赫克托耳","特洛伊城（今土耳其）","希腊联军攻陷特洛伊","希腊联军苦战十年，最终用木马计攻陷特洛伊城。"]],["马拉松战役","世界史·事件",["公元前490年，古希腊","雅典重装步兵","马拉松平原","雅典击败波斯，鼓舞希腊","雅典军队在马拉松平原以少胜多击败波斯入侵大军。"]],["亚历山大东征","世界史·事件",["公元前334—前323年","亚历山大大帝","波斯、埃及、印度河流域","建立庞大帝国，促进东西方交流","亚历山大率军东征十年，建立起横跨欧亚非的庞大帝国。"]],["罗马帝国建立","世界史·事件",["公元前27年","屋大维","罗马","罗马共和国转为帝国","屋大维掌握大权后被尊为奥古斯都，罗马由共和国变为帝国。"]],["布匿战争","世界史·事件",["公元前264—前146年","罗马、迦太基","地中海、北非","罗马称霸地中海","罗马与迦太基三次大战，最终罗马称霸地中海西部。"]],["基督诞生","世界史·事件",["公元1世纪初","耶稣","伯利恒（今巴勒斯坦）","基督教兴起","耶稣在伯利恒诞生，后来基督教从这里传遍世界。"]],["罗马帝国分裂","世界史·事件",["公元395年","狄奥多西一世","罗马","帝国分为东西两部","罗马帝国在公元395年分为东西两部分，此后走向不同命运。"]],["西罗马帝国灭亡","世界史·事件",["公元476年","日耳曼首领奥多亚克","罗马城","西欧进入中世纪","日耳曼人攻陷罗马城，西罗马帝国覆灭，欧洲进入中世纪。"]],["十字军东征","世界史·事件",["1096—1291年","西欧骑士","耶路撒冷","宗教战争，东西方交流","西欧封建主和骑士打着宗教旗号多次东征，最终失败而归。"]],["黑死病","世界史·事件",["14世纪（1347—1351年）","欧洲各国","欧洲全境","人口锐减，动摇封建制度","鼠疫横扫欧洲夺走上千万生命，动摇了封建制度的基础。"]],["哥伦布发现新大陆","世界史·事件",["1492年","哥伦布","大西洋—美洲","美洲进入世界视野，殖民时代开启","哥伦布率船队横渡大西洋抵达美洲，欧洲殖民时代由此开启。"]],["麦哲伦环球航行","世界史·事件",["1519—1522年","麦哲伦","绕地球一周","证明地球是圆的","麦哲伦船队完成人类首次环球航行，用实践证明了地球是圆的。"]],["英国资产阶级革命","世界史·事件",["1640—1688年","克伦威尔","英国","确立君主立宪制","英国通过革命和内战推翻专制王权，确立了君主立宪制度。"]],["美国独立战争","世界史·事件",["1775—1783年","华盛顿、杰斐逊","北美十三州","美国独立，建立共和国","北美十三州经过八年战争摆脱英国统治，美利坚合众国诞生。"]],["法国大革命","世界史·事件",["1789年","罗伯斯庇尔、拿破仑","巴黎","推翻封建专制，传播自由平等","巴黎人民攻占巴士底狱，法国推翻封建专制，传播自由平等理念。"]],["拿破仑战争","世界史·事件",["1803—1815年","拿破仑","欧洲大陆","法国称霸又覆灭，维也纳体系建立","拿破仑率法军横扫欧洲又兵败滑铁卢，欧洲格局重新洗牌。"]],["美国南北战争","世界史·事件",["1861—1865年","林肯","美国南部","废除奴隶制，维护联邦统一","林肯领导北方击败南方，废除奴隶制，维护了联邦统一。"]],["巴黎公社","世界史·事件",["1871年","巴黎工人","法国巴黎","第一个无产阶级政权尝试","巴黎工人建立世界上第一个无产阶级政权，仅存在七十二天。"]],["第一次世界大战","世界史·事件",["1914—1918年","协约国与同盟国","欧洲为主战场","四大帝国瓦解，世界格局改变","萨拉热窝事件引发欧洲列强大混战，四大帝国在战争中崩溃。"]],["俄国十月革命","世界史·事件",["1917年11月","列宁、布尔什维克","俄国彼得格勒","世界上第一个社会主义国家诞生","列宁领导武装起义推翻临时政府，建立第一个社会主义国家。"]],["经济大萧条","世界史·事件",["1929—1933年","各国政府","美国华尔街始发","全球性经济危机，法西斯崛起","华尔街股市崩盘引发全球性经济危机，德国法西斯借机上台。"]],["第二次世界大战","世界史·事件",["1939—1945年","希特勒、斯大林、罗斯福、丘吉尔","全球","反法西斯胜利，联合国成立","德意日法西斯发动的人类史上最大战争，最终反法西斯阵营胜利。"]],["诺曼底登陆","世界史·事件",["1944年6月6日","艾森豪威尔","法国诺曼底","开辟欧洲第二战场，加速纳粹灭亡","盟军六十六万大军在诺曼底抢滩登陆，开辟欧洲第二战场。"]],["联合国成立","世界史·事件",["1945年","美苏英中等国","纽约","维护世界和平与安全","二战结束后五十国签署宪章，联合国在纽约正式成立。"]],["冷战","世界史·事件",["1947—1991年","美苏两国","全球","两极格局，军备竞赛","美苏两大阵营长期对峙、军备竞赛，世界分成两个对立集团。"]],["马歇尔计划","世界史·事件",["1948—1952年","美国、西欧各国","欧洲","美国援助欧洲复兴，遏制苏联","美国援助西欧复兴经济，同时借此遏制苏联扩张。"]],["柏林墙修建","世界史·事件",["1961年","东德政府","柏林","东西德分裂加深，冷战象征","东德一夜之间筑起柏林墙，柏林被分割为两个世界。"]],["人类登月","世界史·事件",["1969年7月","阿姆斯特朗","月球","人类首次踏上月球","阿波罗十一号将两名宇航员送上月球，人类首次踏足地外天体。"]],["柏林墙倒塌","世界史·事件",["1989年11月","东德民众","柏林","冷战结束的标志之一","柏林墙在民众冲击下倒塌，东德人涌入西德，德国统一由此开启。"]],["欧盟成立","世界史·事件",["1993年","欧洲各国","欧洲","欧洲一体化，统一货币欧元","欧洲共同体升级为欧洲联盟，统一货币欧元开始流通。"]],["世贸组织成立","世界史·事件",["1995年","各成员国","瑞士日内瓦","全球贸易规则制定者","世界贸易组织取代关贸总协定，成为全球贸易规则的制定者。"]],["孙悟空","中国史·人物",["古代·男·虚构","神话人物，齐天大圣","大闹天宫，西天取经","金箍棒，七十二变，火眼金睛","从石头里蹦出、大闹天宫后被压五行山，随唐僧西天取经的齐天大圣。"]],["猪八戒","中国史·人物",["古代·男·虚构","神话人物，天蓬元帅","西天取经，贪吃好色","九齿钉耙，高老庄","原是天蓬元帅，因调戏嫦娥被贬下凡，随唐僧取经的二徒弟。"]],["贾宝玉","中国史·人物",["古代·男·虚构","小说人物，贵族公子","大观园中长大，与黛玉相爱","通灵宝玉，绛珠仙草","衔通灵宝玉出生、与林黛玉相爱却不能相守的《红楼梦》主角。"]],["林黛玉","中国史·人物",["古代·女·虚构","小说人物，才女","葬花吟，潇湘妃子","多愁善感，泪尽而亡","多愁善感、葬花吟诗，泪尽而亡的《红楼梦》女主角。"]],["武松","中国史·人物",["古代·男·虚构","水浒英雄，打虎英雄","景阳冈打虎，醉打蒋门神","行者，狮子楼","景阳冈空手打死猛虎、醉打蒋门神的水浒英雄。"]],["林冲","中国史·人物",["古代·男·虚构","水浒英雄，禁军教头","风雪山神庙，逼上梁山","豹子头，八十万禁军教头","被高俅陷害、风雪山神庙后逼上梁山的八十万禁军教头。"]],["鲁智深","中国史·人物",["古代·男·虚构","水浒英雄，花和尚","拳打镇关西，倒拔垂杨柳","五台山出家，禅杖戒刀","拳打镇关西、倒拔垂杨柳，出家为僧的花和尚。"]],["宋江","中国史·人物",["古代·男·虚构","水浒英雄，梁山首领","及时雨，接受招安","浔阳楼题反诗","仗义疏财、人称及时雨，最终接受招安的梁山首领。"]],["哪吒","中国史·人物",["古代·男·虚构","神话人物，三太子","闹海抽龙筋，莲花化身","风火轮，乾坤圈，混天绫","闹海抽龙筋、莲花化身，脚踩风火轮的托塔天王之子。"]],["嫦娥","中国史·人物",["古代·女·虚构","神话人物，月宫仙子","奔月传说，后羿之妻","玉兔捣药，广寒宫","偷吃灵药奔月、独居广寒宫的神话仙子。"]],["后羿","中国史·人物",["古代·男·虚构","神话人物，射日英雄","射落九日，嫦娥的丈夫","神弓在手，为民除害","弯弓射落九日、为民除害，嫦娥的丈夫。"]],["白素贞","中国史·人物",["古代·女·虚构","神话人物，白蛇精","水漫金山，许仙之妻","断桥相遇，雷峰塔","修行千年化作人形、与许仙断桥相恋，被压雷峰塔下的白蛇。"]],["梁山伯","中国史·人物",["古代·男·虚构","传说人物，书生","与祝英台同窗三载","化蝶，十八相送","与祝英台同窗三载、死后化蝶的痴情书生。"]],["祝英台","中国史·人物",["古代·女·虚构","传说人物，才女","女扮男装求学，殉情化蝶","十八相送，楼台会","女扮男装求学、殉情化蝶的痴情女子。"]],["愚公","中国史·人物",["古代·男·虚构","寓言人物，老翁","带领家人移走太行王屋二山","感动天帝，派神搬山","带领子孙日夜挖山、感动天帝移走太行王屋二山的老人。"]]];
+if (typeof module !== "undefined") { module.exports = { HISTORY_ENTRIES }; }</script>
+  <script>const PINYIN_MAP = {"孔":["kong"],"子":["zi"],"老":["lao"],"孟":["meng"],"荀":["xun"],"墨":["mo","mei"],"屈":["qu","jue","que","ju"],"原":["yuan"],"项":["xiang"],"羽":["yu","hu"],"刘":["liu"],"邦":["bang"],"备":["bei"],"曹":["cao"],"操":["cao"],"孙":["sun"],"权":["quan"],"关":["guan"],"张":["zhang"],"飞":["fei"],"赵":["zhao"],"云":["yun"],"周":["zhou"],"瑜":["yu"],"岳":["yue"],"秦":["qin"],"桧":["gui","hui"],"郑":["zheng"],"和":["he","hu","huo"],"康":["kang"],"熙":["xi","yi"],"雍":["yong"],"正":["zheng"],"乾":["qian","gan"],"隆":["long"],"慈":["ci"],"禧":["xi"],"光":["guang"],"绪":["xu"],"溥":["pu","fu","bu","bo","po"],"仪":["yi"],"雷":["lei"],"锋":["feng"],"李":["li"],"白":["bai","bo"],"杜":["du","tu"],"甫":["fu","pu"],"鲁":["lu"],"迅":["xun"],"蔡":["cai","sa","ca"],"伦":["lun"],"毕":["bi"],"昇":["sheng"],"衡":["heng"],"华":["hua"],"佗":["tuo","yi"],"扁":["bian","pian"],"鹊":["que"],"班":["ban"],"超":["chao","tiao"],"卫":["wei"],"青":["qing","jing"],"骞":["qian"],"苏":["su"],"武":["wu"],"玄":["xuan"],"奘":["zang","zhuang"],"鉴":["jian"],"真":["zhen"],"西":["xi"],"施":["shi","yi"],"貂":["diao"],"蝉":["chan"],"诸":["zhu"],"葛":["ge"],"亮":["liang"],"司":["si","ci"],"马":["ma"],"懿":["yi"],"辛":["xin"],"弃":["qi"],"疾":["ji"],"文":["wen"],"天":["tian"],"祥":["xiang"],"居":["ju","ji"],"林":["lin"],"则":["ze"],"徐":["xu"],"曾":["ceng","zeng"],"国":["guo"],"藩":["fan"],"鸿":["hong"],"章":["zhang"],"左":["zuo"],"宗":["zong"],"棠":["tang"],"有":["you","wei"],"为":["wei"],"梁":["liang"],"启":["qi"],"中":["zhong"],"山":["shan"],"袁":["yuan"],"世":["shi"],"凯":["kai"],"蒋":["jiang"],"介":["jie","ge"],"石":["shi","dan"],"毛":["mao"],"泽":["ze"],"东":["dong"],"恩":["en"],"来":["lai"],"邓":["deng","shan"],"小":["xiao"],"平":["ping","pian","bing","beng"],"昌":["chang"],"戚":["qi","cu"],"继":["ji"],"成":["cheng"],"功":["gong"],"谭":["tan"],"嗣":["si"],"同":["tong"],"大":["da","dai","tai"],"钊":["zhao"],"陈":["chen"],"独":["du"],"秀":["xiu"],"彭":["peng","pang","bang"],"德":["de"],"怀":["huai","fu"],"祖":["zu","jie"],"冲":["chong"],"之":["zhi","zhu"],"时":["shi"],"珍":["zhen"],"霞":["xia"],"客":["ke","qia"],"王":["wang","yu"],"羲":["xi"],"吴":["wu","tun"],"道":["dao"],"顾":["gu"],"恺":["kai"],"迁":["qian"],"霍":["huo","he","suo"],"去":["qu"],"病":["bing"],"昭":["zhao"],"君":["jun"],"杨":["yang"],"玉":["yu"],"环":["huan"],"唐":["tang"],"太":["tai","ta"],"汉":["han"],"帝":["di"],"始":["shi"],"皇":["huang","wang"],"宋":["song"],"忽":["hu"],"必":["bi"],"烈":["lie"],"花":["hua"],"木":["mu"],"兰":["lan"],"吉":["ji"],"思":["si","sai"],"汗":["han","gan"],"努":["nu"],"尔":["er"],"哈":["ha","he","ta","sha"],"赤":["chi"],"公":["gong"],"主":["zhu"],"撒":["sa"],"牛":["niu"],"顿":["dun","du"],"瓦":["wa"],"特":["te"],"肯":["ken"],"列":["lie","li"],"宁":["ning","zhu"],"甘":["gan","han"],"地":["di","de"],"金":["jin"],"梵":["fan"],"高":["gao"],"尼":["ni"],"采":["cai"],"卢":["lu"],"梭":["suo","xun"],"普":["pu"],"京":["jing"],"柏":["bai","bo"],"拉":["la"],"图":["tu"],"哥":["ge"],"布":["bu"],"麦":["mai"],"哲":["zhe"],"达":["da","ti","ta"],"芬":["fen"],"奇":["qi","ji","ai","yi"],"盛":["sheng","cheng"],"拿":["na"],"破":["po"],"仑":["lun"],"克":["ke"],"格":["ge","luo","he"],"斯":["si","shi"],"罗":["luo"],"福":["fu"],"丘":["qiu"],"希":["xi"],"勒":["lei","le"],"萨":["sa"],"姆":["mu"],"爱":["ai"],"迪":["di"],"生":["sheng"],"乔":["qiao"],"诺":["nuo"],"贝":["bei"],"多":["duo"],"莫":["mo","mu"],"扎":["zha","za"],"加":["jia"],"索":["suo"],"伏":["fu"],"泰":["tai"],"黑":["hei"],"屋":["wu"],"维":["wei"],"曼":["man"],"底":["di","de"],"释":["shi"],"迦":["jia","xie"],"牟":["mou","mu","mao"],"穆":["mu"],"罕":["han"],"默":["mo"],"富":["fu"],"里":["li"],"条":["tiao"],"英":["ying","yang"],"机":["ji","wei"],"夫":["fu"],"人":["ren"],"因":["yin"],"坦":["tan"],"莎":["sha","suo","sui"],"士":["shi"],"比":["bi","pi"],"亚":["ya"],"鸠":["jiu"],"弗":["fu"],"洛":["luo"],"伊":["yi"],"盖":["gai","ge"],"茨":["ci"],"阿":["a","e"],"法":["fa"],"牧":["mu"],"野":["ye","shu"],"战":["zhan"],"春":["chun"],"秋":["qiu"],"争":["zheng"],"霸":["ba","po"],"七":["qi"],"雄":["xiong"],"商":["shang"],"鞅":["yang"],"变":["bian"],"百":["bai","bo","mo"],"家":["jia","jie","gu"],"鸣":["ming"],"焚":["fen"],"书":["shu"],"坑":["keng","kang"],"儒":["ru"],"楚":["chu"],"景":["jing","ying"],"治":["zhi","chi"],"乱":["luan"],"丝":["si"],"绸":["chou"],"路":["lu","luo"],"官":["guan"],"渡":["du"],"壁":["bi"],"淝":["fei"],"水":["shui"],"三":["san"],"鼎":["ding","zhen"],"立":["li","wei"],"八":["ba"],"贞":["zhen"],"观":["guan"],"开":["kai"],"元":["yuan"],"安":["an"],"史":["shi"],"黄":["huang"],"巢":["chao"],"起":["qi"],"义":["yi"],"桥":["qiao"],"兵":["bing"],"澶":["chan","dan","zhan"],"渊":["yuan"],"盟":["meng","ming"],"靖":["jing"],"抗":["kang","gang"],"朝":["chao","zhao","zhu"],"建":["jian"],"土":["tu","du","cha"],"难":["nan"],"役":["yi"],"虎":["hu"],"门":["men"],"销":["xiao"],"烟":["yan","yin"],"鸦":["ya"],"片":["pian","pan"],"洋":["yang","xiang"],"务":["wu"],"运":["yun"],"动":["dong"],"甲":["jia"],"午":["wu"],"戊":["wu"],"戌":["xu","qu"],"日":["ri"],"新":["xin"],"亥":["hai","jie"],"革":["ge","ji"],"命":["ming"],"五":["wu"],"四":["si"],"南":["nan","na"],"收":["shou"],"红":["hong","gong"],"军":["jun"],"长":["zhang","chang"],"征":["zheng"],"遵":["zun"],"会":["hui","kuai"],"议":["yi"],"事":["shi","zi"],"团":["tuan","qiu"],"解":["jie","xie"],"放":["fang"],"典":["dian","tian"],"美":["mei"],"援":["yuan","huan"],"民":["min"],"社":["she"],"改":["gai"],"私":["si"],"合":["he","ge"],"营":["ying"],"一":["yi"],"计":["ji"],"划":["hua","guo","huai"],"共":["gong","hong"],"造":["zao","cao"],"艺":["yi"],"复":["fu"],"兴":["xing"],"教":["jiao"],"荣":["rong"],"工":["gong"],"业":["ye"],"蒙":["meng"],"明":["ming","meng"],"十":["shi"],"月":["yue","ru"],"奴":["nu"],"贸":["mao"],"易":["yi"],"角":["jiao","jue","lu","gu"],"宣":["xuan"],"言":["yan","yin"],"巴":["ba"],"黎":["li"],"北":["bei"],"约":["yue","yao"],"万":["wan","mo"],"鲜":["xian"],"越":["yue","huo"],"两":["liang"],"海":["hai"],"湾":["wan"],"冷":["leng","ling"],"危":["wei"],"联":["lian"],"体":["ti","ben","cui"],"欧":["ou"],"剧":["ju"],"洲":["zhou"],"统":["tong"],"化":["hua","huo"],"禹":["yu"],"汤":["tang","shang"],"姜":["jiang"],"牙":["ya"],"伍":["wu"],"胥":["xu"],"勾":["gou"],"践":["jian"],"庄":["zhuang","peng"],"蔺":["lin"],"相":["xiang"],"如":["ru"],"廉":["lian"],"颇":["po"],"恬":["tian"],"胜":["sheng","xing","qing"],"广":["guang","yan","an"],"萧":["xiao"],"何":["he"],"良":["liang"],"韩":["han"],"信":["xin","shen"],"吕":["lv"],"后":["hou"],"仲":["zhong"],"陶":["tao","yao","dao"],"郦":["li"],"隋":["sui","duo","tuo"],"炀":["yang"],"魏":["wei"],"邈":["miao"],"禄":["lu"],"匡":["kuang","wang"],"胤":["yin"],"轼":["shi"],"卿":["qing"],"朱":["zhu","shu"],"璋":["zhang"],"棣":["di","ti","dai"],"阳":["yang"],"瑞":["rui"],"承":["cheng","zheng"],"耐":["nai","neng"],"庵":["an","yan","e"],"贯":["guan"],"雪":["xue"],"芹":["qin"],"锷":["e"],"詹":["zhan","dan"],"佑":["you"],"钱":["qian"],"学":["xue"],"森":["sen"],"稼":["jia"],"先":["xian"],"屠":["tu"],"呦":["you"],"庚":["geng"],"烽":["feng"],"火":["huo"],"戏":["xi","hu"],"侯":["hou"],"卧":["wo"],"薪":["xin"],"尝":["chang"],"胆":["dan","tan","da"],"荆":["jing"],"轲":["ke"],"刺":["ci","qi"],"出":["chu"],"使":["shi"],"域":["yu"],"莽":["mang"],"篡":["cuan"],"巾":["jin"],"茅":["mao"],"庐":["lu"],"孝":["xiao"],"凿":["zao","zuo"],"河":["he"],"科":["ke"],"举":["ju"],"制":["zhi"],"度":["du","duo","zhai"],"行":["xing","hang","heng"],"代":["dai"],"耻":["chi"],"古":["gu","ku"],"灭":["mie"],"下":["xia"],"堡":["bao","bu","pu"],"倭":["wo","wei"],"自":["zi"],"清":["qing"],"入":["ru"],"侵":["qin"],"产":["chan"],"党":["dang"],"杀":["sha"],"重":["zhong","chong","tong"],"庆":["qing"],"谈":["tan"],"判":["pan"],"香":["xiang"],"港":["gang","hong"],"回":["hui"],"归":["gui"],"澳":["ao","yu"],"神":["shen"],"舟":["zhou"],"号":["hao","xiao"],"奥":["ao","yu","you"],"历":["li"],"基":["ji"],"米":["mi"],"耶":["ye","xie"],"稣":["su"],"丁":["ding","zheng"],"查":["cha","zha","chai"],"理":["li"],"可":["ke","ge"],"波":["bo","bei","bi"],"朗":["lang"],"伽":["ga","jia","qie"],"利":["li"],"略":["lve"],"杰":["jie"],"斐":["fei"],"逊":["xun"],"俾":["bi","bei","pi"],"戈":["ge"],"蒂":["di"],"松":["song"],"匿":["ni","te"],"督":["du"],"诞":["dan"],"分":["fen"],"裂":["lie"],"亡":["wang","wu"],"字":["zi"],"死":["si"],"发":["fa"],"现":["xian"],"陆":["lu","liu"],"球":["qiu"],"航":["hang"],"资":["zi"],"阶":["jie"],"级":["ji"],"第":["di"],"次":["ci","zi"],"界":["jie"],"俄":["e"],"经":["jing"],"济":["ji"],"二":["er"],"登":["deng","de"],"歇":["xie","ya"],"墙":["qiang"],"修":["xiu"],"类":["lei"],"倒":["dao"],"塌":["ta","da"],"组":["zu"],"织":["zhi"],"悟":["wu"],"空":["kong"],"猪":["zhu"],"戒":["jie"],"贾":["jia","gu"],"宝":["bao"],"黛":["dai"],"智":["zhi"],"深":["shen"],"江":["jiang"],"哪":["na","ne","nuo","nai","nie","nei"],"吒":["zha"],"嫦":["chang"],"娥":["e"],"羿":["yi"],"素":["su"],"伯":["bo","bai","mo","ba"],"祝":["zhu","zhou","chu"],"台":["tai","yi","si"],"愚":["yu"]};</script>
+<script>const PINYIN_TONE = {"孔":["kǒng"],"子":["zi","zǐ"],"老":["lǎo"],"孟":["mèng"],"荀":["xún"],"墨":["mò","mèi"],"屈":["qū","jué","què","jú"],"原":["yuán"],"项":["xiàng"],"羽":["yǔ","hù"],"刘":["liú"],"邦":["bāng"],"备":["bèi"],"曹":["cáo"],"操":["cāo"],"孙":["sūn"],"权":["quán"],"关":["guān"],"张":["zhāng"],"飞":["fēi"],"赵":["zhào"],"云":["yún"],"周":["zhōu"],"瑜":["yú"],"岳":["yuè"],"秦":["qín"],"桧":["guì","huì"],"郑":["zhèng"],"和":["hé","hè","hú","huó","huò","huo"],"康":["kāng","kàng"],"熙":["xī","yí"],"雍":["yōng"],"正":["zhèng","zhēng"],"乾":["qián","gān"],"隆":["lóng","lōng"],"慈":["cí"],"禧":["xǐ","xī"],"光":["guāng","guàng"],"绪":["xù"],"溥":["pǔ","fū","bù","bó","pò"],"仪":["yí"],"雷":["léi","lèi"],"锋":["fēng"],"李":["lǐ"],"白":["bái","bó"],"杜":["dù","dǔ","tú"],"甫":["fǔ","fū","pǔ"],"鲁":["lǔ"],"迅":["xùn"],"蔡":["cài","sà","cā"],"伦":["lún"],"毕":["bì"],"昇":["shēng"],"衡":["héng"],"华":["huá","huà","huā"],"佗":["tuó","tuō","tuò","yí"],"扁":["biǎn","piān","biān","pián"],"鹊":["què"],"班":["bān"],"超":["chāo","chǎo","chào","tiào"],"卫":["wèi"],"青":["qīng","jīng"],"骞":["qiān"],"苏":["sū"],"武":["wǔ"],"玄":["xuán","xuàn"],"奘":["zàng","zhuǎng"],"鉴":["jiàn"],"真":["zhēn"],"西":["xī"],"施":["shī","yì","shǐ"],"貂":["diāo"],"蝉":["chán"],"诸":["zhū"],"葛":["gé","gě"],"亮":["liàng","liáng"],"司":["sī","cí","sì"],"马":["mǎ"],"懿":["yì","yī"],"辛":["xīn"],"弃":["qì"],"疾":["jí"],"文":["wén"],"天":["tiān"],"祥":["xiáng"],"居":["jū","jī"],"林":["lín"],"则":["zé"],"徐":["xú"],"曾":["céng","zēng"],"国":["guó"],"藩":["fān","fán"],"鸿":["hóng"],"章":["zhāng","zhàng"],"左":["zuǒ"],"宗":["zōng"],"棠":["táng"],"有":["yǒu","yòu","wěi"],"为":["wèi","wéi"],"梁":["liáng"],"启":["qǐ"],"中":["zhōng","zhòng"],"山":["shān"],"袁":["yuán"],"世":["shì"],"凯":["kǎi"],"蒋":["jiǎng"],"介":["jiè","gè"],"石":["shí","dàn"],"毛":["máo","mào"],"泽":["zé"],"东":["dōng"],"恩":["ēn"],"来":["lái"],"邓":["dèng","shān"],"小":["xiǎo"],"平":["píng","pián","bìng","bēng"],"昌":["chāng","chàng"],"戚":["qī","cù"],"继":["jì"],"成":["chéng"],"功":["gōng"],"谭":["tán"],"嗣":["sì"],"同":["tóng","tòng"],"大":["dà","dài","tài"],"钊":["zhāo"],"陈":["chén"],"独":["dú"],"秀":["xiù"],"彭":["péng","páng","bāng","pēng"],"德":["dé"],"怀":["huái","fù"],"祖":["zǔ","jiē"],"冲":["chōng","chòng"],"之":["zhī","zhū","zhì"],"时":["shí"],"珍":["zhēn"],"霞":["xiá"],"客":["kè","qià"],"王":["wáng","wàng","yù"],"羲":["xī"],"吴":["wú","tūn"],"道":["dào","dǎo"],"顾":["gù"],"恺":["kǎi"],"迁":["qiān"],"霍":["huò","hè","suǒ"],"去":["qù","qū"],"病":["bìng"],"昭":["zhāo","zhào"],"君":["jūn"],"杨":["yáng"],"玉":["yù"],"环":["huán"],"唐":["táng"],"太":["tài","tā"],"汉":["hàn"],"帝":["dì"],"始":["shǐ"],"皇":["huáng","wǎng"],"宋":["sòng"],"忽":["hū"],"必":["bì"],"烈":["liè"],"花":["huā"],"木":["mù"],"兰":["lán"],"吉":["jí"],"思":["sī","sāi"],"汗":["hàn","hán","gān"],"努":["nǔ"],"尔":["ěr"],"哈":["hā","hǎ","hà","hē","hé","tà","shà"],"赤":["chì"],"公":["gōng"],"主":["zhǔ","zhù"],"撒":["sā","sǎ"],"牛":["niú"],"顿":["dùn","dú"],"瓦":["wǎ","wà"],"特":["tè"],"肯":["kěn"],"列":["liè","lì"],"宁":["níng","nìng","zhù"],"甘":["gān","hān"],"地":["dì","de"],"金":["jīn","jìn"],"梵":["fàn"],"高":["gāo","gào"],"尼":["ní","nǐ"],"采":["cǎi","cài"],"卢":["lú"],"梭":["suō","xùn"],"普":["pǔ"],"京":["jīng"],"柏":["bǎi","bó","bò"],"拉":["lā","lá","lǎ","là","la"],"图":["tú"],"哥":["gē"],"布":["bù"],"麦":["mài"],"哲":["zhé"],"达":["dá","tì","tà"],"芬":["fēn"],"奇":["qí","jī","ǎi","yǐ"],"盛":["shèng","chéng"],"拿":["ná"],"破":["pò"],"仑":["lún"],"克":["kè"],"格":["gé","luò","hè","gē"],"斯":["sī","shǐ"],"罗":["luó","luō"],"福":["fú","fù"],"丘":["qiū"],"希":["xī"],"勒":["lēi","lè","lei"],"萨":["sà"],"姆":["mǔ"],"爱":["ài"],"迪":["dí"],"生":["shēng"],"乔":["qiáo"],"诺":["nuò"],"贝":["bèi"],"多":["duō"],"莫":["mò","mù"],"扎":["zhā","zā","zhá","zhǎ"],"加":["jiā"],"索":["suǒ"],"伏":["fú","fù"],"泰":["tài"],"黑":["hēi"],"屋":["wū"],"维":["wéi"],"曼":["màn"],"底":["dǐ","de"],"释":["shì"],"迦":["jiā","xiè"],"牟":["móu","mù","mào"],"穆":["mù"],"罕":["hǎn","hàn"],"默":["mò"],"富":["fù"],"里":["lǐ","li"],"条":["tiáo"],"英":["yīng","yāng"],"机":["jī","wèi"],"夫":["fū","fú"],"人":["rén"],"因":["yīn"],"坦":["tǎn"],"莎":["shā","suō","suī"],"士":["shì"],"比":["bǐ","bì","pí","pǐ"],"亚":["yà"],"鸠":["jiū"],"弗":["fú"],"洛":["luò"],"伊":["yī"],"盖":["gài","gě"],"茨":["cí"],"阿":["ā","ē","ě","ǎ","à","a"],"法":["fǎ"],"牧":["mù"],"野":["yě","shù"],"战":["zhàn"],"春":["chūn","chǔn"],"秋":["qiū"],"争":["zhēng"],"霸":["bà","pò"],"七":["qī","qí"],"雄":["xióng"],"商":["shāng"],"鞅":["yāng","yàng","yǎng"],"变":["biàn"],"百":["bǎi","bó","mò"],"家":["jiā","jia","jià","jie","gū"],"鸣":["míng"],"焚":["fén","fèn"],"书":["shū"],"坑":["kēng","kàng"],"儒":["rú"],"楚":["chǔ"],"景":["jǐng","yǐng"],"治":["zhì","chí"],"乱":["luàn"],"丝":["sī"],"绸":["chóu"],"路":["lù","luò"],"官":["guān"],"渡":["dù"],"壁":["bì"],"淝":["féi"],"水":["shuǐ"],"三":["sān"],"鼎":["dǐng","zhēn"],"立":["lì","wèi"],"八":["bā","bá"],"贞":["zhēn"],"观":["guān","guàn"],"开":["kāi"],"元":["yuán"],"安":["ān"],"史":["shǐ"],"黄":["huáng"],"巢":["cháo","chào"],"起":["qǐ"],"义":["yì"],"桥":["qiáo"],"兵":["bīng"],"澶":["chán","dàn","zhān"],"渊":["yuān"],"盟":["méng","mèng","míng"],"靖":["jìng"],"抗":["kàng","gāng"],"朝":["cháo","zhāo","zhū"],"建":["jiàn"],"土":["tǔ","dù","chǎ","tú"],"难":["nán","nàn"],"役":["yì"],"虎":["hǔ","hù"],"门":["mén"],"销":["xiāo"],"烟":["yān","yīn"],"鸦":["yā"],"片":["piàn","piān","pàn"],"洋":["yáng","xiáng","yǎng"],"务":["wù"],"运":["yùn","yǔn"],"动":["dòng"],"甲":["jiǎ"],"午":["wǔ"],"戊":["wù"],"戌":["xū","qu"],"日":["rì"],"新":["xīn"],"亥":["hài","jiē"],"革":["gé","jí"],"命":["mìng"],"五":["wǔ"],"四":["sì"],"南":["nán","nā"],"收":["shōu"],"红":["hóng","gōng"],"军":["jūn"],"长":["zhǎng","cháng"],"征":["zhēng"],"遵":["zūn"],"会":["huì","kuài"],"议":["yì"],"事":["shì","zì"],"团":["tuán","qiú"],"解":["jiě","jiè","xiè"],"放":["fàng","fǎng","fāng"],"典":["diǎn","tiǎn"],"美":["měi"],"援":["yuán","huàn"],"民":["mín"],"社":["shè"],"改":["gǎi"],"私":["sī"],"合":["hé","gě"],"营":["yíng"],"一":["yī","yí","yì"],"计":["jì"],"划":["huà","huá","guò","guǒ","huai"],"共":["gòng","gōng","gǒng","hóng"],"造":["zào","cào","cāo"],"艺":["yì"],"复":["fù"],"兴":["xīng","xìng"],"教":["jiào","jiāo"],"荣":["róng"],"工":["gōng"],"业":["yè"],"蒙":["méng","mēng","měng"],"明":["míng","mèng"],"十":["shí"],"月":["yuè","rù"],"奴":["nú"],"贸":["mào"],"易":["yì"],"角":["jiǎo","jué","lù","gǔ"],"宣":["xuān"],"言":["yán","yàn","yín"],"巴":["bā"],"黎":["lí"],"北":["běi","bèi"],"约":["yuē","yāo"],"万":["wàn","mò"],"鲜":["xiān","xiǎn"],"越":["yuè","huó"],"两":["liǎng"],"海":["hǎi"],"湾":["wān"],"冷":["lěng","líng","lǐng"],"危":["wēi"],"联":["lián"],"体":["tǐ","tī","bèn","cuì"],"欧":["ōu"],"剧":["jù"],"洲":["zhōu"],"统":["tǒng"],"化":["huà","huā","huò"],"禹":["yǔ"],"汤":["tāng","shāng"],"姜":["jiāng"],"牙":["yá","yà"],"伍":["wǔ"],"胥":["xū","xǔ"],"勾":["gōu","gòu"],"践":["jiàn"],"庄":["zhuāng","péng"],"蔺":["lìn"],"相":["xiāng","xiàng"],"如":["rú"],"廉":["lián"],"颇":["pǒ","pō"],"恬":["tián"],"胜":["shèng","xīng","qìng","shēng"],"广":["guǎng","yǎn","ān"],"萧":["xiāo"],"何":["hé","hè"],"良":["liáng","liǎng"],"韩":["hán"],"信":["xìn","shēn"],"吕":["lǚ"],"后":["hòu"],"仲":["zhòng"],"陶":["táo","yáo","dào"],"郦":["lì"],"隋":["suí","duò","tuǒ","tuō"],"炀":["yáng"],"魏":["wèi","wéi","wēi"],"邈":["miǎo","miáo"],"禄":["lù"],"匡":["kuāng","wāng"],"胤":["yìn"],"轼":["shì"],"卿":["qīng"],"朱":["zhū","shū"],"璋":["zhāng"],"棣":["dì","tì","dài"],"阳":["yáng"],"瑞":["ruì"],"承":["chéng","zhěng","zhèng"],"耐":["nài","néng"],"庵":["ān","yǎn","è"],"贯":["guàn"],"雪":["xuě"],"芹":["qín"],"锷":["è"],"詹":["zhān","dàn"],"佑":["yòu"],"钱":["qián"],"学":["xué"],"森":["sēn"],"稼":["jià"],"先":["xiān"],"屠":["tú"],"呦":["yōu"],"庚":["gēng"],"烽":["fēng"],"火":["huǒ","huō"],"戏":["xì","hū"],"侯":["hóu","hòu"],"卧":["wò"],"薪":["xīn"],"尝":["cháng"],"胆":["dǎn","tán","tǎn","dá"],"荆":["jīng"],"轲":["kē","kě"],"刺":["cì","cī","qì"],"出":["chū"],"使":["shǐ"],"域":["yù"],"莽":["mǎng","máng"],"篡":["cuàn"],"巾":["jīn"],"茅":["máo"],"庐":["lú"],"孝":["xiào"],"凿":["záo","zuò"],"河":["hé"],"科":["kē","kè"],"举":["jǔ"],"制":["zhì"],"度":["dù","duó","zhái"],"行":["xíng","háng","héng","xìng","hàng"],"代":["dài"],"耻":["chǐ"],"古":["gǔ","gù","kū"],"灭":["miè"],"下":["xià"],"堡":["bǎo","bǔ","pù"],"倭":["wō","wēi","wǒ"],"自":["zì"],"清":["qīng","qìng"],"入":["rù"],"侵":["qīn","qǐn"],"产":["chǎn"],"党":["dǎng"],"杀":["shā"],"重":["zhòng","chóng","tóng"],"庆":["qìng"],"谈":["tán"],"判":["pàn"],"香":["xiāng"],"港":["gǎng","hòng"],"回":["huí"],"归":["guī"],"澳":["ào","yù"],"神":["shén","shēn"],"舟":["zhōu"],"号":["hào","háo","xiāo"],"奥":["ào","yù","yōu"],"历":["lì"],"基":["jī"],"米":["mǐ"],"耶":["yé","yē","xié"],"稣":["sū"],"丁":["dīng","zhēng"],"查":["chá","zhā","chái"],"理":["lǐ"],"可":["kě","kè","gē"],"波":["bō","bēi","bì"],"朗":["lǎng"],"伽":["gā","jiā","qié"],"利":["lì"],"略":["lüè"],"杰":["jié"],"斐":["fěi"],"逊":["xùn"],"俾":["bǐ","bì","bēi","pì"],"戈":["gē"],"蒂":["dì"],"松":["sōng"],"匿":["nì","tè"],"督":["dū"],"诞":["dàn"],"分":["fēn","fèn","fén"],"裂":["liè","liě"],"亡":["wáng","wú"],"字":["zì"],"死":["sǐ"],"发":["fā","fà"],"现":["xiàn"],"陆":["lù","liù"],"球":["qiú"],"航":["háng"],"资":["zī"],"阶":["jiē"],"级":["jí"],"第":["dì"],"次":["cì","zī","cí"],"界":["jiè"],"俄":["é"],"经":["jīng","jìng"],"济":["jì","jǐ"],"二":["èr"],"登":["dēng","dé"],"歇":["xiē","yà"],"墙":["qiáng"],"修":["xiū"],"类":["lèi"],"倒":["dào","dǎo"],"塌":["tā","dā"],"组":["zǔ"],"织":["zhī"],"悟":["wù"],"空":["kōng","kòng","kǒng"],"猪":["zhū"],"戒":["jiè"],"贾":["jiǎ","gǔ"],"宝":["bǎo"],"黛":["dài"],"智":["zhì","zhī"],"深":["shēn"],"江":["jiāng"],"哪":["nǎ","na","né","nuó","nǎi","nà","niè","něi"],"吒":["zhā","zhà"],"嫦":["cháng"],"娥":["é"],"羿":["yì"],"素":["sù"],"伯":["bó","bǎi","mò","bà"],"祝":["zhù","zhòu","chù"],"台":["tái","tāi","yí","sì"],"愚":["yú"]};</script>
+<script>const CHAR_STROKES = {"孔":4,"子":3,"老":6,"孟":8,"荀":9,"墨":15,"屈":8,"原":10,"项":9,"羽":6,"刘":6,"邦":6,"备":8,"曹":11,"操":16,"孙":6,"权":6,"关":6,"张":7,"飞":3,"赵":9,"云":4,"周":8,"瑜":13,"岳":8,"秦":10,"桧":10,"郑":8,"和":8,"康":11,"熙":14,"雍":13,"正":5,"乾":11,"隆":11,"慈":13,"禧":16,"光":6,"绪":11,"溥":13,"仪":5,"雷":13,"锋":12,"李":7,"白":5,"杜":7,"甫":7,"鲁":12,"迅":6,"蔡":14,"伦":6,"毕":6,"昇":8,"衡":16,"华":6,"佗":7,"扁":9,"鹊":13,"班":10,"超":12,"卫":3,"青":8,"骞":13,"苏":7,"武":8,"玄":5,"奘":10,"鉴":13,"真":10,"西":6,"施":9,"貂":12,"蝉":14,"诸":10,"葛":12,"亮":9,"司":5,"马":3,"懿":22,"辛":7,"弃":7,"疾":10,"文":4,"天":4,"祥":10,"居":8,"林":8,"则":6,"徐":10,"曾":12,"国":8,"藩":18,"鸿":11,"章":11,"左":5,"宗":8,"棠":12,"有":6,"为":4,"梁":11,"启":7,"中":4,"山":3,"袁":10,"世":5,"凯":8,"蒋":12,"介":4,"石":5,"毛":4,"泽":8,"东":5,"恩":10,"来":7,"邓":4,"小":3,"平":5,"昌":8,"戚":11,"继":10,"成":6,"功":5,"谭":14,"嗣":13,"同":6,"大":3,"钊":7,"陈":7,"独":9,"秀":7,"彭":12,"德":15,"怀":7,"祖":9,"冲":6,"之":3,"时":7,"珍":9,"霞":17,"客":9,"王":4,"羲":16,"吴":7,"道":12,"顾":10,"恺":9,"迁":6,"霍":16,"去":5,"病":10,"昭":9,"君":7,"杨":7,"玉":5,"环":8,"唐":10,"太":4,"汉":5,"帝":9,"始":8,"皇":9,"宋":7,"忽":8,"必":5,"烈":10,"花":7,"木":4,"兰":5,"吉":6,"思":9,"汗":6,"努":7,"尔":5,"哈":9,"赤":7,"公":4,"主":5,"撒":15,"牛":4,"顿":10,"瓦":4,"特":10,"肯":8,"列":6,"宁":5,"甘":5,"地":6,"金":8,"梵":11,"高":10,"尼":5,"采":8,"卢":5,"梭":11,"普":12,"京":8,"柏":9,"拉":8,"图":8,"哥":10,"布":5,"麦":7,"哲":10,"达":6,"芬":7,"奇":8,"盛":11,"拿":10,"破":10,"仑":4,"克":7,"格":10,"斯":12,"罗":8,"福":13,"丘":5,"希":7,"勒":11,"萨":11,"姆":8,"爱":10,"迪":8,"生":5,"乔":6,"诺":10,"贝":4,"多":6,"莫":10,"扎":4,"加":5,"索":10,"伏":6,"泰":10,"黑":12,"屋":9,"维":11,"曼":11,"底":8,"释":12,"迦":8,"牟":6,"穆":16,"罕":7,"默":16,"富":12,"里":7,"条":7,"英":8,"机":6,"夫":4,"人":2,"因":6,"坦":8,"莎":10,"士":3,"比":4,"亚":6,"鸠":7,"弗":5,"洛":9,"伊":6,"盖":11,"茨":9,"阿":7,"法":8,"牧":8,"野":11,"战":9,"春":9,"秋":9,"争":6,"霸":21,"七":2,"雄":12,"商":11,"鞅":14,"变":8,"百":6,"家":10,"鸣":8,"焚":12,"书":4,"坑":7,"儒":16,"楚":13,"景":12,"治":8,"乱":7,"丝":5,"绸":11,"路":13,"官":8,"渡":12,"壁":16,"淝":11,"水":4,"三":3,"鼎":12,"立":5,"八":2,"贞":6,"观":6,"开":4,"元":4,"安":6,"史":5,"黄":11,"巢":11,"起":10,"义":3,"桥":10,"兵":7,"澶":16,"渊":11,"盟":13,"靖":13,"抗":7,"朝":12,"建":8,"土":3,"难":10,"役":7,"虎":8,"门":3,"销":12,"烟":10,"鸦":9,"片":4,"洋":9,"务":5,"运":7,"动":6,"甲":5,"午":4,"戊":5,"戌":6,"日":4,"新":13,"亥":6,"革":9,"命":8,"五":4,"四":5,"南":9,"收":6,"红":6,"军":6,"长":4,"征":8,"遵":15,"会":6,"议":5,"事":8,"团":6,"解":13,"放":8,"典":8,"美":9,"援":12,"民":5,"社":7,"改":7,"私":7,"合":6,"营":11,"一":1,"计":4,"划":6,"共":6,"造":10,"艺":4,"复":9,"兴":6,"教":11,"荣":9,"工":3,"业":5,"蒙":13,"明":8,"十":2,"月":4,"奴":5,"贸":9,"易":8,"角":7,"宣":9,"言":7,"巴":4,"黎":15,"北":5,"约":6,"万":3,"鲜":14,"越":12,"两":7,"海":10,"湾":12,"冷":7,"危":6,"联":12,"体":7,"欧":8,"剧":10,"洲":9,"统":9,"化":4,"禹":9,"汤":6,"姜":9,"牙":4,"伍":6,"胥":9,"勾":4,"践":12,"庄":6,"蔺":14,"相":9,"如":6,"廉":13,"颇":11,"恬":9,"胜":9,"广":3,"萧":11,"何":7,"良":7,"韩":12,"信":9,"吕":6,"后":6,"仲":6,"陶":10,"郦":9,"隋":11,"炀":7,"魏":17,"邈":17,"禄":12,"匡":6,"胤":9,"轼":10,"卿":10,"朱":6,"璋":15,"棣":12,"阳":6,"瑞":13,"承":8,"耐":9,"庵":11,"贯":8,"雪":11,"芹":7,"锷":14,"詹":13,"佑":7,"钱":10,"学":8,"森":12,"稼":15,"先":6,"屠":11,"呦":8,"庚":8,"烽":11,"火":4,"戏":6,"侯":9,"卧":8,"薪":16,"尝":9,"胆":9,"荆":9,"轲":9,"刺":8,"出":5,"使":8,"域":11,"莽":10,"篡":16,"巾":3,"茅":8,"庐":7,"孝":7,"凿":12,"河":8,"科":9,"举":9,"制":8,"度":9,"行":6,"代":5,"耻":10,"古":5,"灭":5,"下":3,"堡":12,"倭":10,"自":6,"清":11,"入":2,"侵":9,"产":6,"党":10,"杀":6,"重":9,"庆":6,"谈":10,"判":7,"香":9,"港":12,"回":6,"归":5,"澳":15,"神":9,"舟":6,"号":5,"奥":12,"历":4,"基":11,"米":6,"耶":8,"稣":13,"丁":2,"查":9,"理":11,"可":5,"波":8,"朗":10,"伽":7,"利":7,"略":11,"杰":8,"斐":12,"逊":9,"俾":10,"戈":4,"蒂":12,"松":8,"匿":10,"督":13,"诞":8,"分":4,"裂":12,"亡":3,"字":6,"死":6,"发":5,"现":8,"陆":7,"球":11,"航":10,"资":10,"阶":6,"级":6,"第":11,"次":6,"界":9,"俄":9,"经":8,"济":9,"二":2,"登":12,"歇":13,"墙":14,"修":9,"类":9,"倒":10,"塌":13,"组":8,"织":8,"悟":10,"空":8,"猪":11,"戒":7,"贾":10,"宝":8,"黛":17,"智":12,"深":11,"江":6,"哪":9,"吒":6,"嫦":14,"娥":10,"羿":9,"素":10,"伯":7,"祝":9,"台":5,"愚":13};</script>
+<script>// 汉字 Wordle —— 游戏逻辑
+(function () {
+  "use strict";
+
+  var MAX_ATTEMPTS = 6;
+
+  function getEntries() {
+    return typeof HISTORY_ENTRIES !== "undefined" ? HISTORY_ENTRIES : [];
+  }
+  function getPinyin() {
+    return typeof PINYIN_MAP !== "undefined" ? PINYIN_MAP : {};
+  }
+
+  // ---------- 纯逻辑（可单测） ----------
+  function evaluate(guess, answer) {
+    var len = answer.length;
+    var res = new Array(len).fill("absent");
+    var counts = {};
+    var i;
+    for (i = 0; i < answer.length; i++) counts[answer[i]] = (counts[answer[i]] || 0) + 1;
+    for (i = 0; i < len; i++) {
+      if (guess[i] === answer[i]) {
+        res[i] = "correct";
+        counts[guess[i]]--;
+      }
+    }
+    for (i = 0; i < len; i++) {
+      if (res[i] === "correct") continue;
+      if ((counts[guess[i]] || 0) > 0) {
+        res[i] = "present";
+        counts[guess[i]]--;
+      }
+    }
+    return res;
+  }
+
+  function hashStr(s) {
+    var h = 0;
+    for (var i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+
+  function fmtDate(d) {
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
+  }
+
+  function todayStr() {
+    return fmtDate(new Date());
+  }
+
+  function yesterdayStr() {
+    var d = new Date();
+    d.setDate(d.getDate() - 1);
+    return fmtDate(d);
+  }
+
+  function pickDaily() {
+    var entries = getEntries();
+    return entries[hashStr(todayStr()) % entries.length];
+  }
+
+  function pickRandom() {
+    var entries = getEntries();
+    return entries[Math.floor(Math.random() * entries.length)];
+  }
+
+  function buildCharFreq(words) {
+    var f = {};
+    for (var w = 0; w < words.length; w++) {
+      for (var i = 0; i < words[w].length; i++) {
+        var ch = words[w][i];
+        f[ch] = (f[ch] || 0) + 1;
+      }
+    }
+    return f;
+  }
+
+  // ---------- 浏览器端 ----------
+  if (typeof document !== "undefined") {
+    var entries = getEntries();
+    var charFreq = buildCharFreq(
+      entries.map(function (e) {
+        return e[0];
+      })
+    );
+    var PINYIN = getPinyin();
+
+    var mode = "daily";
+    var answer = "";
+    var answerCat = "";
+    var answerClues = [];
+    var wordLen = 4;
+    var currentRow = 0;
+    var currentGuess = "";
+    var gameOver = false;
+    var revealing = false;
+    var isComposing = false;
+    var pinyinBuf = "";
+    var resultRows = [];
+    var won = false;
+    var lastGiveUp = false;
+    var lastResult = null;
+    var lastRows = [];
+    var guessCount = 0;
+    var clueShown = 1;
+    var clueTypes = [];
+    var TAUNTS = ["雑魚ざこ！", "就这？", "太菜了吧！", "弱爆了！", "再练练吧！"];
+    var BODY_TAUNTS = [
+      "猜不出来吧？", "就这点本事？", "看来是历史白学了～", "不会吧不会吧？", "这都猜不到？",
+    ];
+    var PRAISE = [
+      "历史大师就是你！",
+      "太强了，这都难不倒你！",
+      "恭喜！雑魚已经被你远远甩开～",
+      "猛男认证：历史学霸实锤！",
+      "知识就是力量，行走的百科全书！",
+      "答对了！今天也是历史小能手～",
+    ];
+
+    var STATS_KEY = "hanzi-wordle-stats-v1";
+    var HINT = "";
+    var msgTimer = null;
+    var winNextTimer = null;
+
+    function $(sel) {
+      return document.querySelector(sel);
+    }
+
+    function isHan(ch) {
+      return /[\u4e00-\u9fff]/.test(ch);
+    }
+
+    function rowCells(r) {
+      return Array.prototype.slice.call(document.querySelectorAll('.row[data-row="' + r + '"] .cell'));
+    }
+
+    function focusTyper() {
+      var typer = $("#typer");
+      try {
+        typer.focus({ preventScroll: true });
+      } catch (e) {
+        typer.focus();
+      }
+    }
+
+    // ---------- 统计 ----------
+    function emptyStats() {
+      return { played: 0, wins: 0, streak: 0, maxStreak: 0, dist: [0, 0, 0, 0, 0, 0], lastDate: "", misses: 0, giveups: 0, dailyDone: "" };
+    }
+    function loadStats() {
+      try {
+        var s = JSON.parse(localStorage.getItem(STATS_KEY));
+        if (!s || typeof s.played !== "number") return emptyStats();
+        return s;
+      } catch (e) {
+        return emptyStats();
+      }
+    }
+    function saveStats(s) {
+      try {
+        localStorage.setItem(STATS_KEY, JSON.stringify(s));
+      } catch (e) {}
+    }
+    function updateStats(isWin, attempts, giveUp) {
+      var s = loadStats();
+      var today = todayStr();
+      var alreadyToday = mode === "daily" && s.lastDate === today;
+      if (!alreadyToday) {
+        s.played++;
+        if (isWin) {
+          s.wins++;
+          s.dist[attempts - 1]++;
+          s.streak = (s.streak || 0) + 1;
+          s.maxStreak = Math.max(s.maxStreak, s.streak);
+        } else {
+          if (giveUp) s.giveups = (s.giveups || 0) + 1;
+          else s.misses = (s.misses || 0) + 1;
+          s.streak = 0;
+        }
+      }
+      s.lastDate = today;
+      if (mode === "daily") s.dailyDone = today;
+      saveStats(s);
+    }
+
+    // 每日题当天完成后锁定每日按钮
+    function updateDailyLock() {
+      var s = loadStats();
+      var locked = s.dailyDone === todayStr();
+      var btn = $("#btn-daily");
+      btn.disabled = locked;
+      btn.title = locked ? "今日每日题已完成，明天再来" : "每天同一道题";
+    }
+
+    // 胜率段位绰号（每 10% 一档）
+    function winRateNickname(pct) {
+      var tiers = [
+        [0, "纯雑魚"],
+        [10, "菜鸡本鸡"],
+        [20, "蒙题苦手"],
+        [30, "半吊子选手"],
+        [40, "五五开戦士"],
+        [50, "及格猛男"],
+        [60, "历史熟手"],
+        [70, "学霸预备役"],
+        [80, "行走百科"],
+        [90, "历史大师"],
+        [100, "天选之人"],
+      ];
+      for (var i = tiers.length - 1; i >= 0; i--) {
+        if (pct >= tiers[i][0]) return tiers[i][1];
+      }
+      return "纯雑魚";
+    }
+
+    // ---------- 消息 ----------
+    function showMessage(text, type) {
+      clearTimeout(msgTimer);
+      var el = $("#message");
+      el.textContent = text;
+      el.className = type || "";
+      if (type === "error") {
+        msgTimer = setTimeout(function () {
+          $("#message").textContent = HINT;
+          $("#message").className = "";
+        }, 2200);
+      }
+    }
+
+    // ---------- 棋盘 ----------
+    function buildBoard() {
+      var board = $("#board");
+      board.innerHTML = "";
+      for (var r = 0; r < MAX_ATTEMPTS; r++) {
+        var row = document.createElement("div");
+        row.className = "row" + (r === 0 ? " active" : "");
+        row.setAttribute("data-row", r);
+        for (var i = 0; i < wordLen; i++) {
+          var cell = document.createElement("div");
+          cell.className = "cell";
+          cell.setAttribute("data-row", r);
+          cell.setAttribute("data-i", i);
+          row.appendChild(cell);
+        }
+        board.appendChild(row);
+      }
+      renderCurrentRow();
+    }
+
+    function setActiveRow() {
+      var rows = document.querySelectorAll(".row");
+      for (var i = 0; i < rows.length; i++) rows[i].classList.toggle("active", i === currentRow);
+      renderCurrentRow();
+    }
+
+    function renderCurrentRow() {
+      var cells = rowCells(currentRow);
+      for (var i = 0; i < wordLen; i++) {
+        var ch = currentGuess[i] || "";
+        cells[i].textContent = ch;
+        cells[i].classList.toggle("filled", !!ch);
+        cells[i].classList.toggle("next", i === currentGuess.length && !gameOver);
+      }
+    }
+
+    function shakeRow(r) {
+      var row = document.querySelector('.row[data-row="' + r + '"]');
+      if (!row) return;
+      row.classList.add("shake");
+      setTimeout(function () {
+        row.classList.remove("shake");
+      }, 500);
+    }
+
+    // ---------- 输入 ----------
+    function addChar(ch) {
+      if (gameOver || revealing) return;
+      if (currentGuess.length >= wordLen || !isHan(ch)) return;
+      currentGuess += ch;
+      renderCurrentRow();
+      var cells = rowCells(currentRow);
+      var cell = cells[currentGuess.length - 1];
+      cell.classList.remove("pop");
+      void cell.offsetWidth;
+      cell.classList.add("pop");
+    }
+
+    function removeChar() {
+      if (gameOver || revealing) return;
+      if (pinyinBuf) {
+        pinyinBuf = pinyinBuf.slice(0, -1);
+        $("#typer").value = pinyinBuf;
+        renderCandidates();
+        return;
+      }
+      if (currentGuess.length) {
+        currentGuess = currentGuess.slice(0, -1);
+        renderCurrentRow();
+      }
+    }
+
+    function clearPinyin() {
+      pinyinBuf = "";
+      $("#typer").value = "";
+      renderCandidates();
+    }
+
+    function submitGuess() {
+      if (gameOver || revealing) return;
+      if (currentGuess.length < wordLen) {
+        showMessage("还差 " + (wordLen - currentGuess.length) + " 个字", "error");
+        shakeRow(currentRow);
+        return;
+      }
+      var guess = currentGuess;
+      guessCount++;
+      var res = evaluate(guess, answer);
+      resultRows.push({ guess: guess, result: res });
+      revealing = true;
+      var cells = rowCells(currentRow);
+      var i;
+      for (i = 0; i < wordLen; i++) {
+        (function (cell, state, delay) {
+          setTimeout(function () {
+            cell.classList.add("flip", "state-" + state);
+          }, delay);
+        })(cells[i], res[i], i * 300);
+      }
+      setTimeout(function () {
+        revealing = false;
+        var wonRow = res.every(function (x) {
+          return x === "correct";
+        });
+        if (wonRow) {
+          onWin();
+        } else if (guessCount >= MAX_ATTEMPTS) {
+          onLose();
+        } else {
+          currentRow++;
+          currentGuess = "";
+          setActiveRow();
+          updateHintButton();
+          showHintPrompt();
+        }
+      }, wordLen * 300 + 550);
+    }
+
+    // ---------- 拼音候选 ----------
+    function renderCandidates() {
+      var box = $("#candidates");
+      box.innerHTML = "";
+      if (gameOver) {
+        box.innerHTML = '<div class="cand-hint">本局结束，点上方模式再来一局</div>';
+        return;
+      }
+      var q = pinyinBuf.trim().toLowerCase();
+      if (!q) {
+        box.innerHTML = '<div class="cand-hint">输入拼音后，候选字会显示在这里</div>';
+        return;
+      }
+      var matched = [];
+      for (var ch in PINYIN) {
+        if (matched.length >= 120) break;
+        var pys = PINYIN[ch];
+        for (var k = 0; k < pys.length; k++) {
+          if (pys[k].indexOf(q) === 0) {
+            matched.push(ch);
+            break;
+          }
+        }
+      }
+      if (!matched.length) {
+        box.innerHTML = '<div class="cand-hint">没有找到以「' + q + '」开头的字，试试退格</div>';
+        return;
+      }
+      matched.sort(function (a, b) {
+        return (charFreq[b] || 0) - (charFreq[a] || 0);
+      });
+      if (matched.length > 20) {
+        var count = document.createElement("div");
+        count.className = "cand-count";
+        count.textContent = matched.length + " 个字以「" + q + "」开头，可滚动选择";
+        box.appendChild(count);
+      }
+      matched.forEach(function (ch) {
+        var btn = document.createElement("button");
+        btn.className = "cand";
+        btn.textContent = ch;
+        btn.title = PINYIN[ch].join(", ");
+        btn.addEventListener("click", function () {
+          addChar(ch);
+          pinyinBuf = "";
+          $("#typer").value = "";
+          renderCandidates();
+          focusTyper();
+        });
+        box.appendChild(btn);
+      });
+    }
+
+    // ---------- 胜负 ----------
+    function onWin() {
+      gameOver = true;
+      won = true;
+      var n = currentRow + 1;
+      document.querySelector('.row[data-row="' + currentRow + '"]').classList.add("win");
+      showMessage("太棒了！第 " + n + " 次猜中", "success");
+      confetti();
+      updateStats(true, n);
+      updateDailyLock();
+      lastResult = { answer: answer, cat: answerCat, label: "第 " + n + " 次猜中", won: true, n: n, mode: mode };
+      lastRows = resultRows.slice();
+      $("#btn-hint").disabled = true;
+      $("#typer").disabled = true;
+      setTimeout(showWinModal, 1200);
+    }
+
+    function onLose(autoNext, giveUp) {
+      gameOver = true;
+      lastGiveUp = !!giveUp;
+      showMessage("答案是「" + answer + "」（" + answerCat + "）", "error");
+      updateStats(false, -1, giveUp);
+      updateDailyLock();
+      lastResult = { answer: answer, cat: answerCat, label: lastGiveUp ? "看答案认输" : "未猜中", won: false, n: 0, mode: mode };
+      lastRows = resultRows.slice();
+      $("#btn-hint").disabled = true;
+      $("#typer").disabled = true;
+      setTimeout(showStatsModal, 1500);
+      if (autoNext) {
+        clearTimeout(winNextTimer);
+        winNextTimer = setTimeout(nextGame, 4000);
+      }
+    }
+
+    // ---------- 递进线索提示（开局亮线索1，点💡放2~5） ----------
+    function updateHintButton() {
+      var btn = $("#btn-hint");
+      if (clueShown >= 5 || guessCount >= MAX_ATTEMPTS - 1) {
+        btn.disabled = false;
+        btn.textContent = "💡 雑魚认证";
+        btn.title = "最后机会，认输获得雑魚认证";
+      } else {
+        btn.disabled = false;
+        btn.textContent = "💡 " + (clueTypes[clueShown] || "提示");
+        btn.title = "查看下一条线索：" + (clueTypes[clueShown] || "");
+      }
+    }
+
+    function giveHint() {
+      if (gameOver || revealing || clueShown >= 5) return;
+      clueShown++;
+      var box = $("#hint-box");
+      var div = document.createElement("div");
+      div.className = "clue-line";
+      div.textContent = "💡 " + (clueTypes[clueShown - 1] || "提示") + "：" + (answerClues[clueShown - 1] || "");
+      box.appendChild(div);
+      box.classList.remove("hidden");
+      // 看提示消耗当前尝试：本行判定失败，输入次数 -1
+      guessCount++;
+      resultRows.push({ guess: "✕", result: new Array(wordLen).fill("absent") });
+      var cells = rowCells(currentRow);
+      for (var i = 0; i < cells.length; i++) {
+        cells[i].textContent = "✕";
+        cells[i].classList.add("state-absent", "hint-used");
+      }
+      if (guessCount >= MAX_ATTEMPTS) {
+        onLose();
+        return;
+      }
+      currentRow++;
+      currentGuess = "";
+      setActiveRow();
+      updateHintButton();
+      focusTyper();
+    }
+
+    // ---------- 弹窗 ----------
+    function showModal(id) {
+      $("#overlay").classList.remove("hidden");
+      $("#" + id).classList.remove("hidden");
+    }
+    function hideModals() {
+      $("#overlay").classList.add("hidden");
+      $("#modal-help").classList.add("hidden");
+      $("#modal-stats").classList.add("hidden");
+      $("#modal-share").classList.add("hidden");
+      $("#modal-hint").classList.add("hidden");
+      $("#modal-reroll").classList.add("hidden");
+      $("#modal-win").classList.add("hidden");
+    }
+
+    function showHelp() {
+      showModal("modal-help");
+      focusTyper();
+    }
+
+    function renderStatsModal() {
+      var s = loadStats();
+      $("#st-played").textContent = s.played;
+      var pct = s.played ? Math.round((s.wins / s.played) * 100) : 0;
+      $("#st-winrate").textContent = pct + "%";
+      $("#st-nickname").textContent = winRateNickname(pct);
+      $("#st-streak").textContent = s.streak;
+      $("#st-best").textContent = s.maxStreak;
+      $("#st-misses").textContent = s.misses || 0;
+      $("#st-giveups").textContent = s.giveups || 0;
+      var lastEl = $("#stats-last");
+      if (lastResult) {
+        lastEl.classList.remove("hidden");
+        $("#sl-answer").textContent = lastResult.answer;
+        $("#sl-cat").textContent = lastResult.cat;
+        $("#sl-outcome").textContent = lastResult.label;
+      } else {
+        lastEl.classList.add("hidden");
+      }
+      var dist = $("#st-dist");
+      dist.innerHTML = "";
+      var max = 1;
+      for (var i = 0; i < s.dist.length; i++) max = Math.max(max, s.dist[i]);
+      for (var j = 0; j < MAX_ATTEMPTS; j++) {
+        var row = document.createElement("div");
+        row.className = "dist-row";
+        var count = s.dist[j] || 0;
+        var bar = document.createElement("div");
+        bar.className = "dist-bar";
+        bar.style.width = (count / max) * 100 + "%";
+        if (count > 0) {
+          bar.style.minWidth = "22px";
+        } else {
+          bar.classList.add("zero");
+        }
+        bar.textContent = count;
+        row.innerHTML = '<span class="dist-label">' + (j + 1) + "</span>";
+        row.appendChild(bar);
+        dist.appendChild(row);
+      }
+    }
+
+    function showStatsModal() {
+      renderStatsModal();
+      showModal("modal-stats");
+      focusTyper();
+    }
+
+    // ---------- 猜错后提示弹窗 ----------
+    function showHintPrompt() {
+      if (gameOver || revealing) return;
+      $("#hint-pop-title").textContent = TAUNTS[Math.floor(Math.random() * TAUNTS.length)];
+      var yes = $("#btn-hint-yes");
+      var info = $("#hint-pop-info");
+      var used = guessCount;
+      if (clueShown >= 5) {
+        yes.disabled = false;
+        yes.textContent = "雑魚认证";
+        yes.classList.add("danger");
+        info.textContent = "5 条线索都给你了还猜不出来？点「雑魚认证」认输吧！（已用 " + used + "/6 次尝试）";
+      } else if (guessCount >= MAX_ATTEMPTS - 1) {
+        yes.disabled = false;
+        yes.textContent = "雑魚认证";
+        yes.classList.add("danger");
+        info.textContent = "最后一次机会，再猜不中就点「雑魚认证」认输吧！（已用 " + used + "/6）";
+      } else {
+        yes.disabled = false;
+        yes.textContent = "💡 可恶的雌小鬼";
+        yes.classList.remove("danger");
+        var taunt = BODY_TAUNTS[Math.floor(Math.random() * BODY_TAUNTS.length)];
+        info.textContent = taunt + "已放出 " + clueShown + "/5 条线索，点“可恶的雌小鬼”继续获得下一条（看提示将消耗本次尝试，已用 " + used + "/6）";
+      }
+      showModal("modal-hint");
+    }
+
+    // ---------- 认输看答案（本题算失败） ----------
+    function revealAnswer() {
+      clearTimeout(winNextTimer);
+      hideModals();
+      onLose(mode !== "daily", true);
+    }
+
+    // ---------- 换题确认弹窗 ----------
+    function showRerollConfirm() {
+      var used = guessCount;
+      var msg;
+      if (used === 0) {
+        msg = "一个字都没猜就想换题？点「我是雑魚」承认自己菜吧！";
+      } else if (used === 1) {
+        msg = "才试了 1 次就放弃？这也太雑魚了吧！";
+      } else if (used <= 3) {
+        msg = "试了 " + used + " 次就怂了？点「我是雑魚」，认证到手。";
+      } else if (used === 4) {
+        msg = "都试到第 4 次了，现在换题？「我是雑魚」点一下，雑魚认证带走。";
+      } else {
+        msg = "就差最后一次了！现在放弃，恭喜获得「雑魚认证」！";
+      }
+      $("#reroll-info").textContent = msg;
+      showModal("modal-reroll");
+    }
+
+    // ---------- 猜对激励弹窗 ----------
+    function showWinModal() {
+      var n = currentRow + 1;
+      $("#win-title").textContent = PRAISE[Math.floor(Math.random() * PRAISE.length)];
+      var tiers = [
+        "第 1 次猜中：一次命中，天选之人！",
+        "第 2 次猜中：两次拿下，历史小能手！",
+        "第 3 次猜中：三次搞定，进步神速！",
+        "第 4 次猜中：四次过关，还行吧～",
+        "第 5 次猜中：五次才中，差点雑魚了！",
+        "第 6 次猜中：压线通关，雑魚认证通过！",
+      ];
+      $("#win-info").textContent = tiers[Math.min(n - 1, 5)];
+      var daily = mode === "daily";
+      $("#btn-win-dismiss").style.display = daily ? "" : "none";
+      $("#btn-win-mode").style.display = daily ? "" : "none";
+      $("#btn-win-next").style.display = daily ? "none" : "";
+      $("#btn-win-stats").style.display = "";
+      if (!daily) {
+        $("#win-info").textContent += "　即将自动进入下一题…";
+        clearTimeout(winNextTimer);
+        winNextTimer = setTimeout(nextGame, 3500);
+      }
+      showModal("modal-win");
+    }
+
+    function nextGame() {
+      clearTimeout(winNextTimer);
+      hideModals();
+      newGame("random");
+      focusTyper();
+    }
+
+    function roundedRectPath(ctx, x, y, w, h, r) {
+      r = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+    function generateShareCard() {
+      var rowsSrc = resultRows.length ? resultRows : lastRows;
+      var rows = rowsSrc.filter(function (r) {
+        return r.result && r.result.length;
+      });
+      var last = resultRows.length ? { mode: mode, won: won, n: resultRows.length } : lastResult;
+      var s = loadStats();
+      var pct = s.played ? Math.round((s.wins / s.played) * 100) : 0;
+      var W = 1080, sq = 88, gap = 18, rowH = 104, boardY = 430;
+      var boardW = rows.length ? rows[0].result.length * (sq + gap) - gap : 0;
+      var boardH = rows.length ? rows.length * rowH : 220;
+      var statsY = boardY + boardH + 64;
+      var nickY = statsY + 205;
+      var H = nickY + 235;
+      var canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      var ctx = canvas.getContext("2d");
+      var font = "'Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif";
+
+      var g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, "#12162b");
+      g.addColorStop(1, "#1e2748");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.globalAlpha = 0.07;
+      ctx.fillStyle = "#f5c76a";
+      ctx.beginPath();
+      ctx.arc(W - 90, 110, 150, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(70, H - 130, 190, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      ctx.textBaseline = "alphabetic";
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#f4f5fb";
+      ctx.font = "bold 66px " + font;
+      ctx.fillText("历史 Wordle", 72, 128);
+      ctx.fillStyle = "#9aa3c0";
+      ctx.font = "30px " + font;
+      ctx.fillText("猜历史人物 · 猜历史事件", 72, 180);
+
+      var modeText = (last ? last.mode : mode) === "daily" ? "每日挑战" : "测测need学";
+      ctx.font = "28px " + font;
+      var pw = ctx.measureText(modeText).width + 56;
+      roundedRectPath(ctx, W - 72 - pw, 82, pw, 64, 32);
+      ctx.fillStyle = "rgba(245,199,106,0.14)";
+      ctx.fill();
+      ctx.strokeStyle = "#f5c76a";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "#f5c76a";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(modeText, W - 72 - pw / 2, 114);
+
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 112px " + font;
+      var resultText, label;
+      if (last) {
+        resultText = (last.won ? last.n : "X") + " / 6";
+        if (last.won) label = "第 " + last.n + " 次猜中";
+        else if (last.label === "看答案认输") label = "看答案认输";
+        else if (resultRows.length) label = "已猜 " + last.n + " 次";
+        else label = "未猜中";
+      } else {
+        resultText = "— / 6";
+        label = "完成一局后显示结果";
+      }
+      ctx.fillText(resultText, W / 2, 298);
+      ctx.fillStyle = !last ? "#9aa3c0" : last.won ? "#34d399" : "#f87171";
+      ctx.font = "36px " + font;
+      ctx.fillText(label, W / 2, 374);
+
+      if (rows.length) {
+        var x0 = (W - boardW) / 2;
+        for (var ri = 0; ri < rows.length; ri++) {
+          var res = rows[ri].result;
+          for (var ci = 0; ci < res.length; ci++) {
+            var col = res[ci] === "correct" ? "#34d399" : res[ci] === "present" ? "#fbbf24" : "#39415c";
+            roundedRectPath(ctx, x0 + ci * (sq + gap), boardY + ri * rowH, sq, sq, 18);
+            ctx.fillStyle = col;
+            ctx.fill();
+            if (res[ci] === "absent" && rows[ri].guess === "✕") {
+              ctx.fillStyle = "#9aa3c0";
+              ctx.font = "52px " + font;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText("✕", x0 + ci * (sq + gap) + sq / 2, boardY + ri * rowH + sq / 2 + 4);
+            }
+          }
+        }
+      } else {
+        roundedRectPath(ctx, W / 2 - 280, boardY + 40, 560, 140, 24);
+        ctx.fillStyle = "#39415c";
+        ctx.fill();
+        ctx.fillStyle = "#9aa3c0";
+        ctx.font = "32px " + font;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("完成一局后，这里会显示棋盘", W / 2, boardY + 110);
+      }
+
+      ctx.strokeStyle = "rgba(255,255,255,0.10)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(72, statsY - 26);
+      ctx.lineTo(W - 72, statsY - 26);
+      ctx.stroke();
+
+      var stats = [
+        { v: String(s.played), l: "局数" },
+        { v: pct + "%", l: "胜率" },
+        { v: String(s.streak), l: "连胜" },
+        { v: String(s.maxStreak), l: "最佳" },
+      ];
+      var colW = (W - 144) / 4;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (var si = 0; si < 4; si++) {
+        var cx = 72 + colW * (si + 0.5);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 58px " + font;
+        ctx.fillText(stats[si].v, cx, statsY + 58);
+        ctx.fillStyle = "#9aa3c0";
+        ctx.font = "26px " + font;
+        ctx.fillText(stats[si].l, cx, statsY + 108);
+      }
+
+      var nick = winRateNickname(pct);
+      var nt = "当前段位：" + nick;
+      ctx.font = "32px " + font;
+      var nw = ctx.measureText(nt).width + 72;
+      roundedRectPath(ctx, (W - nw) / 2, nickY, nw, 78, 39);
+      ctx.fillStyle = "rgba(245,199,106,0.12)";
+      ctx.fill();
+      ctx.strokeStyle = "#f5c76a";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "#f5c76a";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(nt, W / 2, nickY + 40);
+
+      ctx.fillStyle = "#6f7895";
+      ctx.font = "26px " + font;
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText("回答错误 " + (s.misses || 0) + " · 看答案 " + (s.giveups || 0), W / 2, nickY + 126);
+      var d = new Date();
+      ctx.fillText(d.getFullYear() + "." + (d.getMonth() + 1) + "." + d.getDate() + " · 历史Wordle 单文件小游戏", W / 2, H - 48);
+
+      return canvas;
+    }
+    var shareCardUrl = null;
+    function showShareCard() {
+      var canvas = generateShareCard();
+      if (!canvas) return;
+      if (shareCardUrl) URL.revokeObjectURL(shareCardUrl);
+      shareCardUrl = canvas.toDataURL("image/png");
+      $("#share-img").src = shareCardUrl;
+      var a = $("#btn-share-download");
+      a.href = shareCardUrl;
+      a.download = "历史Wordle战绩.png";
+      showModal("modal-share");
+    }
+
+    // ---------- 彩带 ----------
+    function confetti() {
+      var canvas = document.createElement("canvas");
+      canvas.className = "confetti";
+      document.body.appendChild(canvas);
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      var ctx = canvas.getContext("2d");
+      var colors = ["#ff595e", "#ffca3a", "#8ac926", "#1982c4", "#6a4c93", "#ffffff"];
+      var pieces = [];
+      for (var i = 0; i < 150; i++) {
+        pieces.push({
+          x: Math.random() * canvas.width,
+          y: -20 - Math.random() * canvas.height * 0.45,
+          w: 6 + Math.random() * 6,
+          h: 10 + Math.random() * 8,
+          vx: (Math.random() - 0.5) * 3,
+          vy: 2.2 + Math.random() * 4,
+          rot: Math.random() * Math.PI * 2,
+          vr: (Math.random() - 0.5) * 0.2,
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+      var frames = 0;
+      (function tick() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (var i = 0; i < pieces.length; i++) {
+          var p = pieces[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.rot += p.vr;
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rot);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+          ctx.restore();
+        }
+        if (++frames < 240) requestAnimationFrame(tick);
+        else canvas.remove();
+      })();
+    }
+
+    // ---------- 开局 ----------
+    function newGame(m) {
+      if (m === "daily") {
+        var st = loadStats();
+        if (st.dailyDone === todayStr()) m = "random";
+      }
+      mode = m;
+      clearTimeout(winNextTimer);
+      var entry = mode === "daily" ? pickDaily() : pickRandom();
+      answer = entry[0];
+      answerCat = entry[1];
+      answerClues = entry[2] || [];
+      clueTypes = answerCat.indexOf("人物") !== -1
+        ? ["类别", "身份", "成就", "特征", "雑魚就是雑魚"]
+        : ["时间", "人物", "地点", "影响", "雑魚就是雑魚"];
+      wordLen = answer.length;
+      var fs = wordLen <= 3 ? 40 : wordLen <= 5 ? 30 : wordLen <= 7 ? 24 : 20;
+      document.documentElement.style.setProperty("--cell-font", fs + "px");
+      window.__debug = { answer: answer, cat: answerCat, wordLen: wordLen, clues: answerClues };
+      currentRow = 0;
+      currentGuess = "";
+      gameOver = false;
+      revealing = false;
+      won = false;
+      lastGiveUp = false;
+      resultRows = [];
+      pinyinBuf = "";
+      guessCount = 0;
+      clueShown = 1;
+      $("#typer").disabled = false;
+      $("#typer").value = "";
+      $("#hint-box").classList.add("hidden");
+      $("#hint-box").innerHTML = "";
+      updateHintButton();
+      $("#btn-daily").classList.toggle("active", mode === "daily");
+      $("#btn-random").classList.toggle("active", mode === "random");
+      $("#btn-daily").setAttribute("aria-selected", mode === "daily");
+      $("#btn-random").setAttribute("aria-selected", mode === "random");
+      updateDailyLock();
+      $("#btn-reroll").style.display = mode === "random" ? "" : "none";
+      buildBoard();
+      clearTimeout(msgTimer);
+      $("#message").textContent = HINT;
+      $("#message").className = "";
+      hideModals();
+      renderCandidates();
+      var sub = $("#sub-hint");
+      var type = answerCat.indexOf("人物") !== -1 ? "人物" : "事件";
+      sub.innerHTML = '<span class="type-tag">' + type + "</span>" + clueTypes[0] + "：" + (answerClues[0] || "");
+      sub.title = "开局显示第一条线索，点 💡 依次放出更多";
+    }
+
+    // ---------- 事件 ----------
+    function wireEvents() {
+      $("#btn-daily").addEventListener("click", function () {
+        newGame("daily");
+        focusTyper();
+      });
+      $("#btn-random").addEventListener("click", function () {
+        newGame("random");
+        focusTyper();
+      });
+      $("#btn-reroll").addEventListener("click", function () {
+        if (gameOver) {
+          hideModals();
+          newGame("random");
+          focusTyper();
+        } else {
+          showRerollConfirm();
+        }
+      });
+      $("#btn-reroll-yes").addEventListener("click", function () {
+        hideModals();
+        newGame("random");
+        focusTyper();
+      });
+      $("#btn-reroll-no").addEventListener("click", function () {
+        hideModals();
+        focusTyper();
+      });
+      $("#btn-win-dismiss").addEventListener("click", function () {
+        hideModals();
+        focusTyper();
+      });
+      $("#btn-win-mode").addEventListener("click", function () {
+        hideModals();
+        newGame("random");
+        focusTyper();
+      });
+      $("#btn-win-next").addEventListener("click", function () {
+        nextGame();
+      });
+      $("#btn-win-stats").addEventListener("click", function () {
+        clearTimeout(winNextTimer);
+        newGame(mode);
+        showStatsModal();
+      });
+      $("#btn-stats-big").addEventListener("click", function () {
+        showStatsModal();
+      });
+      $("#btn-backspace").addEventListener("click", function () {
+        removeChar();
+        focusTyper();
+      });
+      $("#btn-clear-py").addEventListener("click", function () {
+        clearPinyin();
+        focusTyper();
+      });
+      $("#btn-hint").addEventListener("click", function () {
+        showHintPrompt();
+      });
+      $("#btn-enter").addEventListener("click", function () {
+        submitGuess();
+        focusTyper();
+      });
+      $("#btn-help").addEventListener("click", showHelp);
+      $("#btn-help-close").addEventListener("click", hideModals);
+      $("#btn-stats").addEventListener("click", showStatsModal);
+      $("#btn-stats-close").addEventListener("click", hideModals);
+      $("#btn-share-card").addEventListener("click", showShareCard);
+      $("#btn-share-close").addEventListener("click", hideModals);
+      $("#btn-hint-yes").addEventListener("click", function () {
+        if (clueShown >= 5) {
+          revealAnswer();
+        } else {
+          giveHint();
+          hideModals();
+          focusTyper();
+        }
+      });
+      $("#btn-hint-no").addEventListener("click", function () {
+        hideModals();
+        focusTyper();
+      });
+      $("#overlay").addEventListener("click", hideModals);
+
+      var typer = $("#typer");
+      typer.addEventListener("compositionstart", function () {
+        isComposing = true;
+      });
+      typer.addEventListener("compositionend", function (e) {
+        isComposing = false;
+        var val = e.target.value;
+        e.target.value = "";
+        pinyinBuf = "";
+        renderCandidates();
+        if (val) {
+          for (var k = 0; k < val.length; k++) addChar(val[k]);
+        }
+      });
+      typer.addEventListener("input", function (e) {
+        if (isComposing) return;
+        var val = e.target.value;
+        if (!val) return;
+        if (/^[a-zA-Z]+$/.test(val)) {
+          // 保留输入框内容作为拼音显示，同步到拼音缓冲
+          pinyinBuf = val.toLowerCase().slice(0, 8);
+          renderCandidates();
+          return;
+        }
+        e.target.value = "";
+        pinyinBuf = "";
+        for (var j = 0; j < val.length; j++) addChar(val[j]);
+      });
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (
+            !$("#modal-help").classList.contains("hidden") ||
+            !$("#modal-stats").classList.contains("hidden") ||
+            !$("#modal-share").classList.contains("hidden") ||
+            !$("#modal-hint").classList.contains("hidden") ||
+            !$("#modal-reroll").classList.contains("hidden") ||
+            !$("#modal-win").classList.contains("hidden")
+          ) {
+            hideModals();
+            focusTyper();
+            return;
+          }
+          submitGuess();
+          return;
+        }
+        if (e.key === "Backspace") {
+          if (e.isComposing || e.keyCode === 229) return;
+          e.preventDefault();
+          removeChar();
+          return;
+        }
+        if (e.key === "Escape") {
+          if (
+            !$("#modal-help").classList.contains("hidden") ||
+            !$("#modal-stats").classList.contains("hidden") ||
+            !$("#modal-share").classList.contains("hidden") ||
+            !$("#modal-hint").classList.contains("hidden") ||
+            !$("#modal-reroll").classList.contains("hidden") ||
+            !$("#modal-win").classList.contains("hidden")
+          ) {
+            hideModals();
+            focusTyper();
+          } else {
+            clearPinyin();
+          }
+        }
+      });
+
+      document.addEventListener("click", function (e) {
+        if (!e.target.closest("button")) focusTyper();
+      });
+
+      var coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+      if (!coarse) focusTyper();
+    }
+
+    wireEvents();
+    newGame("daily");
+  }
+
+  if (typeof module !== "undefined") {
+    module.exports = {
+      evaluate: evaluate,
+      pickDaily: pickDaily,
+      pickRandom: pickRandom,
+      hashStr: hashStr,
+      todayStr: todayStr,
+      MAX_ATTEMPTS: MAX_ATTEMPTS,
+    };
+  }
+})();
+</script>
+</body>
+</html>

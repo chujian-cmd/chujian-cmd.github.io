@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>线 · 形 · 全屏</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  canvas{display:block;width:100vw;height:100vh;cursor:crosshair;touch-action:none;}
+
+  .toolbar-left{
+    position:fixed;top:16px;left:16px;display:flex;gap:6px;align-items:center;z-index:100;
+  }
+  .tool-btn{
+    height:38px;min-width:38px;padding:0;border-radius:11px;border:1px solid #ececec;
+    background:#fff;color:#525252;display:flex;align-items:center;justify-content:center;gap:6px;
+    cursor:pointer;transition:all .15s ease;box-shadow:0 1px 2px rgba(0,0,0,0.04);
+    font-size:12px;font-weight:500;
+  }
+  .tool-btn:hover:not(:disabled){ color:#171717;border-color:#d4d4d4; }
+  .tool-btn:active:not(:disabled){ transform:scale(0.94); }
+  .tool-btn:disabled{ opacity:0.32;cursor:not-allowed; }
+  .tool-btn svg{ width:17px;height:17px;pointer-events:none;flex-shrink:0; }
+  .mode-btn{ padding:0 12px; }
+  .mode-btn svg{ width:14px;height:14px; }
+  .morph-btn{ padding:0 14px; background:#171717;color:#fff;border-color:#171717; }
+  .morph-btn:hover:not(:disabled){ background:#333;border-color:#333;color:#fff; }
+  .morph-btn svg{ width:15px;height:15px; }
+  .divider{ width:1px;height:22px;background:#ececec;margin:0 4px; }
+
+  .picker{ position:fixed;top:16px;right:16px;z-index:100; }
+  .picker-btn{
+    height:38px;padding:0 14px;border-radius:11px;border:1px solid #ececec;
+    background:#fff;color:#171717;font-size:12px;font-weight:500;
+    display:flex;align-items:center;gap:8px;cursor:pointer;transition:all .15s ease;
+    box-shadow:0 1px 2px rgba(0,0,0,0.04);
+  }
+  .picker-btn:hover{ border-color:#d4d4d4; }
+  .picker-btn:active{ transform:scale(0.97); }
+  .picker-btn .arrow{ width:12px;height:12px;color:#a3a3a3;transition:transform .15s ease; }
+  .picker-btn.open .arrow{ transform:rotate(180deg); }
+
+  .picker-panel{
+    position:absolute;top:46px;right:0;width:300px;max-height:70vh;overflow-y:auto;
+    background:#fff;border:1px solid #ececec;border-radius:12px;
+    box-shadow:0 16px 48px rgba(0,0,0,0.12);padding:10px;display:none;z-index:101;
+  }
+  .picker-panel.open{ display:block; }
+  .picker-panel::-webkit-scrollbar{ width:6px; }
+  .picker-panel::-webkit-scrollbar-thumb{ background:#e5e5e5;border-radius:3px; }
+
+  .cat-label{
+    font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.1em;
+    color:#a3a3a3;padding:10px 6px 6px;
+  }
+  .cat-label:first-child{ padding-top:2px; }
+
+  .icon-grid{ display:grid;grid-template-columns:repeat(6,1fr);gap:2px; }
+  .icon-cell{
+    aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;
+    border-radius:8px;cursor:pointer;color:#525252;transition:all .12s ease;
+  }
+  .icon-cell:hover{ background:#f5f5f5;color:#000; }
+  .icon-cell.active{ background:#171717;color:#fff; }
+  .icon-cell svg{ width:18px;height:18px;pointer-events:none; }
+
+  .hint{
+    position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+    font-size:11px;color:#c0c0c0;letter-spacing:0.02em;
+    user-select:none;pointer-events:none;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div class="toolbar-left">
+  <button class="tool-btn" id="clearBtn" title="清空">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>
+    </svg>
+  </button>
+  <button class="tool-btn" id="undoBtn" title="撤销" disabled>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-4"/>
+    </svg>
+  </button>
+  <button class="tool-btn" id="redoBtn" title="重做" disabled>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 000 10h4"/>
+    </svg>
+  </button>
+  <div class="divider"></div>
+  <button class="tool-btn mode-btn" id="modeBtn" title="切换变形模式"></button>
+  <button class="tool-btn morph-btn" id="morphBtn" title="变形全部" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14M13 6l6 6-6 6"/>
+    </svg>
+    <span>变形</span>
+  </button>
+</div>
+
+<div class="picker">
+  <button class="picker-btn" id="pickerBtn">
+    <span id="pickerLabel">星形</span>
+    <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 9l6 6 6-6"/>
+    </svg>
+  </button>
+  <div class="picker-panel" id="pickerPanel"></div>
+</div>
+
+<div class="hint">按住拖拽画线 · 松开变形 · 可连续绘制</div>
+
+<script>
+/* ============================================================
+   SVG 图标库
+   ============================================================ */
+const L = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const F = (inner) => `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none">${inner}</svg>`;
+
+const SVG_DATA = {
+  linear: [
+    L('<circle cx="12" cy="12" r="9"/>'),
+    L('<rect x="4" y="4" width="16" height="16" rx="2"/>'),
+    L('<path d="M12 3l9 16H3z"/>'),
+    L('<path d="M12 3l2.5 5.5L20 10l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1.5z"/>'),
+    L('<path d="M4 12h16M12 4v16"/>'),
+    L('<path d="M5 12l4 4L19 6"/>'),
+    L('<path d="M6 6l12 12M18 6L6 18"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>'),
+    L('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+    L('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'),
+    L('<path d="M4 5h16v11H8l-4 4z"/>'),
+    L('<path d="M3 6h18v12H3z"/><path d="M3 6l9 7 9-7"/>'),
+    L('<path d="M12 3a6 6 0 00-6 6v4l-2 3h16l-2-3V9a6 6 0 00-6-6z"/><path d="M10 19a2 2 0 004 0"/>'),
+    L('<path d="M5 4l14 8-14 8z"/>'),
+    L('<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M10 9l5 3-5 3z"/>'),
+    L('<path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>'),
+    L('<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M13 7l4 4"/>'),
+    L('<path d="M6 4h12v16l-6-4-6 4z"/>'),
+    L('<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>'),
+    L('<path d="M4 12a8 8 0 0116 0 8 8 0 01-16 0z"/>'),
+    L('<path d="M12 3l9 9-9 9-9-9z"/>'),
+    L('<path d="M12 3l7 4v10l-7 4-7-4V7z"/>'),
+    L('<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>'),
+    L('<path d="M4 12h6l2-3 3 6 2-3h3"/>'),
+  ],
+  solid: [
+    F('<circle cx="12" cy="12" r="9"/>'),
+    F('<rect x="4" y="4" width="16" height="16" rx="3"/>'),
+    F('<path d="M12 3l9 16H3z"/>'),
+    F('<circle cx="12" cy="12" r="5"/>'),
+    F('<path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/>'),
+    F('<path d="M5 12l4 4L19 6l1.5 1.5L9 18 3.5 12.5z"/>'),
+    F('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6z"/>'),
+    F('<path d="M4 5h16v11H8l-4 4z"/>'),
+    F('<path d="M3 6h18v12H3z"/>'),
+    F('<path d="M12 3a6 6 0 00-6 6v4l-2 3h16l-2-3V9a6 6 0 00-6-6z"/>'),
+    F('<path d="M5 4l14 8-14 8z"/>'),
+    F('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="#fff"/>'),
+    F('<path d="M6 4h12v16l-6-4-6 4z"/>'),
+    F('<rect x="7" y="3" width="10" height="18" rx="3"/>'),
+    F('<path d="M12 3l9 9-9 9-9-9z"/>'),
+    F('<path d="M12 3l7 4v10l-7 4-7-4V7z"/>'),
+  ],
+  geo: [
+    L('<circle cx="12" cy="12" r="9"/>'),
+    L('<rect x="4" y="4" width="16" height="16"/>'),
+    L('<path d="M12 3l9 16H3z"/>'),
+    L('<path d="M12 3l9 9-9 9-9-9z"/>'),
+    L('<path d="M4 12a8 8 0 0116 0 8 8 0 01-16 0z"/>'),
+    L('<path d="M4 4h16v16H4z"/><path d="M4 12h16M12 4v16"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18"/>'),
+    L('<rect x="4" y="4" width="16" height="16" rx="8"/>'),
+    L('<path d="M12 3l9 9-9 9-9-9z"/><path d="M12 8l4 4-4 4-4-4z"/>'),
+    L('<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="9"/>'),
+    L('<path d="M4 18l8-14 8 14z"/>'),
+    L('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>'),
+    L('<rect x="4" y="4" width="16" height="16"/><path d="M8 8h8v8H8z"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5 5l14 14M19 5L5 19"/>'),
+  ],
+  arrows: [
+    L('<path d="M5 12h14M13 6l6 6-6 6"/>'),
+    L('<path d="M19 12H5M11 6l-6 6 6 6"/>'),
+    L('<path d="M12 5v14M6 11l6-6 6 6"/>'),
+    L('<path d="M12 19V5M6 13l6 6 6-6"/>'),
+    L('<path d="M7 17L17 7M9 7h8v8"/>'),
+    L('<path d="M4 12h16M8 8l-4 4 4 4M16 8l4 4-4 4"/>'),
+    L('<path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/>'),
+    L('<path d="M12 3l4 4h-3v10h3l-4 4-4-4h3V7H8z"/>'),
+    L('<path d="M3 12l4-4v3h10v-3l4 4-4 4v-3H7v3z"/>'),
+    L('<path d="M9 6l6 6-6 6"/>'),
+    L('<path d="M15 6l-6 6 6 6"/>'),
+    L('<path d="M6 9l6 6 6-6"/>'),
+    L('<path d="M6 15l6-6 6 6"/>'),
+  ],
+  weather: [
+    L('<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>'),
+    L('<path d="M6 18a4 4 0 010-8 5 5 0 019.5-1.5A4 4 0 0118 18z"/>'),
+    L('<path d="M6 18a4 4 0 010-8 5 5 0 019.5-1.5A4 4 0 0118 18z"/><path d="M8 20l-1 2M12 20l-1 2M16 20l-1 2"/>'),
+    L('<path d="M13 3L7 13h5l-1 8 6-10h-5z"/>'),
+    L('<path d="M12 3a6 6 0 016 6v4l2 3H4l2-3V9a6 6 0 016-6z"/>'),
+    L('<path d="M4 12a8 8 0 0116 0z"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 000 18z" fill="currentColor" stroke="none"/>'),
+    L('<circle cx="12" cy="12" r="5"/>'),
+  ],
+  ui: [
+    L('<circle cx="11" cy="11" r="7"/><path d="M16 16l4 4"/>'),
+    L('<path d="M5 12l4 4L19 6"/>'),
+    L('<path d="M6 6l12 12M18 6L6 18"/>'),
+    L('<path d="M12 5v14M5 12h14"/>'),
+    L('<path d="M5 12h14"/>'),
+    L('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+    L('<path d="M5 4h14v16H5z"/><path d="M9 4v16"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>'),
+    L('<path d="M12 3a9 9 0 109 9h-9z"/>'),
+    L('<path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
+    L('<path d="M4 5h16v14H4z"/><path d="M4 9h16"/>'),
+    L('<path d="M12 3l7 4v10l-7 4-7-4V7z"/>'),
+    L('<path d="M4 12h16M12 4v16"/>'),
+    L('<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 12h8"/>'),
+    L('<path d="M6 12l4 4 8-8"/>'),
+    L('<path d="M4 6h16v12H4z"/><path d="M4 10h16"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/>'),
+  ],
+  symbols: [
+    L('<path d="M12 21s-7-4.5-7-10a4 4 0 017-2.5A4 4 0 0119 11c0 5.5-7 10-7 10z"/>'),
+    L('<path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9h6M9 15h6"/>'),
+    L('<path d="M12 3a6 6 0 00-6 6v4l-2 3h16l-2-3V9a6 6 0 00-6-6z"/><path d="M10 19a2 2 0 004 0"/>'),
+    L('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/>'),
+    L('<path d="M12 3l9 18H3z"/><path d="M12 10v4M12 17v.5"/>'),
+    L('<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>'),
+    L('<path d="M5 5h14v14H5z"/><path d="M9 12h6"/>'),
+    L('<path d="M4 12h16M12 4v16M6 6l12 12M18 6L6 18"/>'),
+  ],
+  social: [
+    L('<path d="M7 10v10H4V10zM7 10l4-7a2 2 0 012 2v4h5a2 2 0 012 2l-2 7a2 2 0 01-2 2H7"/>'),
+    L('<path d="M21 11.5a8.5 8.5 0 01-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1121 11.5z"/>'),
+    L('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>'),
+    L('<path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7"/><path d="M16 6l-4-4-4 4M12 2v13"/>'),
+    L('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'),
+    L('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>'),
+  ],
+  files: [
+    L('<path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/>'),
+    L('<path d="M4 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z"/>'),
+    L('<path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/>'),
+    L('<path d="M12 21V9M7 14l5-5 5 5"/><path d="M5 3h14"/>'),
+    L('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 4v16M4 8h16"/>'),
+    L('<path d="M6 2h8l4 4v16H6z"/><path d="M9 12h6M9 16h6"/>'),
+    L('<path d="M4 7h16v12H4z"/><path d="M4 7l8 6 8-6"/>'),
+    L('<path d="M12 3l7 4v10l-7 4-7-4V7z"/><path d="M12 12l7-4M12 12v9M12 12L5 8"/>'),
+  ],
+  media: [
+    L('<path d="M5 4l14 8-14 8z"/>'),
+    L('<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M10 9l5 3-5 3z"/>'),
+    L('<path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>'),
+    L('<path d="M12 3v18M8 7v10M16 7v10M4 10v4M20 10v4"/>'),
+    L('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3z"/>'),
+    L('<path d="M4 12a8 8 0 0116 0"/><path d="M8 12a4 4 0 018 0"/>'),
+    L('<path d="M12 3v18M5 8l7-5 7 5"/>'),
+  ],
+  device: [
+    L('<rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/>'),
+    L('<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>'),
+    L('<rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 4V2h6v2"/>'),
+    L('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    L('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/>'),
+    L('<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8"/>'),
+    L('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>'),
+    L('<rect x="6" y="3" width="12" height="18" rx="3"/><path d="M10 18h4"/>'),
+  ]
+};
+
+/* ============================================================
+   SVG → 子路径数组（关键修复）
+   返回 [{ points: [{x,y}...], closed: bool }, ...]
+   ============================================================ */
+function svgToSubPaths(svgStr) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgStr, 'image/svg+xml');
+  const svg = doc.querySelector('svg');
+  if (!svg) return null;
+
+  const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  tempSvg.setAttribute('viewBox', '0 0 24 24');
+  tempSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
+  document.body.appendChild(tempSvg);
+
+  const subPaths = [];
+  const SAMPLES = 60;
+
+  const shapeEls = svg.querySelectorAll('path, circle, rect, line, polyline, polygon, ellipse');
+
+  shapeEls.forEach(el => {
+    try {
+      if (el.tagName === 'path') {
+        const d = el.getAttribute('d') || '';
+        // 按 M/m 拆分子路径
+        const mRegex = /[Mm]/g;
+        const indices = [];
+        let m;
+        while ((m = mRegex.exec(d)) !== null) indices.push(m.index);
+        if (indices.length === 0) return;
+
+        for (let k = 0; k < indices.length; k++) {
+          const start = indices[k];
+          const end = k + 1 < indices.length ? indices[k + 1] : d.length;
+          const subD = d.slice(start, end).trim();
+          if (!subD) continue;
+
+          const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          pathEl.setAttribute('d', subD);
+          tempSvg.appendChild(pathEl);
+
+          const len = pathEl.getTotalLength();
+          if (len === 0) { tempSvg.removeChild(pathEl); continue; }
+
+          const pts = [];
+          for (let i = 0; i < SAMPLES; i++) {
+            const p = pathEl.getPointAtLength((i / SAMPLES) * len);
+            pts.push({ x: p.x, y: p.y });
+          }
+          const closed = /[Zz]/.test(subD);
+          subPaths.push({ points: pts, closed });
+
+          tempSvg.removeChild(pathEl);
+        }
+      } else if (el.tagName === 'circle') {
+        const cx = parseFloat(el.getAttribute('cx') || 0);
+        const cy = parseFloat(el.getAttribute('cy') || 0);
+        const r = parseFloat(el.getAttribute('r') || 0);
+        const pts = [];
+        for (let i = 0; i < SAMPLES; i++) {
+          const a = (i / SAMPLES) * Math.PI * 2;
+          pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+        }
+        subPaths.push({ points: pts, closed: true });
+      } else if (el.tagName === 'ellipse') {
+        const cx = parseFloat(el.getAttribute('cx') || 0);
+        const cy = parseFloat(el.getAttribute('cy') || 0);
+        const rx = parseFloat(el.getAttribute('rx') || 0);
+        const ry = parseFloat(el.getAttribute('ry') || 0);
+        const pts = [];
+        for (let i = 0; i < SAMPLES; i++) {
+          const a = (i / SAMPLES) * Math.PI * 2;
+          pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
+        }
+        subPaths.push({ points: pts, closed: true });
+      } else if (el.tagName === 'rect') {
+        const x = parseFloat(el.getAttribute('x') || 0);
+        const y = parseFloat(el.getAttribute('y') || 0);
+        const w = parseFloat(el.getAttribute('width') || 0);
+        const h = parseFloat(el.getAttribute('height') || 0);
+        const per = 2 * (w + h);
+        const corners = [
+          { x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }
+        ];
+        const pts = [];
+        for (let i = 0; i < SAMPLES; i++) {
+          const d = (i / SAMPLES) * per;
+          let acc = 0;
+          for (let j = 0; j < 4; j++) {
+            const a = corners[j], b = corners[(j + 1) % 4];
+            const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+            if (acc + segLen >= d) {
+              const t = (d - acc) / segLen;
+              pts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+              break;
+            }
+            acc += segLen;
+          }
+        }
+        subPaths.push({ points: pts, closed: true });
+      } else if (el.tagName === 'line') {
+        const x1 = parseFloat(el.getAttribute('x1') || 0);
+        const y1 = parseFloat(el.getAttribute('y1') || 0);
+        const x2 = parseFloat(el.getAttribute('x2') || 0);
+        const y2 = parseFloat(el.getAttribute('y2') || 0);
+        const pts = [];
+        for (let i = 0; i < SAMPLES; i++) {
+          const t = i / SAMPLES;
+          pts.push({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t });
+        }
+        subPaths.push({ points: pts, closed: false });
+      } else if (el.tagName === 'polyline' || el.tagName === 'polygon') {
+        const raw = (el.getAttribute('points') || '').trim();
+        if (!raw) return;
+        const nums = raw.split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+        const verts = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) {
+          verts.push({ x: nums[i], y: nums[i + 1] });
+        }
+        if (verts.length < 2) return;
+        const isClosed = el.tagName === 'polygon';
+        const vlist = isClosed ? verts.concat([verts[0]]) : verts;
+        const total = vlist.reduce((s, v, i) => i === 0 ? 0 : s + Math.hypot(v.x - vlist[i-1].x, v.y - vlist[i-1].y), 0);
+        const pts = [];
+        for (let i = 0; i < SAMPLES; i++) {
+          const d = (i / SAMPLES) * total;
+          let acc = 0;
+          for (let j = 1; j < vlist.length; j++) {
+            const a = vlist[j-1], b = vlist[j];
+            const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+            if (acc + segLen >= d) {
+              const t = (d - acc) / segLen;
+              pts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+              break;
+            }
+            acc += segLen;
+          }
+        }
+        subPaths.push({ points: pts, closed: isClosed });
+      }
+    } catch (e) {}
+  });
+
+  document.body.removeChild(tempSvg);
+  if (subPaths.length === 0) return null;
+
+  // 统一归一化：所有子路径用同一个中心/缩放
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sp of subPaths) {
+    for (const p of sp.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const size = Math.max(maxX - minX, maxY - minY, 0.001);
+
+  for (const sp of subPaths) {
+    sp.points = sp.points.map(p => ({
+      x: (p.x - cx) / size,
+      y: (p.y - cy) / size
+    }));
+  }
+
+  return subPaths;
+}
+
+/* ============================================================
+   星形模板（也用子路径格式）
+   ============================================================ */
+const STAR_TEMPLATE = [{
+  points: [
+    { x: 0,     y: -1.00 },
+    { x: 0.32,  y: -0.40 },
+    { x: 1.00,  y: -0.30 },
+    { x: 0.50,  y: 0.15 },
+    { x: 0.62,  y: 0.85 },
+    { x: 0,     y: 0.50 },
+    { x: -0.62, y: 0.85 },
+    { x: -0.50, y: 0.15 },
+    { x: -1.00, y: -0.30 },
+    { x: -0.32, y: -0.40 }
+  ],
+  closed: true
+}];
+
+/* ============================================================
+   主逻辑
+   ============================================================ */
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const base = document.createElement('canvas');
+const baseCtx = base.getContext('2d');
+const morphLayer = document.createElement('canvas');
+const morphCtx = morphLayer.getContext('2d');
+const drawLayer = document.createElement('canvas');
+const drawCtx = drawLayer.getContext('2d');
+
+let W = 0, H = 0, DPR = 1;
+
+const SAMPLE_COUNT = 60;   // 每个子路径采样点数
+const MIN_DIST = 3;
+
+let currentTemplate = STAR_TEMPLATE;
+let currentTemplateName = '星形';
+
+let morphMode = 'immediate';
+let history = [];
+let redoStack = [];
+let pendingLines = [];
+let morphs = [];
+let drawing = false;
+let points = [];
+let rafId = null;
+let needsRender = false;
+
+/* ---------- 缓动 ---------- */
+function ease(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/* ---------- 采样 ---------- */
+function totalLength(pts) {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+  return len;
+}
+
+function resample(pts, n) {
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return Array(n).fill().map(() => ({ ...pts[0] }));
+  const total = totalLength(pts);
+  if (total === 0) return Array(n).fill().map(() => ({ ...pts[0] }));
+  const step = total / (n - 1);
+  const out = [{ x: pts[0].x, y: pts[0].y }];
+  let segIdx = 0, segStart = pts[0], segEnd = pts[1];
+  let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++) {
+    const targetDist = i * step;
+    let ok = false;
+    while (segIdx < pts.length - 1) {
+      if (segDone + segLen >= targetDist) {
+        const t = segLen === 0 ? 0 : (targetDist - segDone) / segLen;
+        out.push({
+          x: segStart.x + (segEnd.x - segStart.x) * t,
+          y: segStart.y + (segEnd.y - segStart.y) * t
+        });
+        ok = true;
+        break;
+      } else {
+        segDone += segLen;
+        segIdx++;
+        if (segIdx >= pts.length - 1) break;
+        segStart = pts[segIdx];
+        segEnd = pts[segIdx + 1];
+        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+      }
+    }
+    if (!ok) {
+      const last = pts[pts.length - 1];
+      out.push({ x: last.x, y: last.y });
+    }
+  }
+  while (out.length < n) {
+    const last = pts[pts.length - 1];
+    out.push({ x: last.x, y: last.y });
+  }
+  return out.slice(0, n);
+}
+
+function resampleClosed(pts, n) {
+  if (pts.length < 2) return [];
+  const closed = pts.concat([{ ...pts[0] }]);
+  const total = totalLength(closed);
+  if (total === 0) return Array(n).fill().map(() => ({ ...pts[0] }));
+  const step = total / (n - 1);
+  const out = [{ x: pts[0].x, y: pts[0].y }];
+  let segIdx = 0, segStart = closed[0], segEnd = closed[1];
+  let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++) {
+    const targetDist = i * step;
+    let ok = false;
+    while (segIdx < closed.length - 1) {
+      if (segDone + segLen >= targetDist - 1e-9) {
+        const t = segLen === 0 ? 0 : (targetDist - segDone) / segLen;
+        out.push({
+          x: segStart.x + (segEnd.x - segStart.x) * t,
+          y: segStart.y + (segEnd.y - segStart.y) * t
+        });
+        ok = true;
+        break;
+      } else {
+        segDone += segLen;
+        segIdx++;
+        if (segIdx >= closed.length - 1) break;
+        segStart = closed[segIdx];
+        segEnd = closed[segIdx + 1];
+        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+      }
+    }
+    if (!ok) {
+      const last = closed[closed.length - 1];
+      out.push({ x: last.x, y: last.y });
+    }
+  }
+  out[n - 1] = { x: out[0].x, y: out[0].y };
+  return out;
+}
+
+function enforceClosed(samples) {
+  if (samples.length > 1) samples[samples.length - 1] = { ...samples[0] };
+}
+
+/* 把用户线条切成 n 段，每段 samplesPerSegment 个点 */
+function splitPolylineByArc(pts, n, samplesPerSegment) {
+  if (n <= 0) return [];
+  if (n === 1) return [resample(pts, samplesPerSegment)];
+  const totalSamples = n * samplesPerSegment;
+  const allSamples = resample(pts, totalSamples);
+  const segments = [];
+  for (let s = 0; s < n; s++) {
+    segments.push(allSamples.slice(s * samplesPerSegment, (s + 1) * samplesPerSegment));
+  }
+  return segments;
+}
+
+/* ---------- 渲染 ---------- */
+function composite() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(base, 0, 0, W, H);
+  ctx.drawImage(morphLayer, 0, 0, W, H);
+  ctx.drawImage(drawLayer, 0, 0, W, H);
+}
+
+function renderMorphs() {
+  morphCtx.clearRect(0, 0, W, H);
+  morphCtx.strokeStyle = '#000';
+  morphCtx.lineWidth = 2;
+  morphCtx.lineCap = 'round';
+  morphCtx.lineJoin = 'round';
+
+  for (const m of morphs) {
+    const t = ease(m.progress);
+    for (const sp of m.subPaths) {
+      morphCtx.beginPath();
+      for (let i = 0; i < sp.start.length; i++) {
+        const a = sp.start[i];
+        const b = sp.end[i];
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
+        if (i === 0) morphCtx.moveTo(x, y);
+        else morphCtx.lineTo(x, y);
+      }
+      if (sp.closed) morphCtx.closePath();
+      morphCtx.stroke();
+    }
+  }
+}
+
+function renderDrawLayer() {
+  drawCtx.clearRect(0, 0, W, H);
+  drawCtx.strokeStyle = '#000';
+  drawCtx.lineWidth = 2;
+  drawCtx.lineCap = 'round';
+  drawCtx.lineJoin = 'round';
+
+  for (const line of pendingLines) {
+    if (line.length < 2) continue;
+    drawCtx.beginPath();
+    drawCtx.moveTo(line[0].x, line[0].y);
+    for (let i = 1; i < line.length; i++) drawCtx.lineTo(line[i].x, line[i].y);
+    drawCtx.stroke();
+  }
+
+  if (points.length > 0) {
+    drawCtx.beginPath();
+    drawCtx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) drawCtx.lineTo(points[i].x, points[i].y);
+    drawCtx.stroke();
+  }
+}
+
+/* 把子路径数组画到某个 ctx（用于 base 层） */
+function drawSubPathsOnCtx(targetCtx, subPaths) {
+  for (const sp of subPaths) {
+    targetCtx.beginPath();
+    for (let i = 0; i < sp.points.length; i++) {
+      if (i === 0) targetCtx.moveTo(sp.points[i].x, sp.points[i].y);
+      else targetCtx.lineTo(sp.points[i].x, sp.points[i].y);
+    }
+    if (sp.closed) targetCtx.closePath();
+    targetCtx.stroke();
+  }
+}
+
+function rebuildBase() {
+  baseCtx.clearRect(0, 0, W, H);
+  baseCtx.strokeStyle = '#000';
+  baseCtx.lineWidth = 2;
+  baseCtx.lineCap = 'round';
+  baseCtx.lineJoin = 'round';
+  for (const subPaths of history) drawSubPathsOnCtx(baseCtx, subPaths);
+}
+
+/* ---------- 动画 ---------- */
+function animate() {
+  rafId = null;
+  let stillMorphing = false;
+  for (let i = morphs.length - 1; i >= 0; i--) {
+    const m = morphs[i];
+    m.progress += 0.018;
+    if (m.progress >= 1) {
+      m.progress = 1;
+      // 收集最终形态
+      const finalSubPaths = m.subPaths.map(sp => ({
+        points: sp.end.map(p => ({ x: p.x, y: p.y })),
+        closed: sp.closed
+      }));
+      history.push(finalSubPaths);
+      baseCtx.strokeStyle = '#000';
+      baseCtx.lineWidth = 2;
+      baseCtx.lineCap = 'round';
+      baseCtx.lineJoin = 'round';
+      drawSubPathsOnCtx(baseCtx, finalSubPaths);
+      redoStack = [];
+      morphs.splice(i, 1);
+    } else {
+      stillMorphing = true;
+    }
+  }
+  renderMorphs();
+  composite();
+  updateToolbar();
+  if (stillMorphing) rafId = requestAnimationFrame(animate);
+}
+
+function ensureAnimating() {
+  if (rafId === null && morphs.length > 0) rafId = requestAnimationFrame(animate);
+}
+
+/* ---------- 变形（关键修复：多子路径） ---------- */
+function startMorph(linePoints) {
+  if (linePoints.length < 2) return;
+  const targets = currentTemplate;
+  const N = targets.length;
+  if (N === 0) return;
+
+  // 用户线条的包围盒 → 中心 + 缩放
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of linePoints) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const size = Math.max(maxX - minX, maxY - minY, 40);
+  const scale = size * 0.55;
+
+  // 缩放所有目标子路径（用同一个中心/缩放，保证相对位置正确）
+  const scaledTargets = targets.map(t => ({
+    points: t.points.map(p => ({
+      x: cx + p.x * scale,
+      y: cy + p.y * scale
+    })),
+    closed: t.closed
+  }));
+
+  // 把用户线条切成 N 段
+  const segments = splitPolylineByArc(linePoints, N, SAMPLE_COUNT);
+
+  // 逐段做变形准备
+  const subPaths = [];
+  for (let s = 0; s < N; s++) {
+    const startSamples = segments[s];
+    const target = scaledTargets[s];
+
+    let endSamples = target.closed
+      ? resampleClosed(target.points, SAMPLE_COUNT)
+      : resample(target.points, SAMPLE_COUNT);
+
+    // 起点对齐
+    const first = startSamples[0];
+    let bestIdx = 0, bestDist = Infinity;
+    for (let i = 0; i < endSamples.length; i++) {
+      const d = Math.hypot(endSamples[i].x - first.x, endSamples[i].y - first.y);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    if (bestIdx !== 0) {
+      endSamples = endSamples.slice(bestIdx).concat(endSamples.slice(0, bestIdx));
+      if (target.closed) enforceClosed(endSamples);
+    }
+
+    // 方向自适应
+    const dForward = Math.hypot(endSamples[0].x - first.x, endSamples[0].y - first.y);
+    const dReverse = Math.hypot(
+      endSamples[endSamples.length - 1].x - first.x,
+      endSamples[endSamples.length - 1].y - first.y
+    );
+    if (dReverse < dForward) {
+      endSamples.reverse();
+      if (target.closed) enforceClosed(endSamples);
+    }
+
+    subPaths.push({
+      start: startSamples,
+      end: endSamples,
+      closed: target.closed
+    });
+  }
+
+  morphs.push({ subPaths, progress: 0 });
+  ensureAnimating();
+}
+
+/* ---------- 事件 ---------- */
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const src = e.touches ? e.touches[0] : e;
+  return { x: src.clientX - rect.left, y: src.clientY - rect.top };
+}
+
+function scheduleRender() {
+  if (needsRender) return;
+  needsRender = true;
+  requestAnimationFrame(() => {
+    needsRender = false;
+    renderDrawLayer();
+    composite();
+  });
+}
+
+function down(e) {
+  e.preventDefault();
+  drawing = true;
+  points = [getPos(e)];
+  renderDrawLayer();
+  composite();
+}
+
+function move(e) {
+  if (!drawing) return;
+  e.preventDefault();
+  const p = getPos(e);
+  const last = points[points.length - 1];
+  if (Math.hypot(p.x - last.x, p.y - last.y) < MIN_DIST) return;
+  points.push(p);
+  scheduleRender();
+}
+
+function up(e) {
+  if (!drawing) return;
+  e.preventDefault();
+  drawing = false;
+
+  if (points.length >= 2) {
+    if (morphMode === 'immediate') {
+      startMorph(points);
+      redoStack = [];
+    } else {
+      pendingLines.push([...points]);
+      redoStack = [];
+    }
+    points = [];
+    renderDrawLayer();
+    composite();
+    updateToolbar();
+  } else {
+    points = [];
+    renderDrawLayer();
+    composite();
+  }
+}
+
+function leave(e) {
+  if (!drawing) return;
+  drawing = false;
+  if (points.length >= 2) {
+    if (morphMode === 'immediate') {
+      startMorph(points);
+      redoStack = [];
+    } else {
+      pendingLines.push([...points]);
+      redoStack = [];
+    }
+    points = [];
+    renderDrawLayer();
+    composite();
+    updateToolbar();
+  } else {
+    points = [];
+    renderDrawLayer();
+    composite();
+  }
+}
+
+canvas.addEventListener('mousedown', down);
+canvas.addEventListener('mousemove', move);
+canvas.addEventListener('mouseup', up);
+canvas.addEventListener('mouseleave', leave);
+canvas.addEventListener('touchstart', down, { passive: false });
+canvas.addEventListener('touchmove', move, { passive: false });
+canvas.addEventListener('touchend', up, { passive: false });
+
+/* ---------- 工具栏 ---------- */
+const clearBtn = document.getElementById('clearBtn');
+const undoBtn = document.getElementById('undoBtn');
+const redoBtn = document.getElementById('redoBtn');
+const modeBtn = document.getElementById('modeBtn');
+const morphBtn = document.getElementById('morphBtn');
+
+function updateToolbar() {
+  undoBtn.disabled = history.length === 0 && pendingLines.length === 0;
+  redoBtn.disabled = redoStack.length === 0;
+  if (morphMode === 'batch' && pendingLines.length > 0) {
+    morphBtn.style.display = 'flex';
+  } else {
+    morphBtn.style.display = 'none';
+  }
+}
+
+function updateModeButton() {
+  if (morphMode === 'immediate') {
+    modeBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
+      <span>立即</span>`;
+    modeBtn.title = '当前：画完立即变形 · 点击切换为批量';
+  } else {
+    modeBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3l8 4.5-8 4.5-8-4.5z"/>
+        <path d="M4 12l8 4.5 8-4.5"/>
+        <path d="M4 16.5l8 4.5 8-4.5"/>
+      </svg>
+      <span>批量</span>`;
+    modeBtn.title = '当前：画完累积 · 点击切换为立即';
+  }
+}
+
+clearBtn.addEventListener('click', () => {
+  baseCtx.clearRect(0, 0, W, H);
+  morphCtx.clearRect(0, 0, W, H);
+  drawCtx.clearRect(0, 0, W, H);
+  history = [];
+  redoStack = [];
+  pendingLines = [];
+  morphs = [];
+  points = [];
+  drawing = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  composite();
+  updateToolbar();
+});
+
+undoBtn.addEventListener('click', () => {
+  if (pendingLines.length > 0) {
+    pendingLines.pop();
+    renderDrawLayer();
+    composite();
+    updateToolbar();
+    return;
+  }
+  if (history.length > 0) {
+    redoStack.push(history.pop());
+    rebuildBase();
+    composite();
+    updateToolbar();
+  }
+});
+
+redoBtn.addEventListener('click', () => {
+  if (redoStack.length === 0) return;
+  history.push(redoStack.pop());
+  rebuildBase();
+  composite();
+  updateToolbar();
+});
+
+modeBtn.addEventListener('click', () => {
+  if (morphMode === 'immediate') {
+    morphMode = 'batch';
+  } else {
+    if (pendingLines.length > 0) {
+      for (const line of pendingLines) startMorph(line);
+      pendingLines = [];
+      renderDrawLayer();
+      composite();
+      redoStack = [];
+    }
+    morphMode = 'immediate';
+  }
+  updateModeButton();
+  updateToolbar();
+});
+
+morphBtn.addEventListener('click', () => {
+  if (pendingLines.length === 0) return;
+  for (const line of pendingLines) startMorph(line);
+  pendingLines = [];
+  renderDrawLayer();
+  composite();
+  redoStack = [];
+  updateToolbar();
+});
+
+/* ---------- 选择器 ---------- */
+const pickerBtn = document.getElementById('pickerBtn');
+const pickerPanel = document.getElementById('pickerPanel');
+const pickerLabel = document.getElementById('pickerLabel');
+
+function buildPicker() {
+  pickerPanel.innerHTML = '';
+
+  const starLabel = document.createElement('div');
+  starLabel.className = 'cat-label';
+  starLabel.textContent = '默认';
+  pickerPanel.appendChild(starLabel);
+
+  const starGrid = document.createElement('div');
+  starGrid.className = 'icon-grid';
+  const starCell = document.createElement('div');
+  starCell.className = 'icon-cell' + (currentTemplateName === '星形' ? ' active' : '');
+  starCell.innerHTML = L('<path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/>');
+  starCell.title = '星形';
+  starCell.addEventListener('click', () => {
+    currentTemplate = STAR_TEMPLATE;
+    currentTemplateName = '星形';
+    pickerLabel.textContent = '星形';
+    updateActiveCell();
+    closePicker();
+  });
+  starGrid.appendChild(starCell);
+  pickerPanel.appendChild(starGrid);
+
+  for (const [cat, svgs] of Object.entries(SVG_DATA)) {
+    const label = document.createElement('div');
+    label.className = 'cat-label';
+    label.textContent = cat;
+    pickerPanel.appendChild(label);
+
+    const grid = document.createElement('div');
+    grid.className = 'icon-grid';
+
+    svgs.forEach((svgStr, idx) => {
+      const cell = document.createElement('div');
+      cell.className = 'icon-cell';
+      cell.innerHTML = svgStr;
+      cell.dataset.cat = cat;
+      cell.dataset.idx = idx;
+      cell.title = `${cat} #${idx + 1}`;
+      cell.addEventListener('click', () => {
+        const subPaths = svgToSubPaths(svgStr);
+        if (!subPaths || subPaths.length === 0) return;
+        currentTemplate = subPaths;
+        currentTemplateName = `${cat} #${idx + 1}`;
+        pickerLabel.textContent = currentTemplateName;
+        updateActiveCell();
+        closePicker();
+      });
+      grid.appendChild(cell);
+    });
+
+    pickerPanel.appendChild(grid);
+  }
+}
+
+function updateActiveCell() {
+  pickerPanel.querySelectorAll('.icon-cell').forEach(cell => {
+    const cat = cell.dataset.cat;
+    const idx = cell.dataset.idx;
+    if (cat === undefined) {
+      cell.classList.toggle('active', currentTemplateName === '星形');
+    } else {
+      cell.classList.toggle('active', currentTemplateName === `${cat} #${parseInt(idx) + 1}`);
+    }
+  });
+}
+
+function openPicker() { pickerPanel.classList.add('open'); pickerBtn.classList.add('open'); }
+function closePicker() { pickerPanel.classList.remove('open'); pickerBtn.classList.remove('open'); }
+
+pickerBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (pickerPanel.classList.contains('open')) closePicker();
+  else openPicker();
+});
+
+document.addEventListener('click', (e) => {
+  if (!pickerPanel.contains(e.target) && e.target !== pickerBtn && !pickerBtn.contains(e.target)) {
+    closePicker();
+  }
+});
+
+/* ---------- 尺寸 ---------- */
+function resizeCanvas() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  DPR = window.devicePixelRatio || 1;
+
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  base.width = W * DPR;
+  base.height = H * DPR;
+  baseCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  morphLayer.width = W * DPR;
+  morphLayer.height = H * DPR;
+  morphCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  drawLayer.width = W * DPR;
+  drawLayer.height = H * DPR;
+  drawCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  rebuildBase();
+  renderDrawLayer();
+  composite();
+}
+
+/* ---------- 初始化 ---------- */
+buildPicker();
+updateModeButton();
+updateToolbar();
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+</script>
+
+</body>
+</html>

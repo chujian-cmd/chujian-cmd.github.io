@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>波脊线 Ridge Lines</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#050506;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(5,5,6,.85),rgba(5,5,6,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(242,244,248,.18);border-color:rgba(242,244,248,.55);color:#f7f8ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #tip{
+    position:fixed;top:64px;right:12px;z-index:15;max-width:240px;
+    padding:10px 14px;border-radius:12px;
+    background:rgba(14,15,22,.9);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.12);
+    box-shadow:0 12px 32px -12px rgba(0,0,0,.7);
+    color:#eef1ff;font:13px -apple-system,"PingFang SC",sans-serif;line-height:1.5;
+    opacity:0;transform:translateY(-6px);
+    transition:opacity .3s,transform .3s;
+    cursor:pointer;
+  }
+  #tip.show{opacity:1;transform:translateY(0)}
+  #tip .tp-t{font-weight:600;color:#fff;margin-bottom:3px}
+  #tip .tp-d{font-size:11.5px;color:#a9adb8;margin-bottom:6px}
+  #tip .tp-l{font-size:11.5px;color:#c3c9d4;display:flex;gap:5px;margin-top:3px}
+  #tip .tp-l::before{content:"·";color:#7cf7ff;flex:none}
+  #tip .tp-hide{margin-top:8px;font-size:10.5px;color:#5c616a;text-align:right}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(242,244,248,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(242,244,248,.55);
+    background:rgba(242,244,248,.22);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(242,244,248,.4)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">波脊线 <b id="m">横向山脊</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="tip">
+  <div class="tp-t">波脊线（横向版）</div>
+  <div class="tp-d">文字的横向笔画化作一条条纵向波浪脊</div>
+  <div class="tp-l">点「换预设」看多种风格</div>
+  <div class="tp-l">点「自定义」输入你的文字</div>
+  <div class="tp-hide">点此关闭</div>
+</div>
+
+<div id="hint">字横向拍扁成一条条波浪 · 近脊遮远脊</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="一二三"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: '一二三',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    cols: 26,
+    gain: 3.2,
+    smooth: 0.35,
+    lineWidth: 2,
+    persp: 0.15,
+    invertDisp: false,
+    invertLum: false,
+    lineColor: '#f5f6f8',
+    fillColor: '#050506',
+    background: '#050506',
+    underlay: 'dim',
+    underlayAlpha: 0.18
+  };
+
+  var PRESETS = [
+    { text: '一二三',  underlay: 'dim', underlayAlpha: 0.18, cols: 26, gain: 3.2, smooth: 0.35, lineWidth: 2,   persp: 0.15, invertDisp: false, lineColor: '#f5f6f8', fillColor: '#050506', background: '#050506' },
+    { text: '口',      underlay: 'dim', underlayAlpha: 0.22, cols: 22, gain: 3.6, smooth: 0.3,  lineWidth: 2,   persp: 0.1,  invertDisp: false, lineColor: '#ffffff', fillColor: '#0a0a0c', background: '#0a0a0c' },
+    { text: '田',      underlay: 'none', cols: 24, gain: 3,   smooth: 0.3,  lineWidth: 1.8, persp: 0,    invertDisp: false, lineColor: '#bfd6ff', fillColor: '#122a63', background: '#122a63' },
+    { text: '中',      underlay: 'dim', underlayAlpha: 0.15, cols: 22, gain: 3.4, smooth: 0.4,  lineWidth: 2.2, persp: 0.1,  invertDisp: false, lineColor: '#7cf7ff', fillColor: '#07121a', background: '#050b10' },
+    { text: '井',      underlay: 'none', cols: 60, gain: 2,   smooth: 0.55, lineWidth: 1,   persp: 0,    invertDisp: false, lineColor: '#e8e4ee', fillColor: '#0e0c12', background: '#0e0c12' },
+    { text: '品',      underlay: 'dim', underlayAlpha: 0.2,  cols: 24, gain: 3.5, smooth: 0.35, lineWidth: 2,   persp: 0.15, invertDisp: true,  lineColor: '#ff8a5c', fillColor: '#1a0505', background: '#1a0505' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth;
+    var h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w;
+    H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true;
+    sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W;
+    maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) {
+      maskData = mctx.getImageData(0, 0, W, H).data;
+      return;
+    }
+
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0;
+    y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  function alphaBilinear(x, y) {
+    var x0 = Math.floor(x);
+    var y0 = Math.floor(y);
+    var fx = x - x0;
+    var fy = y - y0;
+    var a = alphaAt(x0, y0);
+    var b = alphaAt(x0 + 1, y0);
+    var c = alphaAt(x0, y0 + 1);
+    var d = alphaAt(x0 + 1, y0 + 1);
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  }
+
+  // ---------- 渲染 ----------
+  function render() {
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.cols + '|' + CFG.gain + '|' + CFG.smooth + '|' + CFG.lineWidth + '|' +
+              CFG.persp + '|' + CFG.invertDisp + '|' + CFG.invertLum + '|' +
+              CFG.lineColor + '|' + CFG.fillColor + '|' + CFG.background + '|' +
+              CFG.underlay + '|' + CFG.underlayAlpha;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+
+    if (cfg.underlay === 'dim') {
+      ctx.save();
+      ctx.globalAlpha = cfg.underlayAlpha;
+      ctx.drawImage(maskCanvas, 0, 0, W, H);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    var cols = Math.max(2, Math.round(cfg.cols));
+    var gain = cfg.gain;
+    var smooth = cfg.smooth;
+    var lw = cfg.lineWidth;
+    var persp = cfg.persp;
+    var invDisp = cfg.invertDisp;
+    var invLum = cfg.invertLum;
+
+    var margin = 0.94;
+    var vw = W * margin;
+    var vh = H * margin;
+    var dx = (W - vw) / 2;
+    var dy = (H - vh) / 2;
+
+    var P = Math.max(48, Math.min(220, Math.round(vh / 4)));
+    var P2 = P + 1;
+
+    var lineW = vw / cols;
+    var startX = dx + lineW * 0.5;
+    var denomU = (cols - 1) || 1;
+
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = cfg.lineColor;
+    ctx.fillStyle = cfg.fillColor;
+
+    var gray = new Float32Array(cols * P2);
+    for (var c0 = 0; c0 < cols; c0++) {
+      var sampleU = c0 / denomU;
+      var perspective = 1 - persp * (1 - sampleU);
+      var base0 = c0 * P2;
+      for (var j0 = 0; j0 < P2; j0++) {
+        var v = j0 / (P2 - 1);
+        var realV = 0.5 + (v - 0.5) * perspective;
+        var realX = dx + sampleU * vw;
+        var realY = dy + realV * vh;
+        var lum = alphaBilinear(realX, realY);
+        if (invLum) lum = 1 - lum;
+        gray[base0 + j0] = lum;
+      }
+    }
+
+    var smoothPass = Math.round(Math.min(1, smooth) * 8);
+    if (smoothPass > 0) {
+      for (var p = 0; p < smoothPass; p++) {
+        for (var c1 = 0; c1 < cols; c1++) {
+          var b1 = c1 * P2;
+          var first = gray[b1];
+          var last = gray[b1 + P2 - 1];
+          for (var j1 = 1; j1 < P2 - 1; j1++) {
+            var a1 = gray[b1 + j1 - 1];
+            var m1 = gray[b1 + j1];
+            var cc = gray[b1 + j1 + 1];
+            gray[b1 + j1] = (a1 + m1 * 2 + cc) / 4;
+          }
+          gray[b1] = first;
+          gray[b1 + P2 - 1] = last;
+        }
+      }
+    }
+
+    var dispAmp = lineW * gain * 0.85;
+
+    for (var c = 0; c < cols; c++) {
+      var sampleU2 = c / denomU;
+      var perspective2 = 1 - persp * (1 - sampleU2);
+      var rowH = vh * perspective2;
+      var rowTop = dy + (vh - rowH) / 2;
+      var baseX = startX + c * lineW;
+      var dir = invDisp ? -1 : 1;
+      var base = c * P2;
+
+      ctx.beginPath();
+      var first = true;
+      for (var j = 0; j < P2; j++) {
+        var vv = j / (P2 - 1);
+        var yyy = rowTop + vv * rowH;
+        var xxx = baseX + gray[base + j] * dispAmp * dir;
+        if (first) { ctx.moveTo(xxx, yyy); first = false; }
+        else { ctx.lineTo(xxx, yyy); }
+      }
+      ctx.lineTo(baseX + lineW * 1.6, rowTop + rowH);
+      ctx.lineTo(baseX + lineW * 1.6, rowTop);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.beginPath();
+      first = true;
+      for (var j2 = 0; j2 < P2; j2++) {
+        var vv2 = j2 / (P2 - 1);
+        var yyy2 = rowTop + vv2 * rowH;
+        var xxx2 = baseX + gray[base + j2] * dispAmp * dir;
+        if (first) { ctx.moveTo(xxx2, yyy2); first = false; }
+        else { ctx.lineTo(xxx2, yyy2); }
+      }
+      ctx.stroke();
+    }
+  }
+
+  // ---------- 说明标签 ----------
+  var tip = document.getElementById('tip');
+  function showTip() {
+    tip.classList.add('show');
+    var hideTimer = setTimeout(function () {
+      tip.classList.remove('show');
+    }, 4200);
+    tip.addEventListener('click', function () {
+      clearTimeout(hideTimer);
+      tip.classList.remove('show');
+    });
+  }
+
+  // ---------- 按钮 ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var kk in p) if (p.hasOwnProperty(kk)) CFG[kk] = p[kk];
+    mLabel.textContent = p.text;
+    maskData = null;
+    maskKey = '';
+    dirty = true;
+  });
+
+  var CONTENTS = ['一二三', '中', '口', '田', '井', '品'];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    maskData = null;
+    maskKey = '';
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = '一二三';
+    CFG.text = v;
+    maskData = null;
+    maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      confirmInput();
+      closePanel();
+    }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+    setTimeout(showTip, 400);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

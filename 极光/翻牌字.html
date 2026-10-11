@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>翻牌字 SplitFlap</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0c10;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,12,16,.85),rgba(10,12,16,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(255,210,63,.24);border-color:rgba(255,210,63,.6);color:#fff4c2}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(255,210,63,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(255,210,63,.6);
+    background:rgba(255,210,63,.3);color:#2a1e00;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(255,210,63,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">翻牌字 <b id="m">机场航班</b></div>
+  <button class="btn" id="btn-scheme">换配色</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">字符轮逐格翻页 · 明暗面 · 级联翻动</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（每行一排翻板）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA&#10;BOARD 07"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA\nBOARD 07',
+    flipSpeed: 12,
+    cascade: 0.03,
+    loops: 0,
+    scheme: 'airport',
+    cycleMode: 'refresh',    // hold | refresh | shuffle
+    randomWheel: false,
+    gap: 3,
+    radius: 3,
+    splitW: 1.5,
+    weight: 700,
+    font: '"SF Mono",ui-monospace,Menlo,Consolas,monospace',
+    background: '#08090c'
+  };
+
+  var SCHEMES = {
+    board:    { cell: '#1b1e24', char: '#f3f5f9', label: '黑板白字' },
+    cream:    { cell: '#efe6d0', char: '#39332a', label: '复古米黄' },
+    airport:  { cell: '#14161a', char: '#ffd23f', label: '机场黄字' },
+    terminal: { cell: '#0a1710', char: '#42ff85', label: '终端绿' }
+  };
+
+  var SCHEME_LIST = [
+    { key: 'airport',  label: '机场黄字' },
+    { key: 'board',    label: '黑板白字' },
+    { key: 'cream',    label: '复古米黄' },
+    { key: 'terminal', label: '终端绿' }
+  ];
+
+  var HOLD_TIME = 3.2;
+  var SHUFFLE_TIME = 2.4;
+
+  var WHEEL = (' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-+/#&?!').split('');
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cells = [];
+    targets = [];
+    textKey = '';
+    return true;
+  }
+
+  // ---------- 网格 ----------
+  var cells = [];       // { show, next, steps, p, delay, target, spin }
+  var targets = [];     // 每个格子的目标索引（在 wheel 里）
+  var cols = 1, rows = 1;
+  var hasCJK = false;
+  var textKey = '';
+  var waveT = 0;
+  var idleT = 0;
+  var showingOrig = true;
+  var seed = 1;
+
+  function rnd(n) {
+    var t = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+    return t - Math.floor(t);
+  }
+
+  function rebuild(text) {
+    textKey = text;
+    var lines = text.split('\n').filter(function (l) { return l.trim().length > 0; });
+    var splitLines = [];
+    for (var i = 0; i < lines.length; i++) {
+      splitLines.push(lines[i].split(''));
+    }
+    cols = 1;
+    for (var j = 0; j < splitLines.length; j++) {
+      cols = Math.max(cols, splitLines[j].length);
+    }
+    rows = Math.max(1, splitLines.length);
+    hasCJK = /[\u2e80-\u9fff\uf900-\ufaff]/.test(text);
+
+    // 字符轮：预置 + 文字里出现的所有字符
+    var wheel = WHEEL.slice();
+    var indexMap = {};
+    for (var w = 0; w < wheel.length; w++) indexMap[wheel[w]] = w;
+    for (var y = 0; y < splitLines.length; y++) {
+      for (var k = 0; k < splitLines[y].length; k++) {
+        var ch = splitLines[y][k];
+        if (indexMap[ch] === undefined) {
+          indexMap[ch] = wheel.length;
+          wheel.push(ch);
+        }
+      }
+    }
+    WHEEL = wheel;
+
+    targets = [];
+    for (var r = 0; r < rows; r++) {
+      var line = splitLines[r] || [];
+      var pad = Math.floor((cols - line.length) / 2);
+      for (var c = 0; c < cols; c++) {
+        var ch2;
+        if (c >= pad && c - pad < line.length) ch2 = line[c - pad];
+        else ch2 = ' ';
+        targets.push(indexMap[ch2] !== undefined ? indexMap[ch2] : 0);
+      }
+    }
+
+    cells = targets.map(function () {
+      return { show: 0, next: -1, steps: 0, p: 0, delay: 0, target: 0, spin: 0 };
+    });
+
+    showingOrig = true;
+    seed = 1;
+  }
+
+  function startWave(targetsArr, cascade, loops, isRefresh) {
+    var wheelLen = WHEEL.length;
+    waveT = 0;
+    idleT = 0;
+    seed++;
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      c.target = targetsArr[i];
+      var dist = (targetsArr[i] - c.show + wheelLen) % wheelLen;
+      var steps = dist + loops * wheelLen;
+      // 太短就补一整圈
+      if (steps < 4 && (dist > 0 || isRefresh && targetsArr[i] !== 0)) {
+        steps = 5 + Math.floor(rnd(i * 7.13 + seed * 13.7) * 6);
+      }
+      c.steps = steps;
+      c.p = 0;
+      c.next = -1;
+      c.delay = i * cascade;
+    }
+  }
+
+  function pickNext(cell, i, randomWheel) {
+    var wheelLen = WHEEL.length;
+    if (cell.steps <= 1) return cell.target;
+    if (randomWheel) {
+      return (cell.show + 1 + Math.floor(rnd(i * 31.7 + cell.spin * 3.1 + seed) * (wheelLen - 2))) % wheelLen;
+    }
+    return (cell.show + 1) % wheelLen;
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    if (CFG.text !== textKey) {
+      rebuild(CFG.text);
+      startWave(targets, CFG.cascade, CFG.loops, false);
+    }
+
+    var flipSpeed = CFG.flipSpeed;
+    var cascade = CFG.cascade;
+    var loops = CFG.loops;
+    var randomWheel = CFG.randomWheel;
+    var scheme = SCHEMES[CFG.scheme] || SCHEMES.airport;
+
+    // 状态推进
+    waveT += dt;
+    var allDone = true;
+    for (var i = 0; i < cells.length; i++) {
+      var c = cells[i];
+      if (c.steps <= 0) continue;
+      allDone = false;
+      if (waveT - c.delay <= 0) continue;
+      if (c.next < 0) c.next = pickNext(c, i, randomWheel);
+      c.p += dt * flipSpeed;
+      while (c.p >= 1 && c.steps > 0) {
+        c.p -= 1;
+        c.show = c.next;
+        c.steps--;
+        c.spin++;
+        c.next = c.steps > 0 ? pickNext(c, i, randomWheel) : -1;
+      }
+      if (c.steps === 0) c.p = 0;
+    }
+
+    // 全部翻完 → 判定循环
+    if (allDone) {
+      idleT += dt;
+      var mode = CFG.cycleMode;
+      if (mode === 'refresh' && idleT > HOLD_TIME) {
+        startWave(targets, cascade, loops, true);
+      } else if (mode === 'shuffle' && idleT > SHUFFLE_TIME) {
+        if (showingOrig) {
+          var wl = WHEEL.length;
+          var shuffled = targets.map(function (t, idx) {
+            return t === 0 ? 0 : 1 + Math.floor(rnd(idx * 17.3 + seed * 7.7) * (wl - 1));
+          });
+          startWave(shuffled, cascade, loops, false);
+        } else {
+          startWave(targets, cascade, loops, false);
+        }
+        showingOrig = !showingOrig;
+      }
+    }
+
+    // 屏幕布局
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var gap = CFG.gap;
+    var ratio = hasCJK ? 0.98 : 0.7;
+    var cellH_avail = (H * 0.86 - (rows - 1) * gap) / rows;
+    var cellW_avail = (W * 0.94 - (cols - 1) * gap) / cols;
+
+    // 单格是一个正圆角矩形，宽高比固定 (ratio:1)
+    var cellH = Math.max(6, Math.min(cellH_avail, cellW_avail / ratio));
+    var cellW = cellH * ratio;
+
+    var gridW = cols * cellW + (cols - 1) * gap;
+    var gridH = rows * cellH + (rows - 1) * gap;
+    var ox = (W - gridW) / 2;
+    var oy = (H - gridH) / 2;
+
+    var charH = cellH * (hasCJK ? 0.66 : 0.6);
+    var charW = cellH * (hasCJK ? 0.66 : 0.6);
+    ctx.font = CFG.weight + ' ' + charH + 'px ' + CFG.font;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (var r = 0; r < rows; r++) {
+      for (var cc = 0; cc < cols; cc++) {
+        var idx = r * cols + cc;
+        var c2 = cells[idx];
+        if (!c2) continue;
+        var cxx = ox + cc * (cellW + gap);
+        var cyy = oy + r * (cellH + gap);
+        var midX = cxx + cellW / 2;
+        var midY = cyy + cellH / 2;
+        var flipping = c2.next >= 0 && c2.p > 0;
+        var topChar = flipping ? WHEEL[c2.next] : WHEEL[c2.show];
+        var botChar = WHEEL[c2.show];
+
+        drawCell(ctx, cxx, cyy, cellW, cellH, midX, midY, topChar, botChar, flipping, c2.p, scheme, CFG.radius, CFG.splitW);
+      }
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    if (r <= 0) { c.rect(x, y, w, h); return; }
+    var rr = Math.min(r, w / 2, h / 2);
+    c.beginPath();
+    c.moveTo(x + rr, y);
+    c.arcTo(x + w, y, x + w, y + h, rr);
+    c.arcTo(x + w, y + h, x, y + h, rr);
+    c.arcTo(x, y + h, x, y, rr);
+    c.arcTo(x, y, x + w, y, rr);
+    c.closePath();
+  }
+
+  function shade(hex, mul) {
+    var s = hex.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    var r = Math.min(255, Math.round((n >> 16 & 255) * mul));
+    var g = Math.min(255, Math.round((n >> 8 & 255) * mul));
+    var b = Math.min(255, Math.round((n & 255) * mul));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
+  function drawCell(c, x, y, w, h, midX, midY, topChar, botChar, flipping, p, scheme, radius, splitW) {
+    var cellUp = shade(scheme.cell, 1.16);
+    var cellDn = shade(scheme.cell, 0.9);
+    var charTop = shade(scheme.char, 1.04);
+    var charBot = shade(scheme.char, 0.88);
+
+    // 背景底板
+    c.save();
+    roundRect(c, x, y, w, h, radius);
+    c.fillStyle = cellDn;
+    c.fill();
+
+    // 裁剪圆角
+    c.save();
+    roundRect(c, x, y, w, h, radius);
+    c.clip();
+
+    // 上半张牌（带字）
+    c.save();
+    c.beginPath();
+    c.rect(x, y, w, h / 2);
+    c.clip();
+    c.fillStyle = cellUp;
+    c.fillRect(x, y, w, h / 2);
+    c.fillStyle = charTop;
+    c.fillText(topChar, midX, midY);
+    c.restore();
+
+    // 下半张牌（带字）
+    c.save();
+    c.beginPath();
+    c.rect(x, y + h / 2, w, h / 2);
+    c.clip();
+    c.fillStyle = cellDn;
+    c.fillRect(x, y + h / 2, w, h / 2);
+    c.fillStyle = charBot;
+    c.fillText(botChar, midX, midY);
+    c.restore();
+
+    // 翻页中间片
+    if (flipping) {
+      var firstHalf = p < 0.5;
+      var flipScale = firstHalf ? 1 - p * 2 : p * 2 - 1;
+      var face = firstHalf ? 0.45 + 0.55 * flipScale : 0.5 + 0.5 * flipScale;
+      var faceChar = firstHalf ? WHEEL_SAFE(botChar) : topChar;
+
+      c.save();
+      c.translate(midX, midY);
+      c.scale(1, Math.max(flipScale, 0.001));
+      c.beginPath();
+      if (firstHalf) c.rect(-w / 2, -h / 2, w, h / 2);
+      else c.rect(-w / 2, 0, w, h / 2);
+      c.clip();
+      c.fillStyle = shade(scheme.cell, (firstHalf ? 1.16 : 0.9) * face);
+      c.fillRect(-w / 2, firstHalf ? -h / 2 : 0, w, h / 2);
+      c.fillStyle = shade(scheme.char, face);
+      c.fillText(faceChar, 0, 0);
+      c.restore();
+    }
+
+    c.restore();
+
+    // 中缝
+    if (splitW > 0) {
+      c.globalAlpha = 0.85;
+      c.fillStyle = CFG.background;
+      c.fillRect(x, midY - splitW / 2, w, splitW);
+      c.globalAlpha = 1;
+    }
+
+    c.restore();
+  }
+
+  function WHEEL_SAFE(c) { return c; }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA\nBOARD 07', scheme: 'airport', cycleMode: 'refresh' },
+    { text: 'DEPARTURES\nGATE 12', scheme: 'board', cycleMode: 'refresh' },
+    { text: '出发\n北京', scheme: 'cream', cycleMode: 'refresh' },
+    { text: 'SPLIT\nFLAP', scheme: 'board', cycleMode: 'shuffle' },
+    { text: 'TERMINAL\nRUNNING', scheme: 'terminal', cycleMode: 'refresh' }
+  ];
+  var presetIdx = 0;
+
+  function applyText(t, scheme, cycleMode) {
+    CFG.text = t;
+    if (scheme) CFG.scheme = scheme;
+    if (cycleMode) CFG.cycleMode = cycleMode;
+    cells = [];
+    targets = [];
+    textKey = '';
+    // 更新标签
+    var s = SCHEME_LIST.find(function (x) { return x.key === CFG.scheme; });
+    if (s) mLabel.textContent = s.label;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    applyText(p.text, p.scheme, p.cycleMode);
+  });
+
+  // ---------- 换配色 ----------
+  var schemeIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-scheme').addEventListener('click', function () {
+    schemeIdx = (schemeIdx + 1) % SCHEME_LIST.length;
+    CFG.scheme = SCHEME_LIST[schemeIdx].key;
+    mLabel.textContent = SCHEME_LIST[schemeIdx].label;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'HELLO';
+    applyText(v);
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

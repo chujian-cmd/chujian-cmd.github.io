@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>像素排序 Pixel Sort</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#06070c;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(6,7,12,.85),rgba(6,7,12,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(94,106,210,.28);border-color:rgba(94,106,210,.6);color:#eaeaff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(94,106,210,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(94,106,210,.6);
+    background:rgba(94,106,210,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(94,106,210,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">像素排序 <b id="m">经典流淌</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">按亮度重排像素段 · 丝滑流动的故障数据流</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    direction: 'vertical',   // horizontal | vertical
+    low: 0.2,
+    high: 0.75,
+    sortKey: 'lum',          // lum | value | hue
+    reverse: false,
+    colorMode: 'gradient',   // gradient | mono | duotone
+    colorA: '#5be0ff',
+    colorB: '#ff6bd6',
+    background: '#06070c'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA',   direction: 'vertical',   low: 0.2,  high: 0.75, sortKey: 'lum',   reverse: false, colorMode: 'gradient', colorA: '#5be0ff', colorB: '#ff6bd6', background: '#06070c' },
+    { text: '拉丝',     direction: 'horizontal', low: 0.3,  high: 0.85, sortKey: 'lum',   reverse: false, colorMode: 'gradient', colorA: '#ffe9a8', colorB: '#ff7a2c', background: '#0a0602' },
+    { text: '色相',     direction: 'vertical',   low: 0.15, high: 0.9,  sortKey: 'hue',   reverse: false, colorMode: 'gradient', colorA: '#ff4d9d', colorB: '#4fd6ff', background: '#050510' },
+    { text: '暗溶',     direction: 'vertical',   low: 0.0,  high: 0.45, sortKey: 'value', reverse: true,  colorMode: 'mono',     colorA: '#cfe6ff', colorB: '#cfe6ff', background: '#06070c' },
+    { text: 'NEON',     direction: 'horizontal', low: 0.25, high: 0.95, sortKey: 'lum',   reverse: false, colorMode: 'duotone',  colorA: '#39ff8f', colorB: '#ff2ed6', background: '#02060a' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.direction + '|' + CFG.low + '|' + CFG.high + '|' +
+              CFG.sortKey + '|' + CFG.reverse + '|' + CFG.colorMode + '|' +
+              CFG.colorA + '|' + CFG.colorB + '|' + CFG.background;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    var cw = W, ch = H;
+
+    // 处理分辨率（限制长边）
+    var maxSide = 700;
+    var scale = Math.min(1, maxSide / Math.max(cw * dpr, ch * dpr));
+    var pw = Math.max(2, Math.round(cw * dpr * scale));
+    var ph = Math.max(2, Math.round(ch * dpr * scale));
+
+    // 采样掩膜 → 生成一张"底色图"
+    // 字内：按横位置调色板着色；字外：背景色
+    var cA = hex2rgb(cfg.colorA);
+    var cB = hex2rgb(cfg.colorB);
+    var bg = hex2rgb(cfg.background);
+
+    var px = new Uint8ClampedArray(pw * ph * 4);
+    for (var y = 0; y < ph; y++) {
+      for (var x = 0; x < pw; x++) {
+        var sx = (x / pw) * W;
+        var sy = (y / ph) * H;
+        var lum = alphaAt(sx, sy);
+        var u = x / pw;
+        var o = (y * pw + x) * 4;
+        if (lum < 0.5) {
+          px[o] = bg[0]; px[o + 1] = bg[1]; px[o + 2] = bg[2]; px[o + 3] = 255;
+        } else {
+          // 沿横轴从 A 到 B 渐变，字内叠加明暗
+          var t = u;
+          var r = cA[0] + (cB[0] - cA[0]) * t;
+          var g = cA[1] + (cB[1] - cA[1]) * t;
+          var b = cA[2] + (cB[2] - cA[2]) * t;
+          // 亮度调制
+          var shade = 0.55 + lum * 0.45;
+          px[o] = r * shade;
+          px[o + 1] = g * shade;
+          px[o + 2] = b * shade;
+          px[o + 3] = 255;
+        }
+      }
+    }
+
+    // ---------- 像素排序 ----------
+    var low = cfg.low, high = cfg.high;
+    var sortKey = cfg.sortKey;
+    var reverse = cfg.reverse ? -1 : 1;
+    var dir = cfg.direction;
+
+    function keyOf(idx) {
+      var o = idx * 4;
+      var r = px[o], g = px[o + 1], b = px[o + 2];
+      if (sortKey === 'value') return Math.max(r, g, b);
+      if (sortKey === 'hue') return hueOf(r, g, b);
+      return 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    if (dir === 'horizontal') {
+      for (var yy = 0; yy < ph; yy++) {
+        var base = yy * pw;
+        var start = 0;
+        while (start < pw) {
+          // 找连续区间
+          while (start < pw) {
+            var l = px[(base + start) * 4] / 255 * 0.299 + px[(base + start) * 4 + 1] / 255 * 0.587 + px[(base + start) * 4 + 2] / 255 * 0.114;
+            if (l >= low && l <= high) break;
+            start++;
+          }
+          var end = start;
+          while (end < pw) {
+            var l2 = px[(base + end) * 4] / 255 * 0.299 + px[(base + end) * 4 + 1] / 255 * 0.587 + px[(base + end) * 4 + 2] / 255 * 0.114;
+            if (l2 < low || l2 > high) break;
+            end++;
+          }
+          if (end - start > 1) {
+            // 收集 + 排序
+            var arr = [];
+            for (var i = start; i < end; i++) arr.push(base + i);
+            arr.sort(function (a, b) { return (keyOf(a) - keyOf(b)) * reverse; });
+            var tmp2 = [];
+            for (var j2 = 0; j2 < arr.length; j2++) {
+              var o2 = arr[j2] * 4;
+              tmp2.push(px[o2], px[o2 + 1], px[o2 + 2], px[o2 + 3]);
+            }
+            for (var k = 0; k < arr.length; k++) {
+              var o3 = arr[k] * 4;
+              px[o3] = tmp2[k * 4];
+              px[o3 + 1] = tmp2[k * 4 + 1];
+              px[o3 + 2] = tmp2[k * 4 + 2];
+              px[o3 + 3] = tmp2[k * 4 + 3];
+            }
+          }
+          start = end + 1;
+        }
+      }
+    } else {
+      // vertical
+      for (var xx = 0; xx < pw; xx++) {
+        var start2 = 0;
+        while (start2 < ph) {
+          while (start2 < ph) {
+            var o4 = (start2 * pw + xx) * 4;
+            var l3 = px[o4] / 255 * 0.299 + px[o4 + 1] / 255 * 0.587 + px[o4 + 2] / 255 * 0.114;
+            if (l3 >= low && l3 <= high) break;
+            start2++;
+          }
+          var end2 = start2;
+          while (end2 < ph) {
+            var o5 = (end2 * pw + xx) * 4;
+            var l4 = px[o5] / 255 * 0.299 + px[o5 + 1] / 255 * 0.587 + px[o5 + 2] / 255 * 0.114;
+            if (l4 < low || l4 > high) break;
+            end2++;
+          }
+          if (end2 - start2 > 1) {
+            var arr2 = [];
+            for (var m2 = start2; m2 < end2; m2++) arr2.push(m2 * pw + xx);
+            arr2.sort(function (a, b) { return (keyOf(a) - keyOf(b)) * reverse; });
+            var tmp3 = [];
+            for (var n2 = 0; n2 < arr2.length; n2++) {
+              var o6 = arr2[n2] * 4;
+              tmp3.push(px[o6], px[o6 + 1], px[o6 + 2], px[o6 + 3]);
+            }
+            for (var p2 = 0; p2 < arr2.length; p2++) {
+              var o7 = arr2[p2] * 4;
+              px[o7] = tmp3[p2 * 4];
+              px[o7 + 1] = tmp3[p2 * 4 + 1];
+              px[o7 + 2] = tmp3[p2 * 4 + 2];
+              px[o7 + 3] = tmp3[p2 * 4 + 3];
+            }
+          }
+          start2 = end2 + 1;
+        }
+      }
+    }
+
+    // 写到离屏再放大
+    var img = new ImageData(px, pw, ph);
+    var tmp = document.createElement('canvas');
+    tmp.width = pw;
+    tmp.height = ph;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(tmp, 0, 0, W, H);
+  }
+
+  function hueOf(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    var d = mx - mn;
+    if (d === 0) return 0;
+    var h;
+    if (mx === r) h = (g - b) / d % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = h * 60;
+    if (h < 0) h += 360;
+    return h;
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 按钮 ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  var CONTENTS = [
+    { text: 'AURORA' },
+    { text: '像素' },
+    { text: 'SORT' },
+    { text: 'GLITCH' },
+    { text: '数据流\nDATA' },
+    { text: '⚡' }
+  ];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx].text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

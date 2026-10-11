@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Kaleidoscope 3D 分形</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #05060c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(5,6,12,0.8), rgba(5,6,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">3D 分形 <b id="m">星芒</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换形态</button>
+</div>
+
+<div id="hint">拖动 = 旋转 · 双指捏合 = 缩放</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+              || (navigator.maxTouchPoints > 1);
+
+// ---------- 参数 ----------
+const CFG = {
+  fold: 2.0,          // 折叠次数
+  scale: 1.6,         // 分形缩放系数
+  spin: 0.15,         // 自动旋转
+  camDist: 4.0,       // 相机距离
+  hueShift: 0.0,      // 色相偏移
+  colorA: '#5be0ff',
+  colorB: '#ff6bd6',
+  colorC: '#ffe066',
+  background: '#05060c'
+};
+
+const PIXEL_RATIO = isMobile ? 0.5 : 0.75;
+
+const canvasEl = document.getElementById('cv');
+const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: false });
+renderer.setPixelRatio(PIXEL_RATIO);
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const frag = /* glsl */`
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+  uniform float uTime;
+  uniform float uFold;
+  uniform float uScale;
+  uniform float uSpin;
+  uniform float uCamDist;
+  uniform float uHueShift;
+  uniform vec3  uColorA;
+  uniform vec3  uColorB;
+  uniform vec3  uColorC;
+  uniform vec3  uBackground;
+
+  #define PI 3.14159265359
+  #define TAU 6.28318530718
+
+  mat2 rot(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, -s, s, c);
+  }
+
+  // 3D 旋转矩阵
+  mat3 rotX(float a) {
+    float s = sin(a), c = cos(a);
+    return mat3(1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c);
+  }
+  mat3 rotY(float a) {
+    float s = sin(a), c = cos(a);
+    return mat3(c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c);
+  }
+
+  // 折叠：把坐标折回正八面体基本域
+  // 参考："Kaleidoscopic IFS" (KIFS)
+  vec3 foldOctahedron(vec3 p) {
+    p = abs(p);
+    if (p.x < p.y) p.xy = p.yx;
+    if (p.x < p.z) p.xz = p.zx;
+    if (p.y < p.z) p.yz = p.zy;
+    return p;
+  }
+
+  // 距离场：球 + 折叠 + 缩放（分形）
+  float map(vec3 p) {
+    // 全局旋转
+    float t = uTime * uSpin * 0.4;
+    p = rotY(t) * p;
+    p = rotX(t * 0.5) * p;
+
+    float scale = uScale;
+    float d = 1e9;
+    float curScale = 1.0;
+
+    // KIFS 迭代：折叠 + 缩放 + 平移
+    for (int i = 0; i < 6; i++) {
+      if (float(i) >= uFold) break;
+
+      // 折叠
+      p = foldOctahedron(p);
+
+      // 球面折叠（对半径）
+      float r = length(p);
+      float ballR = 1.0;
+      // 球外推到球内
+      p = p - ballR * (1.0 - smoothstep(0.5, 1.5, r)) * normalize(p + 0.001);
+
+      // 缩放
+      p = p * scale - vec3(scale - 1.0);
+      curScale *= scale;
+
+      // 记录最小距离
+      d = min(d, (length(p) - 0.5) / curScale);
+    }
+
+    return d;
+  }
+
+  vec3 calcNormal(vec3 p) {
+    vec2 e = vec2(0.0015, 0.0);
+    return normalize(vec3(
+      map(p + e.xyy) - map(p - e.xyy),
+      map(p + e.yxy) - map(p - e.yxy),
+      map(p + e.yyx) - map(p - e.yyx)
+    ));
+  }
+
+  vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+  }
+
+  void main() {
+    vec2 uv = (vUv - 0.5) * 2.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    // 相机
+    vec2 mouseOffset = (uMouse - 0.5) * 2.0;
+    float yaw = mouseOffset.x * 3.14;
+    float pitch = mouseOffset.y * 1.2;
+
+    vec3 camPos = vec3(
+      sin(yaw) * cos(pitch) * uCamDist,
+      sin(pitch) * uCamDist,
+      cos(yaw) * cos(pitch) * uCamDist
+    );
+
+    vec3 forward = normalize(-camPos);
+    vec3 worldUp = vec3(0.0, 1.0, 0.0);
+    vec3 right = normalize(cross(worldUp, forward));
+    vec3 up = cross(forward, right);
+
+    vec3 rd = normalize(forward + uv.x * right * 0.8 + uv.y * up * 0.8);
+    vec3 ro = camPos;
+
+    // ray march
+    float t = 0.0;
+    float glow = 0.0;
+    bool hit = false;
+    vec3 p = ro;
+
+    for (int i = 0; i < 100; i++) {
+      p = ro + rd * t;
+      float d = map(p);
+      glow += 0.008 / (0.02 + abs(d));
+      if (d < 0.001) { hit = true; break; }
+      t += d * 0.65;
+      if (t > 10.0) break;
+    }
+
+    vec3 col = uBackground;
+    if (hit) {
+      vec3 n = calcNormal(p);
+      vec3 lightDir = normalize(vec3(0.5, 0.7, 0.6));
+      float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+      float fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
+
+      // 色相随位置 + 时间
+      float tone = 0.5 + 0.5 * sin(p.x * 2.0 + p.y * 2.0 + p.z * 2.0 + uTime * 0.4 + uHueShift);
+      vec3 base = palette(tone,
+        (uColorA + uColorB) * 0.5,
+        (uColorB - uColorA) * 0.5,
+        vec3(1.0),
+        vec3(0.0, 0.15, 0.3)
+      );
+
+      // 点缀色
+      base = mix(base, uColorC, smoothstep(0.7, 1.0, tone) * 0.4);
+
+      col = base * (0.25 + 0.9 * diff) + fres * base * 1.3;
+      col = mix(col, uBackground, clamp(t / 10.0, 0.0, 0.8));
+    }
+
+    col += mix(uColorA, uColorB, 0.5) * glow * 0.02;
+
+    // 色调映射
+    col = col / (1.0 + col * 0.4);
+    col = pow(max(col, 0.0), vec3(0.9));
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    uTime: { value: 0 },
+    uFold: { value: CFG.fold },
+    uScale: { value: CFG.scale },
+    uSpin: { value: CFG.spin },
+    uCamDist: { value: CFG.camDist },
+    uHueShift: { value: CFG.hueShift },
+    uColorA: { value: new THREE.Color(CFG.colorA) },
+    uColorB: { value: new THREE.Color(CFG.colorB) },
+    uColorC: { value: new THREE.Color(CFG.colorC) },
+    uBackground: { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+function resize() {
+  const W = innerWidth;
+  const H = innerHeight;
+  renderer.setPixelRatio(PIXEL_RATIO);
+  renderer.setSize(W, H, false);
+  material.uniforms.uResolution.value.set(W * PIXEL_RATIO, H * PIXEL_RATIO);
+}
+resize();
+
+const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5 };
+let camDist = CFG.camDist;
+let pinchStartDist = 0;
+let pinchStartCam = 1;
+const rect = () => canvasEl.getBoundingClientRect();
+
+const onDown = e => {
+  if (e.touches && e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    pinchStartDist = Math.hypot(dx, dy);
+    pinchStartCam = camDist;
+    return;
+  }
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onMove = e => {
+  if (e.touches && e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const d = Math.hypot(dx, dy);
+    if (pinchStartDist > 0) camDist = Math.max(2, Math.min(10, pinchStartCam * pinchStartDist / d));
+    return;
+  }
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onUp = () => { pinchStartDist = 0; };
+
+canvasEl.addEventListener('touchstart', onDown, { passive: false });
+canvasEl.addEventListener('touchmove', onMove, { passive: false });
+canvasEl.addEventListener('touchend', onUp);
+canvasEl.addEventListener('touchcancel', onUp);
+canvasEl.addEventListener('mousedown', onDown);
+canvasEl.addEventListener('mousemove', onMove);
+canvasEl.addEventListener('mouseup', onUp);
+canvasEl.addEventListener('mouseleave', onUp);
+canvasEl.addEventListener('wheel', e => {
+  e.preventDefault();
+  camDist = Math.max(2, Math.min(10, camDist * Math.exp(e.deltaY * 0.001)));
+}, { passive: false });
+
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+  pointer.x += (pointer.targetX - pointer.x) * 0.08;
+  pointer.y += (pointer.targetY - pointer.y) * 0.08;
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uMouse.value.set(pointer.x, pointer.y);
+  u.uCamDist.value = camDist;
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+const mEl = document.getElementById('m');
+const SCHEMES = [
+  { name: '星芒',   colorA: '#5be0ff', colorB: '#ff6bd6', colorC: '#ffe066',
+    background: '#05060c', fold: 2.0, scale: 1.6, spin: 0.15 },
+  { name: '蓝晶',   colorA: '#8fd4ff', colorB: '#204080', colorC: '#dff6ff',
+    background: '#020610', fold: 3.0, scale: 1.8, spin: 0.1 },
+  { name: '火晶',   colorA: '#ffd86b', colorB: '#ff3d00', colorC: '#ffe9a0',
+    background: '#0a0302', fold: 2.0, scale: 1.5, spin: 0.2 },
+  { name: '翡翠',   colorA: '#4ecb8d', colorB: '#0d6030', colorC: '#e0ffe0',
+    background: '#030a05', fold: 3.0, scale: 1.7, spin: 0.12 },
+  { name: '紫晶',   colorA: '#b26bff', colorB: '#4b2a80', colorC: '#ffb0ff',
+    background: '#06020c', fold: 4.0, scale: 1.9, spin: 0.08 },
+  { name: '极光',   colorA: '#4ecb8d', colorB: '#b26bff', colorC: '#ffffff',
+    background: '#020610', fold: 3.0, scale: 1.7, spin: 0.15 }
+];
+let schemeIdx = 0;
+
+function applyScheme(s) {
+  CFG.colorA = s.colorA;
+  CFG.colorB = s.colorB;
+  CFG.colorC = s.colorC;
+  CFG.background = s.background;
+  CFG.fold = s.fold;
+  CFG.scale = s.scale;
+  CFG.spin = s.spin;
+  const u = material.uniforms;
+  u.uColorA.value.set(s.colorA);
+  u.uColorB.value.set(s.colorB);
+  u.uColorC.value.set(s.colorC);
+  u.uBackground.value.set(s.background);
+  u.uFold.value = s.fold;
+  u.uScale.value = s.scale;
+  u.uSpin.value = s.spin;
+  camDist = CFG.camDist;
+  u.uCamDist.value = camDist;
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  startTime = performance.now();
+  pointer.targetX = 0.5;
+  pointer.targetY = 0.5;
+  camDist = CFG.camDist;
+});
+
+document.getElementById('btn-change').addEventListener('click', () => {
+  schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+  applyScheme(SCHEMES[schemeIdx]);
+  mEl.textContent = SCHEMES[schemeIdx].name;
+});
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+applyScheme(SCHEMES[0]);
+mEl.textContent = SCHEMES[0].name;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

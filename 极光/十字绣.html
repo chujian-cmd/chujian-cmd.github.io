@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>十字绣 Cross Stitch</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#171512;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(23,21,18,.85),rgba(23,21,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(232,169,44,.24);border-color:rgba(232,169,44,.6);color:#ffeec8}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#8a7f6a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(20,16,14,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#f2ead6;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#a5957a;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(232,169,44,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(232,169,44,.6);
+    background:rgba(232,169,44,.32);color:#241800;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(232,169,44,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">十字绣 <b id="m">经典十字绣</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">布格限色量化 · 十字 / 半针 / 编织线迹</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    cells: 56,
+    stitchStyle: 'full',     // full | half | weave
+    colors: 14,
+    thickness: 0.85,
+    highlight: 0.55,
+    fuzz: 0.2,
+    satBoost: 1.15,
+    clothColor: '#efe6d2',
+    clothTex: 0.55,
+    hoop: true,
+    colorA: '#d24a5a',
+    colorB: '#e8a92c',
+    colorC: '#3f7bd9',
+    background: '#171512'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', cells: 56, stitchStyle: 'full',  colors: 14, thickness: 0.85, highlight: 0.6,  fuzz: 0.2,  satBoost: 1.15, hoop: true,  clothColor: '#efe6d2', clothTex: 0.55, background: '#171512' },
+    { text: '粗针',   cells: 32, stitchStyle: 'full',  colors: 8,  thickness: 1.25, highlight: 0.35, fuzz: 0.55, satBoost: 1.05, hoop: false, clothColor: '#e2d6bd', clothTex: 0.7,  background: '#100f0d' },
+    { text: '半针',   cells: 76, stitchStyle: 'half',  colors: 6,  thickness: 0.7,  highlight: 0.3,  fuzz: 0.05, satBoost: 1,    hoop: false, clothColor: '#f0ede4', clothTex: 0.25, background: '#0e0f12' },
+    { text: '编织',   cells: 48, stitchStyle: 'weave', colors: 10, thickness: 1,    highlight: 0.5,  fuzz: 0.1,  satBoost: 1.25, hoop: false, clothColor: '#e8e0cf', clothTex: 0.4,  background: '#0c0d11' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W;
+    maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.88, maxH = H * 0.82;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.82);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  function hash(n) {
+    var t = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+    return t - Math.floor(t);
+  }
+
+  // ---------- 中位切分量化 ----------
+  function quantize(srcR, srcG, srcB, n, maxColors) {
+    // srcR/G/B: Float32Array(n)
+    // 返回：{ pal: [[r,g,b],...], idx: Int16Array }
+    var idxAll = [];
+    for (var i = 0; i < n; i++) idxAll.push(i);
+    var groups = [idxAll];
+    while (groups.length < maxColors) {
+      var bestG = -1, bestSize = 0, bestAxis = 0;
+      for (var g = 0; g < groups.length; g++) {
+        var grp = groups[g];
+        if (grp.length < 2) continue;
+        var minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0;
+        for (var k = 0; k < grp.length; k++) {
+          var j = grp[k];
+          if (srcR[j] < minR) minR = srcR[j]; if (srcR[j] > maxR) maxR = srcR[j];
+          if (srcG[j] < minG) minG = srcG[j]; if (srcG[j] > maxG) maxG = srcG[j];
+          if (srcB[j] < minB) minB = srcB[j]; if (srcB[j] > maxB) maxB = srcB[j];
+        }
+        var range = Math.max(maxR - minR, maxG - minG, maxB - minB);
+        if (range > bestSize) {
+          bestSize = range;
+          bestG = g;
+          bestAxis = (maxR - minR) >= (maxG - minG) && (maxR - minR) >= (maxB - minB) ? 0 :
+                     (maxG - minG) >= (maxB - minB) ? 1 : 2;
+        }
+      }
+      if (bestG < 0 || bestSize < 1) break;
+      var grp2 = groups[bestG];
+      grp2.sort(function (a, b) {
+        var va = bestAxis === 0 ? srcR[a] : bestAxis === 1 ? srcG[a] : srcB[a];
+        var vb = bestAxis === 0 ? srcR[b] : bestAxis === 1 ? srcG[b] : srcB[b];
+        return va - vb;
+      });
+      var mid = grp2.length >> 1;
+      groups.splice(bestG, 1, grp2.slice(0, mid), grp2.slice(mid));
+    }
+    var pal = [];
+    var idx = new Int16Array(n);
+    for (var gi = 0; gi < groups.length; gi++) {
+      var gp = groups[gi];
+      var sr = 0, sg = 0, sb = 0;
+      for (var m = 0; m < gp.length; m++) {
+        var jj = gp[m];
+        sr += srcR[jj]; sg += srcG[jj]; sb += srcB[jj];
+        idx[jj] = gi;
+      }
+      var len = Math.max(1, gp.length);
+      pal.push([Math.round(sr / len), Math.round(sg / len), Math.round(sb / len)]);
+    }
+    return { pal: pal, idx: idx };
+  }
+
+  function satur(r, g, b, amt) {
+    var lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    return [
+      Math.max(0, Math.min(255, lum + (r - lum) * amt)),
+      Math.max(0, Math.min(255, lum + (g - lum) * amt)),
+      Math.max(0, Math.min(255, lum + (b - lum) * amt))
+    ];
+  }
+
+  function shade(rgb, mul, add) {
+    if (add) {
+      return [
+        Math.max(0, Math.min(255, rgb[0] + (255 - rgb[0]) * add * 0.3)),
+        Math.max(0, Math.min(255, rgb[1] + (255 - rgb[1]) * add * 0.3)),
+        Math.max(0, Math.min(255, rgb[2] + (255 - rgb[2]) * add * 0.3))
+      ];
+    }
+    return [
+      Math.max(0, Math.min(255, rgb[0] * mul)),
+      Math.max(0, Math.min(255, rgb[1] * mul)),
+      Math.max(0, Math.min(255, rgb[2] * mul))
+    ];
+  }
+
+  // ---------- 渲染 ----------
+  function render() {
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.cells + '|' + CFG.stitchStyle + '|' + CFG.colors + '|' +
+              CFG.thickness + '|' + CFG.highlight + '|' + CFG.fuzz + '|' +
+              CFG.satBoost + '|' + CFG.clothColor + '|' + CFG.clothTex + '|' +
+              CFG.hoop + '|' + CFG.colorA + '|' + CFG.colorB + '|' + CFG.colorC + '|' +
+              CFG.background;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // 内容区
+    var aspect = W / H;
+    var margin = 0.92;
+    var vw = W * margin, vh = H * margin;
+    if (aspect > W / H) { vh = vw * H / W; } else { vw = vh * W / H; }
+    var dx = (W - vw) / 2;
+    var dy = (H - vh) / 2;
+
+    // 画布底色
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+
+    // 布色底
+    ctx.fillStyle = cfg.clothColor;
+    ctx.fillRect(dx, dy, vw, vh);
+
+    // 十字绣单元格数
+    var cells = Math.max(16, Math.min(160, Math.round(cfg.cells)));
+    var cellW = vw / cells;
+    var cellH = vh / cells;
+    var cell = Math.min(cellW, cellH);
+    var cols = cells;
+    var rows = cells;
+
+    // 采样
+    var n = cols * rows;
+    var srcR = new Float32Array(n);
+    var srcG = new Float32Array(n);
+    var srcB = new Float32Array(n);
+    var cov = new Float32Array(n);
+
+    var cA = hex2rgb(cfg.colorA);
+    var cB = hex2rgb(cfg.colorB);
+    var cC = hex2rgb(cfg.colorC);
+
+    for (var ry = 0; ry < rows; ry++) {
+      for (var rx = 0; rx < cols; rx++) {
+        var i = ry * cols + rx;
+        var u = (rx + 0.5) / cols;
+        var v = (ry + 0.5) / rows;
+        var sxa = dx + u * vw;
+        var sya = dy + v * vh;
+        var a = alphaAt(sxa, sya);
+        cov[i] = a;
+        // 三色循环
+        var seg = u * 2.999;
+        var gi = Math.floor(seg) % 3;
+        var t = seg - Math.floor(seg);
+        var c1 = [cA, cB, cC][gi];
+        var c2 = [cA, cB, cC][(gi + 1) % 3];
+        srcR[i] = c1[0] + (c2[0] - c1[0]) * t;
+        srcG[i] = c1[1] + (c2[1] - c1[1]) * t;
+        srcB[i] = c1[2] + (c2[2] - c1[2]) * t;
+      }
+    }
+
+    // 只保留字内的点参与量化
+    var validR = [], validG = [], validB = [];
+    var validIdxMap = [];
+    for (var k = 0; k < n; k++) {
+      if (cov[k] > 0.35) {
+        validR.push(srcR[k]);
+        validG.push(srcG[k]);
+        validB.push(srcB[k]);
+        validIdxMap.push(k);
+      }
+    }
+
+    var vR = new Float32Array(validR);
+    var vG = new Float32Array(validG);
+    var vB = new Float32Array(validB);
+    var maxColors = Math.max(2, Math.min(32, Math.round(cfg.colors)));
+    var q = quantize(vR, vG, vB, vR.length, maxColors);
+
+    // 把量化结果映射回原索引
+    var pal = q.pal;
+    var idx = new Int16Array(n).fill(-1);
+    for (var vm = 0; vm < validIdxMap.length; vm++) {
+      idx[validIdxMap[vm]] = q.idx[vm];
+    }
+
+    // 饱和度提升
+    var satBoost = cfg.satBoost;
+    for (var pi = 0; pi < pal.length; pi++) {
+      pal[pi] = satur(pal[pi][0], pal[pi][1], pal[pi][2], satBoost);
+    }
+
+    // 布纹（Aida 格网）
+    var clothTex = cfg.clothTex;
+    if (clothTex > 0) {
+      var cLum = hex2rgb(cfg.clothColor);
+      var darker = shade(cLum, 0.7);
+      ctx.strokeStyle = 'rgba(' + (darker[0] | 0) + ',' + (darker[1] | 0) + ',' + (darker[2] | 0) + ',' + (clothTex * 0.5).toFixed(3) + ')';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (var gc = 0; gc <= cols; gc++) {
+        var xg = dx + gc * cellW;
+        ctx.moveTo(xg, dy); ctx.lineTo(xg, dy + vh);
+      }
+      for (var gr = 0; gr <= rows; gr++) {
+        var yg = dy + gr * cellH;
+        ctx.moveTo(dx, yg); ctx.lineTo(dx + vw, yg);
+      }
+      ctx.stroke();
+
+      // Aida 孔
+      var holeR = Math.max(0.6, cell * 0.07);
+      if (cell >= 5) {
+        var holeColor = shade(cLum, 0.55);
+        ctx.fillStyle = 'rgba(' + (holeColor[0] | 0) + ',' + (holeColor[1] | 0) + ',' + (holeColor[2] | 0) + ',' + (clothTex * 0.7).toFixed(3) + ')';
+        ctx.beginPath();
+        for (var hh = 0; hh <= rows; hh++) {
+          for (var hw = 0; hw <= cols; hw++) {
+            var hx = dx + hw * cellW;
+            var hy = dy + hh * cellH;
+            ctx.moveTo(hx + holeR, hy);
+            ctx.arc(hx, hy, holeR, 0, Math.PI * 2);
+          }
+        }
+        ctx.fill();
+      }
+    }
+
+    // 逐格画线迹
+    var style = cfg.stitchStyle;
+    var thick = cfg.thickness;
+    var highlight = cfg.highlight;
+    var fuzz = cfg.fuzz;
+
+    // 把每格按颜色分组
+    var byColor = [];
+    for (var ci = 0; ci < pal.length; ci++) byColor.push([]);
+    for (var ii = 0; ii < n; ii++) {
+      if (idx[ii] < 0) continue;
+      byColor[idx[ii]].push(ii);
+    }
+
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    for (var cc = 0; cc < pal.length; cc++) {
+      var grp = byColor[cc];
+      if (!grp.length) continue;
+      var base = pal[cc];
+      var dark = shade(base, 0.78);
+      var lite = shade(base, 1, 0.35);
+      var baseStr = 'rgb(' + (base[0] | 0) + ',' + (base[1] | 0) + ',' + (base[2] | 0) + ')';
+      var darkStr = 'rgb(' + (dark[0] | 0) + ',' + (dark[1] | 0) + ',' + (dark[2] | 0) + ')';
+      var liteStr = 'rgb(' + (lite[0] | 0) + ',' + (lite[1] | 0) + ',' + (lite[2] | 0) + ')';
+
+      // 主针脚
+      ctx.strokeStyle = baseStr;
+      ctx.lineWidth = Math.max(1, cell * 0.32 * thick);
+      ctx.beginPath();
+
+      // 先算每格的 4 个端点
+      for (var gi2 = 0; gi2 < grp.length; gi2++) {
+        var ii2 = grp[gi2];
+        var rx2 = ii2 % cols;
+        var ry2 = (ii2 / cols) | 0;
+        var cx0 = dx + (rx2 + 0.5) * cellW;
+        var cy0 = dy + (ry2 + 0.5) * cellH;
+        // fuzz 抖动
+        var fz = fuzz * cell * 0.28;
+        var j1 = (hash(ii2 * 3.1) - 0.5) * 2 * fz;
+        var j2 = (hash(ii2 * 5.3) - 0.5) * 2 * fz;
+        var j3 = (hash(ii2 * 7.7) - 0.5) * 2 * fz;
+        var j4 = (hash(ii2 * 11.1) - 0.5) * 2 * fz;
+        var tlX = cx0 - cellW * 0.4 + j1, tlY = cy0 - cellH * 0.4 + j1;
+        var trX = cx0 + cellW * 0.4 + j2, trY = cy0 - cellH * 0.4 + j2;
+        var brX = cx0 + cellW * 0.4 + j3, brY = cy0 + cellH * 0.4 + j3;
+        var blX = cx0 - cellW * 0.4 + j4, blY = cy0 + cellH * 0.4 + j4;
+
+        if (style === 'half') {
+          ctx.moveTo(cx0 - cellW * 0.4 + j1, cy0 + j1);
+          ctx.lineTo(cx0 + cellW * 0.4 + j2, cy0 + j2);
+        } else {
+          // 全针十字 / 编织：两条斜线
+          ctx.moveTo(tlX, tlY);
+          ctx.lineTo(brX, brY);
+          ctx.moveTo(trX, trY);
+          ctx.lineTo(blX, blY);
+        }
+      }
+      ctx.stroke();
+
+      // 上层亮线
+      if (highlight > 0.02) {
+        ctx.strokeStyle = liteStr;
+        ctx.lineWidth = Math.max(0.6, cell * 0.14 * thick);
+        ctx.globalAlpha = highlight * 0.6;
+        ctx.beginPath();
+        for (var gh = 0; gh < grp.length; gh++) {
+          var ih = grp[gh];
+          var rxh = ih % cols;
+          var ryh = (ih / cols) | 0;
+          var cxh = dx + (rxh + 0.5) * cellW;
+          var cyh = dy + (ryh + 0.5) * cellH;
+          if (style === 'half') continue;
+          ctx.moveTo(cxh - cellW * 0.36, cyh - cellH * 0.36);
+          ctx.lineTo(cxh + cellW * 0.36, cyh + cellH * 0.36);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // weave 模式：竖纹
+      if (style === 'weave') {
+        ctx.strokeStyle = darkStr;
+        ctx.lineWidth = Math.max(0.8, cell * 0.16 * thick);
+        ctx.beginPath();
+        for (var gw = 0; gw < grp.length; gw++) {
+          var iw = grp[gw];
+          var rxw = iw % cols;
+          var ryw = (iw / cols) | 0;
+          var cxw = dx + (rxw + 0.5) * cellW;
+          var cyw = dy + (ryw + 0.5) * cellH;
+          if ((rxw + ryw) & 1) {
+            ctx.moveTo(cxw - cellW * 0.4, cyw);
+            ctx.lineTo(cxw + cellW * 0.4, cyw);
+          } else {
+            ctx.moveTo(cxw, cyw - cellH * 0.4);
+            ctx.lineTo(cxw, cyw + cellH * 0.4);
+          }
+        }
+        ctx.stroke();
+      }
+    }
+
+    // 绣绷（可选）
+    if (cfg.hoop) {
+      var cx2 = W / 2;
+      var cy2 = H / 2;
+      var R = Math.min(vw, vh) * 0.48;
+      // 外圈阴影
+      var g = ctx.createRadialGradient(cx2, cy2, R * 0.85, cx2, cy2, R * 1.05);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,0.28)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+
+      // 木框
+      var woodW = Math.max(6, R * 0.09);
+      var g2 = ctx.createRadialGradient(cx2, cy2, R, cx2, cy2, R + woodW);
+      g2.addColorStop(0, '#6b4622');
+      g2.addColorStop(0.45, '#b98b4e');
+      g2.addColorStop(1, '#7a5228');
+      ctx.strokeStyle = g2;
+      ctx.lineWidth = woodW;
+      ctx.beginPath();
+      ctx.arc(cx2, cy2, R + woodW / 2, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 高光
+      ctx.strokeStyle = 'rgba(255,235,200,0.35)';
+      ctx.lineWidth = woodW * 0.22;
+      ctx.beginPath();
+      ctx.arc(cx2, cy2, R + woodW * 0.32, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 外沿暗边
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(cx2, cy2, R + woodW, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 裁掉框外的内容
+      // （先画一遍上一步已经画出的，再用 clearRect 裁回圆形——这里用 clip 提前设置不好，直接重画外圈黑色
+      //  其实不做裁切也 OK，木框会盖住一部分）
+    }
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 按钮 ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  var CONTENTS = ['AURORA', '十字绣', 'STITCH', '你好', '手作', '⚡'];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

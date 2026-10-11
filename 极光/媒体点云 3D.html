@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>媒体点云 3D · 你好</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060c; }
+  canvas { display: block; }
+  #tip {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    color: #8a8f98; font: 13px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; user-select: none; text-align: center; z-index: 10;
+  }
+</style>
+</head>
+<body>
+<div id="tip">左键按住施力 · 右键拖拽旋转 · 滚轮缩放</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- 可调参数 ----------
+const CFG = {
+  text: '你好',
+  font: '"PingFang SC","Microsoft YaHei","Heiti SC","Noto Sans CJK SC",sans-serif',
+  weight: 800,
+  step: 4,             // 点密度：越小点越多越清晰
+  pointSize: 1.6,      // 点大小
+  depth: 2.6,          // 亮度 → Z 位移幅度（0 = 纯平面）
+  rotate: 0.22,        // 自转速度
+  colorMode: 'source', // source（原图色，这里是白字→单色）| mono | gradient
+  layers: 3,           // 深度层数：>1 沿 Z 挤出多层，形成体积感
+  threshold: 0.35,     // alpha 阈值
+  wave: 0,             // 时间波动
+  waveSpeed: 0.7,
+  colorA: '#8ea2ff',
+  colorB: '#ff7de0',
+  background: '#05060c',
+  mouseMode: 'repel',  // repel | attract | swirl | spiral | blackhole | depth
+  repel: 1.0,          // 鼠标力
+  repelR: 1.4,         // 作用半径
+  maxPoints: 130000
+};
+
+const hex2rgb = h => {
+  const s = h.replace('#', '');
+  const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
+};
+
+// ---------- 文字栅格化 ----------
+const raster = {
+  big: document.createElement('canvas'),
+  grid: document.createElement('canvas'),
+  bigCtx: null,
+  gridCtx: null,
+  init() {
+    this.bigCtx = this.big.getContext('2d');
+    this.gridCtx = this.grid.getContext('2d', { willReadFrequently: true });
+  },
+  sample(text, gw, gh, weight, font, aspect) {
+    const BIG_H = 1024;
+    const BIG_W = Math.max(64, Math.round(BIG_H * aspect));
+    this.big.width = BIG_W;
+    this.big.height = BIG_H;
+
+    const bc = this.bigCtx;
+    bc.clearRect(0, 0, BIG_W, BIG_H);
+    bc.fillStyle = '#fff';
+    bc.textAlign = 'center';
+    bc.textBaseline = 'middle';
+
+    const lines = (text || '你好').split('\n').filter(l => l.length > 0);
+    if (!lines.length) return null;
+
+    const maxW = BIG_W * 0.82;
+    const maxH = BIG_H * 0.82;
+
+    let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+    const setFont = s => { bc.font = `${weight} ${s}px ${font}`; };
+    setFont(size);
+
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, bc.measureText(l).width);
+    if (widest > maxW) {
+      size = Math.max(4, Math.floor(size * maxW / widest));
+      setFont(size);
+    }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(4, Math.floor(size * maxH / totalH));
+      setFont(size);
+    }
+
+    const lineH = size * 1.15;
+    const startY = BIG_H / 2 - (lines.length - 1) * lineH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      bc.fillText(lines[i], BIG_W / 2, startY + i * lineH);
+    }
+
+    this.grid.width = gw;
+    this.grid.height = gh;
+    const gc = this.gridCtx;
+    gc.clearRect(0, 0, gw, gh);
+    gc.imageSmoothingEnabled = true;
+    gc.imageSmoothingQuality = 'high';
+    gc.drawImage(this.big, 0, 0, BIG_W, BIG_H, 0, 0, gw, gh);
+    return gc.getImageData(0, 0, gw, gh);
+  }
+};
+raster.init();
+
+// ---------- 场景 ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(CFG.background);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+camera.position.set(0, 0, 9);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 3;
+controls.maxDistance = 30;
+controls.mouseButtons.LEFT = null;          // 左键留给施力
+controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
+controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
+controls.autoRotate = CFG.rotate > 0;
+controls.autoRotateSpeed = CFG.rotate * 4;
+
+// ---------- 顶点着色器：GPU 施力 ----------
+const vertShader = /* glsl */`
+  uniform float uSize, uPixelRatio, uMouseActive, uRepel, uRepelR;
+  uniform float uTime, uWave, uWaveSpeed, uMode, uSwirlDir;
+  uniform vec3 uRayO, uRayD;
+  attribute float aVis;
+  varying vec3 vColor;
+  varying float vVis;
+
+  void main() {
+    vColor = color;
+    vVis = aVis;
+
+    vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+
+    // 时间波动
+    wp.z += sin(wp.x * 1.6 + wp.y * 1.3 + uTime * uWaveSpeed) * uWave;
+
+    // 鼠标射线力
+    if (uMouseActive > 0.5) {
+      vec3 op = wp - uRayO;
+      float t = max(dot(op, uRayD), 0.0);
+      vec3 diff = wp - (uRayO + uRayD * t);
+      float d = length(diff);
+      if (d < uRepelR) {
+        float f = (1.0 - d / uRepelR) * uRepel;
+        vec3 radial  = normalize(diff + vec3(1e-4));
+        vec3 tangent = normalize(cross(uRayD, radial));
+        if (uMode < 0.5)       wp += radial * f;
+        else if (uMode < 1.5)  wp -= radial * f;
+        else if (uMode < 2.5)  wp += tangent * f * uSwirlDir;
+        else if (uMode < 3.5)  wp += (tangent * uSwirlDir - radial * 0.6) * f;
+        else if (uMode < 4.5)  wp -= radial * f * 1.9;
+        else                   wp += uRayD * f * 1.4;
+      }
+    }
+
+    vec4 mv = viewMatrix * vec4(wp, 1.0);
+    gl_Position = projectionMatrix * mv;
+    gl_PointSize = aVis * uSize * uPixelRatio * (11.0 / -mv.z);
+  }
+`;
+
+const fragShader = /* glsl */`
+  varying vec3 vColor;
+  varying float vVis;
+  void main() {
+    if (vVis < 0.5) discard;
+    vec2 c = gl_PointCoord - 0.5;
+    if (length(c) > 0.5) discard;
+    gl_FragColor = vec4(vColor, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vertShader,
+  fragmentShader: fragShader,
+  vertexColors: true,
+  uniforms: {
+    uSize:       { value: CFG.pointSize },
+    uPixelRatio: { value: Math.min(devicePixelRatio, 2) },
+    uMouseActive:{ value: 0 },
+    uRepel:      { value: CFG.repel * 1.8 },
+    uRepelR:     { value: CFG.repelR },
+    uMode:       { value: 0 },
+    uSwirlDir:   { value: 1 },
+    uRayO:       { value: new THREE.Vector3() },
+    uRayD:       { value: new THREE.Vector3(0, 0, -1) },
+    uTime:       { value: 0 },
+    uWave:       { value: CFG.wave },
+    uWaveSpeed:  { value: CFG.waveSpeed }
+  }
+});
+
+let points = null;
+const MODE_MAP = { repel: 0, attract: 1, swirl: 2, spiral: 3, blackhole: 4, depth: 5 };
+let spinDir = 1;
+let lastRightClicks = 0;
+
+// ---------- 生成点云 ----------
+let sig = '';
+
+function rebuild() {
+  const s = `${CFG.text}|${CFG.weight}|${CFG.font}|${CFG.step}|${CFG.layers}`;
+  if (s === sig && points) return;
+  sig = s;
+
+  const gw = 500;
+  const gh = Math.max(80, Math.round(gw / 1.6));
+
+  const img = raster.sample(CFG.text, gw, gh, CFG.weight, CFG.font, gw / gh);
+  if (!img) return;
+
+  const data = img.data;
+  const total = gw * gh;
+  const T = CFG.threshold * 255;
+
+  // 收集有效像素
+  const valid = [];
+  for (let i = 0; i < total; i++) {
+    if (data[i * 4 + 3] > T) valid.push(i);
+  }
+  const cells = valid.length;
+  const layers = Math.max(1, Math.round(CFG.layers));
+  const n = cells * layers;
+  console.log('[点云] 网格', gw, 'x', gh, '有效像素', cells, '层数', layers, '总点数', n);
+
+  if (n === 0) return;
+
+  // 平面尺寸：让点云适配相机
+  const planeW = 6.5;
+  const planeH = planeW * (gh / gw);
+
+  const pos = new Float32Array(n * 3);
+  const col = new Float32Array(n * 3);
+  const vis = new Float32Array(n);
+
+  const [ar, ag, ab] = hex2rgb(CFG.colorA);
+  const [br, bg, bb] = hex2rgb(CFG.colorB);
+  const halfDepth = CFG.depth * 0.5;
+
+  let idx = 0;
+  for (let k = 0; k < cells; k++) {
+    const i = valid[k];
+    const gx = i % gw;
+    const gy = (i / gw) | 0;
+    const px = (gx / (gw - 1) - 0.5) * planeW;
+    const py = (0.5 - gy / (gh - 1)) * planeH;
+    const p4 = i * 4;
+    const a = data[p4 + 3] / 255;
+    const lr = data[p4] / 255;
+    const lg = data[p4 + 1] / 255;
+    const lb = data[p4 + 2] / 255;
+
+    for (let L = 0; L < layers; L++) {
+      const t = layers === 1 ? 0.5 : L / (layers - 1);
+      const z = (t - 0.5) * CFG.depth;
+      const j = idx * 3;
+      pos[j] = px;
+      pos[j + 1] = py;
+      pos[j + 2] = z;
+
+      // 着色
+      if (CFG.colorMode === 'source') {
+        // 文字用白色 → 直接上白色
+        col[j] = lr;
+        col[j + 1] = lg;
+        col[j + 2] = lb;
+      } else if (CFG.colorMode === 'mono') {
+        col[j] = ar;
+        col[j + 1] = ag;
+        col[j + 2] = ab;
+      } else {
+        // gradient：按 X 位置
+        const g = (px / planeW) + 0.5;
+        col[j] = ar + (br - ar) * g;
+        col[j + 1] = ag + (bg - ag) * g;
+        col[j + 2] = ab + (bb - ab) * g;
+      }
+      vis[idx] = 1;
+      idx++;
+    }
+  }
+
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geom.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+  geom.setAttribute('aVis',     new THREE.BufferAttribute(vis, 1));
+
+  if (points) {
+    scene.remove(points);
+    points.geometry.dispose();
+  }
+  points = new THREE.Points(geom, material);
+  points.frustumCulled = false;
+  scene.add(points);
+}
+
+// ---------- 鼠标拾取（把屏幕坐标转成 3D 射线） ----------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const pointer = { x: 0, y: 0, down: false, inside: false, rightClicks: 0 };
+let rightDownX = 0, rightDownY = 0, rightMoved = false;
+
+renderer.domElement.addEventListener('pointermove', e => {
+  pointer.x = e.clientX;
+  pointer.y = e.clientY;
+  pointer.inside = true;
+  if ((e.buttons & 2) && Math.hypot(e.clientX - rightDownX, e.clientY - rightDownY) > 6) {
+    rightMoved = true;
+  }
+});
+renderer.domElement.addEventListener('pointerenter', e => {
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.inside = true;
+});
+renderer.domElement.addEventListener('pointerleave', () => {
+  pointer.inside = false; pointer.down = false;
+});
+renderer.domElement.addEventListener('pointerdown', e => {
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.inside = true;
+  if (e.button === 0) pointer.down = true;
+  if (e.button === 2) {
+    rightDownX = e.clientX; rightDownY = e.clientY; rightMoved = false;
+  }
+});
+window.addEventListener('pointerup', e => {
+  if (e.button === 0) pointer.down = false;
+});
+renderer.domElement.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  if (!rightMoved) pointer.rightClicks++;
+});
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+let lastTime = startTime;
+
+function loop(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  const time = (now - startTime) / 1000;
+
+  // 右键翻转旋向
+  if (pointer.rightClicks !== lastRightClicks) {
+    spinDir *= -1;
+    lastRightClicks = pointer.rightClicks;
+  }
+
+  // 鼠标射线
+  const uniforms = material.uniforms;
+  if (pointer.inside && pointer.down && CFG.repel > 0) {
+    ndc.set((pointer.x / innerWidth) * 2 - 1, -(pointer.y / innerHeight) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    uniforms.uRayO.value.copy(raycaster.ray.origin);
+    uniforms.uRayD.value.copy(raycaster.ray.direction);
+    uniforms.uMouseActive.value = 1;
+    uniforms.uMode.value = MODE_MAP[CFG.mouseMode] ?? 0;
+    uniforms.uSwirlDir.value = spinDir;
+    uniforms.uRepel.value = CFG.repel * 1.8;
+    uniforms.uRepelR.value = CFG.repelR;
+  } else {
+    uniforms.uMouseActive.value = 0;
+  }
+
+  uniforms.uTime.value = time;
+  uniforms.uWave.value = CFG.wave;
+
+  controls.autoRotate = CFG.rotate > 0;
+  controls.autoRotateSpeed = CFG.rotate * 4 * spinDir;
+  controls.update();
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+// ---------- 尺寸 ----------
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  material.uniforms.uPixelRatio.value = Math.min(devicePixelRatio, 2);
+});
+
+// ---------- 启动 ----------
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => setTimeout(() => {
+    rebuild();
+    requestAnimationFrame(loop);
+  }, 80));
+} else {
+  setTimeout(() => { rebuild(); requestAnimationFrame(loop); }, 300);
+}
+</script>
+</body>
+</html>

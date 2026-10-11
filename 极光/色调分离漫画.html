@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>色调分离漫画 Posterize Comic</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0c0c10;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(12,12,16,.85),rgba(12,12,16,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(229,89,94,.24);border-color:rgba(229,89,94,.6);color:#ffe6e7}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(229,89,94,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(229,89,94,.6);
+    background:rgba(229,89,94,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(229,89,94,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">色调分离漫画 <b id="m">美漫</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">颜色量化色块 · Sobel 描黑边 · 美式漫画海报</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    levels: 4,
+    saturate: 1.4,
+    edgeTh: 0.35,
+    edgeW: 1.4,
+    colorA: '#ff4d6d',
+    colorB: '#ffd166',
+    colorC: '#5b6cff',
+    edge: '#0c0c10',
+    background: '#0c0c10'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', levels: 4, saturate: 1.4, edgeTh: 0.35, edgeW: 1.4, colorA: '#ff4d6d', colorB: '#ffd166', colorC: '#5b6cff', edge: '#0c0c10', background: '#0c0c10' },
+    { text: '漫画',   levels: 3, saturate: 1.6, edgeTh: 0.5,  edgeW: 1.2, colorA: '#ff5ac8', colorB: '#5be0ff', colorC: '#1a1526', edge: '#1a1526', background: '#f2f0e8' },
+    { text: '粗描',   levels: 5, saturate: 1.2, edgeTh: 0.25, edgeW: 2.4, colorA: '#e63946', colorB: '#f1faee', colorC: '#1d3557', edge: '#0a0a0a', background: '#0a0a0a' },
+    { text: '淡彩',   levels: 6, saturate: 0.9, edgeTh: 0.3,  edgeW: 1,   colorA: '#8ecae6', colorB: '#ffb703', colorC: '#fb8500', edge: '#2a2a30', background: '#f5f2ea' },
+    { text: 'POP',    levels: 3, saturate: 2,   edgeTh: 0.4,  edgeW: 1.6, colorA: '#ff2e63', colorB: '#08d9d6', colorC: '#f9ed69', edge: '#000000', background: '#fefefe' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.88, maxH = H * 0.82;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.82);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.levels + '|' + CFG.saturate + '|' + CFG.edgeTh + '|' +
+              CFG.edgeW + '|' + CFG.colorA + '|' + CFG.colorB + '|' +
+              CFG.colorC + '|' + CFG.edge + '|' + CFG.background;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    var cw = W, ch = H;
+
+    // 处理分辨率
+    var maxSide = 700;
+    var scale = Math.min(1, maxSide / Math.max(cw * dpr, ch * dpr));
+    var pw = Math.max(2, Math.round(cw * dpr * scale));
+    var ph = Math.max(2, Math.round(ch * dpr * scale));
+
+    // 采样掩膜 → 得到 R/G/B（伪彩色场），用于生成漫画色块
+    // 思路：以字内 alpha 为"明暗基底"，结合 X 位置做彩虹渐变
+    var lums = new Float32Array(pw * ph);
+    for (var y = 0; y < ph; y++) {
+      for (var x = 0; x < pw; x++) {
+        var sx = (x / pw) * W;
+        var sy = (y / ph) * H;
+        lums[y * pw + x] = alphaAt(sx, sy);
+      }
+    }
+
+    // 上色：三色渐变
+    var cA = hex2rgb(cfg.colorA);
+    var cB = hex2rgb(cfg.colorB);
+    var cC = hex2rgb(cfg.colorC);
+    var edge = hex2rgb(cfg.edge);
+    var bg = hex2rgb(cfg.background);
+
+    // 用 X 位置决定在 A/B/C 三色中的位置
+    var saturate = cfg.saturate;
+    var levels = Math.max(2, Math.min(8, Math.round(cfg.levels)));
+
+    function paletteAt(u, lum) {
+      // u: 0..1 沿 X 位置；lum: 0..1 字内强度
+      // 三色循环：A → B → C → A
+      var seg = u * 2.999;
+      var i0 = Math.floor(seg) % 3;
+      var t = seg - Math.floor(seg);
+      var c1 = [cA, cB, cC][i0];
+      var c2 = [cA, cB, cC][(i0 + 1) % 3];
+      var r = c1[0] + (c2[0] - c1[0]) * t;
+      var g = c1[1] + (c2[1] - c1[1]) * t;
+      var b = c1[2] + (c2[2] - c1[2]) * t;
+
+      // 饱和
+      var lumAvg = 0.299 * r + 0.587 * g + 0.114 * b;
+      r = lumAvg + (r - lumAvg) * saturate;
+      g = lumAvg + (g - lumAvg) * saturate;
+      b = lumAvg + (b - lumAvg) * saturate;
+
+      // 量化
+      r = Math.floor(clamp255(r) / 255 * levels) / (levels - 1) * 255;
+      g = Math.floor(clamp255(g) / 255 * levels) / (levels - 1) * 255;
+      b = Math.floor(clamp255(b) / 255 * levels) / (levels - 1) * 255;
+
+      return [r, g, b];
+    }
+
+    // Sobel 边缘
+    var edgeTh = cfg.edgeTh;
+    var edgeW = Math.max(1, Math.round(cfg.edgeW * dpr * scale));
+
+    // 构造图像数据
+    var img = new ImageData(pw, ph);
+    var data = img.data;
+    for (var py = 0; py < ph; py++) {
+      for (var px = 0; px < pw; px++) {
+        var u = px / pw;
+        var lum = lums[py * pw + px];
+        var o = (py * pw + px) * 4;
+
+        if (lum < 0.5) {
+          // 字外：纯背景
+          data[o] = bg[0];
+          data[o + 1] = bg[1];
+          data[o + 2] = bg[2];
+          data[o + 3] = 255;
+        } else {
+          // 字内：调色板
+          var c = paletteAt(u, lum);
+          data[o] = c[0];
+          data[o + 1] = c[1];
+          data[o + 2] = c[2];
+          data[o + 3] = 255;
+        }
+      }
+    }
+
+    // Sobel 描边
+    var grey = new Float32Array(pw * ph);
+    for (var i = 0; i < pw * ph; i++) {
+      grey[i] = lums[i];
+    }
+    for (var yy = edgeW; yy < ph - edgeW; yy++) {
+      for (var xx = edgeW; xx < pw - edgeW; xx++) {
+        var i2 = yy * pw + xx;
+        var gx = grey[i2 - edgeW] - grey[i2 + edgeW];
+        var gy = grey[i2 - edgeW * pw] - grey[i2 + edgeW * pw];
+        var mag = Math.hypot(gx, gy) * 4;
+        if (mag > edgeTh) {
+          var o2 = i2 * 4;
+          data[o2] = edge[0];
+          data[o2 + 1] = edge[1];
+          data[o2 + 2] = edge[2];
+        }
+      }
+    }
+
+    // 写到离屏再放大
+    var tmp = document.createElement('canvas');
+    tmp.width = pw;
+    tmp.height = ph;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(tmp, 0, 0, W, H);
+  }
+
+  function clamp255(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 按钮 ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  var CONTENTS = [
+    { text: 'AURORA' },
+    { text: '漫画' },
+    { text: 'POP' },
+    { text: 'POW!' },
+    { text: 'Wow\n!' },
+    { text: '⚡' }
+  ];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx].text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

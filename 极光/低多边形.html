@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>低多边形 Low Poly</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0d12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(11,13,18,.85),rgba(11,13,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(63,169,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(63,169,255,.6);
+    background:rgba(63,169,255,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(63,169,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">低多边形 <b id="m">边缘采样</b></div>
+  <button class="btn" id="btn-sample">换采样</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">文字上撒点 · 三角剖分 · 棱面几何海报</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    sampling: 'edge',      // edge | dark | bright | uniform
+    detail: 900,           // 目标点数
+    edgeWeight: 0.7,       // 聚集强度
+    fill: true,
+    stroke: 0,
+    strokeColor: '#0b0d12',
+    saturate: 1.1,
+    colorA: '#6ea8ff',
+    colorB: '#ff7de0',
+    colorC: '#0b0d12',
+    background: '#0b0d12'
+  };
+
+  var SAMPLINGS = [
+    { key: 'edge',    label: '边缘采样' },
+    { key: 'dark',    label: '笔画内撒点' },
+    { key: 'bright',  label: '外轮廓描点' },
+    { key: 'uniform', label: '均匀随机' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.88, maxH = H * 0.82;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.82);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0) x = 0; else if (x >= W) x = W - 1;
+    if (y < 0) y = 0; else if (y >= H) y = H - 1;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 采样 ----------
+  var SAMPLE_MAX = 220;
+
+  function sample() {
+    var aspect = W / H;
+    var gw, gh;
+    if (aspect >= 1) { gw = SAMPLE_MAX; gh = Math.max(2, Math.round(SAMPLE_MAX / aspect)); }
+    else { gh = SAMPLE_MAX; gw = Math.max(2, Math.round(SAMPLE_MAX * aspect)); }
+
+    var cellW = W / gw, cellH = H / gh;
+    var n = gw * gh;
+    var lum = new Float32Array(n);
+    for (var y = 0; y < gh; y++) {
+      for (var x = 0; x < gw; x++) {
+        lum[y * gw + x] = alphaAt(x * cellW + cellW / 2, y * cellH + cellH / 2);
+      }
+    }
+    var mag = new Float32Array(n);
+    var maxMag = 1e-6;
+    for (var yy = 1; yy < gh - 1; yy++) {
+      for (var xx = 1; xx < gw - 1; xx++) {
+        var i = yy * gw + xx;
+        var Gx = lum[i + 1] - lum[i - 1];
+        var Gy = lum[i + gw] - lum[i - gw];
+        var gg = Math.hypot(Gx, Gy);
+        mag[i] = gg;
+        if (gg > maxMag) maxMag = gg;
+      }
+    }
+    for (var k = 0; k < n; k++) mag[k] /= maxMag;
+
+    return { gw: gw, gh: gh, lum: lum, mag: mag, cellW: cellW, cellH: cellH };
+  }
+
+  // ---------- Delaunay 三角剖分 (Bowyer-Watson) ----------
+  function inCircumcircle(a, b, c, p) {
+    var ax = a.x, ay = a.y, bx = b.x, by = b.y, cx = c.x, cy = c.y;
+    var d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if (Math.abs(d) < 1e-12) return false;
+    var ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+    var uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+    var r2 = (ax - ux) * (ax - ux) + (ay - uy) * (ay - uy);
+    return (p.x - ux) * (p.x - ux) + (p.y - uy) * (p.y - uy) < r2 - 1e-9;
+  }
+
+  function triangulate(pts) {
+    var n = pts.length;
+    if (n < 3) return [];
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var i = 0; i < n; i++) {
+      var p = pts[i];
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    var dx = (maxX - minX) || 1, dy = (maxY - minY) || 1;
+    var dmax = Math.max(dx, dy) || 1;
+    var midX = (minX + maxX) / 2, midY = (minY + maxY) / 2;
+    var all = pts.concat([
+      { x: midX - 20 * dmax, y: midY - dmax },
+      { x: midX, y: midY + 20 * dmax },
+      { x: midX + 20 * dmax, y: midY - dmax }
+    ]);
+    var tris = [[n, n + 1, n + 2]];
+    for (var k = 0; k < n; k++) {
+      var p2 = all[k];
+      var edges = [];
+      var keep = [];
+      for (var ti = 0; ti < tris.length; ti++) {
+        var t = tris[ti];
+        if (inCircumcircle(all[t[0]], all[t[1]], all[t[2]], p2)) {
+          edges.push([t[0], t[1]], [t[1], t[2]], [t[2], t[0]]);
+        } else keep.push(t);
+      }
+      var edgeMap = {};
+      for (var ei = 0; ei < edges.length; ei++) {
+        var e = edges[ei];
+        var key2 = e[0] < e[1] ? e[0] + '_' + e[1] : e[1] + '_' + e[0];
+        if (edgeMap[key2]) delete edgeMap[key2];
+        else edgeMap[key2] = e;
+      }
+      tris = keep;
+      for (var kk in edgeMap) tris.push([edgeMap[kk][0], edgeMap[kk][1], k]);
+    }
+    return tris.filter(function (t) {
+      return t[0] < n && t[1] < n && t[2] < n;
+    });
+  }
+
+  // ---------- 渲染 ----------
+  function render() {
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.sampling + '|' + CFG.detail + '|' + CFG.edgeWeight + '|' +
+              CFG.fill + '|' + CFG.stroke + '|' + CFG.strokeColor + '|' +
+              CFG.saturate + '|' + CFG.colorA + '|' + CFG.colorB + '|' +
+              CFG.colorC + '|' + CFG.background;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var s = sample();
+    var gw = s.gw, gh = s.gh;
+    var lum = s.lum, mag = s.mag;
+    var cellW = s.cellW, cellH = s.cellH;
+
+    // 采点
+    var N = Math.max(20, Math.min(3000, Math.round(cfg.detail)));
+    var pts = [];
+    var rng = mulberry(1234 + N * 7919);
+
+    // 4 角 + 边界
+    pts.push({ x: 0, y: 0 }, { x: W, y: 0 }, { x: 0, y: H }, { x: W, y: H });
+    var edgeN = Math.max(8, Math.round(N * 0.18));
+    for (var e = 0; e < edgeN; e++) {
+      var t = e / edgeN;
+      pts.push({ x: t * W, y: 0 });
+      pts.push({ x: t * W, y: H });
+      pts.push({ x: 0, y: t * H });
+      pts.push({ x: W, y: t * H });
+    }
+
+    // 主动撒点
+    var maxTry = N * 30;
+    var tries = 0;
+    while (pts.length < N && tries < maxTry) {
+      tries++;
+      var i = Math.floor(rng() * gw);
+      var j = Math.floor(rng() * gh);
+      i = Math.max(0, Math.min(gw - 1, i));
+      j = Math.max(0, Math.min(gh - 1, j));
+      var ii = j * gw + i;
+      var act;
+      if (cfg.sampling === 'edge') act = mag[ii];
+      else if (cfg.sampling === 'dark') act = 1 - lum[ii];
+      else if (cfg.sampling === 'bright') act = lum[ii];
+      else act = 0.5;
+      var w = 0.04 + (1 - cfg.edgeWeight) * 0.5 + cfg.edgeWeight * act;
+      if (rng() < w) {
+        var px = i * cellW + rng() * cellW;
+        var py = j * cellH + rng() * cellH;
+        pts.push({ x: px, y: py });
+      }
+    }
+
+    var tris = triangulate(pts);
+
+    // 颜色插值
+    var colA = hex2rgb(cfg.colorA);
+    var colB = hex2rgb(cfg.colorB);
+    var colC = hex2rgb(cfg.colorC);
+
+    // 上色：每个三角形取中点采样掩膜值 → 混合 A/B，再向 C 靠
+    function colorAt(x, y) {
+      var sx = Math.max(0, Math.min(1, x / W));
+      var sy = Math.max(0, Math.min(1, y / H));
+      var lumV = alphaAt(sx * W, sy * H);
+      var gx = Math.max(0, Math.min(1, sx));
+      var k = Math.max(0, Math.min(1, gx * 0.6 + lumV * 0.4));
+      var r = colA[0] + (colB[0] - colA[0]) * k;
+      var g = colA[1] + (colB[1] - colA[1]) * k;
+      var b = colA[2] + (colB[2] - colA[2]) * k;
+      // 让未覆盖区域更暗
+      var shadeV = 0.35 + 0.65 * lumV;
+      var sR = r * shadeV + colC[0] * (1 - shadeV);
+      var sG = g * shadeV + colC[1] * (1 - shadeV);
+      var sB = b * shadeV + colC[2] * (1 - shadeV);
+      return [sR | 0, sG | 0, sB | 0];
+    }
+
+    ctx.lineJoin = 'round';
+    if (cfg.fill) {
+      for (var t2 = 0; t2 < tris.length; t2++) {
+        var T = tris[t2];
+        var a = pts[T[0]], b = pts[T[1]], c = pts[T[2]];
+        // 面积过滤
+        var area = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+        if (area < 2) continue;
+        var mx = (a.x + b.x + c.x) / 3;
+        var my = (a.y + b.y + c.y) / 3;
+        var col = colorAt(mx, my);
+        var fillStyle = 'rgb(' + col[0] + ',' + col[1] + ',' + col[2] + ')';
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.closePath();
+        ctx.fillStyle = fillStyle;
+        ctx.strokeStyle = fillStyle;
+        ctx.lineWidth = 1;
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    if (cfg.stroke > 0) {
+      ctx.strokeStyle = cfg.strokeColor;
+      ctx.lineWidth = cfg.stroke;
+      for (var t3 = 0; t3 < tris.length; t3++) {
+        var T2 = tris[t3];
+        var a2 = pts[T2[0]], b2 = pts[T2[1]], c2 = pts[T2[2]];
+        ctx.beginPath();
+        ctx.moveTo(a2.x, a2.y);
+        ctx.lineTo(b2.x, b2.y);
+        ctx.lineTo(c2.x, c2.y);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+  }
+
+  function mulberry(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA',   sampling: 'edge',    detail: 1200, edgeWeight: 0.8, fill: true,  stroke: 0,    colorA: '#6ea8ff', colorB: '#ff7de0', colorC: '#0b0d12', background: '#0b0d12' },
+    { text: '粗野',     sampling: 'edge',    detail: 400,  edgeWeight: 0.6, fill: true,  stroke: 0.6,  colorA: '#ffd86b', colorB: '#ff7a2c', colorC: '#0a0602', strokeColor: '#0a0602', background: '#0a0602' },
+    { text: '暗部',     sampling: 'dark',    detail: 1000, edgeWeight: 0.7, fill: true,  stroke: 0,    colorA: '#8affff', colorB: '#1560c0', colorC: '#03121a', background: '#03121a' },
+    { text: '线框',     sampling: 'edge',    detail: 900,  edgeWeight: 0.8, fill: false, stroke: 0.8,  colorA: '#ffffff', colorB: '#ffffff', colorC: '#0a0a10', strokeColor: '#ffffff', background: '#0a0a10' },
+    { text: '均匀晶格', sampling: 'uniform', detail: 700,  edgeWeight: 0.2, fill: true,  stroke: 0.5,  colorA: '#4ecb8d', colorB: '#7c86ff', colorC: '#0a0f0c', strokeColor: '#0a0f0c', background: '#0a0f0c' }
+  ];
+  var presetIdx = 0;
+
+  function applyPreset(p) {
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    dirty = true; sig = ''; maskData = null; maskKey = '';
+    var m = SAMPLINGS.find(function (x) { return x.key === CFG.sampling; });
+    if (m) mLabel.textContent = m.label;
+    var mi = SAMPLINGS.findIndex(function (x) { return x.key === CFG.sampling; });
+    if (mi >= 0) sampleIdx = mi;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyPreset(PRESETS[presetIdx]);
+  });
+
+  // ---------- 换采样 ----------
+  var sampleIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-sample').addEventListener('click', function () {
+    sampleIdx = (sampleIdx + 1) % SAMPLINGS.length;
+    CFG.sampling = SAMPLINGS[sampleIdx].key;
+    mLabel.textContent = SAMPLINGS[sampleIdx].label;
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

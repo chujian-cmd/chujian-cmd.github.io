@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - Cannon.es 专业引擎 | 无限创造</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; overflow: hidden; background: #000; user-select: none; }
+    canvas { display: block; }
+
+    /* 【仅新增这一段，其他样式完全不动】 */
+    #coords-panel {
+      position: fixed; top: 20px; right: 20px; z-index: 9999;
+      background: rgba(0,0,0,0.85); border: 2px solid #00ffcc; border-radius: 10px;
+      padding: 12px; color: #00ffcc; font-family: monospace; font-size: 14px;
+      display: none; user-select: none; pointer-events: none;
+    }
+
+    #start-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, rgba(15, 20, 40, 0.95) 0%, rgba(0, 0, 0, 0.98) 100%);
+      backdrop-filter: blur(12px);
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+      visibility: visible;
+    }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+
+    #start-box {
+      background: rgba(25, 30, 60, 0.98);
+      border: 2px solid rgba(255, 107, 107, 0.4);
+      border-radius: 24px;
+      padding: 45px 55px;
+      text-align: center;
+      color: #fff;
+      box-shadow: 0 0 80px rgba(255, 107, 107, 0.2), inset 0 0 20px rgba(255, 255, 255, 0.05);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 580px;
+      width: 92%;
+    }
+    #start-box h1 { font-size: 2.4rem; margin-bottom: 18px; background: linear-gradient(90deg, #ff6b6b, #4ecdc4); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .subtitle { color: #ff6b6b; font-size: 1.2rem; margin-bottom: 20px; animation: pulse 1.8s infinite; font-weight: 600; }
+    @keyframes pulse { 0%,100% { opacity:1; transform: scale(1); } 50% { opacity:0.7; transform: scale(1.05); } }
+    .key { background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%); border:1px solid rgba(255,255,255,0.3); border-radius:6px; padding:4px 8px; font-size:0.75rem; font-weight:bold; margin:0 3px; display:inline-block; }
+
+    .hud {
+      position: fixed; z-index: 20; pointer-events: none;
+      color: #e6f1ff;
+      background: rgba(15, 25, 50, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 12px 24px;
+      opacity: 0; transition: opacity 0.4s ease;
+      backdrop-filter: blur(12px);
+    }
+    .hud.visible { opacity: 1; }
+    #hud-top { top:20px; left:50%; transform: translateX(-50%); }
+    #hud-bottom { bottom:20px; left:50%; transform: translateX(-50%); }
+  </style>
+</head>
+<body>
+<!-- 【仅新增这个面板，其他HTML完全不动】 -->
+<div id="coords-panel">
+X：<span id="cx">0.00</span><br>
+Y：<span id="cy">0.00</span><br>
+Z：<span id="cz">0.00</span><br>
+RX：<span id="rx">0.00</span><br>
+RY：<span id="ry">0.00</span><br>
+RZ：<span id="rz">0.00</span>
+</div>
+
+<div id="start-overlay">
+  <div id="start-box">
+    <h1>🎮 3D 物理沙盒</h1>
+    <div class="subtitle">按 空格键 开始游戏</div>
+    <p>🎯 操作说明</p>
+    <p>• <span class="key">W/A/S/D</span> 移动视角</p>
+    <p>• <span class="key">鼠标</span> 控制视角方向</p>
+    <p>• <span class="key">左键</span> 生成方块</p>
+    <p>• <span class="key">右键</span> 生成球体</p>
+    <p>• <span class="key">R</span> 重置场景</p>
+  </div>
+</div>
+
+<div id="hud-top" class="hud">3D 物理沙盒 | 按 R 重置</div>
+<div id="hud-bottom" class="hud">WASD 移动 | 鼠标视角 | 左键方块 | 右键球体</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.min.js"></script>
+<script>
+// 基础场景初始化
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// 物理世界
+const world = new CANNON.World();
+world.gravity.set(0, -9.82, 0);
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.solver.iterations = 10;
+
+// 材质
+const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+const cubeMaterial = new THREE.MeshStandardMaterial({ color: 0xff6b6b });
+const sphereMaterial = new THREE.MeshStandardMaterial({ color: 0x4ecdc4 });
+
+// 地面
+const groundGeometry = new THREE.PlaneGeometry(50, 50);
+const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const groundBody = new CANNON.Body({
+  shape: new CANNON.Plane(),
+  mass: 0
+});
+groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+world.addBody(groundBody);
+
+// 灯光
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambientLight);
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+directionalLight.position.set(10, 20, 5);
+directionalLight.castShadow = true;
+directionalLight.shadow.mapSize.width = 2048;
+directionalLight.shadow.mapSize.height = 2048;
+scene.add(directionalLight);
+
+// 相机控制
+camera.position.set(0, 5, 10);
+const keys = {};
+let mouseX = 0, mouseY = 0;
+const cameraSpeed = 0.3;
+const sensitivity = 0.002;
+
+// 物体数组
+const objects = [];
+
+// 生成方块
+function createCube() {
+  const pos = camera.position.clone();
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  pos.add(dir.multiplyScalar(2));
+
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  const mesh = new THREE.Mesh(geometry, cubeMaterial);
+  mesh.position.copy(pos);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  const body = new CANNON.Body({
+    mass: 1,
+    shape: new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5))
+  });
+  body.position.copy(pos);
+  world.addBody(body);
+
+  objects.push({ mesh, body });
+}
+
+// 生成球体
+function createSphere() {
+  const pos = camera.position.clone();
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  pos.add(dir.multiplyScalar(2));
+
+  const geometry = new THREE.SphereGeometry(0.5, 32, 32);
+  const mesh = new THREE.Mesh(geometry, sphereMaterial);
+  mesh.position.copy(pos);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  const body = new CANNON.Body({
+    mass: 1,
+    shape: new CANNON.Sphere(0.5)
+  });
+  body.position.copy(pos);
+  world.addBody(body);
+
+  objects.push({ mesh, body });
+}
+
+// 重置场景
+function resetScene() {
+  objects.forEach(obj => {
+    scene.remove(obj.mesh);
+    world.removeBody(obj.body);
+  });
+  objects.length = 0;
+  camera.position.set(0, 5, 10);
+}
+
+// 键盘事件
+document.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if(e.key === 'r' || e.key === 'R') resetScene();
+});
+document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+// 鼠标控制
+document.addEventListener('mousemove', (e) => {
+  if(document.pointerLockElement === renderer.domElement) {
+    mouseX += e.movementX;
+    mouseY += e.movementY;
+  }
+});
+
+document.addEventListener('click', () => {
+  if(!document.getElementById('start-overlay').classList.contains('hidden')) return;
+  renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('mousedown', (e) => {
+  if(document.getElementById('start-overlay').classList.contains('hidden')) {
+    if(e.button === 0) createCube();
+    if(e.button === 2) createSphere();
+  }
+});
+
+// 开始游戏
+document.addEventListener('keydown', (e) => {
+  if(e.code === 'Space') {
+    document.getElementById('start-overlay').classList.add('hidden');
+    document.getElementById('hud-top').classList.add('visible');
+    document.getElementById('hud-bottom').classList.add('visible');
+    renderer.domElement.requestPointerLock();
+  }
+});
+
+// --------------------------
+// 【仅新增以下坐标功能，完全不改动原有代码】
+// --------------------------
+const cp = document.getElementById('coords-panel');
+let show = false;
+
+document.addEventListener('keydown', e => {
+  if((e.key === 't' || e.key === 'T') && document.pointerLockElement === renderer.domElement) {
+    show = !show;
+    cp.style.display = show ? 'block' : 'none';
+  }
+});
+
+function updateCoord() {
+  cx.textContent = camera.position.x.toFixed(2);
+  cy.textContent = camera.position.y.toFixed(2);
+  cz.textContent = camera.position.z.toFixed(2);
+  rx.textContent = camera.rotation.x.toFixed(2);
+  ry.textContent = camera.rotation.y.toFixed(2);
+  rz.textContent = camera.rotation.z.toFixed(2);
+}
+// --------------------------
+// 【新增结束】
+// --------------------------
+
+// 窗口适配
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// 动画循环
+function animate() {
+  requestAnimationFrame(animate);
+
+  // 相机旋转
+  camera.rotation.y = -mouseX * sensitivity;
+  camera.rotation.x = -mouseY * sensitivity;
+  camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+
+  // 相机移动
+  const front = new THREE.Vector3(Math.sin(camera.rotation.y), 0, Math.cos(camera.rotation.y));
+  const right = new THREE.Vector3(Math.cos(camera.rotation.y), 0, -Math.sin(camera.rotation.y));
+  
+  if(keys['KeyW']) camera.position.addScaledVector(front, cameraSpeed);
+  if(keys['KeyS']) camera.position.addScaledVector(front, -cameraSpeed);
+  if(keys['KeyA']) camera.position.addScaledVector(right, cameraSpeed);
+  if(keys['KeyD']) camera.position.addScaledVector(right, -cameraSpeed);
+
+  // 物理更新
+  world.step(1/60);
+
+  // 同步物体
+  objects.forEach(obj => {
+    obj.mesh.position.copy(obj.body.position);
+    obj.mesh.quaternion.copy(obj.body.quaternion);
+  });
+
+  // 【只加这一行】
+  updateCoord();
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

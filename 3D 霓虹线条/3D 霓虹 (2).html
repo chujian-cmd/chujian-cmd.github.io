@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>霓虹光绘 · Neon</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; touch-action: none; }
+
+  #hint {
+    position: fixed;
+    left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
+    transform: translateX(-50%);
+    color: rgba(120, 255, 255, 0.8);
+    font: 12px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    text-shadow: 0 0 12px rgba(0, 255, 255, 0.9);
+    pointer-events: none;
+    z-index: 10;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+    transition: opacity 0.6s;
+    animation: hint-pulse 3s ease-in-out infinite;
+  }
+  @keyframes hint-pulse {
+    0%, 100% { opacity: 0.45; }
+    50%      { opacity: 1; }
+  }
+
+  #vignette {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.6) 100%);
+  }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+<div id="vignette"></div>
+<div id="hint">滑动屏幕 · 或甩动手机</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ================================================================
+   * 参数
+   * ================================================================ */
+  const CFG = {
+    maxPoints:   500,    // 轨迹最多保留点数
+    pointLife:   6.0,    // 每个点寿命（秒）—— 决定拖尾留多久
+    minSegDist:  0.025,  // 相邻点最小间距
+    accelDead:   0.6,    // 加速度死区
+    accelGain:   2.8,    // 加速度 → 速度 增益
+    velDamp:     0.15,   // 速度阻尼基数（每秒保留比例）
+    maxSpeed:    22,     // 速度上限
+    boundRadius: 10.0,   // 光笔活动软边界
+    camSmooth:   0.08,   // 相机朝向平滑半衰期（秒）
+    glowWidth:   0.085,  // 外发光带宽度
+    coreWidth:   0.022   // 高亮芯线宽度
+  };
+
+  /* ================================================================
+   * 1. Three.js 基础设置
+   * ================================================================ */
+  const appEl = document.getElementById('app');
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.FogExp2(0x000000, 0.018);
+
+  const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.05,
+    300
+  );
+  camera.position.set(0, 0, 0);
+
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x000000, 1);
+  appEl.appendChild(renderer.domElement);
+  const canvas = renderer.domElement;
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  /* ================================================================
+   * 2. 轨迹几何体
+   *    每条线段 = 12 个顶点（外发光四边形6 + 高亮芯四边形6）
+   * ================================================================ */
+  const MAX_SEGS = CFG.maxPoints - 1;
+  const VPS = 12;   // 每条线段顶点数
+
+  const posArr = new Float32Array(MAX_SEGS * VPS * 3);
+  const colArr = new Float32Array(MAX_SEGS * VPS * 3);
+
+  const trailGeo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(posArr, 3);
+  const colAttr = new THREE.BufferAttribute(colArr, 3);
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  colAttr.setUsage(THREE.DynamicDrawUsage);
+  trailGeo.setAttribute('position', posAttr);
+  trailGeo.setAttribute('color', colAttr);
+  trailGeo.setDrawRange(0, 0);
+
+  const trailMat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,   // 叠加发光
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    fog: true
+  });
+
+  const trailMesh = new THREE.Mesh(trailGeo, trailMat);
+  trailMesh.frustumCulled = false;
+  scene.add(trailMesh);
+
+  /* ================================================================
+   * 3. 光笔光标（发光 Sprite）
+   * ================================================================ */
+  function makeGlowTexture() {
+    const S = 128;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = S;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(S/2, S/2, 0, S/2, S/2, S/2);
+    g.addColorStop(0.00, 'rgba(255,255,255,1)');
+    g.addColorStop(0.20, 'rgba(255,255,255,0.65)');
+    g.addColorStop(0.50, 'rgba(255,255,255,0.18)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  const penSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture(),
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    color: 0x66ffff
+  }));
+  penSprite.scale.set(1.1, 1.1, 1);
+  scene.add(penSprite);
+
+  /* ================================================================
+   * 4. 状态
+   * ================================================================ */
+  const points = [];
+  const penPos  = new THREE.Vector3(0, 0, -6);
+  const penPrev = new THREE.Vector3(0, 0, -6);
+  const penVel  = new THREE.Vector3();
+  let   hueCursor = 0.52;   // 色相游标
+
+  /* ================================================================
+   * 5. 设备方向 → 相机四元数
+   *    使用 Three.js 官方 DeviceOrientationControls 算法
+   * ================================================================ */
+  const targetQuat = new THREE.Quaternion();
+  const _euler = new THREE.Euler();
+  const _qa = new THREE.Quaternion();
+  const _qb = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2); // 绕X轴 -90°
+  const Z_AXIS = new THREE.Vector3(0, 0, 1);
+
+  let orientationReady = false;
+
+  function getScreenAngle() {
+    if (screen.orientation && typeof screen.orientation.angle === 'number') {
+      return screen.orientation.angle;
+    }
+    if (typeof window.orientation === 'number') return window.orientation;
+    return 0;
+  }
+
+  function onDeviceOrientation(e) {
+    if (e.alpha === null && e.beta === null && e.gamma === null) return;
+
+    const alpha  = THREE.MathUtils.degToRad(e.alpha || 0);
+    const beta   = THREE.MathUtils.degToRad(e.beta  || 0);
+    const gamma  = THREE.MathUtils.degToRad(e.gamma || 0);
+    const scrRad = THREE.MathUtils.degToRad(getScreenAngle());
+
+    _euler.set(beta, alpha, -gamma, 'YXZ');
+    targetQuat.setFromEuler(_euler);
+    targetQuat.multiply(_qb);                               // 设备 → 相机坐标修正
+    targetQuat.multiply(_qa.setFromAxisAngle(Z_AXIS, -scrRad)); // 屏幕方向修正
+
+    if (!orientationReady) {
+      camera.quaternion.copy(targetQuat);   // 首次直接对齐，避免跳动
+      orientationReady = true;
+    }
+  }
+
+  /* ================================================================
+   * 6. 加速度传感器 → 光笔速度
+   * ================================================================ */
+  const rawAccel    = new THREE.Vector3();
+  const smoothAccel = new THREE.Vector3();
+  const gravityEst  = new THREE.Vector3();
+  let   gravityInit = false;
+  let   accelFirst  = true;
+  let   motionReady = false;
+
+  function onDeviceMotion(e) {
+    let ax = 0, ay = 0, az = 0;
+    let valid = false;
+
+    const a = e.acceleration;
+    if (a && typeof a.x === 'number' && typeof a.y === 'number' && typeof a.z === 'number') {
+      ax = a.x; ay = a.y; az = a.z;
+      valid = true;
+    } else {
+      const ag = e.accelerationIncludingGravity;
+      if (ag && typeof ag.x === 'number' && typeof ag.y === 'number' && typeof ag.z === 'number') {
+        if (!gravityInit) {
+          gravityEst.set(ag.x, ag.y, ag.z);
+          gravityInit = true;
+        }
+        // 慢速低通估计重力
+        gravityEst.x += (ag.x - gravityEst.x) * 0.08;
+        gravityEst.y += (ag.y - gravityEst.y) * 0.08;
+        gravityEst.z += (ag.z - gravityEst.z) * 0.08;
+        ax = ag.x - gravityEst.x;
+        ay = ag.y - gravityEst.y;
+        az = ag.z - gravityEst.z;
+        valid = true;
+      }
+    }
+
+    if (!valid) return;
+
+    rawAccel.set(ax, ay, az);
+    if (accelFirst) {
+      smoothAccel.copy(rawAccel);
+      accelFirst = false;
+    } else {
+      smoothAccel.lerp(rawAccel, 0.55);
+    }
+    motionReady = true;
+  }
+
+  // 注册传感器监听（直接监听，不做任何前置判断）
+  window.addEventListener('deviceorientation', onDeviceOrientation, false);
+  window.addEventListener('devicemotion', onDeviceMotion, false);
+
+  // iOS 13+ 需要用户手势才能请求权限；失败也不报错
+  function tryRequestPermission() {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().catch(function () {});
+    }
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().catch(function () {});
+    }
+  }
+  // 加载时尝试一次（部分浏览器允许）
+  tryRequestPermission();
+
+  /* ================================================================
+   * 7. 触摸 / 鼠标控制（主要输入方式）
+   * ================================================================ */
+  let touching = false;
+  const touchTarget = new THREE.Vector3(0, 0, -7);
+
+  function setTouchTarget(clientX, clientY) {
+    const nx = (clientX / window.innerWidth)  * 2 - 1;
+    const ny = -(clientY / window.innerHeight) * 2 + 1;
+    // 映射到相机前方 7 单位的平面上
+    touchTarget.set(nx * 5.5, ny * 4.2, -7)
+               .applyQuaternion(camera.quaternion);
+  }
+
+  function hideHint() {
+    const hint = document.getElementById('hint');
+    if (hint) hint.style.opacity = '0';
+  }
+
+  function onTouchStart(e) {
+    e.preventDefault();
+    touching = true;
+    const t = e.touches[0];
+    setTouchTarget(t.clientX, t.clientY);
+    tryRequestPermission();   // iOS 权限必须由用户手势触发
+    hideHint();
+  }
+  function onTouchMove(e) {
+    e.preventDefault();
+    if (!touching) return;
+    const t = e.touches[0];
+    setTouchTarget(t.clientX, t.clientY);
+  }
+  function onTouchEnd() { touching = false; }
+
+  canvas.addEventListener('touchstart',  onTouchStart, { passive: false });
+  canvas.addEventListener('touchmove',   onTouchMove,  { passive: false });
+  canvas.addEventListener('touchend',    onTouchEnd,   { passive: false });
+  canvas.addEventListener('touchcancel', onTouchEnd,   { passive: false });
+
+  // 桌面鼠标支持
+  let mouseDown = false;
+  canvas.addEventListener('mousedown', function (e) {
+    mouseDown = true;
+    touching = true;
+    setTouchTarget(e.clientX, e.clientY);
+    tryRequestPermission();
+    hideHint();
+  });
+  window.addEventListener('mousemove', function (e) {
+    if (!mouseDown) return;
+    setTouchTarget(e.clientX, e.clientY);
+  });
+  window.addEventListener('mouseup', function () {
+    mouseDown = false;
+    touching = false;
+  });
+
+  /* ================================================================
+   * 8. 光笔物理更新
+   *    优先级：触摸控制 > 加速度控制 > 阻尼滑行
+   * ================================================================ */
+  const worldAccel = new THREE.Vector3();
+
+  function updatePen(dt) {
+    // ---------- 触摸控制（最优先） ----------
+    if (touching) {
+      penPrev.copy(penPos);
+      const k = Math.min(1, dt * 14);
+      penPos.lerp(touchTarget, k);
+      penVel.subVectors(penPos, penPrev).divideScalar(Math.max(dt, 1e-4));
+      const sp = penVel.length();
+      if (sp > CFG.maxSpeed) penVel.setLength(CFG.maxSpeed);
+      return;
+    }
+
+    // ---------- 加速度驱动 ----------
+    if (motionReady) {
+      worldAccel.copy(smoothAccel).applyQuaternion(camera.quaternion);
+      const mag = worldAccel.length();
+      const eff = Math.max(0, mag - CFG.accelDead);
+
+      if (eff > 0) {
+        worldAccel.multiplyScalar(eff / mag);
+        // 甩得越猛，加速越快
+        penVel.addScaledVector(worldAccel, dt * CFG.accelGain * (1 + eff * 0.15));
+      }
+    }
+
+    // 阻尼（与帧率无关）
+    penVel.multiplyScalar(Math.pow(CFG.velDamp, dt));
+
+    // 限速
+    const sp = penVel.length();
+    if (sp > CFG.maxSpeed) penVel.setLength(CFG.maxSpeed);
+
+    // 积分位置
+    penPos.addScaledVector(penVel, dt);
+
+    // 软边界：超出范围后平滑拉回，形成纵深游走感
+    const r = penPos.length();
+    if (r > CFG.boundRadius) {
+      const newR = CFG.boundRadius + (r - CFG.boundRadius) * Math.pow(0.02, dt);
+      penPos.multiplyScalar(newR / r);
+    }
+  }
+
+  /* ================================================================
+   * 9. 轨迹采样 / 老化
+   * ================================================================ */
+  function updateTrail(dt) {
+    // 老化
+    for (let i = 0; i < points.length; i++) points[i].age += dt;
+    while (points.length && points[0].age > CFG.pointLife) points.shift();
+
+    // 强度：速度 + 加速度共同决定
+    const sp = penVel.length();
+    const accMag = motionReady ? Math.max(0, smoothAccel.length() - CFG.accelDead) : sp;
+
+    let power = Math.max(sp / 5, accMag / 14);
+    power = Math.min(1, Math.max(0.25, power));
+
+    // 是否追加新点
+    let shouldAdd = false;
+    const last = points.length ? points[points.length - 1] : null;
+
+    if (!last) {
+      shouldAdd = true;
+    } else {
+      const dx = penPos.x - last.x;
+      const dy = penPos.y - last.y;
+      const dz = penPos.z - last.z;
+      if (dx*dx + dy*dy + dz*dz > CFG.minSegDist * CFG.minSegDist) {
+        shouldAdd = true;
+      }
+    }
+
+    if (shouldAdd) {
+      hueCursor = (hueCursor + 0.007) % 1;   // 色相缓慢流转
+      points.push({
+        x: penPos.x, y: penPos.y, z: penPos.z,
+        age: 0,
+        power: power,
+        hue: hueCursor
+      });
+    }
+
+    while (points.length > CFG.maxPoints) points.shift();
+  }
+
+  /* ================================================================
+   * 10. 每帧构建轨迹网格
+   * ================================================================ */
+  let _vi = 0;
+
+  const _v1   = new THREE.Vector3();
+  const _v2   = new THREE.Vector3();
+  const _dir  = new THREE.Vector3();
+  const _mid  = new THREE.Vector3();
+  const _side = new THREE.Vector3();
+  const _colA = new THREE.Color();
+  const _colB = new THREE.Color();
+
+  function pushVert(px, py, pz, cr, cg, cb) {
+    const o = _vi * 3;
+    posArr[o]     = px; posArr[o + 1] = py; posArr[o + 2] = pz;
+    colArr[o]     = cr; colArr[o + 1] = cg; colArr[o + 2] = cb;
+    _vi++;
+  }
+
+  function buildTrailMesh() {
+    _vi = 0;
+    const n = points.length;
+
+    for (let i = 0; i < n - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+
+      const fa = Math.max(0, 1 - a.age / CFG.pointLife) * a.power;
+      const fb = Math.max(0, 1 - b.age / CFG.pointLife) * b.power;
+      if (fa <= 0.002 && fb <= 0.002) continue;
+
+      _v1.set(a.x, a.y, a.z);
+      _v2.set(b.x, b.y, b.z);
+
+      _dir.subVectors(_v2, _v1);
+      const len = _dir.length();
+      if (len < 1e-6) continue;
+      _dir.multiplyScalar(1 / len);
+
+      // 面向相机的带状方向 = dir × viewDir
+      _mid.addVectors(_v1, _v2).multiplyScalar(0.5);
+      _side.crossVectors(_dir, _mid);
+      if (_side.lengthSq() < 1e-10) {
+        _side.set(0, 1, 0).cross(_dir);
+        if (_side.lengthSq() < 1e-10) _side.set(1, 0, 0);
+      }
+      _side.normalize();
+
+      // 宽度随强度变化 —— 甩得越猛越粗
+      const pm = (fa + fb) * 0.5;
+      const wScale = 0.5 + pm * 1.8;
+
+      const gw = CFG.glowWidth * wScale;
+      const cw = CFG.coreWidth * wScale;
+
+      const gsx = _side.x * gw, gsy = _side.y * gw, gsz = _side.z * gw;
+      const csx = _side.x * cw, csy = _side.y * cw, csz = _side.z * cw;
+
+      _colA.setHSL(a.hue, 1.0, 0.5);
+      _colB.setHSL(b.hue, 1.0, 0.5);
+
+      const v1x = _v1.x, v1y = _v1.y, v1z = _v1.z;
+      const v2x = _v2.x, v2y = _v2.y, v2z = _v2.z;
+
+      /* ---- 外发光四边形（宽而暗） ---- */
+      const GA = 0.25;
+      const gar = _colA.r * GA * fa, gag = _colA.g * GA * fa, gab = _colA.b * GA * fa;
+      const gbr = _colB.r * GA * fb, gbg = _colB.g * GA * fb, gbb = _colB.b * GA * fb;
+
+      pushVert(v1x - gsx, v1y - gsy, v1z - gsz, gar, gag, gab);
+      pushVert(v2x - gsx, v2y - gsy, v2z - gsz, gbr, gbg, gbb);
+      pushVert(v2x + gsx, v2y + gsy, v2z + gsz, gbr, gbg, gbb);
+
+      pushVert(v1x - gsx, v1y - gsy, v1z - gsz, gar, gag, gab);
+      pushVert(v2x + gsx, v2y + gsy, v2z + gsz, gbr, gbg, gbb);
+      pushVert(v1x + gsx, v1y + gsy, v1z + gsz, gar, gag, gab);
+
+      /* ---- 高亮芯四边形（窄而亮，偏白） ---- */
+      const car = (_colA.r * 0.6 + 0.4) * fa;
+      const cag = (_colA.g * 0.6 + 0.4) * fa;
+      const cab = (_colA.b * 0.6 + 0.4) * fa;
+      const cbr = (_colB.r * 0.6 + 0.4) * fb;
+      const cbg = (_colB.g * 0.6 + 0.4) * fb;
+      const cbb = (_colB.b * 0.6 + 0.4) * fb;
+
+      pushVert(v1x - csx, v1y - csy, v1z - csz, car, cag, cab);
+      pushVert(v2x - csx, v2y - csy, v2z - csz, cbr, cbg, cbb);
+      pushVert(v2x + csx, v2y + csy, v2z + csz, cbr, cbg, cbb);
+
+      pushVert(v1x - csx, v1y - csy, v1z - csz, car, cag, cab);
+      pushVert(v2x + csx, v2y + csy, v2z + csz, cbr, cbg, cbb);
+      pushVert(v1x + csx, v1y + csy, v1z + csz, car, cag, cab);
+    }
+
+    trailGeo.setDrawRange(0, _vi);
+    if (_vi > 0) {
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+    }
+  }
+
+  /* ================================================================
+   * 11. 主循环
+   * ================================================================ */
+  const clock = new THREE.Clock();
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    // 相机平滑跟随手机朝向（只在有方向数据后启用）
+    if (orientationReady) {
+      const k = 1 - Math.pow(0.5, dt / CFG.camSmooth);
+      camera.quaternion.slerp(targetQuat, k);
+    }
+
+    updatePen(dt);
+    updateTrail(dt);
+    buildTrailMesh();
+
+    // 光笔光标
+    penSprite.position.copy(penPos);
+    const spd = penVel.length();
+    const sz = 0.9 + Math.min(spd * 0.12, 1.2);
+    penSprite.scale.set(sz, sz, 1);
+    penSprite.material.color.setHSL(hueCursor, 1.0, 0.65);
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+})();
+</script>
+</body>
+</html>

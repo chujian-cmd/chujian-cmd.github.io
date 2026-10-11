@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>引力轨道网 Gravity</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #08060a;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(8,6,10,0.8), rgba(8,6,10,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">引力 <b id="m">三体</b></div>
+  <button class="btn" id="btn-reset">重新散布</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 额外引力点</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    count: isMobile ? 1800 : 3500,   // 粒子数
+    attractors: 3,                    // 引力点数：1~6
+    gravity: 42,                      // 引力强度
+    swirl: 0.7,                       // 涡旋强度（正负决定方向）
+    damping: 0.97,                    // 阻尼
+    spin: 0.15,                       // 布局旋转速度
+    trail: 0.05,                      // 拖尾（越小越长）
+    glow: true,                       // 辉光叠加
+    dot: 1.4,                         // 粒子大小（像素）
+    mouseAttract: true,               // 指针是否作为额外引力点
+    mouseForce: 80,                   // 指针引力
+    colors: [
+      { name: '赤焰', a: '#ff9d5c', b: '#5a1010', bg: '#08060a' },
+      { name: '银河', a: '#8ea2ff', b: '#1a1a3a', bg: '#04040a' },
+      { name: '极光', a: '#5be0ff', b: '#0a3a3a', bg: '#030810' },
+      { name: '品红', a: '#ff6b9d', b: '#3a0a2a', bg: '#0a040a' },
+      { name: '金焰', a: '#dfba69', b: '#2a1a0a', bg: '#0a0806' }
+    ],
+    scheme: 0
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ---------- 粒子 ----------
+  const N = CFG.count;
+  const px = new Float32Array(N);
+  const py = new Float32Array(N);
+  const vx = new Float32Array(N);
+  const vy = new Float32Array(N);
+
+  function seed() {
+    const cx = W / 2, cy = H / 2;
+    const R = Math.min(W, H) * 0.3;
+    for (let i = 0; i < N; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * R;
+      px[i] = cx + Math.cos(a) * r;
+      py[i] = cy + Math.sin(a) * r;
+      // 初始切向速度 → 天然椭圆轨道
+      vx[i] = -Math.sin(a) * 0.5;
+      vy[i] = Math.cos(a) * 0.5;
+    }
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    pointer.down = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.down = false; pointer.inside = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 配色 ----------
+  let colA = [0,0,0], colB = [0,0,0], bgRGB = [0,0,0];
+  function buildColors() {
+    const s = CFG.colors[CFG.scheme];
+    colA = hex2rgb(s.a);
+    colB = hex2rgb(s.b);
+    bgRGB = hex2rgb(s.bg);
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  let startTime = lastTime;
+
+  // 引力点位置缓存
+  const axArr = new Float32Array(8);
+  const ayArr = new Float32Array(8);
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    const t = (now - startTime) / 1000;
+
+    // ---- 背景：半透明覆盖 → 拖尾 ----
+    const [br, bgc, bb] = bgRGB;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(${br},${bgc},${bb},${CFG.trail})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // ---- 计算引力点位置 ----
+    const nAtt = Math.max(1, Math.min(6, CFG.attractors | 0));
+    const cx = W / 2, cy = H / 2;
+    const R = Math.min(W, H) * 0.28;
+    const rot = t * CFG.spin;
+    for (let i = 0; i < nAtt; i++) {
+      const a = rot + i / nAtt * Math.PI * 2;
+      if (nAtt === 1) { axArr[i] = cx; ayArr[i] = cy; }
+      else { axArr[i] = cx + Math.cos(a) * R; ayArr[i] = cy + Math.sin(a) * R; }
+    }
+
+    const G = CFG.gravity;
+    const SWR = CFG.swirl;
+    const DAMP = CFG.damping;
+    const z = clamp(dt * 60, 0, 2.5);
+
+    const useMouse = CFG.mouseAttract && pointer.inside && pointer.down;
+    const mfx = pointer.x, mfy = pointer.y;
+    const mForce = CFG.mouseForce;
+
+    // ---- 更新粒子 ----
+    for (let i = 0; i < N; i++) {
+      let x = px[i], y = py[i];
+      let fx = 0, fy = 0;
+
+      // 多个引力点
+      for (let k = 0; k < nAtt; k++) {
+        const dx = axArr[k] - x;
+        const dy = ayArr[k] - y;
+        const d2 = dx * dx + dy * dy + 120;
+        const d = Math.sqrt(d2);
+        const g = G / d2;
+        fx += dx * g;
+        fy += dy * g;
+        // 涡旋（垂直方向）
+        fx += -dy / d * g * SWR * 20;
+        fy += dx / d * g * SWR * 20;
+      }
+
+      // 指针额外引力
+      if (useMouse) {
+        const dx = mfx - x, dy = mfy - y;
+        const d2 = dx * dx + dy * dy + 120;
+        const g = mForce / d2;
+        fx += dx * g;
+        fy += dy * g;
+      }
+
+      // 阻尼 + 积分
+      let vX = (vx[i] + fx * z) * DAMP;
+      let vY = (vy[i] + fy * z) * DAMP;
+      vx[i] = vX;
+      vy[i] = vY;
+      x += vX * z;
+      y += vY * z;
+
+      // 太远就重生（回到画面中心附近）
+      if (x < -80 || x > W + 80 || y < -80 || y > H + 80) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * R;
+        x = cx + Math.cos(a) * r;
+        y = cy + Math.sin(a) * r;
+        vx[i] = -Math.sin(a) * 0.5;
+        vy[i] = Math.cos(a) * 0.5;
+      }
+
+      px[i] = x;
+      py[i] = y;
+
+      // ---- 绘制 ----
+      const speed = Math.hypot(vX, vY);
+      const tcol = clamp(speed / 6, 0, 1);
+      const R_ = colA[0] + (colB[0] - colA[0]) * tcol;
+      const G_ = colA[1] + (colB[1] - colA[1]) * tcol;
+      const B_ = colA[2] + (colB[2] - colA[2]) * tcol;
+      // 速度越快越亮，慢的暗淡
+      const alpha = 0.35 + tcol * 0.55;
+      ctx.fillStyle = `rgba(${R_|0},${G_|0},${B_|0},${alpha})`;
+      ctx.fillRect(x - CFG.dot * 0.5, y - CFG.dot * 0.5, CFG.dot, CFG.dot);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  const NAMES = ['单极', '双星', '三体', '四极', '五极', '六极'];
+  function updateName() {
+    const n = Math.max(1, Math.min(6, CFG.attractors));
+    mEl.textContent = NAMES[n - 1];
+  }
+
+  document.getElementById('btn-reset').addEventListener('click', seed);
+  document.getElementById('btn-change').addEventListener('click', () => {
+    CFG.scheme = (CFG.scheme + 1) % CFG.colors.length;
+    buildColors();
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); seed(); });
+  window.addEventListener('orientationchange', () => setTimeout(() => { resize(); seed(); }, 200));
+
+  buildColors();
+  updateName();
+  seed();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

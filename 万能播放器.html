@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>万能播放器 · 查看器</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+
+    /* 顶部工具栏 - 移动端更紧凑 */
+    .toolbar {
+      padding: 8px 10px;
+      background: #2a2a2a;
+      border-bottom: 1px solid #3d3d3d;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .file-label {
+      background: #3d3d3d;
+      color: #f0f0f0;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+      border: 1px solid #555;
+      white-space: nowrap;
+      flex-shrink: 0;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+    }
+
+    .file-label:active {
+      background: #555;
+    }
+
+    #fileInput {
+      display: none;
+    }
+
+    .filename {
+      font-size: 13px;
+      color: #aaa;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* 主内容区 */
+    .viewer {
+      flex: 1;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      background: #1a1a1a;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* 音视频播放器 */
+    .media-area {
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .media-container {
+      width: 100%;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 120px;
+    }
+
+    video {
+      width: 100%;
+      max-height: 55vh;
+      outline: none;
+      background: #000;
+    }
+
+    audio {
+      width: 100%;
+      margin: 10px 0;
+    }
+
+    /* 控制条 - 移动端优先，可换行 */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      background: #2a2a2a;
+      padding: 8px 10px;
+      border-radius: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .controls button {
+      background: #3d3d3d;
+      border: 1px solid #555;
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 56px;
+      min-height: 36px;
+      touch-action: manipulation;
+      user-select: none;
+    }
+
+    .controls button:active {
+      background: #555;
+    }
+
+    /* 进度条容器 - 触摸友好 */
+    .progress-container {
+      flex: 2 1 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      padding: 4px 0;
+      order: 3;
+    }
+
+    /* 音量容器 - 移动端也可换行 */
+    .volume-container {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex: 1 1 auto;
+      min-width: 0;
+      order: 2;
+    }
+
+    .volume-label {
+      font-size: 12px;
+      color: #ccc;
+      flex-shrink: 0;
+    }
+
+    /* 时间显示 */
+    .time {
+      font-size: 12px;
+      color: #ccc;
+      min-width: 76px;
+      text-align: center;
+      flex-shrink: 0;
+      order: 2;
+    }
+
+    /* Range 输入 - 触摸热区放大 */
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 28px;
+      background: transparent;
+      cursor: pointer;
+      touch-action: none;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px;
+      background: #555;
+      border-radius: 2px;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #6b9eff;
+      border-radius: 50%;
+      margin-top: -7px;
+      border: none;
+    }
+
+    input[type="range"]::-moz-range-track {
+      height: 4px;
+      background: #555;
+      border-radius: 2px;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: #6b9eff;
+      border-radius: 50%;
+      border: none;
+    }
+
+    /* 内容容器 */
+    .content-box {
+      width: 100%;
+      max-width: 1000px;
+      background: #252525;
+      border-radius: 8px;
+      padding: 14px;
+      color: #ddd;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow: auto;
+      max-height: 80vh;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .content-box img {
+      max-width: 100%;
+      max-height: 70vh;
+      display: block;
+      margin: 0 auto;
+      border-radius: 4px;
+    }
+
+    .content-box iframe {
+      width: 100%;
+      height: 70vh;
+      border: none;
+      background: #fff;
+      border-radius: 4px;
+    }
+
+    .content-box pre {
+      background: #1e1e1e;
+      padding: 12px;
+      border-radius: 6px;
+      overflow: auto;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .font-preview {
+      font-size: clamp(20px, 6vw, 30px);
+      margin: 14px 0;
+      padding: 12px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #1e1e1e;
+      word-break: break-word;
+      line-height: 1.4;
+    }
+
+    .info-message {
+      background: #2e2e2e;
+      border-left: 4px solid #6b9eff;
+      padding: 14px 16px;
+      border-radius: 6px;
+      margin: 10px 0;
+      color: #ccc;
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 100%;
+      word-break: break-word;
+    }
+
+    .info-message strong {
+      color: #fff;
+    }
+
+    .download-link {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 10px 16px;
+      background: #3d3d3d;
+      color: #6b9eff;
+      text-decoration: none;
+      border-radius: 20px;
+      font-size: 14px;
+      border: 1px solid #555;
+      min-height: 40px;
+      line-height: 20px;
+    }
+
+    .download-link:active {
+      background: #555;
+    }
+
+    /* 小屏适配 */
+    @media (max-width: 600px) {
+      .toolbar {
+        padding: 6px 8px;
+      }
+
+      .file-label {
+        font-size: 13px;
+        padding: 7px 12px;
+        min-height: 34px;
+      }
+
+      .filename {
+        font-size: 12px;
+      }
+
+      .viewer {
+        padding: 8px;
+      }
+
+      .controls {
+        padding: 6px 8px;
+        gap: 6px;
+      }
+
+      .controls button {
+        font-size: 12px;
+        padding: 7px 10px;
+        min-width: 50px;
+        min-height: 34px;
+      }
+
+      .time {
+        font-size: 11px;
+        min-width: 68px;
+      }
+
+      .volume-label {
+        font-size: 11px;
+      }
+
+      .content-box {
+        padding: 10px;
+        font-size: 13px;
+      }
+
+      .content-box iframe {
+        height: 60vh;
+      }
+
+      video {
+        max-height: 45vh;
+      }
+    }
+
+    /* 横屏手机 */
+    @media (max-height: 500px) and (orientation: landscape) {
+      video {
+        max-height: 70vh;
+      }
+      .toolbar {
+        padding: 4px 8px;
+      }
+      .file-label {
+        padding: 5px 10px;
+        min-height: 30px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <label class="file-label" for="fileInput">打开文件</label>
+  <input type="file" id="fileInput">
+  <span class="filename" id="filenameDisplay">未选择</span>
+</div>
+
+<div class="viewer" id="viewer">
+  <div class="info-message" id="welcomeMsg">
+    请选择文件以预览。支持音视频、图片、文本、PDF、字体及部分Office文档。
+  </div>
+</div>
+
+<script>
+  (function() {
+    const fileInput = document.getElementById('fileInput');
+    const filenameDisplay = document.getElementById('filenameDisplay');
+    const viewer = document.getElementById('viewer');
+
+    let currentMedia = null;
+    let currentObjectUrl = null;
+    let currentFontStyle = null;
+
+    function cleanup() {
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
+      if (currentMedia) {
+        if (currentMedia.pause) currentMedia.pause();
+        currentMedia.removeAttribute('src');
+        currentMedia.load();
+        currentMedia = null;
+      }
+      if (currentFontStyle && currentFontStyle.parentNode) {
+        currentFontStyle.parentNode.removeChild(currentFontStyle);
+        currentFontStyle = null;
+      }
+      viewer.innerHTML = '';
+    }
+
+    function getFileCategory(filename) {
+      const ext = filename.split('.').pop().toLowerCase();
+      if (['mp4','webm','mkv','avi','mov','mp3','wav','flac','aac','ogg','m4a','opus','weba','3gp'].includes(ext)) return 'media';
+      if (['png','jpg','jpeg','gif','svg','webp','bmp','ico','avif','jfif','heic','heif'].includes(ext)) return 'image';
+      if (['txt','md','json','xml','csv','log','js','css','html','htm','ts','yml','yaml','ini','conf','sh','py','java','c','cpp','h'].includes(ext)) return 'text';
+      if (ext === 'pdf') return 'pdf';
+      if (['doc','docx'].includes(ext)) return 'word';
+      if (['xls','xlsx'].includes(ext)) return 'excel';
+      if (['ppt','pptx'].includes(ext)) return 'ppt';
+      if (['woff2','woff','ttf','otf','eot'].includes(ext)) return 'font';
+      return 'unknown';
+    }
+
+    function formatTime(seconds) {
+      if (!seconds || isNaN(seconds) || !isFinite(seconds)) return '00:00';
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // 判断是视频还是音频
+    function isVideoFile(file) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      return ['mp4','webm','mkv','avi','mov','3gp','ogv'].includes(ext) || file.type.startsWith('video/');
+    }
+
+    function renderMedia(file, url) {
+      const isVideo = isVideoFile(file);
+      const mediaEl = document.createElement(isVideo ? 'video' : 'audio');
+      mediaEl.src = url;
+      mediaEl.controls = false;
+      mediaEl.preload = 'metadata';
+      mediaEl.setAttribute('playsinline', '');
+      mediaEl.setAttribute('webkit-playsinline', '');
+      mediaEl.style.width = '100%';
+
+      const mediaArea = document.createElement('div');
+      mediaArea.className = 'media-area';
+
+      const mediaContainer = document.createElement('div');
+      mediaContainer.className = 'media-container';
+      mediaContainer.appendChild(mediaEl);
+
+      // 控制条
+      const controlsDiv = document.createElement('div');
+      controlsDiv.className = 'controls';
+
+      // 播放/暂停
+      const playPauseBtn = document.createElement('button');
+      playPauseBtn.textContent = '播放';
+      playPauseBtn.addEventListener('click', () => {
+        if (mediaEl.paused) {
+          mediaEl.play().catch(() => {});
+        } else {
+          mediaEl.pause();
+        }
+      });
+
+      // 时间显示
+      const timeDisplay = document.createElement('span');
+      timeDisplay.className = 'time';
+      timeDisplay.textContent = '00:00 / 00:00';
+
+      // 音量
+      const volumeContainer = document.createElement('div');
+      volumeContainer.className = 'volume-container';
+      const volumeLabel = document.createElement('span');
+      volumeLabel.className = 'volume-label';
+      volumeLabel.textContent = '音量';
+      const volumeBar = document.createElement('input');
+      volumeBar.type = 'range';
+      volumeBar.min = '0';
+      volumeBar.max = '1';
+      volumeBar.step = '0.01';
+      volumeBar.value = '1';
+      volumeContainer.appendChild(volumeLabel);
+      volumeContainer.appendChild(volumeBar);
+
+      // 全屏
+      const fullscreenBtn = document.createElement('button');
+      fullscreenBtn.textContent = '全屏';
+      fullscreenBtn.addEventListener('click', () => {
+        const el = mediaEl;
+        if (el.requestFullscreen) {
+          el.requestFullscreen().catch(() => {});
+        } else if (el.webkitRequestFullscreen) {
+          el.webkitRequestFullscreen();
+        } else if (el.webkitEnterFullscreen) {
+          // iOS Safari 视频专用
+          el.webkitEnterFullscreen();
+        } else if (el.msRequestFullscreen) {
+          el.msRequestFullscreen();
+        }
+      });
+
+      // 进度条
+      const progressContainer = document.createElement('div');
+      progressContainer.className = 'progress-container';
+      const progressBar = document.createElement('input');
+      progressBar.type = 'range';
+      progressBar.min = '0';
+      progressBar.max = '100';
+      progressBar.value = '0';
+      progressBar.step = '0.1';
+      progressContainer.appendChild(progressBar);
+
+      // 组装
+      controlsDiv.appendChild(playPauseBtn);
+      controlsDiv.appendChild(timeDisplay);
+      controlsDiv.appendChild(volumeContainer);
+      controlsDiv.appendChild(fullscreenBtn);
+      controlsDiv.appendChild(progressContainer);
+
+      mediaArea.appendChild(mediaContainer);
+      mediaArea.appendChild(controlsDiv);
+
+      // 事件
+      mediaEl.addEventListener('loadedmetadata', () => {
+        progressBar.max = mediaEl.duration || 100;
+        timeDisplay.textContent = `${formatTime(mediaEl.currentTime)} / ${formatTime(mediaEl.duration)}`;
+      });
+
+      mediaEl.addEventListener('timeupdate', () => {
+        if (!progressBar.dragging) {
+          progressBar.value = mediaEl.currentTime;
+        }
+        timeDisplay.textContent = `${formatTime(mediaEl.currentTime)} / ${formatTime(mediaEl.duration)}`;
+      });
+
+      mediaEl.addEventListener('play', () => { playPauseBtn.textContent = '暂停'; });
+      mediaEl.addEventListener('pause', () => { playPauseBtn.textContent = '播放'; });
+      mediaEl.addEventListener('volumechange', () => { volumeBar.value = mediaEl.volume; });
+
+      // 进度条拖动（触摸友好）
+      let dragging = false;
+      const startDrag = (e) => { dragging = true; };
+      const endDrag = () => { dragging = false; };
+      progressBar.addEventListener('pointerdown', startDrag);
+      progressBar.addEventListener('touchstart', startDrag, { passive: true });
+      progressBar.addEventListener('mousedown', startDrag);
+      progressBar.addEventListener('input', (e) => {
+        if (dragging) {
+          mediaEl.currentTime = parseFloat(e.target.value);
+        }
+      });
+      progressBar.addEventListener('change', (e) => {
+        dragging = false;
+        mediaEl.currentTime = parseFloat(e.target.value);
+      });
+      window.addEventListener('pointerup', endDrag);
+      window.addEventListener('touchend', endDrag);
+      window.addEventListener('mouseup', endDrag);
+
+      volumeBar.addEventListener('input', (e) => {
+        mediaEl.volume = parseFloat(e.target.value);
+      });
+
+      // 错误处理
+      mediaEl.addEventListener('error', () => {
+        viewer.innerHTML = '';
+        showMessage('无法播放此媒体格式', 
+          '您的浏览器可能不支持该编码或容器格式。建议使用专业播放器，或转换为 MP4/WebM 后重试。',
+          url, file.name);
+      }, { once: true });
+
+      viewer.appendChild(mediaArea);
+      currentMedia = mediaEl;
+    }
+
+    function renderImage(file, url) {
+      const container = document.createElement('div');
+      container.className = 'content-box';
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = file.name;
+      img.loading = 'lazy';
+      img.addEventListener('error', () => {
+        container.innerHTML = '';
+        showMessage('无法显示图片', '浏览器可能不支持该图片格式，或文件已损坏。', url, file.name);
+      });
+      container.appendChild(img);
+      viewer.appendChild(container);
+    }
+
+    function renderText(file, url) {
+      fetch(url)
+        .then(res => res.text())
+        .then(text => {
+          const container = document.createElement('div');
+          container.className = 'content-box';
+          const pre = document.createElement('pre');
+          pre.textContent = text;
+          container.appendChild(pre);
+          viewer.appendChild(container);
+        })
+        .catch(() => {
+          showMessage('无法读取文本文件', '文件可能已损坏或编码不受支持。', url, file.name);
+        });
+    }
+
+    function renderPdf(file, url) {
+      const container = document.createElement('div');
+      container.className = 'content-box';
+      const iframe = document.createElement('iframe');
+      iframe.src = url;
+      iframe.title = file.name;
+      container.appendChild(iframe);
+      viewer.appendChild(container);
+    }
+
+    function renderFont(file, url) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      const fontFamily = 'PreviewFont_' + Date.now();
+      const style = document.createElement('style');
+      // woff2/woff/ttf/otf 用 format 提示
+      let formatHint = '';
+      if (ext === 'woff2') formatHint = ' format("woff2")';
+      else if (ext === 'woff') formatHint = ' format("woff")';
+      else if (ext === 'ttf') formatHint = ' format("truetype")';
+      else if (ext === 'otf') formatHint = ' format("opentype")';
+      style.textContent = `@font-face { font-family: '${fontFamily}'; src: url('${url}')${formatHint}; }`;
+      document.head.appendChild(style);
+      currentFontStyle = style;
+
+      const container = document.createElement('div');
+      container.className = 'content-box';
+      container.innerHTML = `
+        <p><strong>字体名称：</strong>${file.name}</p>
+        <p><strong>大小：</strong>${(file.size / 1024).toFixed(1)} KB</p>
+        <div class="font-preview" style="font-family: '${fontFamily}', sans-serif;">
+          AaBbCc 123 你好，世界！<br>
+          The quick brown fox jumps over the lazy dog.
+        </div>
+        <p style="color:#aaa; font-size:12px;">若字体未渲染，可能是浏览器不支持该格式（如EOT），或字体文件损坏。</p>
+      `;
+      viewer.appendChild(container);
+    }
+
+    function renderWord(file, url) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (ext === 'docx') {
+        showMessage('Word 文档预览受限',
+          '浏览器无法原生渲染 .docx 文件。建议下载后使用本地办公软件打开。',
+          url, file.name);
+      } else {
+        showMessage('不支持 .doc 预览',
+          '旧版 .doc 格式无法在浏览器中可靠解析，请下载后使用办公软件打开。',
+          url, file.name);
+      }
+    }
+
+    function renderExcel(file, url) {
+      showMessage('Excel 文件无法直接预览',
+        '浏览器不能原生渲染 Excel 表格。请下载后使用本地办公软件打开。',
+        url, file.name);
+    }
+
+    function renderPpt(file, url) {
+      showMessage('PPT 文件无法直接预览',
+        '浏览器不能原生渲染 PowerPoint 文件。请下载后使用本地办公软件打开。',
+        url, file.name);
+    }
+
+    function showMessage(title, detail, url, fileName) {
+      const container = document.createElement('div');
+      container.className = 'info-message';
+      const strong = document.createElement('strong');
+      strong.textContent = title;
+      container.appendChild(strong);
+      container.appendChild(document.createElement('br'));
+      container.appendChild(document.createTextNode(detail));
+
+      if (url && fileName) {
+        const dlLink = document.createElement('a');
+        dlLink.href = url;
+        dlLink.download = fileName;
+        dlLink.className = 'download-link';
+        dlLink.textContent = '下载文件';
+        container.appendChild(document.createElement('br'));
+        container.appendChild(dlLink);
+      }
+      viewer.appendChild(container);
+    }
+
+    function handleFile(file) {
+      cleanup();
+      filenameDisplay.textContent = file.name;
+
+      const url = URL.createObjectURL(file);
+      currentObjectUrl = url;
+
+      const category = getFileCategory(file.name);
+
+      if (category === 'media') {
+        renderMedia(file, url);
+      } else if (category === 'image') {
+        renderImage(file, url);
+      } else if (category === 'text') {
+        renderText(file, url);
+      } else if (category === 'pdf') {
+        renderPdf(file, url);
+      } else if (category === 'word') {
+        renderWord(file, url);
+      } else if (category === 'excel') {
+        renderExcel(file, url);
+      } else if (category === 'ppt') {
+        renderPpt(file, url);
+      } else if (category === 'font') {
+        renderFont(file, url);
+      } else {
+        // 未知类型，尝试按文本处理（如果是文本 MIME）
+        if (file.type.startsWith('text/') || file.name.match(/\.(txt|md|json|xml|csv|log|js|css|html?)$/i)) {
+          renderText(file, url);
+        } else {
+          showMessage('未知文件类型', 
+            `无法预览此文件（${file.name}）。您可以下载后使用合适的软件打开。`,
+            url, file.name);
+        }
+      }
+    }
+
+    // 文件选择
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      handleFile(file);
+      // 重置 input，以便重复选择同一文件也能触发 change
+      fileInput.value = '';
+    });
+
+    // 拖拽支持（桌面端）
+    document.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    });
+  })();
+</script>
+</body>
+</html>

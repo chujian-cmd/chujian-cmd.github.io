@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>星空穿越 Starfield</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #04040a;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(4,4,10,0.8), rgba(4,4,10,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">星空 <b id="m">超光速</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">拖动屏幕 = 改变飞行方向</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    stars: isMobile ? 900 : 1400,   // 星星数量
+    speed: 0.4,                      // 飞行速度（0.05~1.5）
+    twist: 0.8,                      // 螺旋扭转
+    streak: 0.5,                     // 光条拉长（0~1）
+    glow: 0.6,                       // 中心辉光
+    brightness: 1.1,                 // 亮度
+
+    colorA: '#ffffff',               // 近处色
+    colorB: '#5a6bff',               // 远处色
+    background: '#04040a',
+
+    mouseInfluence: 0.55             // 指针影响（拖动时隧道的偏移）
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const TAU = Math.PI * 2;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ---------- 星星 ----------
+  // 每颗星有：深度 z（0=最远，1=到镜头）、角度、半径、亮度、闪烁相位
+  const N = CFG.stars;
+  const starZ    = new Float32Array(N);
+  const starAng  = new Float32Array(N);
+  const starR    = new Float32Array(N);
+  const starTw   = new Float32Array(N);  // 闪烁相位
+  const starBri  = new Float32Array(N);  // 亮度
+
+  const rng = (() => {
+    let s = (Date.now() ^ 12345) | 0;
+    return () => {
+      s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+      return ((s >>> 0) % 1e6) / 1e6;
+    };
+  })();
+
+  function seed() {
+    for (let i = 0; i < N; i++) {
+      starZ[i]   = rng();
+      starAng[i] = rng() * TAU;
+      // 半径分布：越靠近中心概率越大，用 sqrt 均匀
+      starR[i]   = 0.02 + Math.sqrt(rng()) * 0.6;
+      starTw[i]  = rng() * TAU;
+      starBri[i] = 0.5 + rng() * 0.5;
+    }
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const t = e.touches ? e.touches[0] : e;
+    const r = rect();
+    pointer.targetX = (t.clientX - r.left) / r.width;
+    pointer.targetY = (t.clientY - r.top) / r.height;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const t = e.touches ? e.touches[0] : e;
+    const r = rect();
+    pointer.targetX = (t.clientX - r.left) / r.width;
+    pointer.targetY = (t.clientY - r.top) / r.height;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.inside = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 配色 ----------
+  let colA = [0, 0, 0], colB = [0, 0, 0], bgRGB = [0, 0, 0];
+  function buildColors() {
+    colA = hex2rgb(CFG.colorA);
+    colB = hex2rgb(CFG.colorB);
+    bgRGB = hex2rgb(CFG.background);
+  }
+
+  // ---------- 渲染 ----------
+  // 用「上一帧的绘制」+ 半透明覆盖制造拖尾
+  function render(t) {
+    const [br, bg, bb] = bgRGB;
+
+    // 1) 背景（拖尾）
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(${br},${bg},${bb},0.35)`;
+    ctx.fillRect(0, 0, W, H);
+
+    // 2) 中心辉光
+    if (CFG.glow > 0.01) {
+      const cx = pointer.x * W;
+      const cy = pointer.y * H;
+      const radius = Math.max(W, H) * 0.28;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      g.addColorStop(0, `rgba(${colB[0]},${colB[1]},${colB[2]},${0.35 * CFG.glow})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 3) 星星
+    const speed = CFG.speed;
+    const twist = CFG.twist;
+    const streak = CFG.streak;
+    const bright = CFG.brightness;
+    const ar = colA[0], ag = colA[1], ab = colA[2];
+    const cr = colB[0], cg = colB[1], cb = colB[2];
+
+    // 指针在屏幕坐标里的偏移（用于隧道焦点）
+    const focusX = pointer.x * W;
+    const focusY = pointer.y * H;
+
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+
+    for (let i = 0; i < N; i++) {
+      let z = starZ[i];
+      // 前进
+      z += speed * 0.0035;
+      if (z >= 1) {
+        // 重生
+        z = 0;
+        starAng[i] = rng() * TAU;
+        starR[i] = 0.02 + Math.sqrt(rng()) * 0.6;
+        starTw[i] = rng() * TAU;
+        starBri[i] = 0.5 + rng() * 0.5;
+      }
+      starZ[i] = z;
+
+      // 越远越扭（螺旋）
+      const ang = starAng[i] + (1 - z) * twist * 2.2 + t * 0.02;
+
+      // 投影半径：z 越大 → 屏幕半径越大
+      const persp = 1 / (1.0001 - z);
+      const sx0 = focusX + Math.cos(ang) * starR[i] * persp * Math.min(W, H) * 0.9;
+      const sy0 = focusY + Math.sin(ang) * starR[i] * persp * Math.min(W, H) * 0.9;
+
+      // 前一个位置（用于画光条）
+      const zPrev = z - speed * 0.0035 * (1 + streak * 6);
+      const zPrevSafe = Math.max(0.0001, zPrev);
+      const perspPrev = 1 / (1.0001 - zPrevSafe);
+      const angPrev = starAng[i] + (1 - zPrevSafe) * twist * 2.2 + t * 0.02;
+      const sx1 = focusX + Math.cos(angPrev) * starR[i] * perspPrev * Math.min(W, H) * 0.9;
+      const sy1 = focusY + Math.sin(angPrev) * starR[i] * perspPrev * Math.min(W, H) * 0.9;
+
+      // 亮度：越近越亮
+      const depthFade = Math.min(1, z * 1.4);
+      const twinkle = 0.75 + 0.25 * Math.sin(t * 2.4 + starTw[i]);
+      const alpha = clamp(depthFade * starBri[i] * twinkle * bright * 0.9, 0, 1);
+      if (alpha < 0.02) continue;
+
+      // 颜色：近处亮白，远处蓝
+      const t2 = clamp(z, 0, 1);
+      const R = ar + (cr - ar) * (1 - t2) | 0;
+      const G = ag + (cg - ag) * (1 - t2) | 0;
+      const B = ab + (cb - ab) * (1 - t2) | 0;
+
+      // 线宽：z 越大越粗
+      const lw = Math.max(0.6, z * 3.2);
+
+      ctx.strokeStyle = `rgba(${R},${G},${B},${alpha})`;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(sx1, sy1);
+      ctx.lineTo(sx0, sy0);
+      ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ---------- 主循环 ----------
+  let startTime = performance.now();
+  function loop(now) {
+    const t = (now - startTime) / 1000;
+
+    // 指针平滑跟随
+    pointer.x += (pointer.targetX - pointer.x) * 0.06;
+    pointer.y += (pointer.targetY - pointer.y) * 0.06;
+
+    render(t);
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', seed);
+
+  const SCHEMES = [
+    { name: '超光速', speed: 1.2, twist: 0.2, streak: 0.85, glow: 0.9, brightness: 1.4,
+      colorA: '#ffffff', colorB: '#8fd4ff', background: '#02020a' },
+    { name: '星尘漩涡', speed: 0.35, twist: 2.6, streak: 0.6, glow: 0.8, brightness: 1.1,
+      colorA: '#ffe9c7', colorB: '#a06bff', background: '#0a0512' },
+    { name: '暖芒', speed: 0.3, twist: 0.4, streak: 0.4, glow: 1.1, brightness: 1.2,
+      colorA: '#fff3d6', colorB: '#ff8a5c', background: '#140904' },
+    { name: '冷隧道', speed: 0.55, twist: -1.2, streak: 0.7, glow: 0.5, brightness: 1.15,
+      colorA: '#dff6ff', colorB: '#2050b0', background: '#020610' },
+    { name: '幽绿', speed: 0.5, twist: 1.4, streak: 0.65, glow: 0.7, brightness: 1.2,
+      colorA: '#e5ffe5', colorB: '#2fbf6a', background: '#030a06' }
+  ];
+  let schemeIdx = 0;
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+    const s = SCHEMES[schemeIdx];
+    CFG.speed = s.speed;
+    CFG.twist = s.twist;
+    CFG.streak = s.streak;
+    CFG.glow = s.glow;
+    CFG.brightness = s.brightness;
+    CFG.colorA = s.colorA;
+    CFG.colorB = s.colorB;
+    CFG.background = s.background;
+    mEl.textContent = s.name;
+    buildColors();
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  buildColors();
+  seed();
+  mEl.textContent = SCHEMES[0].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

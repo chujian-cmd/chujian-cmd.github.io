@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>点线星座 Edge Network</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#070a12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(7,10,18,.85),rgba(7,10,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(63,169,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(63,169,255,.6);
+    background:rgba(63,169,255,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(63,169,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">点线星座 <b id="m">边缘采样</b></div>
+  <button class="btn" id="btn-sample">换采样</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">文字笔画上撒点 · 近邻连线 · 科技线网海报</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    sampling: 'edge',     // edge | dark | bright | uniform
+    density: 0.5,
+    linkRadius: 42,
+    colorMode: 'mono',    // mono | duotone | lum
+    edgeThreshold: 0.12,
+    maxLinks: 4,
+    dotSize: 1.4,
+    lineWidth: 0.6,
+    lineAlpha: 0.3,
+    colorA: '#7fd4ff',
+    colorB: '#ff8ae0',
+    background: '#070a12',
+    underlay: 'none',
+    underlayAlpha: 0.28
+  };
+
+  var SAMPLINGS = [
+    { key: 'edge',    label: '边缘采样' },
+    { key: 'dark',    label: '笔画内撒点' },
+    { key: 'bright',  label: '外轮廓描点' },
+    { key: 'uniform', label: '均匀随机' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buf.width = cv.width; buf.height = cv.height;
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var buf = document.createElement('canvas');
+  var bctx = buf.getContext('2d');
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.88, maxH = H * 0.82;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.82);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0) x = 0; else if (x >= W) x = W - 1;
+    if (y < 0) y = 0; else if (y >= H) y = H - 1;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 采样：低分辨率 lum / gx / gy / mag ----------
+  var SAMPLE_MAX = 220;
+
+  function sample() {
+    var aspect = W / H;
+    var gw, gh;
+    if (aspect >= 1) { gw = SAMPLE_MAX; gh = Math.max(2, Math.round(SAMPLE_MAX / aspect)); }
+    else { gh = SAMPLE_MAX; gw = Math.max(2, Math.round(SAMPLE_MAX * aspect)); }
+
+    var cellW = W / gw;
+    var cellH = H / gh;
+    var n = gw * gh;
+    var lum = new Float32Array(n);
+    for (var y = 0; y < gh; y++) {
+      for (var x = 0; x < gw; x++) {
+        lum[y * gw + x] = alphaAt(x * cellW + cellW / 2, y * cellH + cellH / 2);
+      }
+    }
+    var gx = new Float32Array(n);
+    var gy = new Float32Array(n);
+    var mag = new Float32Array(n);
+    var maxMag = 1e-6;
+    for (var yy = 0; yy < gh; yy++) {
+      for (var xx = 0; xx < gw; xx++) {
+        var i = yy * gw + xx;
+        var xl = xx > 0 ? lum[i - 1] : lum[i];
+        var xr = xx < gw - 1 ? lum[i + 1] : lum[i];
+        var yu = yy > 0 ? lum[i - gw] : lum[i];
+        var yd = yy < gh - 1 ? lum[i + gw] : lum[i];
+        var Gx = xr - xl;
+        var Gy = yd - yu;
+        gx[i] = Gx; gy[i] = Gy;
+        var gg = Math.hypot(Gx, Gy);
+        mag[i] = gg;
+        if (gg > maxMag) maxMag = gg;
+      }
+    }
+    for (var k = 0; k < n; k++) mag[k] /= maxMag;
+
+    return {
+      gw: gw, gh: gh, lum: lum, gx: gx, gy: gy, mag: mag,
+      cellW: cellW, cellH: cellH
+    };
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.sampling + '|' + CFG.edgeThreshold + '|' + CFG.density + '|' +
+              CFG.linkRadius + '|' + CFG.maxLinks + '|' + CFG.lineWidth + '|' +
+              CFG.lineAlpha + '|' + CFG.dotSize + '|' + CFG.colorMode + '|' +
+              CFG.colorA + '|' + CFG.colorB + '|' + CFG.background + '|' +
+              CFG.underlay + '|' + CFG.underlayAlpha;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(buf, 0, 0, W, H);
+
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.fillStyle = cfg.background;
+    bctx.fillRect(0, 0, W, H);
+
+    if (cfg.underlay === 'dim') {
+      bctx.save();
+      bctx.globalAlpha = cfg.underlayAlpha;
+      bctx.drawImage(maskCanvas, 0, 0, W, H);
+      bctx.restore();
+      bctx.globalAlpha = 1;
+    }
+
+    var s = sample();
+    var gw = s.gw, gh = s.gh;
+    var lum = s.lum, mag = s.mag;
+    var cellW = s.cellW, cellH = s.cellH;
+
+    // 采点
+    var xs = [];
+    var ys = [];
+    var vs = [];   // 每个点的亮度（用于着色）
+    var MAX_POINTS = 5000;
+
+    for (var j = 1; j < gh - 1 && xs.length < MAX_POINTS; j++) {
+      for (var i = 1; i < gw - 1 && xs.length < MAX_POINTS; i++) {
+        var ii = j * gw + i;
+        var raw = 0;
+        if (cfg.sampling === 'dark') raw = 1 - lum[ii];
+        else if (cfg.sampling === 'bright') raw = lum[ii];
+        else if (cfg.sampling === 'edge') raw = mag[ii];
+        else raw = 1;
+        var act = (raw - cfg.edgeThreshold) / Math.max(0.001, 1 - cfg.edgeThreshold);
+        if (act <= 0) continue;
+        if (Math.random() > Math.max(0, Math.min(1, act)) * cfg.density) continue;
+        var px = i * cellW + cellW / 2 + (Math.random() - 0.5) * cellW * 0.8;
+        var py = j * cellH + cellH / 2 + (Math.random() - 0.5) * cellH * 0.8;
+        xs.push(px); ys.push(py); vs.push(lum[ii]);
+      }
+    }
+
+    var N = xs.length;
+    if (!N) return;
+
+    var R = cfg.linkRadius;
+    var R2 = R * R;
+    var grid = Math.max(1, R);
+    var buckets = {};
+    var bx, by, key;
+    for (var p = 0; p < N; p++) {
+      bx = (xs[p] / grid) | 0;
+      by = (ys[p] / grid) | 0;
+      key = bx * 73856093 ^ by * 19349663;
+      if (!buckets[key]) buckets[key] = [];
+      buckets[key].push(p);
+    }
+
+    var linkCount = new Int8Array(N);
+    var maxLinks = Math.max(1, Math.round(cfg.maxLinks));
+    var colA = hex2rgb(cfg.colorA);
+    var colB = hex2rgb(cfg.colorB);
+
+    // 连线
+    bctx.lineWidth = cfg.lineWidth;
+    bctx.lineCap = 'round';
+    for (var p2 = 0; p2 < N; p2++) {
+      if (linkCount[p2] >= maxLinks) continue;
+      var gx0 = (xs[p2] / grid) | 0;
+      var gy0 = (ys[p2] / grid) | 0;
+      for (var dx = -1; dx <= 1 && linkCount[p2] < maxLinks; dx++) {
+        for (var dy = -1; dy <= 1 && linkCount[p2] < maxLinks; dy++) {
+          var k2 = (gx0 + dx) * 73856093 ^ (gy0 + dy) * 19349663;
+          var bucket = buckets[k2];
+          if (!bucket) continue;
+          for (var bi = 0; bi < bucket.length; bi++) {
+            var q = bucket[bi];
+            if (q <= p2) continue;
+            if (linkCount[q] >= maxLinks) continue;
+            var ddx = xs[p2] - xs[q];
+            var ddy = ys[p2] - ys[q];
+            var d2 = ddx * ddx + ddy * ddy;
+            if (d2 > R2) continue;
+            var strength = 1 - Math.sqrt(d2) / R;
+
+            var cr, cg, cb;
+            if (cfg.colorMode === 'duotone') {
+              var tr = (vs[p2] + vs[q]) / 2;
+              cr = colA[0] + (colB[0] - colA[0]) * tr;
+              cg = colA[1] + (colB[1] - colA[1]) * tr;
+              cb = colA[2] + (colB[2] - colA[2]) * tr;
+            } else if (cfg.colorMode === 'lum') {
+              var tr2 = Math.min(1, (Math.sqrt(d2) / R) * 0.8 + 0.2);
+              cr = colA[0] + (colB[0] - colA[0]) * tr2;
+              cg = colA[1] + (colB[1] - colA[1]) * tr2;
+              cb = colA[2] + (colB[2] - colA[2]) * tr2;
+            } else {
+              cr = colA[0]; cg = colA[1]; cb = colA[2];
+            }
+
+            bctx.globalAlpha = Math.max(0, Math.min(1, strength * cfg.lineAlpha));
+            bctx.strokeStyle = 'rgb(' + (cr | 0) + ',' + (cg | 0) + ',' + (cb | 0) + ')';
+            bctx.beginPath();
+            bctx.moveTo(xs[p2], ys[p2]);
+            bctx.lineTo(xs[q], ys[q]);
+            bctx.stroke();
+            linkCount[p2]++;
+            linkCount[q]++;
+            if (linkCount[p2] >= maxLinks) break;
+          }
+        }
+      }
+    }
+
+    // 画点
+    var dot = cfg.dotSize;
+    if (dot > 0) {
+      bctx.globalAlpha = 1;
+      for (var pp = 0; pp < N; pp++) {
+        var cR, cG, cB;
+        if (cfg.colorMode === 'duotone') {
+          var t3 = vs[pp];
+          cR = colA[0] + (colB[0] - colA[0]) * t3;
+          cG = colA[1] + (colB[1] - colA[1]) * t3;
+          cB = colA[2] + (colB[2] - colA[2]) * t3;
+        } else {
+          cR = colA[0]; cG = colA[1]; cB = colA[2];
+        }
+        bctx.fillStyle = 'rgb(' + (cR | 0) + ',' + (cG | 0) + ',' + (cB | 0) + ')';
+        bctx.beginPath();
+        bctx.arc(xs[pp], ys[pp], dot, 0, Math.PI * 2);
+        bctx.fill();
+      }
+    }
+    bctx.globalAlpha = 1;
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA',   sampling: 'edge',    colorMode: 'mono',    colorA: '#7fd4ff', background: '#070a12', underlay: 'none' },
+    { text: 'NEON',     sampling: 'edge',    colorMode: 'duotone', colorA: '#ff2ed6', colorB: '#7c5cff', background: '#05030a', underlay: 'none' },
+    { text: '笔画',     sampling: 'dark',    colorMode: 'lum',     colorA: '#ffe9a8', colorB: '#ff7a2c', background: '#0a0602', underlay: 'dim' },
+    { text: 'GRID',     sampling: 'uniform', colorMode: 'mono',    colorA: '#57ff8f', background: '#020804', underlay: 'none' },
+    { text: '线网',     sampling: 'bright',  colorMode: 'duotone', colorA: '#e8ecff', colorB: '#5b6cff', background: '#0b0d12', underlay: 'none' }
+  ];
+  var presetIdx = 0;
+
+  function applyPreset(p) {
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    dirty = true; sig = ''; maskData = null; maskKey = '';
+    var m = SAMPLINGS.find(function (x) { return x.key === CFG.sampling; });
+    if (m) mLabel.textContent = m.label;
+    var mi = SAMPLINGS.findIndex(function (x) { return x.key === CFG.sampling; });
+    if (mi >= 0) sampleIdx = mi;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyPreset(PRESETS[presetIdx]);
+  });
+
+  // ---------- 换采样 ----------
+  var sampleIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-sample').addEventListener('click', function () {
+    sampleIdx = (sampleIdx + 1) % SAMPLINGS.length;
+    CFG.sampling = SAMPLINGS[sampleIdx].key;
+    mLabel.textContent = SAMPLINGS[sampleIdx].label;
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

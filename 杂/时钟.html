@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>方圆形时钟 · 北京时间</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(145deg, #1e2b3c 0%, #0f1722 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      padding: 16px;
+    }
+
+    /* 主卡片 – 方圆形 (squircle) 风格 */
+    .clock-card {
+      background: rgba(18, 28, 40, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-radius: 48px;          /* 大方圆角，形成方圆形 */
+      padding: 28px 28px 32px;
+      box-shadow: 
+        0 20px 40px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+        0 0 0 2px rgba(255, 255, 255, 0.02) inset;
+      width: 100%;
+      max-width: 380px;
+      transition: all 0.2s ease;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    /* 模拟时钟容器 – 方圆形表盘 */
+    .analog-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 40px;          /* 与卡片保持协调的方圆形 */
+      background: radial-gradient(circle at 30% 30%, #2d3f54, #1b2635);
+      box-shadow: 
+        0 8px 24px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+        0 0 0 2px rgba(0, 0, 0, 0.4) inset;
+      margin-bottom: 22px;
+      overflow: hidden;            /* 保证子元素圆角裁剪 */
+    }
+
+    /* SVG 表盘 – 完全填充容器 */
+    .analog-svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border-radius: 40px;         /* 与容器一致，避免边缘锯齿 */
+      background: transparent;
+      overflow: visible;
+    }
+
+    /* 数字时间 – 清晰现代 */
+    .digital-time {
+      text-align: center;
+      padding: 10px 0 4px;
+      letter-spacing: 2px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.9);
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+      background: rgba(0, 0, 0, 0.15);
+      border-radius: 60px;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: all 0.2s;
+    }
+
+    .digital-time span {
+      display: inline-block;
+      font-size: 2.6rem;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 4px;
+      background: linear-gradient(to right, #e8edf5, #b6c8e0);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-shadow: 0 0 20px rgba(100, 150, 255, 0.15);
+      padding: 0 4px;
+    }
+
+    .digital-time .seconds-blink {
+      opacity: 0.8;
+      font-weight: 300;
+      background: linear-gradient(to right, #b0c8e8, #8aa4c8);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    /* 小标签: 北京时间 */
+    .timezone-label {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: rgba(255, 255, 255, 0.35);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      padding-top: 14px;
+    }
+
+    .timezone-label i {
+      font-style: normal;
+      display: inline-block;
+      background: rgba(255, 215, 100, 0.12);
+      padding: 2px 12px;
+      border-radius: 40px;
+      color: #f0d59a;
+      font-weight: 400;
+      font-size: 0.7rem;
+      letter-spacing: 1px;
+      border: 1px solid rgba(255, 215, 100, 0.08);
+    }
+
+    /* 响应式微调 */
+    @media (max-width: 420px) {
+      .clock-card {
+        padding: 20px 20px 24px;
+        border-radius: 36px;
+      }
+      .analog-container {
+        border-radius: 32px;
+      }
+      .analog-svg {
+        border-radius: 32px;
+      }
+      .digital-time span {
+        font-size: 2.2rem;
+        letter-spacing: 2px;
+      }
+    }
+
+    /* 简单的秒针跳动动画 (平滑过渡) */
+    .second-hand {
+      transition: transform 0.2s cubic-bezier(0.4, 2.0, 0.6, 1.0);
+    }
+
+    /* 指针阴影提升立体感 */
+    .hand-shadow {
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+    }
+  </style>
+</head>
+<body>
+  <div class="clock-card" role="clock" aria-label="方圆形时钟，显示北京时间">
+    <!-- 模拟时钟 (SVG) -->
+    <div class="analog-container">
+      <svg class="analog-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <!-- 柔和发光滤镜 -->
+          <filter id="glow" x="-10%" y="-10%" width="120%" height="120%">
+            <feGaussianBlur stdDeviation="2" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="shadow" x="-8%" y="-8%" width="116%" height="116%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.4" />
+          </filter>
+        </defs>
+
+        <!-- 表盘背景 (微妙的渐变) -->
+        <circle cx="100" cy="100" r="92" fill="url(#dialGrad)" stroke="rgba(255,255,255,0.08)" stroke-width="0.5" />
+        <radialGradient id="dialGrad" cx="40%" cy="40%" r="70%">
+          <stop offset="0%" stop-color="#3f546b" />
+          <stop offset="100%" stop-color="#1f2d3e" />
+        </radialGradient>
+
+        <!-- 刻度外圈 (装饰) -->
+        <circle cx="100" cy="100" r="88" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+        <circle cx="100" cy="100" r="80" fill="none" stroke="rgba(255,255,255,0.02)" stroke-width="0.5" />
+
+        <!-- 小时刻度 (12个主刻度) -->
+        <g stroke="#d6e2f0" stroke-width="3" stroke-linecap="round">
+          <!-- 12, 3, 6, 9 更粗更长 -->
+          <line x1="100" y1="18" x2="100" y2="30" stroke-width="4.5" stroke="#eaf0fa" />
+          <line x1="182" y1="100" x2="170" y2="100" stroke-width="4.5" stroke="#eaf0fa" />
+          <line x1="100" y1="182" x2="100" y2="170" stroke-width="4.5" stroke="#eaf0fa" />
+          <line x1="18" y1="100" x2="30" y2="100" stroke-width="4.5" stroke="#eaf0fa" />
+          <!-- 其余小时刻度 -->
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(30 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(60 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(120 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(150 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(210 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(240 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(300 100 100)" stroke-width="3" />
+          <line x1="100" y1="20" x2="100" y2="29" transform="rotate(330 100 100)" stroke-width="3" />
+        </g>
+
+        <!-- 分钟刻度 (细小，每5分钟一个加强) 只画一部分，保持干净 -->
+        <g stroke="rgba(200, 215, 235, 0.25)" stroke-width="1.2" stroke-linecap="round">
+          <!-- 每5分钟一个稍明显的小刻度，简化只画几个代表 -->
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(6 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(12 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(18 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(24 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(36 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(42 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(48 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(54 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(66 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(72 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(78 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(84 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(96 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(102 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(108 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(114 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(126 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(132 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(138 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(144 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(156 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(162 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(168 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(174 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(186 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(192 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(198 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(204 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(216 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(222 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(228 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(234 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(246 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(252 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(258 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(264 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(276 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(282 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(288 100 100)" />
+          <line x1="100" y1="22" x2="100" y2="27" transform="rotate(294 100 100)" />
+        </g>
+
+        <!-- 时针 -->
+        <line id="hourHand" x1="100" y1="100" x2="100" y2="42" 
+              stroke="#d9e6f5" stroke-width="5.5" stroke-linecap="round" 
+              filter="url(#shadow)" style="transform-origin: 100px 100px;" />
+
+        <!-- 分针 -->
+        <line id="minuteHand" x1="100" y1="100" x2="100" y2="28" 
+              stroke="#eaf2fc" stroke-width="3.8" stroke-linecap="round" 
+              filter="url(#shadow)" style="transform-origin: 100px 100px;" />
+
+        <!-- 秒针 (更细长，红色调) -->
+        <line id="secondHand" class="second-hand" x1="100" y1="100" x2="100" y2="20" 
+              stroke="#f0a8a0" stroke-width="1.8" stroke-linecap="round" 
+              filter="url(#shadow)" style="transform-origin: 100px 100px;" />
+
+        <!-- 中心装饰圆 -->
+        <circle cx="100" cy="100" r="6" fill="#d9e6f5" stroke="#1f2d3e" stroke-width="1.5" />
+        <circle cx="100" cy="100" r="2.5" fill="#f0a8a0" />
+      </svg>
+    </div>
+
+    <!-- 数字时间显示 (下方) -->
+    <div class="digital-time" id="digitalTimeDisplay">
+      <span id="hours">00</span>
+      <span style="color: rgba(255,255,255,0.3); font-weight: 300; margin: 0 -2px;">:</span>
+      <span id="minutes">00</span>
+      <span style="color: rgba(255,255,255,0.3); font-weight: 300; margin: 0 -2px;">:</span>
+      <span id="seconds" class="seconds-blink">00</span>
+    </div>
+
+    <!-- 北京时间标识 -->
+    <div class="timezone-label">
+      <span>⏱️ 北京时间</span>
+      <i>UTC+8</i>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // DOM 元素
+      const hourHand = document.getElementById('hourHand');
+      const minuteHand = document.getElementById('minuteHand');
+      const secondHand = document.getElementById('secondHand');
+      const hoursSpan = document.getElementById('hours');
+      const minutesSpan = document.getElementById('minutes');
+      const secondsSpan = document.getElementById('seconds');
+
+      // 辅助: 补零
+      function padZero(num) {
+        return String(num).padStart(2, '0');
+      }
+
+      // 更新时钟 (北京时间)
+      function updateClock() {
+        const now = new Date();
+        // 获取北京时间 (UTC+8) — 直接使用本地时间，因为浏览器本地时间即系统时间，若系统为UTC+8则一致；但为了确保显示北京时间，我们基于UTC计算。
+        // 更稳健: 使用UTC+8
+        const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+        const beijingTime = new Date(utc + 8 * 3600000);
+
+        const hours = beijingTime.getHours();
+        const minutes = beijingTime.getMinutes();
+        const seconds = beijingTime.getSeconds();
+
+        // 数字时间更新
+        hoursSpan.textContent = padZero(hours);
+        minutesSpan.textContent = padZero(minutes);
+        secondsSpan.textContent = padZero(seconds);
+
+        // 模拟时钟角度 (12点方向为0°)
+        // 时针: 每小时30° + 每分钟0.5°
+        const hourDeg = (hours % 12) * 30 + minutes * 0.5;
+        // 分针: 每分钟6°
+        const minuteDeg = minutes * 6 + seconds * 0.1;
+        // 秒针: 每秒6°
+        const secondDeg = seconds * 6;
+
+        // 应用旋转 (SVG transform 旋转)
+        hourHand.setAttribute('transform', `rotate(${hourDeg}, 100, 100)`);
+        minuteHand.setAttribute('transform', `rotate(${minuteDeg}, 100, 100)`);
+        secondHand.setAttribute('transform', `rotate(${secondDeg}, 100, 100)`);
+      }
+
+      // 首次立即更新
+      updateClock();
+
+      // 每秒更新 (精确到秒)
+      setInterval(updateClock, 1000);
+
+      // 可选: 页面可见性变化时立即刷新 (比如从后台切回)
+      document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) {
+          updateClock();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

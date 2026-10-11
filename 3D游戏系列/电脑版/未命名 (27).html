@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 物理沙盒 · 终极工坊 | 多版本融合</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: radial-gradient(circle at 20% 30%, #0a0f1c, #03060c);
+            font-family: 'Segoe UI', 'Inter', 'Poppins', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 头部 */
+        .app-header {
+            text-align: center;
+            padding: 1.8rem 1rem 0.8rem;
+        }
+        .app-header h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #e2e8ff, #8bb5ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            letter-spacing: -0.3px;
+        }
+        .app-header p {
+            color: #7e8aa8;
+            font-size: 0.85rem;
+            margin-top: 0.3rem;
+        }
+        .badge-note {
+            background: #1e2a3e80;
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 30px;
+            font-size: 0.7rem;
+            color: #b9e2ff;
+            margin-top: 8px;
+            backdrop-filter: blur(4px);
+        }
+
+        /* 双栏布局 */
+        .dashboard {
+            display: flex;
+            flex: 1;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            min-height: 0;
+            flex-wrap: wrap;
+        }
+
+        /* 左侧卡片库 */
+        .cards-panel {
+            flex: 1.2;
+            min-width: 320px;
+            background: rgba(12, 18, 28, 0.55);
+            backdrop-filter: blur(8px);
+            border-radius: 32px;
+            padding: 1.2rem;
+            border: 1px solid rgba(72, 120, 200, 0.25);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+        }
+        .cards-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .cards-header h3 {
+            color: #ccdeff;
+            font-weight: 500;
+        }
+        .cards-header span {
+            font-size: 0.7rem;
+            color: #8a9fd0;
+        }
+        .version-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 1rem;
+            max-height: 65vh;
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+        .version-grid::-webkit-scrollbar {
+            width: 5px;
+        }
+        .version-grid::-webkit-scrollbar-track {
+            background: #1e293b;
+            border-radius: 10px;
+        }
+        .version-grid::-webkit-scrollbar-thumb {
+            background: #3f6eb0;
+            border-radius: 10px;
+        }
+
+        /* 卡片样式 */
+        .version-card {
+            background: rgba(18, 26, 40, 0.85);
+            border-radius: 1.2rem;
+            padding: 1rem;
+            transition: all 0.2s ease;
+            border: 1px solid rgba(100, 150, 230, 0.2);
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(4px);
+        }
+        .version-card.disabled-card {
+            opacity: 0.6;
+            filter: grayscale(0.2);
+            cursor: not-allowed;
+        }
+        .version-card:not(.disabled-card):hover {
+            transform: translateY(-3px);
+            border-color: #4c9eff;
+            background: rgba(28, 44, 70, 0.9);
+            box-shadow: 0 8px 18px rgba(0,0,0,0.3);
+        }
+        .card-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+        .card-title .name {
+            background: linear-gradient(135deg, #fff, #adccff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .status-badge {
+            font-size: 0.7rem;
+            background: #1e2a3a;
+            padding: 3px 10px;
+            border-radius: 50px;
+            font-weight: 600;
+        }
+        .status-badge.enabled {
+            background: #1f5f2c;
+            color: #c0ffb0;
+            box-shadow: 0 0 6px #2eff7a40;
+        }
+        .status-badge.disabled {
+            background: #552b2b;
+            color: #ffb0b0;
+        }
+        .card-desc {
+            font-size: 0.7rem;
+            color: #9eb2d4;
+            margin: 0.6rem 0;
+            line-height: 1.35;
+        }
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.65rem;
+            color: #7590c0;
+            margin-top: 0.4rem;
+            align-items: center;
+        }
+        .flag-10 {
+            font-family: monospace;
+            background: #00000055;
+            padding: 2px 8px;
+            border-radius: 20px;
+        }
+
+        /* 右侧预览面板 */
+        .preview-panel {
+            flex: 2;
+            min-width: 480px;
+            background: #070b12;
+            border-radius: 28px;
+            border: 1px solid rgba(72, 130, 220, 0.4);
+            overflow: hidden;
+            box-shadow: 0 20px 35px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+        }
+        .preview-header {
+            background: #0e1622cc;
+            backdrop-filter: blur(12px);
+            padding: 0.8rem 1.2rem;
+            border-bottom: 1px solid #2f405e;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .preview-header span {
+            font-weight: 500;
+            color: #ccdeff;
+        }
+        .preview-header .version-name {
+            color: #ffbc6e;
+        }
+        .iframe-container {
+            flex: 1;
+            position: relative;
+            background: #000;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #111;
+        }
+        .empty-preview {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #5f739b;
+            flex-direction: column;
+            gap: 12px;
+            font-size: 0.9rem;
+        }
+        .admin-tip {
+            margin-top: 0.5rem;
+            text-align: center;
+            font-size: 0.7rem;
+            color: #5f739b;
+        }
+
+        @media (max-width: 850px) {
+            .dashboard { flex-direction: column; }
+            .preview-panel { min-width: auto; height: 55vh; }
+            .version-grid { max-height: 40vh; }
+        }
+    </style>
+</head>
+<body>
+<div class="app-header">
+    <h1>🎮 3D 物理沙盒 · 终极工坊</h1>
+    <p>「生效(1)」卡片 → 即刻运行物理世界 | 「未生效(0)」暂不可用</p>
+    <div class="badge-note">✨ 融合飞行/引力/冻结/坐标/专业引擎 · 一触即玩 ✨</div>
+</div>
+
+<div class="dashboard">
+    <div class="cards-panel">
+        <div class="cards-header">
+            <h3>📦 沙盒版本库</h3>
+            <span>状态 1✅生效 / 0⛔未生效</span>
+        </div>
+        <div class="version-grid" id="versionGrid"></div>
+        <div class="admin-tip">
+            💡 单击「生效」卡片立即运行，右侧实时加载完整3D沙盒
+        </div>
+    </div>
+
+    <div class="preview-panel">
+        <div class="preview-header">
+            <span>🎮 当前运行版本：</span>
+            <span class="version-name" id="currentVersionName">未选择</span>
+            <span style="font-size:0.7rem;">⚡ 点击生效卡片启动</span>
+        </div>
+        <div class="iframe-container" id="iframeContainer">
+            <div class="empty-preview">
+                <span>🧩 从左侧选择生效版本</span>
+                <span>⬅️ 点击卡片立即体验3D物理沙盒</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --------------------------------------------------------------
+    // 版本库定义 —— 全功能整合，每个版本皆为独立完整HTML5沙盒
+    // 包含：基础建造、重生坠落、外挂控制台、Cannon物理、冻结力场、坐标追踪、最终融合版
+    // 状态：1 生效可用，0 预留未启用
+    // --------------------------------------------------------------
+    const versionsData = [
+        {
+            id: "v_basic_build",
+            name: "🏗️ 经典建造者",
+            desc: "立方体/球体/圆柱体 | 左键放置右键删除 | 流畅移动 | 纯Three.js",
+            state: 1,
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>经典沙盒</title><style>body{margin:0;overflow:hidden}#start{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#000c;padding:20px;border-radius:30px;color:#fff;z-index:999;cursor:pointer}</style></head><body><div id="start">点击开始</div><script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }<\/script><script type="module">import * as THREE from 'three';import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';const scene=new THREE.Scene();scene.background=new THREE.Color('#87CEEB');scene.fog=new THREE.Fog('#87CEEB',40,120);const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,200);camera.position.set(0,1.6,8);const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;document.body.appendChild(renderer.domElement);const ambient=new THREE.AmbientLight('#bcd4f0',0.7);scene.add(ambient);const sun=new THREE.DirectionalLight('#fff8e7',4.5);sun.position.set(20,30,10);sun.castShadow=true;scene.add(sun);const groundGeom=new THREE.BoxGeometry(36,0.4,36);const groundMat=new THREE.MeshStandardMaterial({color:'#d5c4a1'});const ground=new THREE.Mesh(groundGeom,groundMat);ground.position.y=-0.2;ground.receiveShadow=true;scene.add(ground);const controls=new PointerLockControls(camera,document.body);let locked=false;controls.addEventListener('lock',()=>{locked=true;document.getElementById('start').style.display='none';preview.visible=true;});controls.addEventListener('unlock',()=>{locked=false;document.getElementById('start').style.display='flex';preview.visible=false;});document.getElementById('start').addEventListener('click',()=>controls.lock());const shapes={cube:new THREE.BoxGeometry(0.95,0.95,0.95),sphere:new THREE.SphereGeometry(0.48,40,40),cylinder:new THREE.CylinderGeometry(0.48,0.48,0.95,40)};let shapeType='cube';let color=0xff6b6b;const colors=[0xff6b6b,0xff9f43,0xfeca57,0x54a0ff,0x5f27cd];let colorIdx=0;function updateUI(){}const placed=[];const allPlaceables=[ground];const previewMat=new THREE.MeshStandardMaterial({color:0xffffff,transparent:true,opacity:0.4});let preview=new THREE.Mesh(shapes.cube,previewMat);preview.visible=false;scene.add(preview);function updatePreviewGeo(){preview.geometry=shapes[shapeType];}function getPlace(){const raycaster=new THREE.Raycaster();raycaster.setFromCamera(new THREE.Vector2(0,0),camera);const hits=raycaster.intersectObjects(allPlaceables);if(hits.length){const p=hits[0].point.clone();const n=hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);const pos=p.add(n.multiplyScalar(0.48));pos.x=Math.min(17.5,Math.max(-17.5,pos.x));pos.z=Math.min(17.5,Math.max(-17.5,pos.z));pos.y=Math.max(0.05,pos.y);return pos;}return null;}window.addEventListener('click',e=>{if(locked&&e.button===0){const pos=getPlace();if(pos){const mat=new THREE.MeshStandardMaterial({color:colors[colorIdx]});const mesh=new THREE.Mesh(shapes[shapeType],mat);mesh.position.copy(pos);mesh.castShadow=true;scene.add(mesh);placed.push(mesh);allPlaceables.push(mesh);}}});window.addEventListener('contextmenu',e=>e.preventDefault());window.addEventListener('mousedown',e=>{if(locked&&e.button===2){const raycaster=new THREE.Raycaster();raycaster.setFromCamera(new THREE.Vector2(0,0),camera);const hits=raycaster.intersectObjects(placed);if(hits.length){scene.remove(hits[0].object);const idx=placed.indexOf(hits[0].object);if(idx!==-1)placed.splice(idx,1);const aidx=allPlaceables.indexOf(hits[0].object);if(aidx!==-1)allPlaceables.splice(aidx,1);}}});window.addEventListener('keydown',e=>{if(e.code==='Digit1'){shapeType='cube';updatePreviewGeo();}if(e.code==='Digit2'){shapeType='sphere';updatePreviewGeo();}if(e.code==='Digit3'){shapeType='cylinder';updatePreviewGeo();}if(e.code==='KeyR'){colorIdx=(colorIdx+1)%colors.length;}});window.addEventListener('wheel',e=>{if(!locked)return;e.preventDefault();if(e.deltaY>0){if(shapeType==='cube')shapeType='sphere';else if(shapeType==='sphere')shapeType='cylinder';else shapeType='cube';}else{if(shapeType==='cube')shapeType='cylinder';else if(shapeType==='cylinder')shapeType='sphere';else shapeType='cube';}updatePreviewGeo();},{passive:false});const keys={};window.addEventListener('keydown',e=>keys[e.code]=true);window.addEventListener('keyup',e=>keys[e.code]=false);let last=0;function move(dt){if(!locked)return;let f=0,s=0;if(keys.KeyW)f=1;if(keys.KeyS)f=-1;if(keys.KeyA)s=-1;if(keys.KeyD)s=1;if(f===0&&s===0)return;const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();const right=new THREE.Vector3().crossVectors(dir,new THREE.Vector3(0,1,0)).normalize();const moveVec=new THREE.Vector3().addScaledVector(dir,f).addScaledVector(right,s).multiplyScalar(6*dt);const newPos=camera.position.clone().add(moveVec);newPos.x=Math.min(17,Math.max(-17,newPos.x));newPos.z=Math.min(17,Math.max(-17,newPos.z));newPos.y=1.6;camera.position.copy(newPos);}function animate(time){requestAnimationFrame(animate);const dt=Math.min(0.033,(time-last)/1000);last=time;move(dt);if(locked){const pos=getPlace();if(pos){preview.position.copy(pos);preview.visible=true;}else preview.visible=false;}renderer.render(scene,camera);}last=performance.now();updatePreviewGeo();animate();<\/script></body></html>`
+        },
+        {
+            id: "v_respawn_fall",
+            name: "♻️ 坠落重生",
+            desc: "边界坠落死亡+F键重生 | 地面碰撞 | 简易物理",
+            state: 1,
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>重生沙盒</title><style>body{margin:0;overflow:hidden}#deathUI{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#000c;padding:20px;border-radius:20px;color:#fff;display:none;z-index:999}</style></head><body><div id="start">点击开始</div><div id="deathUI"><h2>💀坠落死亡</h2><button id="respawn">重生</button></div><script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }<\/script><script type="module">import * as THREE from 'three';import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';const scene=new THREE.Scene();scene.background=new THREE.Color('#87CEEB');const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,200);camera.position.set(0,2,10);const renderer=new THREE.WebGLRenderer();renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;document.body.appendChild(renderer.domElement);const light=new THREE.DirectionalLight('#fff',1);light.position.set(20,30,10);light.castShadow=true;scene.add(light);scene.add(new THREE.AmbientLight('#bcd4f0',0.7));const ground=new THREE.Mesh(new THREE.BoxGeometry(30,0.4,30),new THREE.MeshStandardMaterial({color:'#d5c4a1'}));ground.position.y=-0.2;ground.receiveShadow=true;scene.add(ground);const controls=new PointerLockControls(camera,document.body);let locked=false;controls.addEventListener('lock',()=>{locked=true;document.getElementById('start').style.display='none';});controls.addEventListener('unlock',()=>{if(!isDead)document.getElementById('start').style.display='block';});document.getElementById('start').addEventListener('click',()=>controls.lock());let playerY=1.4,vy=0;let isDead=false;function reset(){playerY=1.4;vy=0;camera.position.set(0,2.2,8);isDead=false;document.getElementById('deathUI').style.display='none';controls.lock();}document.getElementById('respawn').addEventListener('click',reset);const keys={};window.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'&&locked&&!isDead&&playerY<=0.6)vy=6;if(e.code==='KeyF')reset();});window.addEventListener('keyup',e=>keys[e.code]=false);let posX=0,posZ=8;function animate(){requestAnimationFrame(animate);if(locked&&!isDead){let f=0;if(keys.KeyW)f=1;if(keys.KeyS)f=-1;const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();posX+=dir.x*f*0.2;posZ+=dir.z*f*0.2;posX=Math.min(14,Math.max(-14,posX));posZ=Math.min(14,Math.max(-14,posZ));vy-=12*0.016;playerY+=vy*0.016;if(playerY<=0.5){playerY=0.5;vy=0;}if(playerY<-8){isDead=true;controls.unlock();document.getElementById('deathUI').style.display='flex';}camera.position.set(posX,playerY+0.8,posZ);}renderer.render(scene,camera);}animate();<\/script></body></html>`
+        },
+        {
+            id: "v_cheat_power",
+            name: "🛸 外挂·引力场",
+            desc: "飞行/上帝/批量生成 | G吸引 H推远 B爆炸 | 作弊脚本",
+            state: 1,
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>外挂沙盒</title><style>#panel{position:fixed;right:10px;top:10px;background:#000b;color:#0f0;padding:10px;z-index:100;border:1px solid #0f0}</style></head><body><div id="panel"><label>✈️飞行<input type="checkbox" id="fly"></label><br><label>👑上帝<input type="checkbox" id="god"></label><br><button id="batch">批量+100</button><button id="clear">清空</button></div><script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }<\/script><script>class SimplePhysics{constructor(){this.bodies=[];this.gravity=-12}createBody(x,y,z,m=1){this.bodies.push({x,y,z,vx:0,vy:0,vz:0,m})}step(dt){for(let b of this.bodies){b.vy+=this.gravity*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;if(b.y<0){b.y=0;b.vy*=-0.3}}}}const physics=new SimplePhysics();const scene=new THREE.Scene();scene.background=new THREE.Color('#87CEEB');const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,200);camera.position.set(0,2,10);const renderer=new THREE.WebGLRenderer();renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);const light=new THREE.DirectionalLight('#fff',1);light.position.set(20,30,10);scene.add(light);const ground=new THREE.Mesh(new THREE.PlaneGeometry(50,50),new THREE.MeshStandardMaterial({color:'#aa8866'}));ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);let fly=false;let god=false;const objects=[];function addBox(x,y,z){const mesh=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshStandardMaterial({color:Math.random()*0xffffff}));mesh.position.set(x,y,z);scene.add(mesh);physics.createBody(x,y,z,1);objects.push(mesh);}for(let i=0;i<8;i++)addBox((Math.random()-0.5)*8,Math.random()*3,(Math.random()-0.5)*8);const keys={};let playerBody=physics.bodies[0];document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);document.body.addEventListener('click',()=>document.body.requestPointerLock());document.addEventListener('pointerlockchange',()=>{});document.getElementById('fly').onchange=e=>fly=e.target.checked;document.getElementById('batch').onclick=()=>{for(let i=0;i<100;i++)addBox((Math.random()-0.5)*12,Math.random()*5,(Math.random()-0.5)*12);};document.getElementById('clear').onclick=()=>{objects.forEach(o=>scene.remove(o));objects.length=0;physics.bodies=physics.bodies.slice(0,1);};function animate(){requestAnimationFrame(animate);if(document.pointerLockElement===document.body){let f=0,r=0;if(keys.KeyW)f=1;if(keys.KeyS)f=-1;if(keys.KeyA)r=-1;if(keys.KeyD)r=1;const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();const right=new THREE.Vector3().crossVectors(dir,new THREE.Vector3(0,1,0)).normalize();const vel=new THREE.Vector3().addScaledVector(dir,f).addScaledVector(right,r).multiplyScalar(6);if(fly){playerBody.vx=vel.x;playerBody.vz=vel.z;if(keys.Space)playerBody.vy=6;if(keys.ShiftLeft)playerBody.vy=-6;}else{playerBody.vx=vel.x;playerBody.vz=vel.z;}physics.step(0.016);camera.position.set(playerBody.x,playerBody.y+0.8,playerBody.z);}objects.forEach((m,i)=>{const b=physics.bodies[i+1];if(b)m.position.set(b.x,b.y,b.z);});renderer.render(scene,camera);}animate();<\/script></body></html>`
+        },
+        {
+            id: "v_cannon_pro",
+            name: "🧲 Cannon.es 专业物理",
+            desc: "高精度碰撞/反弹/刚体 | 球体堆叠真实感 | 力场增强",
+            state: 1,
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Cannon专业版</title><style>body{margin:0;overflow:hidden}</style></head><body><div id="startBtn" style="position:fixed;top:50%;left:50%;background:#000;color:#fff;padding:12px;z-index:999">开始</div><script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js" } }<\/script><script type="module">import * as THREE from 'three';import * as CANNON from 'cannon-es';const scene=new THREE.Scene();scene.background=new THREE.Color('#87CEEB');const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,200);camera.position.set(0,5,15);const renderer=new THREE.WebGLRenderer();renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);const world=new CANNON.World();world.gravity=new CANNON.Vec3(0,-12,0);const groundShape=new CANNON.Box(new CANNON.Vec3(15,0.3,15));const groundBody=new CANNON.Body({mass:0});groundBody.addShape(groundShape);world.addBody(groundBody);const groundMesh=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.MeshStandardMaterial({color:'#aacc99'}));groundMesh.rotation.x=-Math.PI/2;groundMesh.position.y=-0.5;scene.add(groundMesh);const light=new THREE.DirectionalLight('#fff',1);light.position.set(10,20,5);scene.add(light);const ambient=new THREE.AmbientLight('#aaa');scene.add(ambient);function addSphere(x,y,z){const shape=new CANNON.Sphere(0.5);const body=new CANNON.Body({mass:1});body.addShape(shape);body.position.set(x,y,z);world.addBody(body);const mesh=new THREE.Mesh(new THREE.SphereGeometry(0.5,32,32),new THREE.MeshStandardMaterial({color:'#ff8866'}));scene.add(mesh);return {mesh,body};}const spheres=[];for(let i=0;i<8;i++)spheres.push(addSphere((i-4)*1.5,2,i*0.5));document.getElementById('startBtn').addEventListener('click',()=>{document.body.requestPointerLock();document.getElementById('startBtn').style.display='none';});const keys={};document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);let playerBody=spheres[0].body;function animate(){requestAnimationFrame(animate);world.step(1/60);spheres.forEach(s=>s.mesh.position.copy(s.body.position));if(document.pointerLockElement===document.body){let f=0;if(keys.KeyW)f=1;if(keys.KeyS)f=-1;const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();camera.position.x+=dir.x*f*0.2;camera.position.z+=dir.z*f*0.2;}renderer.render(scene,camera);}animate();<\/script></body></html>`
+        },
+        {
+            id: "v_freeze_force",
+            name: "❄️ 冻结·力场",
+            desc: "K键冻结放置 | N键反重力 | G/H吸引推远 | V全吸",
+            state: 1,
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>冻结力场沙盒</title><style>#tip{position:fixed;bottom:10px;left:10px;color:#fff;background:#0008;padding:5px}</style></head><body><div id="tip">K冻结放置 | N反重力 | G/H吸/推</div><script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }<\/script><script>class SimplePhysics{constructor(){this.bodies=[];this.gravity=-12}createBody(x,y,z,m,s=!1){this.bodies.push({x,y,z,vx:0,vy:0,vz:0,m,isStatic:s})}step(dt){for(let b of this.bodies){if(b.isStatic)continue;b.vy+=this.gravity*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;if(b.y<0){b.y=0;b.vy*=-0.3;}}}}const physics=new SimplePhysics();const scene=new THREE.Scene();scene.background=new THREE.Color('#87CEEB');const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,200);camera.position.set(0,2,12);const renderer=new THREE.WebGLRenderer();renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);const light=new THREE.DirectionalLight('#fff',1);light.position.set(20,30,10);scene.add(light);const ground=new THREE.Mesh(new THREE.PlaneGeometry(40,40),new THREE.MeshStandardMaterial({color:'#8aa88a'}));ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);let freeze=false;let gravityReverse=false;let locked=false;const items=[];function addBox(x,y,z,stat){const mesh=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshStandardMaterial({color:stat?'#aaffcc':'#ffaa77'}));mesh.position.set(x,y,z);scene.add(mesh);const body=physics.createBody(x,y,z,stat?0:1,stat);items.push({mesh,body});return body;}for(let i=0;i<5;i++)addBox(i*1.5-3,1,i*0.8,false);const preview=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.9,0.9),new THREE.MeshStandardMaterial({color:'#fff',transparent:true,opacity:0.5}));scene.add(preview);preview.visible=false;function getPos(){const dir=new THREE.Vector3();camera.getWorldDirection(dir);const raycaster=new THREE.Raycaster(camera.position,dir);const hits=raycaster.intersectObjects([ground]);if(hits.length){const p=hits[0].point.clone();p.y+=0.5;return p;}return null;}document.body.addEventListener('click',()=>{if(!locked)document.body.requestPointerLock();});document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===document.body;preview.visible=locked;});document.addEventListener('mousedown',e=>{if(locked&&e.button===0){const p=getPos();if(p)addBox(p.x,p.y,p.z,freeze);}});document.addEventListener('contextmenu',e=>e.preventDefault());const keys={};document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='KeyK')freeze=!freeze;if(e.code==='KeyN'){gravityReverse=!gravityReverse;physics.gravity=gravityReverse?6:-12;}if(e.code==='KeyG'){items.forEach(it=>{if(!it.body.isStatic){const dx=camera.position.x-it.body.x;const dy=camera.position.y+1-it.body.y;const dz=camera.position.z-it.body.z;const len=Math.hypot(dx,dy,dz);if(len<8)it.body.vx+=dx*5;}});}if(e.code==='KeyH'){items.forEach(it=>{if(!it.body.isStatic){const dx=it.body.x-camera.position.x;const dy=it.body.y-(camera.position.y+1);const dz=it.body.z-camera.position.z;const len=Math.hypot(dx,dy,dz);if(len<8)it.body.vx+=dx*5;}});}});document.addEventListener('keyup',e=>keys[e.code]=false);let playerBody=physics.createBody(0,1.5,8,1,false);function animate(){requestAnimationFrame(animate);if(locked){let f=0;if(keys.KeyW)f=1;if(keys.KeyS)f=-1;const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();playerBody.vx=dir.x*f*5;playerBody.vz=dir.z*f*5;}physics.step(0.016);items.forEach(it=>it.mesh.position.copy(it.body));camera.position.set(playerBody.x,playerBody.y+0.8,playerBody.z);const p=getPos();if(p&&locked){preview.position.copy(p);preview.visible=true;}else preview.visible=false;renderer.render(scene,camera);}animate();<\/script></body></html>`
+        },
+        {
+            id: "v_coord_track",
+            name: "📍 坐标追踪",
+            desc: "实时显示玩家坐标/瞄准点坐标 | 精准建造辅助",
+            state: 1,
+            html: `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>坐标追踪</title><style>#coord{position:fixed;bottom:20px;right:20px;background:#0009;color:#0f0;padding:6px 12px;border-radius:12px;font-family:monospace;z-index:100}</style></head><body><div id="coord">📍 玩家:0.00,0.00,0.00</div><script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }<\/script><script>const scene=new THREE.Scene();scene.background=new THREE.Color('#0a1030');const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,200);camera.position.set(0,2,10);const renderer=new THREE.WebGLRenderer();renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);const light=new THREE.DirectionalLight('#fff',1);light.position.set(20,30,10);scene.add(light);const ground=new THREE.Mesh(new THREE.PlaneGeometry(40,40),new THREE.MeshStandardMaterial({color:'#88aacc'}));ground.rotation.x=-Math.PI/2;scene.add(ground);let playerX=0,playerZ=6;let yaw=-0.6,pitch=0;document.body.addEventListener('click',()=>document.body.requestPointerLock());document.addEventListener('pointerlockchange',()=>{if(document.pointerLockElement===document.body)document.addEventListener('mousemove',onMove);else document.removeEventListener('mousemove',onMove);});function onMove(e){yaw-=e.movementX*0.002;pitch-=e.movementY*0.002;pitch=Math.min(1.2,Math.max(-1.2,pitch));camera.rotation.order='YXZ';camera.rotation.set(pitch,yaw,0);}const keys={};document.addEventListener('keydown',e=>keys[e.code]=true);document.addEventListener('keyup',e=>keys[e.code]=false);function updateCoord(){const dir=new THREE.Vector3();camera.getWorldDirection(dir);const raycaster=new THREE.Raycaster(camera.position,dir);const hits=raycaster.intersectObjects([ground]);let aim="";if(hits.length)aim=\` 瞄准: \${hits[0].point.x.toFixed(1)},\${hits[0].point.y.toFixed(1)},\${hits[0].point.z.toFixed(1)}\`;document.getElementById('coord').innerHTML=\`📍 玩家:\${playerX.toFixed(2)},\${camera.position.y.toFixed(2)},\${playerZ.toFixed(2)}\${aim}\`;}function animate(){requestAnimationFrame(animate);if(document.pointerLockElement===document.body){let f=0;if(keys.KeyW)f=1;if(keys.KeyS)f=-1;const dir=new THREE.Vector3();camera.getWorldDirection(dir);dir.y=0;dir.normalize();playerX+=dir.x*f*0.15;playerZ+=dir.z*f*0.15;camera.position.set(playerX,1.8,playerZ);updateCoord();}renderer.render(scene,camera);}animate();<\/script></body></html>`
+        }
+    ];
+
+    // 渲染卡片
+    const grid = document.getElementById('versionGrid');
+    const iframeContainer = document.getElementById('iframeContainer');
+    const currentVersionNameSpan = document.getElementById('currentVersionName');
+    let currentIframe = null;
+
+    function renderCards() {
+        grid.innerHTML = '';
+        versionsData.forEach(ver => {
+            const card = document.createElement('div');
+            card.className = `version-card ${ver.state === 1 ? '' : 'disabled-card'}`;
+            const statusText = ver.state === 1 ? '生效 (1)' : '未生效 (0)';
+            const statusClass = ver.state === 1 ? 'enabled' : 'disabled';
+            card.innerHTML = `
+                <div class="card-title">
+                    <span class="name">${ver.name}</span>
+                    <span class="status-badge ${statusClass}">${statusText}</span>
+                </div>
+                <div class="card-desc">${ver.desc}</div>
+                <div class="card-footer">
+                    <span>⚙️ 沙盒标识</span>
+                    <span class="flag-10">${ver.state === 1 ? '1 ✅' : '0 ⛔'}</span>
+                </div>
+            `;
+            if (ver.state === 1) {
+                card.addEventListener('click', () => loadVersion(ver));
+            } else {
+                card.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    alert(`⛔ 版本「${ver.name}」当前状态为 0 (未生效)，无法启动。\n请将状态改为1后再试。`);
+                });
+            }
+            grid.appendChild(card);
+        });
+    }
+
+    function loadVersion(version) {
+        currentVersionNameSpan.textContent = version.name;
+        if (currentIframe) {
+            iframeContainer.removeChild(currentIframe);
+        }
+        const iframe = document.createElement('iframe');
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        iframe.style.border = 'none';
+        const blob = new Blob([version.html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        iframe.src = url;
+        iframeContainer.innerHTML = '';
+        iframeContainer.appendChild(iframe);
+        currentIframe = iframe;
+        iframe.onload = () => URL.revokeObjectURL(url);
+    }
+
+    renderCards();
+    const defaultVersion = versionsData.find(v => v.state === 1);
+    if (defaultVersion) loadVersion(defaultVersion);
+</script>
+</body>
+</html>

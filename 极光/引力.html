@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>N-body 引力</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06060c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(6,6,12,0.8), rgba(6,6,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">星系 <b id="m">星系盘</b></div>
+  <button class="btn" id="btn-reset">重新生成</button>
+  <button class="btn pri" id="btn-change">换形态</button>
+</div>
+
+<div id="hint">按住屏幕 = 一个额外引力巨星 · 恒星会绕它打转</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    bodies: isMobile ? 120 : 220,   // 天体数
+    G: 110,                          // 引力常数
+    softening: 140,                  // 软化系数（防止奇点）
+    massSpread: 0.55,                // 质量差异
+    initSpin: 1.1,                   // 初始旋转速度
+
+    trail: 0.05,                     // 拖尾（越小越长）
+    colorMode: 'speed',              // speed | mass
+    colorA: '#ffe08a',               // 慢 → 亮黄
+    colorB: '#5f7bff',               // 快 → 蓝
+    background: '#06060c',
+
+    mouseMass: 800,                  // 指针"巨星"质量
+    mouseForce: 0                  // 额外指针吸引力（额外）
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    seed();
+  }
+
+  // ---------- 天体 ----------
+  const N_MAX = 400;
+  const bx = new Float32Array(N_MAX);
+  const by = new Float32Array(N_MAX);
+  const bvx = new Float32Array(N_MAX);
+  const bvy = new Float32Array(N_MAX);
+  const bm = new Float32Array(N_MAX);
+  const maxMassRef = { v: 1 };
+  let N = 0;
+
+  const rng = (() => {
+    let s = Date.now() | 0;
+    return () => {
+      s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+      return ((s >>> 0) % 1e6) / 1e6;
+    };
+  })();
+
+  function seed() {
+    N = Math.min(N_MAX, CFG.bodies);
+    const cx = W / 2, cy = H / 2;
+    const R = Math.min(W, H) * 0.42;
+
+    // 随机质量（幂律 → 少数巨星 + 多数小星）
+    let maxMass = 0;
+    for (let i = 0; i < N; i++) {
+      const m = 1 + CFG.massSpread * Math.pow(rng(), 3) * 60;
+      bm[i] = m;
+      if (m > maxMass) maxMass = m;
+    }
+    maxMassRef.v = maxMass;
+
+    // 初始分布：略偏心的盘
+    for (let i = 0; i < N; i++) {
+      const a = rng() * Math.PI * 2;
+      const r = Math.sqrt(rng()) * R;
+      bx[i] = cx + Math.cos(a) * r;
+      by[i] = cy + Math.sin(a) * r;
+
+      // 切向速度 → 天然自转
+      const spin = CFG.initSpin * (0.8 + rng() * 0.4);
+      bvx[i] = -Math.sin(a) * spin + (rng() - 0.5) * 0.6;
+      bvy[i] = Math.cos(a) * spin + (rng() - 0.5) * 0.6;
+    }
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+  cv.addEventListener('touchstart', e => {
+    const r = rect(); const t = e.touches[0];
+    pointer.x = t.clientX - r.left; pointer.y = t.clientY - r.top;
+    pointer.inside = true; pointer.down = true;
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchmove', e => {
+    const r = rect(); const t = e.touches[0];
+    pointer.x = t.clientX - r.left; pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchend', () => { pointer.down = false; });
+  cv.addEventListener('mousedown', e => {
+    const r = rect();
+    pointer.x = e.clientX - r.left; pointer.y = e.clientY - r.top;
+    pointer.inside = true; pointer.down = true;
+  });
+  cv.addEventListener('mousemove', e => {
+    const r = rect();
+    pointer.x = e.clientX - r.left; pointer.y = e.clientY - r.top;
+    pointer.inside = true;
+  });
+  cv.addEventListener('mouseup', () => { pointer.down = false; });
+  cv.addEventListener('mouseleave', () => { pointer.down = false; });
+
+  // ---------- 物理一步 ----------
+  function physics(dt) {
+    const G = CFG.G;
+    const soft2 = CFG.softening * CFG.softening;
+
+    // 加速度累加
+    const ax = new Float32Array(N);
+    const ay = new Float32Array(N);
+
+    // 两两引力
+    for (let i = 0; i < N; i++) {
+      const xi = bx[i], yi = by[i];
+      for (let j = i + 1; j < N; j++) {
+        const dx = bx[j] - xi;
+        const dy = by[j] - yi;
+        const d2 = dx * dx + dy * dy + soft2;
+        const invD = 1 / Math.sqrt(d2);
+        const invD3 = invD / d2;
+        const f = G * invD3;
+        ax[i] += dx * f * bm[j];
+        ay[i] += dy * f * bm[j];
+        ax[j] -= dx * f * bm[i];
+        ay[j] -= dy * f * bm[i];
+      }
+    }
+
+    // 指针"巨星"引力
+    if (pointer.inside && pointer.down) {
+      const m = CFG.mouseMass;
+      for (let i = 0; i < N; i++) {
+        const dx = pointer.x - bx[i];
+        const dy = pointer.y - by[i];
+        const d2 = dx * dx + dy * dy + soft2;
+        const invD = 1 / Math.sqrt(d2);
+        const invD3 = invD / d2;
+        const f = G * invD3 * m;
+        ax[i] += dx * f;
+        ay[i] += dy * f;
+      }
+    }
+
+    // 速度积分
+    const t = clamp(dt, 0, 1 / 30);
+    const maxSpeed = Math.max(W, H) * 1.6;
+
+    for (let i = 0; i < N; i++) {
+      let vx = bvx[i] + ax[i] * t;
+      let vy = bvy[i] + ay[i] * t;
+      // 限制最大速度（防止飞出去）
+      const sp = Math.hypot(vx, vy);
+      if (sp > maxSpeed) {
+        vx = vx / sp * maxSpeed;
+        vy = vy / sp * maxSpeed;
+      }
+      bvx[i] = vx;
+      bvy[i] = vy;
+      bx[i] += vx * t;
+      by[i] += vy * t;
+    }
+
+    // 出界重生（从边缘内部重新注入）
+    const margin = Math.max(W, H) * 0.6;
+    for (let i = 0; i < N; i++) {
+      if (bx[i] < -margin || bx[i] > W + margin ||
+          by[i] < -margin || by[i] > H + margin) {
+        const a = rng() * Math.PI * 2;
+        const r = Math.min(W, H) * 0.2 * rng();
+        bx[i] = W / 2 + Math.cos(a) * r;
+        by[i] = H / 2 + Math.sin(a) * r;
+        const sp = CFG.initSpin;
+        bvx[i] = -Math.sin(a) * sp;
+        bvy[i] = Math.cos(a) * sp;
+      }
+    }
+  }
+
+  // ---------- 渲染 ----------
+  function render() {
+    const [br, bg, bb] = hex2rgb(CFG.background);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(${br},${bg},${bb},${CFG.trail})`;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    const [ar, ag, ab] = hex2rgb(CFG.colorA);
+    const [cr, cg, cb] = hex2rgb(CFG.colorB);
+    const mode = CFG.colorMode;
+    const maxMass = maxMassRef.v;
+
+    for (let i = 0; i < N; i++) {
+      const sp = Math.hypot(bvx[i], bvy[i]);
+      let R, G, B;
+
+      if (mode === 'mass') {
+        const t = clamp((bm[i] - 1) / (maxMass - 1), 0, 1);
+        R = ar + (cr - ar) * t | 0;
+        G = ag + (cg - ag) * t | 0;
+        B = ab + (cb - ab) * t | 0;
+      } else {
+        const t = clamp(sp / 6, 0, 1);
+        R = ar + (cr - ar) * t | 0;
+        G = ag + (cg - ag) * t | 0;
+        B = ab + (cb - ab) * t | 0;
+      }
+
+      // 大小跟质量挂钩
+      const sz = Math.max(0.8, Math.min(4.5, Math.sqrt(bm[i]) * 0.7));
+      const alpha = clamp(0.5 + Math.sqrt(bm[i]) * 0.05, 0.4, 0.95);
+
+      ctx.fillStyle = `rgba(${R},${G},${B},${alpha})`;
+      ctx.beginPath();
+      ctx.arc(bx[i], by[i], sz, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    // 每帧最多跑 2 次物理（防止卡顿时物理跳跃）
+    physics(dt);
+
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', seed);
+
+  const MODES = [
+    { name: '星系盘',   G: 110, softening: 130, massSpread: 0.55, initSpin: 1.1,
+      trail: 0.05, colorMode: 'speed', colorA: '#ffe08a', colorB: '#5f7bff',
+      background: '#06060c', bodies: isMobile ? 120 : 220 },
+    { name: '双星团',   G: 150, softening: 110, massSpread: 0.35, initSpin: 0.7,
+      trail: 0.08, colorMode: 'mass',  colorA: '#ff8a5c', colorB: '#5cd8ff',
+      background: '#060a12', bodies: isMobile ? 140 : 260 },
+    { name: '尘埃吸积', G: 90,  softening: 200, massSpread: 0.15, initSpin: 0.5,
+      trail: 0.035, colorMode: 'speed', colorA: '#fff4c2', colorB: '#7c4bff',
+      background: '#05040c', bodies: isMobile ? 180 : 340 },
+    { name: '混沌三体', G: 300, softening: 60,  massSpread: 0.85, initSpin: 0.3,
+      trail: 0.02, colorMode: 'mass',  colorA: '#ff5c8a', colorB: '#5cffe0',
+      background: '#05080a', bodies: isMobile ? 3 : 6 },
+    { name: '银河',     G: 80,  softening: 160, massSpread: 0.7, initSpin: 1.4,
+      trail: 0.03, colorMode: 'mass',  colorA: '#fff2b0', colorB: '#4b3dff',
+      background: '#04040a', bodies: isMobile ? 160 : 300 }
+  ];
+  let modeIdx = 0;
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    modeIdx = (modeIdx + 1) % MODES.length;
+    Object.assign(CFG, MODES[modeIdx]);
+    mEl.textContent = MODES[modeIdx].name;
+    seed();
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); });
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  mEl.textContent = MODES[0].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

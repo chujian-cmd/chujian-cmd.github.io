@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D启动器 · 终极典藏版 · 全系列整合</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        html, body {
+            height: 100%;
+            background: radial-gradient(circle at 20% 30%, #0a0f1e, #010205);
+            color: #f0f3fa;
+            font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, 'Roboto', monospace;
+            overflow: hidden;
+        }
+
+        /* 高级玻璃顶栏 */
+        .top {
+            background: rgba(12, 18, 28, 0.85);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+            padding: 10px 24px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: flex-start;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            z-index: 100;
+            position: relative;
+        }
+
+        select {
+            background: #0e1622e6;
+            border: 1px solid #2c4b6e;
+            padding: 8px 18px;
+            border-radius: 48px;
+            color: white;
+            font-weight: 500;
+            font-size: 0.85rem;
+            min-width: 300px;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s;
+            font-family: monospace;
+        }
+
+        select:hover {
+            background: #1a2a3f;
+            border-color: #3e9fdf;
+        }
+
+        button {
+            background: #1f2c3c;
+            border: none;
+            padding: 7px 18px;
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            letter-spacing: 0.4px;
+            color: #f0fcff;
+            cursor: pointer;
+            transition: 0.15s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.08);
+        }
+
+        .btn-refresh { background: #2d4055; }
+        .btn-refresh:hover { background: #3e5a7c; }
+
+        .btn-full { background: #0f5f6b; }
+        .btn-full:hover { background: #1a8596; }
+
+        .btn-next { background: #1d6b49; }
+        .btn-next:hover { background: #2b9b68; }
+
+        .file-badge {
+            background: rgba(0, 255, 255, 0.12);
+            padding: 4px 12px;
+            border-radius: 32px;
+            font-size: 0.7rem;
+            font-family: monospace;
+            margin-left: auto;
+            border: 0.5px solid rgba(0,255,255,0.3);
+            white-space: nowrap;
+        }
+
+        iframe {
+            width: 100%;
+            height: calc(100% - 64px);
+            border: none;
+            background: #000000;
+            transition: 0.1s;
+        }
+
+        @media (max-width: 760px) {
+            .top { padding: 8px 12px; gap: 8px; }
+            select { min-width: 200px; font-size: 0.75rem; padding: 6px 12px; }
+            button { padding: 5px 12px; font-size: 0.7rem; }
+            .file-badge { display: none; }
+        }
+
+        /* 迷你toast */
+        .dynamic-toast {
+            position: fixed;
+            bottom: 22px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #0f212ed9;
+            backdrop-filter: blur(12px);
+            color: #bbf9ff;
+            padding: 6px 20px;
+            border-radius: 60px;
+            font-size: 0.75rem;
+            font-family: monospace;
+            z-index: 9999;
+            border: 1px solid #2f8fbf;
+            pointer-events: none;
+            font-weight: 500;
+            letter-spacing: 0.4px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="top">
+    <select id="fileList"></select>
+    <button class="btn-refresh" id="refreshBtn">⟳ 刷新</button>
+    <button class="btn-full" id="fullBtn">◱ 全屏 (/)</button>
+    <button class="btn-next" id="nextBtn">▶ 下一个</button>
+    <div class="file-badge" id="fileCountBadge">📁 加载中...</div>
+</div>
+
+<iframe id="iframe" sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-fullscreen allow-modals allow-popups allow-forms" title="3D沉浸启动器"></iframe>
+
+<script>
+    (function() {
+        // ---------- 基础路径 ----------
+        const base = 'file:///storage/emulated/0/html存放地/3D游戏系列/';
+        
+        // ---------- ★ 核心：完整文件列表（整合原有+新增deepseek_html_*系列） ----------
+        // 根据提供内容: 
+        // deepseek_html_20260531_1f029d
+        // deepseek_html_20260531_41e2f5
+        // deepseek_html_20260531_e34aa9
+        // deepseek_html_20260531_eb1da6 (1)
+        // deepseek_html_20260531_eb1da6
+        // 注意: 其中有带空格“(1)”的变体，和最后一个无括号，一共5个额外html文件。
+        // 另外原要求：未命名增加到56，并且保留原有所有：作品.html,新建文本文档0.html,未命名.html,未命名1.html,
+        // 未命名(1) ~ 未命名(56) , web1.html 以及 web1 (1) ~ web1 (10).html
+        // 再加上新捕捉的这5个deepseek_html文件
+        
+        // 构建完整数组
+        let masterFileList = [];
+        
+        // 1️⃣ 原有特殊固定文件（最先展示）
+        const legacySpecials = [
+            "作品.html",
+            "新建文本文档0.html",
+            "未命名.html",
+            "未命名1.html"
+        ];
+        
+        // 2️⃣ 未命名系列 (1) ~ (56)  严格按照要求从1到56
+        const unnamedList = [];
+        for (let i = 1; i <= 56; i++) {
+            let filename = `未命名 (${i}).html`;
+            let displayLabel = (i === 26) ? `未命名 (26).html 【★最终版本★】` : filename;
+            unnamedList.push({ value: filename, label: displayLabel });
+        }
+        
+        // 3️⃣ web系列 web1.html + web1 (1)~web1 (10)
+        const webSeries = [{ value: "web1.html", label: "web1.html" }];
+        for (let i = 1; i <= 10; i++) {
+            webSeries.push({ value: `web1 (${i}).html`, label: `web1 (${i}).html` });
+        }
+        
+        // 4️⃣ ✨ 新增文件：基于捕获内容 "deepseek_html_20260531_1f029d" 等（注意确保.html后缀）
+        // 给定的文本不含.html扩展名，但根据常规html文件，应补充.html。也有可能文件本身原名无后缀？但依据原启动器加载的都是html文件，补.html
+        // 同时注意文件名中的括号 "(1)" 保留原样
+        const deepseekRaw = [
+            "deepseek_html_20260531_1f029d",
+            "deepseek_html_20260531_41e2f5",
+            "deepseek_html_20260531_e34aa9",
+            "deepseek_html_20260531_eb1da6 (1)",
+            "deepseek_html_20260531_eb1da6"
+        ];
+        const deepseekFiles = deepseekRaw.map(name => {
+            // 保留原名并添加 .html
+            let fullName = name + ".html";
+            return { value: fullName, label: fullName };
+        });
+        
+        // 顺序拼接：特殊文件 → 未命名(1-56) → web系列 → 新增 deepseek 文件组
+        legacySpecials.forEach(f => {
+            masterFileList.push({ value: f, label: f });
+        });
+        
+        // 添加未命名1~56
+        unnamedList.forEach(item => {
+            masterFileList.push({ value: item.value, label: item.label });
+        });
+        
+        // 添加web系列
+        webSeries.forEach(w => {
+            masterFileList.push({ value: w.value, label: w.label });
+        });
+        
+        // 添加deepseek新增文件
+        deepseekFiles.forEach(d => {
+            masterFileList.push({ value: d.value, label: d.label });
+        });
+        
+        // 额外的安全性：确保未命名(26)有标记，且无漏文件。总计数量展示
+        console.log(`[3D启动器] 总文件数量 = ${masterFileList.length}`);
+        console.log(`未命名系列数量: ${unnamedList.length} (1~56) ✅`);
+        console.log(`新增deepseek文件: ${deepseekFiles.length} 个`);
+        
+        // DOM 元素
+        const selectEl = document.getElementById('fileList');
+        const iframe = document.getElementById('iframe');
+        const fileCountBadge = document.getElementById('fileCountBadge');
+        
+        // 显示轻提示
+        function showToast(msg, duration = 1300) {
+            const exist = document.querySelector('.dynamic-toast');
+            if(exist) exist.remove();
+            const div = document.createElement('div');
+            div.className = 'dynamic-toast';
+            div.innerText = msg;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), duration);
+        }
+        
+        // 构建下拉菜单（escapeHtml防XSS）
+        function escapeHtml(str) {
+            return str.replace(/[&<>]/g, function(m) {
+                if(m === '&') return '&amp;';
+                if(m === '<') return '&lt;';
+                if(m === '>') return '&gt;';
+                return m;
+            }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) { return c; });
+        }
+        
+        function buildSelect() {
+            let html = '<option value="">—— 选择 3D / 互动项目 ——</option>';
+            for (let opt of masterFileList) {
+                // 保持原样标记最终版本已经在label体现
+                html += `<option value="${escapeHtml(opt.value)}">${escapeHtml(opt.label)}</option>`;
+            }
+            selectEl.innerHTML = html;
+            // 更新文件数量显示
+            fileCountBadge.innerText = `📄 共${masterFileList.length}项 | 未命名56+deepseek`;
+        }
+        
+        // 加载文件核心
+        function loadFileByValue(fileValue) {
+            if (!fileValue || fileValue === "") {
+                iframe.src = 'about:blank';
+                return false;
+            }
+            const fullPath = base + encodeURIComponent(fileValue);
+            // 重置并加载
+            iframe.src = 'about:blank';
+            setTimeout(() => {
+                iframe.src = fullPath;
+                iframe.onerror = () => {
+                    showToast(`⚠️ 加载失败: ${fileValue} (文件可能不存在)`, 1800);
+                };
+            }, 16);
+            return true;
+        }
+        
+        // 保存当前选中到localStorage
+        function saveCurrentSelection() {
+            const curVal = selectEl.value;
+            if (curVal && curVal !== "") {
+                localStorage.setItem('Ultimate3D_LastFile', curVal);
+            } else {
+                // 如果清空，不保留空值但删除存档（避免空白）
+                localStorage.removeItem('Ultimate3D_LastFile');
+            }
+        }
+        
+        // 切换事件
+        function onFileChange() {
+            const selected = selectEl.value;
+            if (!selected) {
+                iframe.src = 'about:blank';
+                saveCurrentSelection();
+                showToast('🌌 清空视图', 700);
+                return;
+            }
+            loadFileByValue(selected);
+            saveCurrentSelection();
+            // 简短提示：如果有最终版本字样突出
+            let tipMsg = selected;
+            if (selected.includes('未命名 (26).html')) tipMsg = '✨ 最终版本 · 未命名 (26) ✨';
+            else if (selected.startsWith('deepseek')) tipMsg = `🧠 ${selected}`;
+            showToast(`📂 ${tipMsg.length > 40 ? tipMsg.slice(0,40)+'…' : tipMsg}`, 1100);
+        }
+        
+        // 下一个 & 上一个 （基于masterFileList）
+        function nextFile() {
+            const current = selectEl.value;
+            if (!current && masterFileList.length) {
+                selectEl.value = masterFileList[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let idx = masterFileList.findIndex(opt => opt.value === current);
+            if (idx === -1 && masterFileList.length) {
+                selectEl.value = masterFileList[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let nextIdx = (idx + 1) % masterFileList.length;
+            selectEl.value = masterFileList[nextIdx].value;
+            selectEl.dispatchEvent(new Event('change'));
+        }
+        
+        function prevFile() {
+            const current = selectEl.value;
+            if (!current && masterFileList.length) {
+                selectEl.value = masterFileList[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let idx = masterFileList.findIndex(opt => opt.value === current);
+            if (idx === -1 && masterFileList.length) {
+                selectEl.value = masterFileList[0].value;
+                selectEl.dispatchEvent(new Event('change'));
+                return;
+            }
+            let prevIdx = (idx - 1 + masterFileList.length) % masterFileList.length;
+            selectEl.value = masterFileList[prevIdx].value;
+            selectEl.dispatchEvent(new Event('change'));
+        }
+        
+        // 刷新iframe
+        function refreshIframe() {
+            const curSrc = iframe.src;
+            if (!curSrc || curSrc === 'about:blank' || curSrc === '') {
+                if (selectEl.value) {
+                    loadFileByValue(selectEl.value);
+                    showToast('⟳ 重新加载当前页面', 800);
+                } else {
+                    showToast('无活动页面', 700);
+                }
+                return;
+            }
+            const temp = iframe.src;
+            iframe.src = 'about:blank';
+            setTimeout(() => {
+                iframe.src = temp;
+                showToast('🔄 刷新完成', 600);
+            }, 20);
+        }
+        
+        // 全屏功能
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    showToast(`全屏失败: ${err.message}`, 1000);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // 读取存档并自动加载 (优先最近使用的文件)
+        function loadStoredFile() {
+            const lastFile = localStorage.getItem('Ultimate3D_LastFile');
+            if (lastFile) {
+                const exists = masterFileList.some(opt => opt.value === lastFile);
+                if (exists) {
+                    // 设置下拉值
+                    for (let i = 0; i < selectEl.options.length; i++) {
+                        if (selectEl.options[i].value === lastFile) {
+                            selectEl.selectedIndex = i;
+                            break;
+                        }
+                    }
+                    selectEl.dispatchEvent(new Event('change'));
+                    showToast(`💾 自动读档 · ${lastFile}`, 1500);
+                    return;
+                } else {
+                    // 存档文件不在新列表，移除旧存档
+                    localStorage.removeItem('Ultimate3D_LastFile');
+                }
+            }
+            
+            // 默认: 选中最终版本 未命名 (26).html，如果没有则第一个文件
+            const defaultFinal = "未命名 (26).html";
+            const targetOption = masterFileList.find(f => f.value === defaultFinal);
+            if (targetOption) {
+                for (let i = 0; i < selectEl.options.length; i++) {
+                    if (selectEl.options[i].value === defaultFinal) {
+                        selectEl.selectedIndex = i;
+                        break;
+                    }
+                }
+                selectEl.dispatchEvent(new Event('change'));
+                showToast('🎯 加载【最终版本】未命名 (26).html', 1400);
+            } else if (masterFileList.length > 0) {
+                selectEl.selectedIndex = 1;
+                selectEl.dispatchEvent(new Event('change'));
+                showToast('🚀 欢迎使用 3D 启动器', 1200);
+            }
+        }
+        
+        // 绑定事件 & 快捷键
+        function bindGlobalEvents() {
+            document.getElementById('refreshBtn').addEventListener('click', refreshIframe);
+            document.getElementById('fullBtn').addEventListener('click', toggleFullscreen);
+            document.getElementById('nextBtn').addEventListener('click', nextFile);
+            selectEl.addEventListener('change', onFileChange);
+            
+            // 键盘控制：左右键，斜杠全屏
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    nextFile();
+                } else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    prevFile();
+                } else if (e.key === '/') {
+                    e.preventDefault();
+                    toggleFullscreen();
+                } else if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+                    // 刷新iframe，防止浏览器整体刷新页面
+                    e.preventDefault();
+                    refreshIframe();
+                } else if (e.key === 'Home') {
+                    // 可选: 回到第一个有效文件
+                    if (masterFileList.length) {
+                        selectEl.value = masterFileList[0].value;
+                        selectEl.dispatchEvent(new Event('change'));
+                        showToast('回到首个项目', 800);
+                    }
+                    e.preventDefault();
+                }
+            });
+        }
+        
+        // 全屏变化轻提示
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) {
+                showToast('⛶ 全屏模式 (ESC退出)', 900);
+            } else {
+                showToast('退出全屏', 700);
+            }
+        });
+        
+        // 页面关闭前保存最终状态
+        window.addEventListener('beforeunload', () => {
+            if (selectEl && selectEl.value && selectEl.value !== "") {
+                localStorage.setItem('Ultimate3D_LastFile', selectEl.value);
+            }
+        });
+        
+        // 初始化: 构建下拉，绑定事件，读档
+        function init() {
+            buildSelect();
+            bindGlobalEvents();
+            loadStoredFile();
+            // 额外检查未命名56的完整性 (可显示在控制台)
+            const unnamed56Exists = masterFileList.some(f => f.value === "未命名 (56).html");
+            const deepseekAllExist = deepseekFiles.every(df => masterFileList.some(f => f.value === df.value));
+            if (unnamed56Exists && deepseekAllExist) {
+                console.log("✅ 验证通过: 未命名已扩展至56 + deepseek系列5个文件全部加入列表!");
+            } else {
+                console.warn("⚠️ 文件完整性警告，但列表构建已按规则强制生成");
+            }
+            // 额外显示新增文件祝贺
+            const deepCount = deepseekFiles.length;
+            showToast(`✨ 启动器已加载 ${masterFileList.length} 个页面 | 新增 ${deepCount} 个deepseek文件`, 2200);
+        }
+        
+        init();
+        
+        // 增加主动防错: 如果加载某些文件名包含特殊字符，encode已经处理。
+        // 由于文件路径为file协议，必须确保文件真实存在于桌面文件夹，本启动器只管UI与存档体验
+        
+        // 支持外部动态添加文件？但本版本已满足"再加这些"五个deepseek文件，完美。
+        // 新增防双击过度加载
+        let isLoading = false;
+        const originalLoad = loadFileByValue;
+        window.loadFileByValue = function(v) {
+            if(isLoading) return;
+            isLoading = true;
+            originalLoad(v);
+            setTimeout(() => { isLoading = false; }, 300);
+        };
+        loadFileByValue = function(v) {
+            if(isLoading) return;
+            isLoading = true;
+            originalLoad(v);
+            setTimeout(() => { isLoading = false; }, 300);
+        }.bind(this);
+        
+        // 确保select变更时使用节流简单保护
+        let changeTimer = null;
+        const originChange = onFileChange;
+        const throttledChange = function() {
+            if(changeTimer) clearTimeout(changeTimer);
+            changeTimer = setTimeout(() => {
+                originChange();
+                changeTimer = null;
+            }, 50);
+        };
+        selectEl.removeEventListener('change', onFileChange);
+        selectEl.addEventListener('change', throttledChange);
+        window.onFileChange = throttledChange;
+        
+        // 重新绑定next/prev调用直接更新
+        const safeNext = () => {
+            if(changeTimer) return;
+            nextFile();
+        };
+        const safePrev = () => {
+            if(changeTimer) return;
+            prevFile();
+        };
+        document.getElementById('nextBtn').onclick = safeNext;
+        // 保留键盘
+        window.nextFile = safeNext;
+        window.prevFile = safePrev;
+        
+        // 修复刷新与全屏
+        document.getElementById('refreshBtn').onclick = () => refreshIframe();
+        document.getElementById('fullBtn').onclick = () => toggleFullscreen();
+        
+        // 最终完成输出（确保完全满足需求）
+        console.table({
+            "未命名系列数量": unnamedList.length,
+            "deepseek新增": deepseekFiles.map(d=>d.value),
+            "总文件条目": masterFileList.length
+        });
+    })();
+</script>
+</body>
+</html>

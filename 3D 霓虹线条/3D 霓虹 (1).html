@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>霓虹光绘 · Neon Light Painting</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: calc(env(safe-area-inset-top, 0px) + 14px) 18px 14px;
+    font: 12px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: rgba(130, 255, 255, 0.85);
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.9), 0 0 26px rgba(0, 170, 255, 0.55);
+    pointer-events: none;
+    z-index: 10;
+    letter-spacing: 0.06em;
+  }
+  #hud b { color: #ffffff; font-weight: 600; }
+
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 42px);
+    transform: translateX(-50%);
+    max-width: 86vw;
+    padding: 14px 20px;
+    border-radius: 14px;
+    background: rgba(8, 0, 22, 0.78);
+    border: 1px solid rgba(0, 255, 255, 0.45);
+    box-shadow: 0 0 26px rgba(0, 255, 255, 0.35),
+                inset 0 0 22px rgba(130, 0, 255, 0.28);
+    color: #d8fbff;
+    font: 13px/1.75 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    text-align: center;
+    z-index: 20;
+    pointer-events: none;
+    transition: opacity 0.55s ease;
+  }
+  #toast.hide { opacity: 0; }
+
+  #vignette {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    background: radial-gradient(ellipse at center,
+                rgba(0,0,0,0) 40%,
+                rgba(0,0,0,0.55) 100%);
+  }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+<div id="vignette"></div>
+
+<div id="hud">
+  <b>甩动</b>手机 或 <b>滑动屏幕</b> → 绘制霓虹轨迹　｜　<b>转动</b>手机 → 环视光绘
+</div>
+
+<div id="toast">正在检测传感器…<br>你也可以直接用手指滑动屏幕绘制</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+   * 0. 参数
+   * ============================================================ */
+  const CFG = {
+    maxPoints:    500,    // 轨迹最多保留点数
+    pointLife:    5.0,    // 每个点的寿命（秒）—— 决定拖尾留多久
+    minSegDist:   0.02,   // 相邻点最小间距
+    accelGain:    1.8,    // 加速度 → 速度 增益（甩得越猛走得越快）
+    accelDead:    0.7,    // 加速度死区
+    velDamp:      0.05,   // 速度阻尼基数
+    maxSpeed:     20,     // 速度上限
+    boundRadius:  10.0,   // 光笔活动软边界
+    camSmooth:    0.10,   // 相机朝向平滑半衰期（秒）
+    glowWidth:    0.080,  // 外发光带宽度
+    coreWidth:    0.022   // 高亮芯线宽度
+  };
+
+  /* ============================================================
+   * 1. 渲染器 / 场景 / 相机
+   * ============================================================ */
+  const appEl   = document.getElementById('app');
+  const toastEl = document.getElementById('toast');
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.FogExp2(0x000000, 0.020);
+
+  const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.05,
+    300
+  );
+  camera.position.set(0, 0, 0);
+
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x000000, 1);
+  appEl.appendChild(renderer.domElement);
+
+  const canvas = renderer.domElement;
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  /* ============================================================
+   * 2. 轨迹几何体
+   *    每条线段 12 个顶点：
+   *      外发光四边形（6 顶点，宽而暗）
+   *      高亮芯四边形（6 顶点，窄而亮）
+   * ============================================================ */
+  const MAX_POINTS = CFG.maxPoints;
+  const MAX_SEGS   = MAX_POINTS - 1;
+  const VPS        = 12;  // vertices per segment
+
+  const posArr = new Float32Array(MAX_SEGS * VPS * 3);
+  const colArr = new Float32Array(MAX_SEGS * VPS * 3);
+
+  const trailGeo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(posArr, 3);
+  const colAttr = new THREE.BufferAttribute(colArr, 3);
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  colAttr.setUsage(THREE.DynamicDrawUsage);
+  trailGeo.setAttribute('position', posAttr);
+  trailGeo.setAttribute('color', colAttr);
+  trailGeo.setDrawRange(0, 0);
+
+  const trailMat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    fog: true
+  });
+
+  const trailMesh = new THREE.Mesh(trailGeo, trailMat);
+  trailMesh.frustumCulled = false;
+  scene.add(trailMesh);
+
+  /* ============================================================
+   * 3. 光笔光标（发光 sprite）
+   * ============================================================ */
+  function makeGlowTexture() {
+    const S = 128;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = S;
+    const ctx = cv.getContext('2d');
+    const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    g.addColorStop(0.00, 'rgba(255,255,255,1)');
+    g.addColorStop(0.22, 'rgba(255,255,255,0.6)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0.18)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  const penSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture(),
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    color: 0x66ffff
+  }));
+  penSprite.scale.set(1.2, 1.2, 1);
+  scene.add(penSprite);
+
+  /* ============================================================
+   * 4. 状态
+   * ============================================================ */
+  const points = [];
+  const penPos  = new THREE.Vector3(0, 0, -6);
+  const penPrev = new THREE.Vector3(0, 0, -6);
+  const penVel  = new THREE.Vector3();
+  let   hueCursor = 0.52;
+
+  /* ============================================================
+   * 5. 陀螺仪 / 方向传感器 → 相机朝向
+   * ============================================================ */
+  const targetQuat = new THREE.Quaternion();
+  const _euler = new THREE.Euler();
+  const _q0    = new THREE.Quaternion();
+  const _q1    = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
+  const Z_AXIS = new THREE.Vector3(0, 0, 1);
+
+  let orientationSeen = false;
+  let motionSeen      = false;
+
+  function getScreenAngle() {
+    if (screen.orientation && typeof screen.orientation.angle === 'number') {
+      return screen.orientation.angle;
+    }
+    return window.orientation || 0;
+  }
+
+  function onDeviceOrientation(e) {
+    if (e.alpha === null && e.beta === null && e.gamma === null) return;
+
+    const alpha  = THREE.MathUtils.degToRad(e.alpha || 0);
+    const beta   = THREE.MathUtils.degToRad(e.beta  || 0);
+    const gamma  = THREE.MathUtils.degToRad(e.gamma || 0);
+    const scrAng = THREE.MathUtils.degToRad(getScreenAngle());
+
+    _euler.set(beta, alpha, -gamma, 'YXZ');
+    targetQuat.setFromEuler(_euler);
+    targetQuat.multiply(_q1);
+    targetQuat.multiply(_q0.setFromAxisAngle(Z_AXIS, -scrAng));
+
+    if (!orientationSeen) {
+      camera.quaternion.copy(targetQuat);
+    }
+    orientationSeen = true;
+  }
+
+  /* ============================================================
+   * 6. 加速度传感器 → 光笔速度
+   * ============================================================ */
+  const rawAccel    = new THREE.Vector3();
+  const smoothAccel = new THREE.Vector3();
+  const gravityEst  = new THREE.Vector3();
+  let   gravityInit = false;
+  let   firstAccelSample = true;
+
+  function onDeviceMotion(e) {
+    const a = e.acceleration;
+    let valid = false;
+
+    if (a && a.x !== null && a.y !== null && a.z !== null) {
+      // 现代浏览器：直接提供去重力加速度
+      rawAccel.set(a.x, a.y, a.z);
+      valid = true;
+    } else {
+      const ag = e.accelerationIncludingGravity;
+      if (ag && ag.x !== null && ag.y !== null && ag.z !== null) {
+        const ax = ag.x, ay = ag.y, az = ag.z;
+        // 判断传感器是否真的有效：静止时也应有重力分量
+        if (Math.abs(ax) + Math.abs(ay) + Math.abs(az) > 0.05) {
+          valid = true;
+        }
+        if (!gravityInit) {
+          gravityEst.set(ax, ay, az);
+          gravityInit = true;
+        }
+        // 慢速低通估计重力
+        gravityEst.x += (ax - gravityEst.x) * 0.08;
+        gravityEst.y += (ay - gravityEst.y) * 0.08;
+        gravityEst.z += (az - gravityEst.z) * 0.08;
+        rawAccel.set(ax - gravityEst.x, ay - gravityEst.y, az - gravityEst.z);
+      }
+    }
+
+    if (!valid) return;
+
+    if (firstAccelSample) {
+      smoothAccel.copy(rawAccel);
+      firstAccelSample = false;
+    } else {
+      smoothAccel.lerp(rawAccel, 0.65);
+    }
+    motionSeen = true;
+  }
+
+  /* ============================================================
+   * 7. 指针 / 触摸控制（始终可用）
+   * ============================================================ */
+  let pointerDown = false;
+  const pointerTarget = new THREE.Vector3(0, 0, -7);
+
+  function updatePointerTarget(e) {
+    const nx = (e.clientX / window.innerWidth)  * 2 - 1;
+    const ny = -(e.clientY / window.innerHeight) * 2 + 1;
+    // 映射到相机前方 7 单位处的平面
+    pointerTarget
+      .set(nx * 5.5, ny * 4.2, -7)
+      .applyQuaternion(camera.quaternion);
+  }
+
+  function onPointerDown(e) {
+    pointerDown = true;
+    updatePointerTarget(e);
+    requestSensorPermission();   // iOS 权限必须由用户手势触发
+  }
+  function onPointerMove(e) {
+    if (!pointerDown) return;
+    updatePointerTarget(e);
+  }
+  function onPointerUp() { pointerDown = false; }
+
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('pointerleave', onPointerUp);
+
+  // 阻止页面滚动 / 缩放
+  canvas.addEventListener('touchstart', function (e) { e.preventDefault(); }, { passive: false });
+  canvas.addEventListener('touchmove',  function (e) { e.preventDefault(); }, { passive: false });
+
+  /* ============================================================
+   * 8. 传感器权限 & 绑定
+   * ============================================================ */
+  function requestSensorPermission() {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().catch(function () {});
+    }
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      DeviceMotionEvent.requestPermission().catch(function () {});
+    }
+  }
+
+  // 立即尝试绑定（Android / 桌面浏览器大多可以直接收到）
+  window.addEventListener('deviceorientation', onDeviceOrientation, false);
+  window.addEventListener('devicemotion', onDeviceMotion, false);
+
+  // iOS：用户手势之后再绑定一次（权限通过后才会有数据）
+  ['touchend', 'click'].forEach(function (evt) {
+    document.addEventListener(evt, function () {
+      window.addEventListener('deviceorientation', onDeviceOrientation, false);
+      window.addEventListener('devicemotion', onDeviceMotion, false);
+    }, { once: true });
+  });
+
+  /* ============================================================
+   * 9. 传感器状态检测 & Toast 提示
+   * ============================================================ */
+  let toastHidden = false;
+
+  function hideToast() {
+    if (toastHidden) return;
+    toastHidden = true;
+    toastEl.classList.add('hide');
+    setTimeout(function () { toastEl.style.display = 'none'; }, 700);
+  }
+  function showToast(html) {
+    toastEl.innerHTML = html;
+    toastEl.classList.remove('hide');
+    toastEl.style.display = '';
+    toastHidden = false;
+  }
+
+  setTimeout(function () {
+    if (motionSeen || orientationSeen) {
+      hideToast();
+    } else {
+      showToast('未检测到传感器<br>请用 <b>手指在屏幕上滑动</b> 绘制光绘');
+    }
+  }, 1800);
+
+  // 用户触摸后自动隐藏提示
+  document.addEventListener('touchstart', function () { setTimeout(hideToast, 900); }, { once: true });
+  document.addEventListener('mousedown',  function () { setTimeout(hideToast, 900); }, { once: true });
+
+  /* ============================================================
+   * 10. 相机更新：平滑跟随手机朝向
+   * ============================================================ */
+  function updateCamera(dt) {
+    if (!orientationSeen) return;
+    const k = 1 - Math.pow(0.5, dt / CFG.camSmooth);
+    camera.quaternion.slerp(targetQuat, k);
+  }
+
+  /* ============================================================
+   * 11. 光笔物理更新
+   *     优先级：触摸控制 > 加速度控制 > 减速滑行
+   * ============================================================ */
+  const worldAccel = new THREE.Vector3();
+
+  function updatePen(dt) {
+    /* ----- 触摸 / 鼠标拖动（最优先） ----- */
+    if (pointerDown) {
+      penPrev.copy(penPos);
+      penPos.lerp(pointerTarget, 1 - Math.pow(0.004, dt));
+      penVel.subVectors(penPos, penPrev).divideScalar(Math.max(dt, 1e-4));
+      const sp = penVel.length();
+      if (sp > CFG.maxSpeed) penVel.setLength(CFG.maxSpeed);
+      return;
+    }
+
+    /* ----- 无传感器：减速滑行 ----- */
+    if (!motionSeen) {
+      penVel.multiplyScalar(Math.pow(0.02, dt));
+      penPos.addScaledVector(penVel, dt);
+      return;
+    }
+
+    /* ----- 加速度驱动 ----- */
+    worldAccel.copy(smoothAccel).applyQuaternion(camera.quaternion);
+
+    const mag = worldAccel.length();
+    const eff = Math.max(0, mag - CFG.accelDead);
+
+    if (eff > 0) {
+      worldAccel.multiplyScalar(eff / mag);
+      penVel.addScaledVector(
+        worldAccel,
+        dt * CFG.accelGain * (1 + eff * 0.2)
+      );
+    }
+
+    penVel.multiplyScalar(Math.pow(CFG.velDamp, dt));
+
+    const sp = penVel.length();
+    if (sp > CFG.maxSpeed) penVel.setLength(CFG.maxSpeed);
+
+    penPos.addScaledVector(penVel, dt);
+
+    // 软边界：超出后平滑拉回
+    const r = penPos.length();
+    if (r > CFG.boundRadius) {
+      const shrink = Math.pow(0.02, dt);
+      const newR = CFG.boundRadius + (r - CFG.boundRadius) * shrink;
+      penPos.multiplyScalar(newR / r);
+    }
+  }
+
+  /* ============================================================
+   * 12. 轨迹采样 / 老化
+   * ============================================================ */
+  function updateTrail(dt) {
+    for (let i = 0; i < points.length; i++) points[i].age += dt;
+    while (points.length && points[0].age > CFG.pointLife) points.shift();
+
+    const speed  = penVel.length();
+    const accMag = motionSeen
+      ? Math.max(0, smoothAccel.length() - CFG.accelDead)
+      : speed;
+
+    // 甩得越猛 → power 越大 → 越亮越粗
+    let power = Math.max(speed / 5, accMag / 14);
+    power = Math.min(1, Math.max(0.25, power));
+
+    let shouldAdd = false;
+    const last = points.length ? points[points.length - 1] : null;
+
+    if (!last) {
+      shouldAdd = true;
+    } else {
+      const dx = penPos.x - last.x;
+      const dy = penPos.y - last.y;
+      const dz = penPos.z - last.z;
+      if (dx * dx + dy * dy + dz * dz > CFG.minSegDist * CFG.minSegDist) {
+        shouldAdd = true;
+      }
+    }
+
+    if (shouldAdd) {
+      hueCursor = (hueCursor + 0.006) % 1;   // 色相缓慢流转
+      points.push({
+        x: penPos.x, y: penPos.y, z: penPos.z,
+        age: 0,
+        power: power,
+        hue: hueCursor
+      });
+    }
+
+    while (points.length > MAX_POINTS) points.shift();
+  }
+
+  /* ============================================================
+   * 13. 每帧构建轨迹网格
+   * ============================================================ */
+  let _vi = 0;
+
+  const _v1   = new THREE.Vector3();
+  const _v2   = new THREE.Vector3();
+  const _dir  = new THREE.Vector3();
+  const _mid  = new THREE.Vector3();
+  const _side = new THREE.Vector3();
+  const _colA = new THREE.Color();
+  const _colB = new THREE.Color();
+
+  function pushVert(px, py, pz, cr, cg, cb) {
+    const o = _vi * 3;
+    posArr[o]     = px; posArr[o + 1] = py; posArr[o + 2] = pz;
+    colArr[o]     = cr; colArr[o + 1] = cg; colArr[o + 2] = cb;
+    _vi++;
+  }
+
+  function buildTrailMesh() {
+    _vi = 0;
+    const n = points.length;
+
+    for (let i = 0; i < n - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+
+      const fa = Math.max(0, 1 - a.age / CFG.pointLife) * a.power;
+      const fb = Math.max(0, 1 - b.age / CFG.pointLife) * b.power;
+      if (fa <= 0.002 && fb <= 0.002) continue;
+
+      _v1.set(a.x, a.y, a.z);
+      _v2.set(b.x, b.y, b.z);
+
+      _dir.subVectors(_v2, _v1);
+      const len = _dir.length();
+      if (len < 1e-6) continue;
+      _dir.multiplyScalar(1 / len);
+
+      // 面向相机的带状方向 = dir × viewDir
+      _mid.addVectors(_v1, _v2).multiplyScalar(0.5);
+      _side.crossVectors(_dir, _mid);
+      if (_side.lengthSq() < 1e-10) {
+        _side.set(0, 1, 0).cross(_dir);
+        if (_side.lengthSq() < 1e-10) _side.set(1, 0, 0);
+      }
+      _side.normalize();
+
+      // 宽度随强度变化（越猛越粗）
+      const pm = (fa + fb) * 0.5;
+      const wScale = 0.5 + pm * 1.8;
+
+      const gw = CFG.glowWidth * wScale;
+      const cw = CFG.coreWidth * wScale;
+
+      const gsx = _side.x * gw, gsy = _side.y * gw, gsz = _side.z * gw;
+      const csx = _side.x * cw, csy = _side.y * cw, csz = _side.z * cw;
+
+      _colA.setHSL(a.hue, 1.0, 0.5);
+      _colB.setHSL(b.hue, 1.0, 0.5);
+
+      const v1x = _v1.x, v1y = _v1.y, v1z = _v1.z;
+      const v2x = _v2.x, v2y = _v2.y, v2z = _v2.z;
+
+      /* ---- 外发光四边形 ---- */
+      const GA = 0.25;
+      const gar = _colA.r * GA * fa, gag = _colA.g * GA * fa, gab = _colA.b * GA * fa;
+      const gbr = _colB.r * GA * fb, gbg = _colB.g * GA * fb, gbb = _colB.b * GA * fb;
+
+      pushVert(v1x - gsx, v1y - gsy, v1z - gsz, gar, gag, gab);
+      pushVert(v2x - gsx, v2y - gsy, v2z - gsz, gbr, gbg, gbb);
+      pushVert(v2x + gsx, v2y + gsy, v2z + gsz, gbr, gbg, gbb);
+
+      pushVert(v1x - gsx, v1y - gsy, v1z - gsz, gar, gag, gab);
+      pushVert(v2x + gsx, v2y + gsy, v2z + gsz, gbr, gbg, gbb);
+      pushVert(v1x + gsx, v1y + gsy, v1z + gsz, gar, gag, gab);
+
+      /* ---- 高亮芯四边形 ---- */
+      const car = (_colA.r * 0.6 + 0.4) * fa;
+      const cag = (_colA.g * 0.6 + 0.4) * fa;
+      const cab = (_colA.b * 0.6 + 0.4) * fa;
+      const cbr = (_colB.r * 0.6 + 0.4) * fb;
+      const cbg = (_colB.g * 0.6 + 0.4) * fb;
+      const cbb = (_colB.b * 0.6 + 0.4) * fb;
+
+      pushVert(v1x - csx, v1y - csy, v1z - csz, car, cag, cab);
+      pushVert(v2x - csx, v2y - csy, v2z - csz, cbr, cbg, cbb);
+      pushVert(v2x + csx, v2y + csy, v2z + csz, cbr, cbg, cbb);
+
+      pushVert(v1x - csx, v1y - csy, v1z - csz, car, cag, cab);
+      pushVert(v2x + csx, v2y + csy, v2z + csz, cbr, cbg, cbb);
+      pushVert(v1x + csx, v1y + csy, v1z + csz, car, cag, cab);
+    }
+
+    trailGeo.setDrawRange(0, _vi);
+    if (_vi > 0) {
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+    }
+  }
+
+  /* ============================================================
+   * 14. 主循环
+   * ============================================================ */
+  const clock = new THREE.Clock();
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    updateCamera(dt);
+    updatePen(dt);
+    updateTrail(dt);
+    buildTrailMesh();
+
+    // 光笔光标
+    penSprite.position.copy(penPos);
+    const spd = penVel.length();
+    const sz = 1.0 + Math.min(spd * 0.12, 1.2);
+    penSprite.scale.set(sz, sz, 1);
+    penSprite.material.color.setHSL(hueCursor, 1.0, 0.62);
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+
+})();
+</script>
+</body>
+</html>

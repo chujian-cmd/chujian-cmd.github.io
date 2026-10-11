@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GooseHyperGlassCDN2.0 接入文档</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0a0e17; color: #e8eef6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.78;
+  }
+  article { max-width: 880px; margin: 0 auto; padding: 48px 20px 100px; }
+
+  /* 侧边目录：窄屏默认是抽屉（移出屏幕，点按钮滑入），宽屏在 @media 里改回固定显示 */
+  nav.toc {
+    position: fixed; left: 0; top: 0; bottom: 0; width: 80vw; max-width: 300px;
+    background: #0c121c; border-right: 1px solid #1e2d40;
+    overflow-y: auto; padding: 60px 16px 40px;
+    transform: translateX(-100%); transition: transform .25s ease; z-index: 60;
+  }
+  nav.toc.open { transform: translateX(0); }
+  nav.toc a { display: block; font-size: 14px; padding: 7px 0; color: #7a93ac; }
+  nav.toc a:hover { color: #cfe3ff; text-decoration: none; }
+  nav.toc a.h2 { font-weight: 600; color: #9fb3c8; margin-top: 6px; }
+
+  /* 抽屉遮罩 + 汉堡按钮：窄屏显示，宽屏隐藏 */
+  .toc-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5);
+    opacity: 0; visibility: hidden; transition: opacity .25s; z-index: 55;
+  }
+  .toc-backdrop.open { opacity: 1; visibility: visible; }
+  .toc-toggle {
+    position: fixed; top: 12px; left: 12px; z-index: 70;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 15px; border-radius: 22px; cursor: pointer;
+    background: #15202b; color: #cfe3ff; border: 1px solid #1e2d40; font-size: 13px;
+    font-family: inherit;
+  }
+  .toc-toggle .bars { position: relative; display: inline-block; width: 16px; height: 2px; background: #cfe3ff; border-radius: 1px; }
+  .toc-toggle .bars::before,
+  .toc-toggle .bars::after { content: ''; position: absolute; left: 0; width: 16px; height: 2px; background: #cfe3ff; border-radius: 1px; }
+  .toc-toggle .bars::before { top: -5px; }
+  .toc-toggle .bars::after { top: 5px; }
+
+  /* 两屏都有侧边栏，md 里的 ## 目录 内联章节冗余，全局隐藏 */
+  .toc-inline { display: none; }
+
+  /* ---- headings ---- */
+  h1 { font-size: 32px; font-weight: 700; margin: 0 0 8px; color: #fff; }
+  h2 { font-size: 22px; font-weight: 600; margin: 48px 0 14px; padding-bottom: 8px; border-bottom: 1px solid #1e2d40; color: #e0ecff; }
+  h3 { font-size: 17px; font-weight: 600; margin: 32px 0 10px; color: #cfe3ff; }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 6px; color: #9fb3c8; }
+
+  /* ---- text ---- */
+  p { color: #bccbde; margin: 0 0 12px; }
+  a { color: #6fc0ec; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { color: #e8eef6; }
+  hr { border: none; border-top: 1px solid #1e2d40; margin: 40px 0; }
+
+  /* ---- inline code ---- */
+  code { background: #1a2332; padding: 2px 7px; border-radius: 4px; font-size: 13px; color: #cfe3ff; font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace; }
+  pre { background: #1a2332; padding: 16px 20px; border-radius: 12px; overflow: auto; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+
+  /* ---- table ---- */
+  table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 13px; }
+  th, td { border: 1px solid #1e2d40; padding: 10px 14px; text-align: left; }
+  th { background: #15202b; color: #cfe3ff; font-weight: 600; white-space: nowrap; }
+  td { color: #bccbde; }
+  td code, th code { background: transparent; padding: 0; }
+
+  /* ---- lists ---- */
+  ul, ol { color: #bccbde; margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  li code { font-size: 12px; }
+
+  /* ---- blockquote ---- */
+  blockquote {
+    margin: 0 0 14px; padding: 12px 16px;
+    background: #15202b; border-left: 3px solid #2f6fb8;
+    border-radius: 0 8px 8px 0; color: #9fb3c8; font-size: 14px;
+  }
+  blockquote p { color: #9fb3c8; margin: 0; }
+
+  /* ---- loading ---- */
+  .loading { text-align: center; padding: 100px 20px; color: #6a8099; font-size: 14px; }
+  .loading .spinner {
+    display: inline-block; width: 22px; height: 22px; border: 2px solid #243248;
+    border-top-color: #2f6fb8; border-radius: 50%; margin-right: 8px; vertical-align: middle;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error { text-align: center; padding: 100px 20px; color: #f06060; font-size: 14px; }
+
+  /* ---- sidebar nav (sticky) ---- */
+  @media (min-width: 1200px) {
+    body { padding-left: 240px; }
+    nav.toc {
+      display: block; width: 220px; padding: 30px 16px 40px;
+      transform: none; z-index: auto;
+    }
+    .toc-backdrop, .toc-toggle { display: none; } /* 宽屏用固定侧栏，抽屉控件隐藏 */
+  }
+
+  /* ---- scrollbar ---- */
+  pre::-webkit-scrollbar { height: 6px; }
+  pre::-webkit-scrollbar-thumb { background: #243248; border-radius: 3px; }
+
+  /* ---- 竖屏 / 手机优化 ---- */
+  @media (max-width: 768px) {
+    article { padding: 60px 16px 72px; } /* 顶部留白避开左上角目录按钮 */
+    h1 { font-size: 25px; }
+    h2 { font-size: 19px; margin: 34px 0 12px; }
+    h3 { font-size: 16px; }
+    pre { font-size: 12px; padding: 12px 14px; }
+    code { font-size: 12px; }
+    table { display: block; width: auto; max-width: 100%; overflow-x: auto; }
+    th, td { white-space: nowrap; }
+    ul, ol { padding-left: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app"><div class="loading"><span class="spinner"></span>加载文档中...</div></div>
+
+<script>
+(function() {
+  var app = document.getElementById('app');
+
+  function toc(html) {
+    // Build a sidebar TOC from h2 headings in the rendered HTML
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    var h2s = tmp.querySelectorAll('h2');
+    var tocHtml = '<nav class="toc">';
+    h2s.forEach(function(h) {
+      var id = h.id || h.textContent.replace(/\s+/g, '-').toLowerCase();
+      h.id = id;
+      tocHtml += '<a class="h2" href="index.html#' + id + '">' + h.textContent + '</a>';
+      var h3s = h.parentElement.querySelectorAll('h3');
+      // h3s after h2 until next h2 - tricky in a div, skip for simplicity
+    });
+    tocHtml += '</nav>';
+    // Prepend toc to body if wide screen — but we need to modify the returned html
+    // Instead, inject toc into the DOM after render
+    return { html: tmp.innerHTML, toc: tocHtml };
+  }
+
+  // 检测本地 file:// 打开 — 提示用 http 服务
+  if (location.protocol === 'file:') {
+    app.innerHTML = '<div class="error"><b>不能直接双击打开</b><br><br>浏览器禁止 file:// 协议下 fetch 其他文件。<br><br>请在此目录下启动本地服务器：<br><pre style="display:inline-block;text-align:left">python -m http.server 8000</pre><br><br>然后打开 <code>http://localhost:8000</code></div>';
+    return;
+  }
+
+  fetch('docs.md')
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function(md) {
+      // Configure marked
+      if (typeof marked.setOptions === 'function') {
+        marked.setOptions({ breaks: false, gfm: true });
+      }
+      var html = typeof marked.parse === 'function' ? marked.parse(md) : marked(md);
+
+      // Build TOC sidebar — extract {#id} from heading text
+      var tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      var h2s = tmp.querySelectorAll('h2');
+      var tocLinks = '';
+      h2s.forEach(function(h) {
+        var raw = h.textContent;
+        var m = raw.match(/\{#([^}]+)\}/);
+        var id = m ? m[1] : '';
+        // Strip {#id} from display text
+        h.textContent = raw.replace(/\s*\{#[^}]+\}/, '');
+        if (!id) return;
+        h.id = id;
+        tocLinks += '<a class="h2" href="index.html#' + id + '">' + h.textContent + '</a>';
+      });
+
+      // 把"目录"章节（## 目录 + 其下 ul 列表）包进 .toc-inline：
+      // 宽屏侧边栏已有 toc，内联目录隐藏；窄屏侧边栏隐藏，内联目录作导航补位
+      var dirH2 = Array.prototype.slice.call(tmp.querySelectorAll('h2')).filter(function(h){
+        return h.textContent.trim() === '目录';
+      })[0];
+      if (dirH2) {
+        var wrap = document.createElement('div');
+        wrap.className = 'toc-inline';
+        var parent = dirH2.parentNode;
+        var nodes = [];
+        var sib = dirH2;
+        while (sib && sib.tagName !== 'H2') { nodes.push(sib); sib = sib.nextElementSibling; }
+        nodes.forEach(function(n){ wrap.appendChild(n); });
+        parent.insertBefore(wrap, sib);
+      }
+
+      // Build final HTML
+      var sidebar = '<nav class="toc" id="toc-nav">' + tocLinks + '</nav>';
+      app.innerHTML = sidebar + '<article>' + tmp.innerHTML + '</article>';
+
+      // 窄屏抽屉侧边栏：汉堡按钮 + 遮罩（宽屏由 CSS 隐藏，不影响）
+      var tocNav = document.getElementById('toc-nav');
+      var backdrop = document.createElement('div');
+      backdrop.className = 'toc-backdrop';
+      var toggle = document.createElement('button');
+      toggle.className = 'toc-toggle';
+      toggle.innerHTML = '<span class="bars"></span>目录';
+      toggle.setAttribute('aria-label', '打开目录');
+      document.body.appendChild(backdrop);
+      document.body.appendChild(toggle);
+      function openToc() { tocNav.classList.add('open'); backdrop.classList.add('open'); }
+      function closeToc() { tocNav.classList.remove('open'); backdrop.classList.remove('open'); }
+      toggle.addEventListener('click', function() {
+        tocNav.classList.contains('open') ? closeToc() : openToc();
+      });
+      backdrop.addEventListener('click', closeToc);
+      // 点目录链接后自动收起抽屉
+      tocNav.addEventListener('click', function(e) { if (e.target.closest('a')) closeToc(); });
+
+      // TOC click + article internal links — smooth scroll to heading
+      function smoothScroll(e) {
+        var a = e.target.closest('a[href^="#"]');
+        if (!a) return;
+        e.preventDefault();
+        var id = a.getAttribute('href').slice(1);
+        var h = document.getElementById(id);
+        if (!h) return;
+        var top = h.getBoundingClientRect().top + window.pageYOffset - 20;
+        window.scrollTo({ top: top, behavior: 'smooth' });
+      }
+      document.getElementById('toc-nav').addEventListener('click', smoothScroll);
+      var article = document.querySelector('article');
+      if (article) article.addEventListener('click', smoothScroll);
+    })
+    .catch(function(err) {
+      app.innerHTML = '<div class="error">文档加载失败：' + err.message + '<br><br>请确保 docs.md 与本页面在同一目录下，且通过 http:// 访问（非 file://）。</div>';
+    });
+})();
+</script>
+
+<div class="credit-foot">基于 <a href="https://github.com/Kyant0/AndroidLiquidGlass">Kyant0/AndroidLiquidGlass</a> · <a href="https://github.com/martin65536/liquid-glass-webgl">martin65536/liquid-glass-webgl</a> 二开 · <a href="https://github.com/Minecraftgoose/GooseHyperGlass">GitHub</a></div>
+<style>.credit-foot{text-align:center;padding:32px 16px;font-size:12px;color:#3a5068;line-height:1.8}.credit-foot a{color:#4a7098;text-decoration:none}.credit-foot a:hover{text-decoration:underline}</style>
+
+</body>
+</html>

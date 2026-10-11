@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>纯数字动画 · 液态玻璃</title>
+    <!-- 使用您指定的 CDN -->
+    <script src="https://glass.goose.cc.cd/liquid-glass.js">
+    </script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, system-ui, -apple-system, sans-serif;
+            background: #0b0b14;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 液态玻璃背景层 */
+        #liquid-glass-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* 所有内容放在上层 */
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            width: 100%;
+        }
+
+        .setup-card {
+            background: rgba(20, 20, 31, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 48px;
+            padding: 2.5rem 3rem 3rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+            max-width: 680px;
+            width: 100%;
+            transition: opacity 0.4s ease, transform 0.4s ease;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .setup-card.hidden {
+            opacity: 0;
+            transform: scale(0.96);
+            pointer-events: none;
+            position: absolute;
+        }
+        h1 {
+            color: #c8c8e8;
+            font-weight: 300;
+            font-size: 1.6rem;
+            letter-spacing: 2px;
+            margin-top: 0;
+            margin-bottom: 2rem;
+            text-align: center;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+        .param-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.2rem 1.8rem;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 1.6rem 1.8rem;
+            border-radius: 32px;
+            margin-bottom: 1.8rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .param-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+        .param-item label {
+            color: #9a9abe;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: 500;
+        }
+        .param-item input[type="number"],
+        .param-item input[type="color"] {
+            background: rgba(30, 30, 48, 0.7);
+            border: 1px solid rgba(51, 51, 80, 0.6);
+            border-radius: 40px;
+            padding: 0.6rem 1rem;
+            color: #f0f0ff;
+            font-size: 0.95rem;
+            outline: none;
+            transition: 0.2s;
+            width: 100%;
+            backdrop-filter: blur(4px);
+        }
+        .param-item input[type="number"]:focus,
+        .param-item input[type="color"]:focus {
+            border-color: #7a7aff;
+            box-shadow: 0 0 0 3px rgba(122, 122, 255, 0.2);
+        }
+        .param-item input[type="color"] {
+            height: 44px;
+            padding: 4px;
+            cursor: pointer;
+        }
+        .color-pair {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        .color-pair span {
+            color: #7a7a9a;
+            font-size: 0.8rem;
+        }
+        .duration-item {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+        .duration-item label {
+            min-width: 70px;
+        }
+        .duration-item input {
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .decimal-toggle {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding-top: 0.2rem;
+            border-top: 1px solid rgba(42, 42, 62, 0.5);
+            margin-top: 0.2rem;
+            padding-bottom: 0.2rem;
+        }
+        .decimal-toggle label {
+            color: #9a9abe;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+        .decimal-toggle input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: #5a5aff;
+            cursor: pointer;
+        }
+        .decimal-toggle .hint {
+            color: #5a5a7a;
+            font-size: 0.7rem;
+        }
+
+        .action-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.8rem;
+            margin-top: 0.2rem;
+        }
+        .btn {
+            background: rgba(90, 90, 255, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 60px;
+            padding: 0.9rem 3.2rem;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #ffffff;
+            cursor: pointer;
+            box-shadow: 0 8px 20px rgba(90, 90, 255, 0.25);
+            transition: 0.2s;
+            letter-spacing: 1px;
+            width: fit-content;
+            min-width: 160px;
+        }
+        .btn:hover {
+            background: rgba(112, 112, 255, 0.9);
+            transform: scale(1.02);
+            box-shadow: 0 12px 28px rgba(90, 90, 255, 0.35);
+        }
+        .btn:active {
+            transform: scale(0.96);
+        }
+        .status-note {
+            color: #5a5a7a;
+            font-size: 0.75rem;
+            text-align: center;
+            letter-spacing: 0.5px;
+            min-height: 1.4rem;
+        }
+
+        /* 全屏数字界面 */
+        .fullscreen-number {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(10, 10, 18, 0.7);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+            padding: 2rem;
+        }
+        .fullscreen-number.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .fullscreen-number .digit {
+            font-size: 18vw;
+            font-weight: 700;
+            letter-spacing: 4px;
+            font-variant-numeric: tabular-nums;
+            color: transparent;
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: none;
+            line-height: 1.2;
+            word-break: break-word;
+            text-align: center;
+            max-width: 90vw;
+            background-repeat: no-repeat;
+            background-size: 100% 100%;
+            filter: drop-shadow(0 0 40px rgba(122, 122, 255, 0.15));
+        }
+        .fullscreen-controls {
+            margin-top: 5vh;
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .fullscreen-controls .btn {
+            min-width: 120px;
+            padding: 0.7rem 2rem;
+            font-size: 1rem;
+            background: rgba(58, 58, 90, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        .fullscreen-controls .btn:hover {
+            background: rgba(90, 90, 122, 0.8);
+        }
+        .fullscreen-controls .btn-primary {
+            background: rgba(90, 90, 255, 0.7);
+        }
+        .fullscreen-controls .btn-primary:hover {
+            background: rgba(112, 112, 255, 0.8);
+        }
+        .fullscreen-status {
+            color: #8a8aaa;
+            font-size: 0.9rem;
+            margin-top: 1.2rem;
+            letter-spacing: 1px;
+            text-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+        }
+
+        @media (max-width: 500px) {
+            .setup-card {
+                padding: 1.5rem;
+                margin: 1rem;
+            }
+            .param-grid {
+                grid-template-columns: 1fr;
+                gap: 0.8rem;
+            }
+            .fullscreen-number .digit {
+                font-size: 22vw;
+            }
+        }
+        @media (max-width: 380px) {
+            .fullscreen-number .digit {
+                font-size: 16vw;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 液态玻璃 Canvas -->
+    <div id="liquid-glass-canvas"></div>
+
+    <!-- 内容容器 -->
+    <div class="content-wrapper">
+
+        <!-- 设置界面 -->
+        <div class="setup-card" id="setupCard">
+            <h1>✦ 数字加速 ✦</h1>
+            <div class="param-grid">
+                <div class="param-item">
+                    <label>最小值</label>
+                    <input type="number" id="minVal" value="0" step="0.1">
+                </div>
+                <div class="param-item">
+                    <label>最大值</label>
+                    <input type="number" id="maxVal" value="100" step="0.1">
+                </div>
+
+                <div class="param-item">
+                    <label>起始渐变色</label>
+                    <div class="color-pair">
+                        <input type="color" id="startFrom" value="#ff7b7b">
+                        <span>→</span>
+                        <input type="color" id="startTo" value="#7bb7ff">
+                    </div>
+                </div>
+                <div class="param-item">
+                    <label>结束渐变色</label>
+                    <div class="color-pair">
+                        <input type="color" id="endFrom" value="#f9d976">
+                        <span>→</span>
+                        <input type="color" id="endTo" value="#ff6f91">
+                    </div>
+                </div>
+
+                <div class="param-item duration-item">
+                    <label for="durationInput">⏱️ 时长 (ms)</label>
+                    <input type="number" id="durationInput" value="3000" step="100" min="300" max="10000">
+                </div>
+
+                <div class="decimal-toggle">
+                    <label>
+                        <input type="checkbox" id="showDecimal" checked>
+                        🔢 显示小数
+                    </label>
+                    <span class="hint">开启后保留 1 位小数，关闭后显示整数</span>
+                </div>
+            </div>
+
+            <div class="action-area">
+                <button class="btn" id="startBtn">▶ 开始</button>
+                <div class="status-note" id="statusNote">✨ 设置参数，点击「开始」进入全屏动画</div>
+            </div>
+        </div>
+
+        <!-- 全屏数字界面 -->
+        <div class="fullscreen-number" id="fullscreenNumber">
+            <div class="digit" id="fullscreenDigit">0</div>
+            <div class="fullscreen-controls">
+                <button class="btn" id="backBtn">↩ 返回</button>
+                <button class="btn btn-primary" id="restartBtn">⟳ 重新开始</button>
+            </div>
+            <div class="fullscreen-status" id="fullscreenStatus">⏩ 加速中 · 从慢到快</div>
+        </div>
+
+    </div>
+
+    <script>
+        (function() {
+            "use strict";
+
+            // ---------- DOM 引用 ----------
+            const setupCard = document.getElementById('setupCard');
+            const fullscreenDiv = document.getElementById('fullscreenNumber');
+            const fullscreenDigit = document.getElementById('fullscreenDigit');
+            const fullscreenStatus = document.getElementById('fullscreenStatus');
+
+            const minInput = document.getElementById('minVal');
+            const maxInput = document.getElementById('maxVal');
+            const startFrom = document.getElementById('startFrom');
+            const startTo = document.getElementById('startTo');
+            const endFrom = document.getElementById('endFrom');
+            const endTo = document.getElementById('endTo');
+            const durationInput = document.getElementById('durationInput');
+            const showDecimalCheckbox = document.getElementById('showDecimal');
+            const startBtn = document.getElementById('startBtn');
+            const statusNote = document.getElementById('statusNote');
+            const backBtn = document.getElementById('backBtn');
+            const restartBtn = document.getElementById('restartBtn');
+
+            // ---------- 初始化液态玻璃 ----------
+            let liquidGlass = null;
+            try {
+                // 检查 LiquidGlass 是否可用（使用您指定的 CDN）
+                if (typeof LiquidGlass !== 'undefined') {
+                    liquidGlass = new LiquidGlass({
+                        container: document.getElementById('liquid-glass-canvas'),
+                        color: '#5a5aff',
+                        intensity: 0.4,
+                        speed: 0.6,
+                        blendMode: 'screen'
+                    });
+                    liquidGlass.start();
+                } else {
+                    console.warn('LiquidGlass 库未加载，使用备用背景');
+                    document.getElementById('liquid-glass-canvas').style.background =
+                        'radial-gradient(ellipse at center, #1a1a2e, #0a0a12)';
+                }
+            } catch (e) {
+                console.warn('液态玻璃初始化失败:', e);
+                document.getElementById('liquid-glass-canvas').style.background =
+                    'radial-gradient(ellipse at center, #1a1a2e, #0a0a12)';
+            }
+
+            // ---------- 状态 ----------
+            let animationFrame = null;
+            let startTime = null;
+            let duration = 3000;
+            let isRunning = false;
+            let isFullscreen = false;
+
+            let currentMin = 0;
+            let currentMax = 100;
+            let colorStartFrom = '#ff7b7b';
+            let colorStartTo = '#7bb7ff';
+            let colorEndFrom = '#f9d976';
+            let colorEndTo = '#ff6f91';
+            let showDecimal = true;
+
+            // ---------- 工具函数 ----------
+            function lerp(a, b, t) {
+                return a + (b - a) * t;
+            }
+
+            function hexToRgb(hex) {
+                let cleanHex = hex.trim();
+                if (cleanHex.startsWith('#')) {
+                    cleanHex = cleanHex.slice(1);
+                }
+                if (cleanHex.length === 3) {
+                    cleanHex = cleanHex.split('').map(c => c + c).join('');
+                }
+                const result = /^([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(cleanHex);
+                if (!result) return { r: 0, g: 0, b: 0 };
+                return {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                };
+            }
+
+            function rgbToCss(r, g, b) {
+                return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+            }
+
+            function lerpColor(hex1, hex2, t) {
+                const c1 = hexToRgb(hex1);
+                const c2 = hexToRgb(hex2);
+                return rgbToCss(
+                    lerp(c1.r, c2.r, t),
+                    lerp(c1.g, c2.g, t),
+                    lerp(c1.b, c2.b, t)
+                );
+            }
+
+            function computeGradient(t) {
+                const colorA = lerpColor(colorStartFrom, colorStartTo, t);
+                const colorB = lerpColor(colorEndFrom, colorEndTo, t);
+                return `linear-gradient(135deg, ${colorA}, ${colorB})`;
+            }
+
+            // ---------- 核心：更新数字 ----------
+            function updateFullscreenNumber(value) {
+                const clamped = Math.min(Math.max(value, currentMin), currentMax);
+
+                let displayText;
+                if (showDecimal) {
+                    displayText = clamped.toFixed(1);
+                } else {
+                    displayText = Math.round(clamped).toString();
+                }
+                fullscreenDigit.textContent = displayText;
+
+                let t = 0;
+                if (currentMax !== currentMin) {
+                    t = (clamped - currentMin) / (currentMax - currentMin);
+                }
+                t = Math.min(Math.max(t, 0), 1);
+
+                const gradient = computeGradient(t);
+
+                fullscreenDigit.style.backgroundImage = gradient;
+                fullscreenDigit.style.backgroundClip = 'text';
+                fullscreenDigit.style.webkitBackgroundClip = 'text';
+                fullscreenDigit.style.webkitTextFillColor = 'transparent';
+                fullscreenDigit.style.color = 'transparent';
+                fullscreenDigit.style.backgroundRepeat = 'no-repeat';
+                fullscreenDigit.style.backgroundSize = '100% 100%';
+            }
+
+            // ---------- 动画循环 ----------
+            function animate(timestamp) {
+                if (!isRunning) return;
+
+                if (startTime === null) {
+                    startTime = timestamp;
+                }
+
+                const elapsed = timestamp - startTime;
+                let p = Math.min(elapsed / duration, 1);
+                const eased = p * p;
+
+                const currentVal = currentMin + (currentMax - currentMin) * eased;
+                updateFullscreenNumber(currentVal);
+
+                if (p < 1) {
+                    animationFrame = requestAnimationFrame(animate);
+                } else {
+                    updateFullscreenNumber(currentMax);
+                    isRunning = false;
+                    fullscreenStatus.textContent = '✅ 完成 · 点击「重新开始」';
+                    animationFrame = null;
+                    startTime = null;
+                }
+            }
+
+            // ---------- 启动 ----------
+            function startFullscreenAnimation() {
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+
+                let minVal = parseFloat(minInput.value) || 0;
+                let maxVal = parseFloat(maxInput.value) || 100;
+                if (maxVal < minVal) {
+                    [minVal, maxVal] = [maxVal, minVal];
+                    minInput.value = minVal;
+                    maxInput.value = maxVal;
+                }
+                currentMin = minVal;
+                currentMax = maxVal;
+
+                colorStartFrom = startFrom.value;
+                colorStartTo = startTo.value;
+                colorEndFrom = endFrom.value;
+                colorEndTo = endTo.value;
+
+                let dur = parseInt(durationInput.value);
+                if (isNaN(dur) || dur < 100) dur = 3000;
+                duration = dur;
+
+                showDecimal = showDecimalCheckbox.checked;
+
+                fullscreenDiv.classList.add('active');
+                isFullscreen = true;
+
+                isRunning = true;
+                startTime = null;
+                fullscreenStatus.textContent = '⏩ 加速中 · 从慢到快';
+
+                updateFullscreenNumber(currentMin);
+                animationFrame = requestAnimationFrame(animate);
+            }
+
+            // ---------- 返回 ----------
+            function goBackToSetup() {
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+                isRunning = false;
+                startTime = null;
+
+                fullscreenDiv.classList.remove('active');
+                isFullscreen = false;
+
+                startBtn.textContent = '▶ 开始';
+                statusNote.textContent = '⏹ 已返回 · 可重新设置';
+            }
+
+            // ---------- 重新开始 ----------
+            function restartFullscreen() {
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+                isRunning = false;
+                startTime = null;
+
+                let minVal = parseFloat(minInput.value) || 0;
+                let maxVal = parseFloat(maxInput.value) || 100;
+                if (maxVal < minVal) {
+                    [minVal, maxVal] = [maxVal, minVal];
+                    minInput.value = minVal;
+                    maxInput.value = maxVal;
+                }
+                currentMin = minVal;
+                currentMax = maxVal;
+
+                colorStartFrom = startFrom.value;
+                colorStartTo = startTo.value;
+                colorEndFrom = endFrom.value;
+                colorEndTo = endTo.value;
+
+                let dur = parseInt(durationInput.value);
+                if (isNaN(dur) || dur < 100) dur = 3000;
+                duration = dur;
+
+                showDecimal = showDecimalCheckbox.checked;
+
+                isRunning = true;
+                startTime = null;
+                fullscreenStatus.textContent = '⏩ 加速中 · 从慢到快';
+
+                updateFullscreenNumber(currentMin);
+                animationFrame = requestAnimationFrame(animate);
+            }
+
+            // ---------- 事件绑定 ----------
+            startBtn.addEventListener('click', startFullscreenAnimation);
+
+            backBtn.addEventListener('click', goBackToSetup);
+
+            restartBtn.addEventListener('click', function() {
+                if (isFullscreen) {
+                    restartFullscreen();
+                }
+            });
+
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && isFullscreen) {
+                    goBackToSetup();
+                }
+            });
+
+            const paramInputs = [minInput, maxInput, startFrom, startTo, endFrom, endTo, durationInput, showDecimalCheckbox];
+            paramInputs.forEach(input => {
+                input.addEventListener('input', function() {
+                    if (!isFullscreen) {
+                        statusNote.textContent = '⚙️ 参数已更新 · 点击「开始」';
+                    }
+                });
+            });
+
+            // ---------- 初始化 ----------
+            fullscreenDiv.classList.remove('active');
+            isFullscreen = false;
+            statusNote.textContent = '✨ 设置参数，点击「开始」进入全屏动画';
+
+            fullscreenDigit.textContent = '0';
+            fullscreenDigit.style.backgroundImage = 'linear-gradient(135deg, #ff7b7b, #7bb7ff)';
+            fullscreenDigit.style.backgroundClip = 'text';
+            fullscreenDigit.style.webkitBackgroundClip = 'text';
+            fullscreenDigit.style.webkitTextFillColor = 'transparent';
+            fullscreenDigit.style.color = 'transparent';
+            fullscreenDigit.style.backgroundRepeat = 'no-repeat';
+            fullscreenDigit.style.backgroundSize = '100% 100%';
+        })();
+    </script>
+</body>
+</html>

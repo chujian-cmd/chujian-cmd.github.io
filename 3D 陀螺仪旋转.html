@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>陀螺仪 3D 场景</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background:#05050c; color:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;
+    touch-action:none; overscroll-behavior:none;
+  }
+  canvas { display:block; }
+
+  /* ---- 启动遮罩 ---- */
+  #overlay {
+    position:fixed; inset:0; z-index:20;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 50% 40%, #141430 0%, #05050c 70%);
+    padding:32px; text-align:center;
+    transition:opacity .4s ease;
+  }
+  #overlay.hide { opacity:0; pointer-events:none; }
+  #overlay h1 { font-size:22px; font-weight:700; letter-spacing:1px; margin-bottom:22px; }
+  #overlay .tip {
+    font-size:14px; line-height:2; color:#8b8ba8;
+    padding:18px 22px; border-radius:16px;
+    background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.07);
+    margin-bottom:10px;
+  }
+  #overlay .tip b { color:#7db4ff; font-weight:600; }
+  #overlay .note { font-size:12px; color:#55556e; margin-top:14px; line-height:1.8; }
+  #startBtn {
+    margin-top:26px; padding:15px 52px; border:none; border-radius:100px;
+    background:linear-gradient(135deg,#3b82f6,#6366f1);
+    color:#fff; font-size:16px; font-weight:600; letter-spacing:1px;
+    box-shadow:0 8px 32px rgba(59,130,246,.4);
+    cursor:pointer; transition:transform .15s ease;
+  }
+  #startBtn:active { transform:scale(.95); }
+
+  /* ---- 校准按钮 ---- */
+  #calibBtn {
+    position:fixed; bottom:calc(24px + env(safe-area-inset-bottom)); left:50%;
+    transform:translateX(-50%);
+    padding:11px 30px; border-radius:100px;
+    background:rgba(20,20,40,.7); color:#c9c9e0;
+    font-size:13px; letter-spacing:.5px;
+    border:1px solid rgba(255,255,255,.14);
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    z-index:10; display:none; cursor:pointer;
+  }
+  #calibBtn:active { background:rgba(60,60,110,.85); }
+
+  /* ---- 状态条 ---- */
+  #hud {
+    position:fixed; top:calc(14px + env(safe-area-inset-top)); left:0; right:0;
+    z-index:10; display:none; justify-content:center; pointer-events:none;
+  }
+  #hud .pill {
+    font-size:11px; color:#7a7a9a; letter-spacing:.5px;
+    background:rgba(10,10,24,.6); padding:6px 16px; border-radius:100px;
+    border:1px solid rgba(255,255,255,.06);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+  }
+</style>
+</head>
+<body>
+
+<div id="hud"><div class="pill" id="hudText">倾斜移动 · 转动看四周</div></div>
+<button id="calibBtn">重新校准</button>
+
+<div id="overlay">
+  <h1>陀螺仪 3D 场景</h1>
+  <div class="tip">
+    <b>前后倾斜</b> → 前进 / 后退<br>
+    <b>左右倾斜</b> → 左移 / 右移<br>
+    <b>水平转动</b> → 旋转视角
+  </div>
+  <div class="note">建议将手机放平，或倾斜 30°~60° 握持<br>进入后可按「重新校准」重置中位姿态</div>
+  <button id="startBtn">开始体验</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ============================================================
+   0. 参数配置
+   ============================================================ */
+const CFG = {
+  moveSpeed:   8.0,    // 最大移动速度 (单位/秒)
+  tiltRange:   22,     // 倾斜多少度达到满速
+  yawGain:     1.0,    // 视角旋转灵敏度
+  deadzone:    0.07,   // 摇杆死区
+  smoothTilt:  0.10,   // 倾斜平滑时间常数(秒)，越大越顺滑
+  smoothYaw:   0.06,   // 视角平滑时间常数
+  lookAhead:   0.16,   // 视角跟随速度
+};
+
+const DEG = Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+function angleDelta(a, b) {          // 处理 0/360 环绕
+  let d = (a - b) % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
+/* ============================================================
+   1. 场景搭建
+   ============================================================ */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05050c);
+scene.fog = new THREE.FogExp2(0x05050c, 0.018);
+
+const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 400);
+
+// ---- 灯光 ----
+const hemi = new THREE.HemisphereLight(0x9bb8ff, 0x14142a, 0.9);
+scene.add(hemi);
+
+const keyLight = new THREE.DirectionalLight(0xbfd4ff, 2.0);
+keyLight.position.set(18, 30, 12);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(1024, 1024);
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 120;
+const S = 45;
+Object.assign(keyLight.shadow.camera, { left: -S, right: S, top: S, bottom: -S });
+keyLight.shadow.bias = -0.0008;
+scene.add(keyLight);
+scene.add(keyLight.target);
+
+const warmLight = new THREE.PointLight(0xff5f9e, 260, 90, 2);
+warmLight.position.set(-22, 10, -18);
+scene.add(warmLight);
+
+const coolLight = new THREE.PointLight(0x3ad9ff, 220, 90, 2);
+coolLight.position.set(24, 8, 22);
+scene.add(coolLight);
+
+// ---- 地面 ----
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400),
+  new THREE.MeshStandardMaterial({ color: 0x0c0c1a, roughness: 0.92, metalness: 0.15 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(400, 200, 0x1e2a55, 0x111828);
+grid.position.y = 0.02;
+grid.material.transparent = true;
+grid.material.opacity = 0.55;
+scene.add(grid);
+
+// ---- 随机建筑群 ----
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const buildings = [];
+const COUNT = 150;
+
+for (let i = 0; i < COUNT; i++) {
+  const h = 0.6 + Math.pow(Math.random(), 2) * 12;
+  const hue = 0.53 + Math.random() * 0.14;
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(hue, 0.55, 0.30 + Math.random() * 0.22),
+    emissive: new THREE.Color().setHSL(hue, 0.9, 0.06 + Math.random() * 0.10),
+    roughness: 0.35,
+    metalness: 0.65,
+  });
+
+  const box = new THREE.Mesh(boxGeo, mat);
+  const r = 7 + Math.random() * 70;
+  const a = Math.random() * Math.PI * 2;
+  box.position.set(Math.cos(a) * r, h / 2, Math.sin(a) * r);
+  box.scale.set(0.9 + Math.random() * 2.2, h, 0.9 + Math.random() * 2.2);
+  box.rotation.y = Math.random() * Math.PI;
+  box.castShadow = true;
+  box.receiveShadow = true;
+  scene.add(box);
+  buildings.push({ mesh: box, baseY: h / 2 });
+}
+
+// ---- 中心光柱 ----
+const coreMat = new THREE.MeshStandardMaterial({
+  color: 0x2a3f7a, emissive: 0x3b82f6, emissiveIntensity: 1.6,
+  roughness: 0.2, metalness: 0.9, transparent: true, opacity: 0.85
+});
+const core = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.9, 26, 16), coreMat);
+core.position.y = 13;
+scene.add(core);
+
+const halo = new THREE.Mesh(
+  new THREE.TorusGeometry(5, 0.06, 8, 90),
+  new THREE.MeshBasicMaterial({ color: 0x5b8cff, transparent: true, opacity: 0.5 })
+);
+halo.rotation.x = Math.PI / 2;
+halo.position.y = 1.2;
+scene.add(halo);
+
+/* ============================================================
+   2. 陀螺仪输入
+   ============================================================ */
+const G = {
+  raw: { a: 0, b: 0, g: 0 },     // 原始角度
+  sm:  { a: 0, b: 0, g: 0 },     // 平滑后角度
+  base:{ a: 0, b: 0, g: 0 },     // 校准基准
+  ready: false,                  // 是否收到过数据
+  calibrated: false,
+};
+
+let targetYaw = 0;      // 目标视角（弧度）
+let inputZ = 0;         // 前后 (-1 ~ 1)
+let inputX = 0;         // 左右 (-1 ~ 1)
+
+function onDeviceOrientation(e) {
+  if (e.alpha === null || e.alpha === undefined) return;
+  if (e.beta === null || e.beta === undefined) return;
+
+  if (!G.ready) {
+    // 首次收到数据 → 自动校准
+    G.sm.a = G.base.a = e.alpha;
+    G.sm.b = G.base.b = e.beta;
+    G.sm.g = G.base.g = e.gamma;
+    G.calibrated = true;
+    G.ready = true;
+  }
+
+  G.raw.a = e.alpha;
+  G.raw.b = e.beta;
+  G.raw.g = e.gamma;
+}
+
+function calibrate() {
+  if (!G.ready) return;
+  G.base.a = G.sm.a;
+  G.base.b = G.sm.b;
+  G.base.g = G.sm.g;
+  targetYaw = 0;
+  inputX = inputZ = 0;
+  flashHud('已重新校准 ✓');
+}
+
+function updateGyro(dt) {
+  if (!G.ready) return;
+
+  // ---- 平滑（指数平滑，与帧率无关）----
+  const kT = 1 - Math.exp(-dt / CFG.smoothTilt);
+  const kY = 1 - Math.exp(-dt / CFG.smoothYaw);
+
+  G.sm.a += angleDelta(G.raw.a, G.sm.a) * kY;
+  G.sm.b += (G.raw.b - G.sm.b) * kT;
+  G.sm.g += (G.raw.g - G.sm.g) * kT;
+
+  if (!G.calibrated) return;
+
+  // ---- 视角旋转：alpha 相对基准的偏移 ----
+  const dAlpha = angleDelta(G.sm.a, G.base.a);
+  targetYaw = dAlpha * DEG * CFG.yawGain;
+
+  // ---- 移动：beta / gamma 相对基准的倾斜 ----
+  let z = (G.base.b - G.sm.b) / CFG.tiltRange;   // 前倾 → 前进
+  let x = (G.sm.g - G.base.g) / CFG.tiltRange;   // 右倾 → 右移
+
+  z = clamp(z, -1, 1);
+  x = clamp(x, -1, 1);
+
+  // 死区 + 缓入曲线（让操作更细腻）
+  inputZ = Math.abs(z) < CFG.deadzone ? 0 : Math.sign(z) * Math.pow((Math.abs(z) - CFG.deadzone) / (1 - CFG.deadzone), 1.4);
+  inputX = Math.abs(x) < CFG.deadzone ? 0 : Math.sign(x) * Math.pow((Math.abs(x) - CFG.deadzone) / (1 - CFG.deadzone), 1.4);
+}
+
+/* ============================================================
+   3. 玩家状态 & 移动
+   ============================================================ */
+const player = {
+  pos: new THREE.Vector3(0, 1.7, 26),
+  yaw: 0,
+  bob: 0,        // 走路上下摆动相位
+};
+
+const _fwd = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _vel = new THREE.Vector3();
+
+function updatePlayer(dt) {
+  // ---- 视角平滑 ----
+  player.yaw += (targetYaw - player.yaw) * (1 - Math.exp(-dt / CFG.lookAhead));
+
+  // ---- 计算局部坐标方向 ----
+  const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+  _fwd.set(-s, 0, -c);      // 前方
+  _right.set(c, 0, -s);     // 右方
+
+  // ---- 合成速度 ----
+  _vel.set(0, 0, 0)
+      .addScaledVector(_fwd, inputZ)
+      .addScaledVector(_right, inputX);
+
+  let mag = _vel.length();
+  if (mag > 1) _vel.normalize();
+  mag = Math.min(mag, 1);
+
+  _vel.multiplyScalar(CFG.moveSpeed);
+
+  player.pos.addScaledVector(_vel, dt);
+
+  // 限制活动范围
+  const R = 130;
+  if (player.pos.length() > R) {
+    player.pos.setLength(R);
+  }
+  player.pos.y = 1.7;
+
+  // ---- 走路上下摆动 ----
+  player.bob += dt * mag * 11;
+  const bobY = Math.sin(player.bob) * 0.055 * mag;
+  const bobR = Math.cos(player.bob * 0.5) * 0.012 * mag;
+
+  // ---- 应用到相机 ----
+  camera.position.set(player.pos.x, player.pos.y + bobY, player.pos.z);
+  camera.rotation.set(0, player.yaw, bobR, 'YXZ');
+}
+
+/* ============================================================
+   4. 桌面端降级方案（鼠标拖拽 + WASD）
+   ============================================================ */
+const keys = {};
+let dragging = false, lastPX = 0, lastPY = 0;
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup',   e => keys[e.code] = false);
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (G.ready) return;              // 有陀螺仪就忽略鼠标
+  dragging = true; lastPX = e.clientX; lastPY = e.clientY;
+});
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  targetYaw -= (e.clientX - lastPX) * 0.005;
+  lastPX = e.clientX; lastPY = e.clientY;
+});
+window.addEventListener('pointerup', () => dragging = false);
+
+function updateDesktop(dt) {
+  if (G.ready) return;
+  let z = 0, x = 0;
+  if (keys['KeyW'] || keys['ArrowUp'])    z += 1;
+  if (keys['KeyS'] || keys['ArrowDown'])  z -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) x += 1;
+  if (keys['KeyA'] || keys['ArrowLeft'])  x -= 1;
+  inputZ = z; inputX = x;
+}
+
+/* ============================================================
+   5. 主循环
+   ============================================================ */
+let lastTime = performance.now();
+let elapsed = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const now = performance.now();
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  dt = Math.min(dt, 0.05);   // 防止切后台后跳帧
+  elapsed += dt;
+
+  updateDesktop(dt);
+  updateGyro(dt);
+  updatePlayer(dt);
+
+  // 场景动效
+  halo.rotation.z += dt * 0.35;
+  halo.scale.setScalar(1 + Math.sin(elapsed * 1.4) * 0.04);
+  core.material.emissiveIntensity = 1.4 + Math.sin(elapsed * 2.2) * 0.35;
+
+  warmLight.position.x = -22 + Math.sin(elapsed * 0.5) * 6;
+  warmLight.position.z = -18 + Math.cos(elapsed * 0.4) * 6;
+  coolLight.position.x = 24 + Math.sin(elapsed * 0.35 + 2) * 7;
+  coolLight.position.z = 22 + Math.cos(elapsed * 0.45 + 1) * 7;
+
+  // 灯光跟随玩家，保证阴影质量
+  keyLight.position.set(player.pos.x + 18, 30, player.pos.z + 12);
+  keyLight.target.position.copy(player.pos);
+  keyLight.target.updateMatrixWorld();
+
+  renderer.render(scene, camera);
+}
+
+/* ============================================================
+   6. 启动流程
+   ============================================================ */
+const overlay   = document.getElementById('overlay');
+const startBtn  = document.getElementById('startBtn');
+const calibBtn  = document.getElementById('calibBtn');
+const hud       = document.getElementById('hud');
+const hudText   = document.getElementById('hudText');
+let hudTimer = null;
+
+function flashHud(msg) {
+  hudText.textContent = msg;
+  clearTimeout(hudTimer);
+  hudTimer = setTimeout(() => {
+    hudText.textContent = G.ready ? '倾斜移动 · 转动看四周' : '鼠标拖拽转向 · WASD 移动';
+  }, 1600);
+}
+
+async function requestGyroPermission() {
+  if (typeof DeviceOrientationEvent === 'undefined') return false;
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    try {
+      const res = await DeviceOrientationEvent.requestPermission();
+      return res === 'granted';
+    } catch (err) {
+      console.warn('陀螺仪权限请求失败:', err);
+      return false;
+    }
+  }
+  return true;   // Android / 旧版 iOS 无需授权
+}
+
+startBtn.addEventListener('click', async () => {
+  startBtn.disabled = true;
+  startBtn.textContent = '正在启动…';
+
+  const ok = await requestGyroPermission();
+
+  if (ok) {
+    window.addEventListener('deviceorientation', onDeviceOrientation, true);
+
+    // 等待 600ms，看是否有真实数据
+    setTimeout(() => {
+      if (!G.ready) {
+        flashHud('未检测到陀螺仪，已切换鼠标模式');
+      } else {
+        flashHud('校准完成 ✓');
+      }
+    }, 900);
+  } else {
+    flashHud('陀螺仪不可用，已切换鼠标模式');
+  }
+
+  overlay.classList.add('hide');
+  hud.style.display = 'flex';
+  calibBtn.style.display = 'block';
+  setTimeout(() => overlay.remove(), 450);
+});
+
+calibBtn.addEventListener('click', calibrate);
+
+// 页面可见性：切回来时重置时间，避免大跳
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) lastTime = performance.now();
+});
+
+/* ============================================================
+   7. 窗口尺寸
+   ============================================================ */
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', () => setTimeout(onResize, 220));
+
+/* 启动 */
+onResize();
+animate();
+</script>
+</body>
+</html>

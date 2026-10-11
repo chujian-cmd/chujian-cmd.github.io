@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>体素沙盒 · 透明全屏</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', sans-serif;
+      overflow: hidden; background: #0b0f1a;
+      user-select: none; touch-action: none;
+      position: fixed; width: 100%; height: 100%;
+    }
+    #app { display: flex; flex-direction: column; width: 100vw; height: 100vh; background: #0b0f1a; }
+    #scene-container {
+      flex: 1; background: #151e2e; overflow: hidden;
+      position: relative; box-shadow: inset 0 0 30px rgba(0,0,0,0.5);
+    }
+    #scene-container canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* ---------- HUD ---------- */
+    #hud {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 20; display: flex; align-items: center; gap: 12px;
+      padding: 4px 16px; background: rgba(8,14,30,0.65);
+      backdrop-filter: blur(12px); border-radius: 40px;
+      border: 1px solid rgba(255,255,255,0.04);
+      color: #b0c8e8; font-size: 0.6rem;
+      pointer-events: none; white-space: nowrap;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    }
+    #hud .dot {
+      width: 14px; height: 14px; border-radius: 4px; display: inline-block;
+      border: 1.5px solid rgba(255,255,255,0.1);
+      vertical-align: middle; margin-right: 3px;
+    }
+    #hud .name { color: #e0ecff; font-weight: 600; }
+    #hud .right {
+      display: flex; gap: 10px; font-family: monospace;
+      font-size: 0.5rem; color: #4ecdc4; align-items: center;
+    }
+    #hud .right svg { width: 12px; height: 12px; fill: currentColor; }
+
+    /* ---------- 底部 ---------- */
+    #bottom-controls {
+      position: absolute; bottom: 12px; left: 0; right: 0;
+      z-index: 30; display: flex; flex-direction: column;
+      gap: 8px; padding: 0 10px; pointer-events: none;
+    }
+    #bottom-controls > * { pointer-events: auto; }
+
+    #toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      background: transparent; padding: 4px 6px;
+    }
+    .tool-group { display: flex; gap: 4px; align-items: center; }
+
+    .btn-icon {
+      width: 40px; height: 40px;
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 12px; background: rgba(0,0,0,0.35);
+      backdrop-filter: blur(8px); color: #ffffff;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; touch-action: none; transition: 0.08s;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2); padding: 0;
+    }
+    .btn-icon svg {
+      width: 20px; height: 20px; fill: currentColor;
+      display: block; transform-origin: center; overflow: visible;
+    }
+    .btn-icon svg.stroke-icon {
+      fill: none; stroke: currentColor;
+      stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    }
+    .btn-icon:active { transform: scale(0.85); background: rgba(78,205,196,0.25); }
+    .btn-icon.action:active { background: rgba(255,107,107,0.25); }
+
+    /* ⭐ CSS 回退动画：保证一定会动 */
+    @keyframes icon-pop {
+      0%   { transform: scale(1) rotate(0deg); }
+      30%  { transform: scale(1.55) rotate(-8deg); }
+      60%  { transform: scale(0.85) rotate(4deg); }
+      100% { transform: scale(1) rotate(0deg); }
+    }
+    @keyframes icon-spin {
+      0%   { transform: rotate(0deg) scale(1); }
+      50%  { transform: rotate(180deg) scale(1.3); }
+      100% { transform: rotate(360deg) scale(1); }
+    }
+    .btn-icon.pop svg   { animation: icon-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .btn-icon.spin svg  { animation: icon-spin 0.6s ease; }
+
+    #shape-indicator {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0,0,0,0.3); backdrop-filter: blur(8px);
+      padding: 2px 10px 2px 6px; border-radius: 30px;
+      border: 1px solid rgba(255,255,255,0.03);
+    }
+    #shape-dot {
+      width: 20px; height: 20px; border-radius: 6px;
+      border: 1.5px solid rgba(255,255,255,0.1); flex-shrink: 0;
+    }
+    #shape-name { color: #e0ecff; font-size: 0.6rem; font-weight: 500; }
+
+    #control-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 4px;
+    }
+    #joystick-area { position: relative; width: 110px; height: 110px; touch-action: none; flex-shrink: 0; }
+    #joystick-base {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: rgba(0,0,0,0.3); backdrop-filter: blur(8px);
+      border: 2px solid rgba(255,255,255,0.06);
+      box-shadow: 0 0 40px rgba(0,0,0,0.3), inset 0 0 20px rgba(0,0,0,0.15);
+    }
+    #joystick-thumb {
+      position: absolute; width: 42%; height: 42%; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #8cf0e8, #1f8a82);
+      border: 2.5px solid rgba(255,255,255,0.2);
+      box-shadow: 0 0 30px rgba(78,205,196,0.15);
+      top: 29%; left: 29%; pointer-events: none;
+    }
+    #btn-jump {
+      width: 90px; height: 90px; border: none; border-radius: 50%;
+      color: #fff;
+      background: linear-gradient(145deg, #ff6b6b, #d63031);
+      box-shadow: 0 8px 30px rgba(255,107,107,0.25), inset 0 -4px 0 rgba(0,0,0,0.1);
+      cursor: pointer; touch-action: none; transition: 0.06s;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; border: 2px solid rgba(255,255,255,0.05);
+      padding: 0;
+    }
+    #btn-jump svg { width: 36px; height: 36px; fill: #fff; transform-origin: center; }
+    #btn-jump:active { transform: scale(0.85); }
+
+    /* ---------- 触控板 ---------- */
+    #touchpad-wrap {
+      position: absolute; top: 60px; right: 8px;
+      width: 64px; height: 64px; z-index: 25;
+      background: rgba(0,0,0,0.3); backdrop-filter: blur(10px);
+      border-radius: 36px; border: 1px solid rgba(255,255,255,0.04);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3); touch-action: none;
+    }
+    #touchpad-wrap #touchpad-label {
+      color: rgba(255,255,255,0.3);
+      display: flex; align-items: center; gap: 3px; margin-bottom: 1px;
+    }
+    #touchpad-wrap #touchpad-label svg { width: 7px; height: 7px; fill: currentColor; }
+    #touchpad {
+      width: 48px; height: 32px; border-radius: 30px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.04);
+      position: relative; touch-action: none; cursor: pointer; overflow: hidden;
+    }
+    #touchpad .divider {
+      position: absolute; top: 0; bottom: 0; left: 50%;
+      width: 1px; background: rgba(255,255,255,0.06);
+    }
+    #touchpad .label-left, #touchpad .label-right {
+      position: absolute; bottom: 3px; color: rgba(255,255,255,0.15);
+    }
+    #touchpad .label-left svg, #touchpad .label-right svg {
+      width: 6px; height: 6px; fill: currentColor; display: block;
+    }
+    #touchpad .label-left { left: 6px; }
+    #touchpad .label-right { right: 6px; }
+    #touchpad .cursor-dot {
+      position: absolute; width: 14px; height: 14px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(78,205,196,0.4), rgba(78,205,196,0.05));
+      border: 1.5px solid rgba(78,205,196,0.2);
+      pointer-events: none; transform: translate(-50%, -50%); display: none;
+    }
+    #touchpad .cursor-dot.active { display: block; }
+
+    /* ---------- 控制台 ---------- */
+    #cheat-panel {
+      position: fixed; top: 80px; right: 6px; width: 180px;
+      z-index: 9999; background: rgba(8,16,32,0.92);
+      border: 1px solid rgba(78,205,196,0.1);
+      color: #b0f0e0; padding: 10px; border-radius: 16px;
+      opacity: 0; pointer-events: none; transition: opacity 0.25s;
+      font-family: monospace; font-size: 0.5rem;
+      backdrop-filter: blur(14px); max-height: 70vh; overflow-y: auto;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      cursor: grab; touch-action: none;
+    }
+    #cheat-panel.visible { opacity: 1; pointer-events: auto; }
+    #cheat-panel .panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 6px; cursor: grab; touch-action: none; user-select: none;
+    }
+    #cheat-panel .panel-header h3 {
+      color: #4ecdc4; font-size: 0.7rem; margin: 0;
+      display: flex; align-items: center; gap: 4px; pointer-events: none;
+    }
+    #cheat-panel .panel-header h3 svg { width: 13px; height: 13px; fill: #4ecdc4; }
+    #cheat-panel .panel-header .close-btn {
+      background: none; border: none; color: rgba(255,255,255,0.3);
+      font-size: 0.8rem; cursor: pointer; padding: 0 4px; font-family: inherit;
+    }
+    #cheat-panel .panel-header .close-btn:hover { color: #ff6b6b; }
+    #cheat-panel input[type="range"] { width: 60px; accent-color: #4ecdc4; }
+    .cheat-btn {
+      width: 100%; padding: 4px 3px; margin: 2px 0;
+      background: rgba(0,255,200,0.05);
+      border: 1px solid rgba(0,255,200,0.1);
+      color: #b0f0e0; border-radius: 6px; cursor: pointer;
+      font-size: 0.5rem; font-family: inherit;
+      display: flex; align-items: center; justify-content: center; gap: 4px;
+    }
+    .cheat-btn svg { width: 10px; height: 10px; fill: currentColor; flex-shrink: 0; }
+    .cheat-btn:active { background: rgba(0,255,200,0.12); }
+    #cheat-panel textarea {
+      width: 100%; background: rgba(0,10,0,0.3);
+      border: 1px solid rgba(0,255,200,0.08); color: #b0f0e0;
+      padding: 3px; border-radius: 6px; min-height: 28px;
+      font-size: 0.45rem; font-family: monospace;
+      resize: vertical; margin-top: 2px;
+    }
+    #cheat-panel .row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin: 2px 0;
+    }
+    #cheat-panel .row label {
+      display: flex; align-items: center; gap: 4px; color: #b0f0e0;
+    }
+    #cheat-panel .row label svg { width: 11px; height: 11px; fill: #4ecdc4; flex-shrink: 0; }
+    #cheat-panel .script-label {
+      display: flex; align-items: center; gap: 4px;
+      margin-top: 4px; color: #b0f0e0;
+    }
+    #cheat-panel .script-label svg { width: 11px; height: 11px; fill: #4ecdc4; }
+
+    /* ---------- 覆层 ---------- */
+    #start-overlay, #death-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity 0.4s ease, visibility 0.4s ease;
+    }
+    #start-overlay {
+      background: radial-gradient(circle at center, rgba(8,12,26,0.98), rgba(0,0,0,0.99));
+      backdrop-filter: blur(16px); visibility: visible;
+    }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+    #start-box {
+      background: rgba(18,26,48,0.95);
+      border: 1.5px solid rgba(78,205,196,0.15);
+      border-radius: 32px; padding: 28px 24px; text-align: center;
+      color: #eaf2ff; max-width: 320px; width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    #start-box h1 {
+      font-size: 1.8rem; margin-bottom: 2px;
+      background: linear-gradient(135deg, #4ecdc4, #ff6b6b);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    #start-box .sub {
+      color: #4ecdc4; font-size: 0.9rem; margin-bottom: 6px;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    #start-box .sub svg { width: 16px; height: 16px; fill: #4ecdc4; }
+    #start-box p {
+      font-size: 0.65rem; color: #8aa4c8; margin: 3px 0;
+      display: flex; align-items: center; justify-content: center;
+      gap: 4px; flex-wrap: wrap;
+    }
+    #start-box .key {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 4px; padding: 1px 6px;
+      font-size: 0.5rem; display: inline-block; color: #b0c8e8;
+    }
+
+    #death-overlay {
+      background: rgba(0,0,0,0.8); backdrop-filter: blur(6px);
+      opacity: 0; pointer-events: none; z-index: 200;
+    }
+    #death-overlay.active { opacity: 1; pointer-events: auto; }
+    #death-box {
+      background: rgba(18,10,22,0.96);
+      border: 1px solid rgba(255,107,107,0.15);
+      border-radius: 28px; padding: 24px 28px;
+      text-align: center; color: #fff;
+    }
+    #death-box h2 {
+      display: flex; align-items: center; justify-content: center;
+      gap: 6px; margin-bottom: 2px;
+    }
+    #death-box h2 svg { width: 22px; height: 22px; fill: #ff6b6b; }
+    #death-box button {
+      background: linear-gradient(135deg, #ff6b6b, #e84a4a);
+      border: none; color: #fff; font-weight: 600;
+      padding: 10px 32px; border-radius: 40px; cursor: pointer;
+      margin-top: 8px; font-size: 0.9rem;
+      box-shadow: 0 4px 20px rgba(255,107,107,0.2);
+    }
+
+    @media (max-width: 600px) {
+      #hud { font-size: 0.5rem; gap: 8px; padding: 3px 12px; top: 6px; }
+      #hud .right { font-size: 0.45rem; gap: 6px; }
+      #touchpad-wrap { width: 56px; height: 56px; top: 52px; right: 6px; }
+      #touchpad { width: 40px; height: 28px; }
+      .btn-icon { width: 34px; height: 34px; border-radius: 10px; }
+      .btn-icon svg { width: 18px; height: 18px; }
+      #joystick-area { width: 90px; height: 90px; }
+      #btn-jump { width: 74px; height: 74px; }
+      #btn-jump svg { width: 30px; height: 30px; }
+      #cheat-panel { width: 150px; font-size: 0.4rem; top: 70px; right: 4px; }
+    }
+    @media (max-width: 420px) {
+      .btn-icon { width: 28px; height: 28px; border-radius: 8px; }
+      .btn-icon svg { width: 15px; height: 15px; }
+      #joystick-area { width: 74px; height: 74px; }
+      #btn-jump { width: 60px; height: 60px; }
+      #btn-jump svg { width: 24px; height: 24px; }
+      #touchpad-wrap { width: 46px; height: 46px; top: 44px; }
+      #touchpad { width: 34px; height: 24px; }
+      #hud { font-size: 0.4rem; gap: 4px; padding: 2px 8px; }
+      #cheat-panel { width: 130px; font-size: 0.35rem; top: 60px; right: 2px; padding: 6px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="start-overlay">
+    <div id="start-box">
+      <h1>沙盒 by 初见.</h1>
+      <p class="sub">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/></svg>
+        点击进入
+      </p>
+      <p><span class="key">摇杆</span> 移动 · <span class="key">跳跃</span> 大按钮</p>
+      <p><span class="key">右触板</span> 左/右 · <span class="key">右滑</span> 视角</p>
+    </div>
+  </div>
+
+  <div id="death-overlay">
+    <div id="death-box">
+      <h2>
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+        坠落
+      </h2>
+      <p style="margin:4px 0;font-size:0.75rem;">点击重生</p>
+      <button id="respawn-btn">重生</button>
+    </div>
+  </div>
+
+  <div id="app">
+    <div id="scene-container">
+      <div id="hud">
+        <span id="shape-indicator">
+          <span id="shape-dot" class="dot"></span>
+          <span id="shape-name" class="name">立方体</span>
+        </span>
+        <span class="right">
+          <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span id="obj-count">0</span>
+          <svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+          <span id="fps-val">60</span>fps
+        </span>
+      </div>
+
+      <div id="touchpad-wrap">
+        <div id="touchpad-label">
+          <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+        </div>
+        <div id="touchpad">
+          <div class="divider"></div>
+          <span class="label-left">
+            <svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </span>
+          <span class="label-right">
+            <svg viewBox="0 0 24 24"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+          </span>
+          <div class="cursor-dot" id="cursor-dot"></div>
+        </div>
+      </div>
+
+      <div id="bottom-controls">
+        <div id="toolbar">
+          <div class="tool-group">
+            <button class="btn-icon action" id="btn-place" title="放置">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+            <button class="btn-icon action" id="btn-remove" title="移除">
+              <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg>
+            </button>
+            <button class="btn-icon" id="btn-next" title="下一个形状">
+              <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+            </button>
+            <button class="btn-icon special" id="btn-grab" title="抓取（吸引）">
+              <svg viewBox="0 0 24 24">
+                <path d="M6 3h4v9a2 2 0 0 0 4 0V3h4v9a6 6 0 0 1-12 0V3z"/>
+                <rect x="4" y="2" width="8" height="3" rx="1"/>
+                <rect x="12" y="2" width="8" height="3" rx="1"/>
+              </svg>
+            </button>
+            <button class="btn-icon special" id="btn-push" title="推动（排斥）">
+              <svg viewBox="0 0 24 24">
+                <path class="icon-path" d="M12 3l2.5 5h-1.5v3h-2V8H9.5L12 3zM12 21l-2.5-5h1.5v-3h2v3h2.5L12 21zM3 12l5-2.5v1.5h3v2H8v1.5L3 12zM21 12l-5 2.5v-1.5h-3v-2h3V9.5L21 12z"/>
+              </svg>
+            </button>
+          </div>
+          <div class="tool-group">
+            <button class="btn-icon special" id="btn-explode" title="爆炸">
+              <svg viewBox="0 0 24 24"><path d="M12 2l1.8 4.2L18 4l-2.2 4.2L20 10l-4.2 1.8L18 16l-4.2-1.8L12 18l-1.8-4.2L6 16l2.2-4.2L4 10l4.2-1.8L6 4l4.2 2.2z"/></svg>
+            </button>
+            <button class="btn-icon special" id="btn-vacuum" title="吸引（龙卷风）">
+              <svg viewBox="0 0 24 24">
+                <path id="tornado-path" class="stroke-icon"
+                      d="M3 5h18 M5 9h14 M7 13h10 M9 17h6 M11 21h2"
+                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button class="btn-icon" id="btn-color" title="切换颜色">
+              <svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8z"/></svg>
+            </button>
+            <button class="btn-icon" id="btn-panel" title="控制台">
+              <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="control-row">
+          <div id="joystick-area">
+            <div id="joystick-base"></div>
+            <div id="joystick-thumb"></div>
+          </div>
+          <button id="btn-jump" title="跳跃">
+            <svg viewBox="0 0 24 24"><path d="M12 4l-8 8h5v8h6v-8h5z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cheat-panel">
+    <div class="panel-header" id="panel-drag-handle">
+      <h3>
+        <svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+        控制台
+      </h3>
+      <button class="close-btn" id="panel-close">✕</button>
+    </div>
+
+    <div class="row"><label><svg viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>飞行</label><input type="checkbox" id="cheat-fly"></div>
+    <div class="row"><label><svg viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>上帝</label><input type="checkbox" id="cheat-god" checked></div>
+    <div class="row"><label><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>无限放置</label><input type="checkbox" id="cheat-range"></div>
+    <div class="row"><label><svg viewBox="0 0 24 24"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>自动放置</label><input type="checkbox" id="cheat-auto"></div>
+
+    <div class="row">重力 <input type="range" id="cheat-gravity" min="-20" max="20" value="-12" step="0.5"></div>
+    <div class="row">速度 <input type="range" id="cheat-speed" min="2" max="30" value="6" step="0.5"></div>
+    <div class="row">跳跃 <input type="range" id="cheat-jump" min="2" max="20" value="7" step="0.5"></div>
+
+    <button class="cheat-btn" id="btn-spawn-batch">
+      <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+      批量生成(30)
+    </button>
+    <button class="cheat-btn" id="btn-random-color">
+      <svg viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8z"/></svg>
+      随机颜色
+    </button>
+
+    <label class="script-label">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+      脚本
+    </label>
+    <textarea id="cheat-script-input">// 示例: setGravity(-9.8); spawnSphere(0,5,0,'#ff0000');</textarea>
+    <button class="cheat-btn" id="btn-exec-script">
+      <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      执行
+    </button>
+  </div>
+
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js" } }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    // ============================================================
+    //  anime.js 加载（多 CDN + 日志 + 后台不阻塞）
+    // ============================================================
+    let animeReady = false;
+    let animeAnimate = null;
+    let animeSvg = null;
+
+    const ANIME_CDNS = [
+      'https://cdn.jsdelivr.net/npm/animejs@4.0.0/+esm',
+      'https://esm.sh/animejs@4.0.0',
+      'https://unpkg.com/animejs@4.0.0/+esm',
+    ];
+
+    (async () => {
+      for (const url of ANIME_CDNS) {
+        try {
+          const mod = await import(url);
+          if (typeof mod.animate === 'function' && mod.svg) {
+            animeAnimate = mod.animate;
+            animeSvg = mod.svg;
+            animeReady = true;
+            console.log('%c[anime.js] ✓ 已加载: ' + url, 'color:#4ecdc4');
+            return;
+          } else {
+            console.warn('[anime.js] 模块没有 animate/svg 导出:', url, Object.keys(mod));
+          }
+        } catch (e) {
+          console.warn('[anime.js] ✗ 加载失败:', url, e.message);
+        }
+      }
+      console.warn('%c[anime.js] 全部 CDN 失败，仅使用 CSS 回退动画', 'color:#ff6b6b');
+    })();
+
+    // ============================================================
+    //  核心
+    // ============================================================
+    const game = {
+      scene: new THREE.Scene(),
+      camera: new THREE.PerspectiveCamera(68, 1, 0.1, 200),
+      renderer: new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" }),
+      clock: new THREE.Clock(),
+      raycaster: new THREE.Raycaster(),
+      world: null, groundBody: null, playerBody: null, playerMesh: null,
+      isDead: false, holdK: false,
+      cheat: { fly: false, god: true, range: false, auto: false },
+      config: { moveSpeed: 6, jumpForce: 7, forceStrength: 1500 },
+      placedItems: [], allPlaceables: [], undoStack: [],
+      shapes: {
+        types: ['cube','sphere','cylinder','cone','torus','pyramid','capsule','octahedron'],
+        names: ['立方体','球体','圆柱','圆锥','圆环','金字塔','胶囊','八面体'],
+        index: 0,
+        colors: ['#ff6b6b','#ff9f43','#feca57','#54a0ff','#5f27cd','#00d2d3','#55efc4','#fd79a8','#ffffff','#e056a0'],
+        colorIndex: 0
+      },
+      input: { keys: {}, euler: new THREE.Euler(0,0,0,'YXZ') },
+      geometries: {}, previewMesh: null,
+      directionalLight: null, ambientLight: null,
+      statsFrames: 0, statsTime: 0,
+      joystick: { x: 0, y: 0 },
+      _gravityDefault: -12,
+      _resizeTimeout: null,
+      _gravityBeforeFly: -12,
+    };
+
+    const container = document.getElementById('scene-container');
+
+    function initGraphics() {
+      const rect = container.getBoundingClientRect();
+      const w = rect.width || 400, h = rect.height || 300;
+      game.renderer.setSize(w, h);
+      game.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      game.renderer.shadowMap.enabled = true;
+      game.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      game.renderer.setClearColor('#87CEEB');
+      container.appendChild(game.renderer.domElement);
+
+      game.scene.background = new THREE.Color('#87CEEB');
+      game.scene.fog = new THREE.Fog('#87CEEB', 40, 110);
+
+      game.ambientLight = new THREE.AmbientLight('#bcd4f0', 0.6);
+      game.scene.add(game.ambientLight);
+
+      game.directionalLight = new THREE.DirectionalLight('#fff8e7', 1.2);
+      game.directionalLight.position.set(20,30,10);
+      game.directionalLight.castShadow = true;
+      game.directionalLight.shadow.mapSize.width = 1024;
+      game.directionalLight.shadow.mapSize.height = 1024;
+      game.scene.add(game.directionalLight);
+
+      const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(36,36),
+        new THREE.MeshStandardMaterial({ color: '#d5c4a1', roughness: 0.8 })
+      );
+      groundMesh.rotation.x = -Math.PI/2;
+      groundMesh.position.y = -0.2;
+      groundMesh.receiveShadow = true;
+      game.scene.add(groundMesh);
+      game.allPlaceables.push(groundMesh);
+
+      game.scene.add(new THREE.GridHelper(36,36,'#c4b99a','#e0d5c0'));
+
+      game.previewMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.95,0.95,0.95),
+        new THREE.MeshStandardMaterial({ color: '#ff6b6b', transparent: true, opacity: 0.3 })
+      );
+      game.previewMesh.visible = false;
+      game.scene.add(game.previewMesh);
+
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.4, 16, 12),
+        new THREE.MeshStandardMaterial({ color: '#4ecdc4', emissive: '#4ecdc4', emissiveIntensity: 0.15 })
+      );
+      sphere.position.set(0, 2, 8);
+      sphere.visible = false;
+      game.scene.add(sphere);
+      game.playerMesh = sphere;
+
+      game.camera.position.set(0, 2.6, 8);
+      game.camera.lookAt(0,0,0);
+
+      const ro = new ResizeObserver(() => {
+        if (game._resizeTimeout) cancelAnimationFrame(game._resizeTimeout);
+        game._resizeTimeout = requestAnimationFrame(() => {
+          const r = container.getBoundingClientRect();
+          const w2 = r.width || 400, h2 = r.height || 300;
+          game.camera.aspect = w2 / h2;
+          game.camera.updateProjectionMatrix();
+          game.renderer.setSize(w2, h2);
+          game._resizeTimeout = null;
+        });
+      });
+      ro.observe(container);
+    }
+
+    function getGeometry(type) {
+      if (!game.geometries[type]) {
+        const g = game.geometries;
+        switch(type) {
+          case 'cube': g.cube = new THREE.BoxGeometry(0.95,0.95,0.95); break;
+          case 'sphere': g.sphere = new THREE.SphereGeometry(0.48,24,18); break;
+          case 'cylinder': g.cylinder = new THREE.CylinderGeometry(0.48,0.48,0.95,16); break;
+          case 'cone': g.cone = new THREE.ConeGeometry(0.48,0.95,16); break;
+          case 'torus': g.torus = new THREE.TorusGeometry(0.4,0.18,12,24); break;
+          case 'pyramid': g.pyramid = new THREE.ConeGeometry(0.48,0.9,4); break;
+          case 'capsule': g.capsule = new THREE.CylinderGeometry(0.32,0.32,0.8,12); break;
+          case 'octahedron': g.octahedron = new THREE.OctahedronGeometry(0.48); break;
+          default: g.cube = new THREE.BoxGeometry(0.95,0.95,0.95);
+        }
+      }
+      return game.geometries[type];
+    }
+
+    function getPhysicsShape(type) {
+      switch(type) {
+        case 'cube': return new CANNON.Box(new CANNON.Vec3(0.48,0.48,0.48));
+        case 'sphere': return new CANNON.Sphere(0.48);
+        case 'cylinder': return new CANNON.Cylinder(0.48,0.48,0.95,8);
+        case 'cone': return new CANNON.Cylinder(0,0.48,0.95,8);
+        case 'torus': return new CANNON.Sphere(0.45);
+        case 'pyramid': return new CANNON.Cylinder(0,0.48,0.9,4);
+        case 'capsule': return new CANNON.Cylinder(0.32,0.32,0.8,8);
+        case 'octahedron': return new CANNON.Sphere(0.48);
+        default: return new CANNON.Box(new CANNON.Vec3(0.48,0.48,0.48));
+      }
+    }
+
+    function createPlacedShape(type, colorHex, position, isStatic = false) {
+      const mesh = new THREE.Mesh(
+        getGeometry(type),
+        new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.35, metalness: 0.05 })
+      );
+      mesh.position.copy(position);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.name = 'placed-shape';
+      game.scene.add(mesh);
+      game.allPlaceables.push(mesh);
+
+      const shape = getPhysicsShape(type);
+      const body = new CANNON.Body({ mass: isStatic ? 0 : 1 });
+      body.addShape(shape);
+      body.position.set(position.x, position.y, position.z);
+      body.linearDamping = 0.3;
+      body.angularDamping = 0.1;
+      game.world.addBody(body);
+
+      const entry = { mesh, body, shapeType: type, isStatic };
+      game.placedItems.push(entry);
+      return entry;
+    }
+
+    function removeEntry(entry) {
+      game.world.removeBody(entry.body);
+      game.scene.remove(entry.mesh);
+      const idx = game.placedItems.indexOf(entry);
+      if (idx !== -1) game.placedItems.splice(idx, 1);
+      const pIdx = game.allPlaceables.indexOf(entry.mesh);
+      if (pIdx !== -1) game.allPlaceables.splice(pIdx, 1);
+    }
+
+    function initPhysics() {
+      game.world = new CANNON.World();
+      game.world.gravity.set(0, game._gravityDefault, 0);
+      game.world.broadphase = new CANNON.NaiveBroadphase();
+      game.world.defaultContactMaterial.restitution = 0.4;
+
+      const groundShape = new CANNON.Box(new CANNON.Vec3(18,0.2,18));
+      game.groundBody = new CANNON.Body({ mass: 0 });
+      game.groundBody.addShape(groundShape);
+      game.groundBody.position.set(0, -0.3, 0);
+      game.world.addBody(game.groundBody);
+
+      const bounds = 17.5;
+      const wallPos = [[0,0,-bounds],[0,0,bounds],[-bounds,0,0],[bounds,0,0]];
+      const wallSizes = [[bounds*2,10,0.5],[bounds*2,10,0.5],[0.5,10,bounds*2],[0.5,10,bounds*2]];
+      wallPos.forEach((pos, i) => {
+        const box = new CANNON.Box(new CANNON.Vec3(wallSizes[i][0], wallSizes[i][1], wallSizes[i][2]));
+        const body = new CANNON.Body({ mass: 0 });
+        body.addShape(box);
+        body.position.set(pos[0], pos[1], pos[2]);
+        game.world.addBody(body);
+      });
+
+      const playerShape = new CANNON.Sphere(0.4);
+      game.playerBody = new CANNON.Body({ mass: 1 });
+      game.playerBody.addShape(playerShape);
+      game.playerBody.position.set(0, 2, 8);
+      game.playerBody.linearDamping = 0.9;
+      game.world.addBody(game.playerBody);
+    }
+
+    function resetJoystickFull() {
+      game.joystick.x = 0;
+      game.joystick.y = 0;
+      const thumb = document.getElementById('joystick-thumb');
+      if (thumb) thumb.style.transform = 'translate(0px, 0px)';
+      joyPointerId = null;
+    }
+
+    function resetPlayer() {
+      game.playerBody.position.set(0, 2, 8);
+      game.playerBody.velocity.set(0,0,0);
+      game.playerBody.quaternion.set(0,0,0,1);
+      game.playerBody.angularVelocity.set(0,0,0);
+      const targetGravity = game.cheat.fly ? 0 : game._gravityDefault;
+      game.world.gravity.set(0, targetGravity, 0);
+      document.getElementById('cheat-gravity').value = game._gravityDefault;
+      game.camera.position.set(0, 2.6, 8);
+      game.input.euler.set(0,0,0);
+      game.camera.quaternion.setFromEuler(game.input.euler);
+      game.isDead = false;
+      document.getElementById('death-overlay').classList.remove('active');
+      resetJoystickFull();
+    }
+
+    function die() {
+      if (game.isDead || game.cheat.god) return;
+      game.isDead = true;
+      document.getElementById('death-overlay').classList.add('active');
+      game.playerBody.velocity.set(0,0,0);
+      game.playerBody.angularVelocity.set(0,0,0);
+    }
+
+    function getPlacement() {
+      game.raycaster.setFromCamera(new THREE.Vector2(0,0), game.camera);
+      game.raycaster.far = game.cheat.range ? 100 : 30;
+      const hits = game.raycaster.intersectObjects(game.allPlaceables, false);
+      if (hits.length) {
+        const point = hits[0].point.clone();
+        const normal = hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+        const pos = point.add(normal.multiplyScalar(0.48));
+        pos.x = THREE.MathUtils.clamp(pos.x, -17, 17);
+        pos.z = THREE.MathUtils.clamp(pos.z, -17, 17);
+        pos.y = Math.max(pos.y, 0.2);
+        const validDist = game.cheat.range || pos.distanceTo(game.camera.position) >= 0.9;
+        return { pos, valid: validDist };
+      }
+      return { pos: null, valid: false };
+    }
+
+    function applyForceToAll(attract) {
+      const p = game.playerBody.position;
+      const str = game.config.forceStrength;
+      game.placedItems.forEach(item => {
+        if (item.isStatic) return;
+        const dx = p.x - item.body.position.x, dy = p.y - item.body.position.y, dz = p.z - item.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 8 && dist > 0.3) {
+          const power = (1 - dist / 8) * str;
+          const fx = dx / dist * power, fy = dy / dist * power, fz = dz / dist * power;
+          if (!attract) item.body.applyForce(new CANNON.Vec3(-fx, -fy, -fz), item.body.position);
+          else item.body.applyForce(new CANNON.Vec3(fx, fy, fz), item.body.position);
+        }
+      });
+    }
+
+    function explode() {
+      const p = game.playerBody.position;
+      const str = game.config.forceStrength * 0.7;
+      game.placedItems.forEach(item => {
+        if (item.isStatic) return;
+        const dx = item.body.position.x - p.x, dy = item.body.position.y - p.y, dz = item.body.position.z - p.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 10 && dist > 0.3) {
+          const factor = (1 - dist / 10) * str;
+          const inv = 1 / dist;
+          item.body.applyImpulse(new CANNON.Vec3(dx * inv * factor, (dy+0.5)*inv*factor, dz*inv*factor), item.body.position);
+        }
+      });
+    }
+
+    function vacuum() {
+      const p = game.playerBody.position;
+      game.placedItems.forEach(item => {
+        if (item.isStatic) return;
+        const dx = p.x - item.body.position.x, dy = p.y + 0.5 - item.body.position.y, dz = p.z - item.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist > 1 && dist < 15) item.body.applyImpulse(new CANNON.Vec3(dx*12, dy*12, dz*12), item.body.position);
+      });
+    }
+
+    function clearWorld() {
+      while (game.placedItems.length) removeEntry(game.placedItems[0]);
+      game.undoStack = [];
+    }
+
+    function spawnBatch(count) {
+      const num = Math.min(30, Math.max(1, Math.floor(count)));
+      const type = game.shapes.types[game.shapes.index];
+      const color = game.shapes.colors[game.shapes.colorIndex];
+      const dir = new THREE.Vector3();
+      game.camera.getWorldDirection(dir);
+      const base = game.camera.position.clone().add(dir.multiplyScalar(3));
+      for (let i = 0; i < num; i++) {
+        const ang = (i / num) * Math.PI * 2 + Math.random() * 0.5;
+        const r = 1.5 + Math.random() * 3;
+        const x = base.x + Math.cos(ang) * r, z = base.z + Math.sin(ang) * r, y = base.y + Math.random() * 2;
+        createPlacedShape(type, color, new THREE.Vector3(x, y, z), game.holdK);
+      }
+    }
+
+    function execScript() {
+      const code = document.getElementById('cheat-script-input').value;
+      try {
+        const ctx = {
+          setGravity: (v) => { game.world.gravity.set(0, v, 0); game._gravityDefault = v; document.getElementById('cheat-gravity').value = v; },
+          spawnSphere: (x,y,z,col) => createPlacedShape('sphere', col || '#ff6b6b', new THREE.Vector3(x,y,z)),
+          spawnCube: (x,y,z,col) => createPlacedShape('cube', col || '#ff6b6b', new THREE.Vector3(x,y,z)),
+          clearAll: clearWorld,
+          log: console.log
+        };
+        new Function(...Object.keys(ctx), code)(...Object.values(ctx));
+      } catch(e) { console.error(e); alert('脚本错误: ' + e.message); }
+    }
+
+    function updateHUD() {
+      const col = game.shapes.colors[game.shapes.colorIndex];
+      const name = game.shapes.names[game.shapes.index];
+      document.getElementById('shape-dot').style.background = col;
+      document.getElementById('shape-name').textContent = name;
+    }
+
+    function refreshPreview() {
+      const type = game.shapes.types[game.shapes.index];
+      if (game.previewMesh.geometry) game.previewMesh.geometry.dispose();
+      let newGeo;
+      switch(type) {
+        case 'cube': newGeo = new THREE.BoxGeometry(0.95,0.95,0.95); break;
+        case 'sphere': newGeo = new THREE.SphereGeometry(0.48,24,18); break;
+        case 'cylinder': newGeo = new THREE.CylinderGeometry(0.48,0.48,0.95,16); break;
+        case 'cone': newGeo = new THREE.ConeGeometry(0.48,0.95,16); break;
+        case 'torus': newGeo = new THREE.TorusGeometry(0.4,0.18,12,24); break;
+        case 'pyramid': newGeo = new THREE.ConeGeometry(0.48,0.9,4); break;
+        case 'capsule': newGeo = new THREE.CylinderGeometry(0.32,0.32,0.8,12); break;
+        case 'octahedron': newGeo = new THREE.OctahedronGeometry(0.48); break;
+        default: newGeo = new THREE.BoxGeometry(0.95,0.95,0.95);
+      }
+      game.previewMesh.geometry = newGeo;
+      game.previewMesh.material.color.set(game.shapes.colors[game.shapes.colorIndex]);
+    }
+
+    // ============================================================
+    //  摇杆
+    // ============================================================
+    const joystickArea = document.getElementById('joystick-area');
+    const joystickThumb = document.getElementById('joystick-thumb');
+    const maxDist = 30;
+    let joyPointerId = null;
+
+    function updateJoystick(clientX, clientY) {
+      const rect = joystickArea.getBoundingClientRect();
+      const cx = rect.left + rect.width/2;
+      const cy = rect.top + rect.height/2;
+      let dx = clientX - cx, dy = clientY - cy;
+      const dist = Math.hypot(dx, dy);
+      const clamped = Math.min(dist, maxDist);
+      if (dist > 0) { dx = dx/dist*clamped; dy = dy/dist*clamped; }
+      game.joystick.x = Math.max(-1, Math.min(1, dx/maxDist));
+      game.joystick.y = Math.max(-1, Math.min(1, -dy/maxDist));
+      joystickThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+
+    joystickArea.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      joyPointerId = e.pointerId;
+      joystickArea.setPointerCapture(e.pointerId);
+      updateJoystick(e.clientX, e.clientY);
+    });
+    joystickArea.addEventListener('pointermove', (e) => {
+      if (joyPointerId === null) return;
+      updateJoystick(e.clientX, e.clientY);
+    });
+    joystickArea.addEventListener('pointerup', (e) => {
+      if (joyPointerId === e.pointerId) resetJoystickFull();
+    });
+    joystickArea.addEventListener('pointercancel', (e) => {
+      if (joyPointerId === e.pointerId) resetJoystickFull();
+    });
+
+    // ============================================================
+    //  触控板
+    // ============================================================
+    const touchpad = document.getElementById('touchpad');
+    const cursorDot = document.getElementById('cursor-dot');
+
+    function getTouchPos1(e) {
+      const rect = touchpad.getBoundingClientRect();
+      const cx = e.clientX || 0;
+      const cy = e.clientY || 0;
+      const x = (cx - rect.left) / rect.width;
+      const y = (cy - rect.top) / rect.height;
+      return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+    }
+
+    function handleTouchStart1(e) {
+      e.preventDefault();
+      const pos = getTouchPos1(e);
+      cursorDot.style.left = (pos.x * 100) + '%';
+      cursorDot.style.top = (pos.y * 100) + '%';
+      cursorDot.classList.add('active');
+
+      if (pos.x < 0.5) {
+        const place = getPlacement();
+        if (place.valid && place.pos) {
+          const entry = createPlacedShape(
+            game.shapes.types[game.shapes.index],
+            game.shapes.colors[game.shapes.colorIndex],
+            place.pos,
+            game.holdK
+          );
+          game.undoStack.push({ entries: [entry] });
+        }
+      } else {
+        game.raycaster.setFromCamera(new THREE.Vector2(0,0), game.camera);
+        const hits = game.raycaster.intersectObjects(game.allPlaceables, false);
+        for (let hit of hits) {
+          if (hit.object.name === 'placed-shape') {
+            const ent = game.placedItems.find(i => i.mesh === hit.object);
+            if (ent) removeEntry(ent);
+            break;
+          }
+        }
+      }
+    }
+    function handleTouchEnd1(e) { e.preventDefault(); cursorDot.classList.remove('active'); }
+
+    touchpad.addEventListener('pointerdown', handleTouchStart1);
+    touchpad.addEventListener('pointerup', handleTouchEnd1);
+    touchpad.addEventListener('pointercancel', handleTouchEnd1);
+
+    // ============================================================
+    //  右半屏滑动视角
+    // ============================================================
+    let isViewDragging = false;
+    let lastViewX = 0, lastViewY = 0;
+    let viewPointerId = null;
+
+    document.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button') || e.target.closest('#touchpad-wrap') ||
+          e.target.closest('#toolbar') || e.target.closest('#control-row') ||
+          e.target.closest('#cheat-panel') || e.target.closest('#start-overlay') ||
+          e.target.closest('#death-overlay')) return;
+
+      const rect = container.getBoundingClientRect();
+      const w = rect.width;
+      const x = e.clientX - rect.left;
+      if (x > w * 0.5) {
+        isViewDragging = true;
+        viewPointerId = e.pointerId;
+        lastViewX = e.clientX;
+        lastViewY = e.clientY;
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('pointermove', (e) => {
+      if (!isViewDragging || viewPointerId !== e.pointerId) return;
+      const dx = e.clientX - lastViewX;
+      const dy = e.clientY - lastViewY;
+      lastViewX = e.clientX;
+      lastViewY = e.clientY;
+      game.input.euler.y -= dx * 0.008;
+      game.input.euler.x -= dy * 0.008;
+      game.input.euler.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, game.input.euler.x));
+      game.camera.quaternion.setFromEuler(game.input.euler);
+    });
+
+    document.addEventListener('pointerup', (e) => {
+      if (viewPointerId === e.pointerId) { isViewDragging = false; viewPointerId = null; }
+    });
+    document.addEventListener('pointercancel', (e) => {
+      if (viewPointerId === e.pointerId) { isViewDragging = false; viewPointerId = null; }
+    });
+
+    // ============================================================
+    //  图标动画：CSS 回退 + anime.js 增强
+    // ============================================================
+    function popButton(id, animClass) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      animClass = animClass || 'pop';
+      btn.classList.remove('pop', 'spin');
+      // 强制重排，让动画能重新触发
+      void btn.offsetWidth;
+      btn.classList.add(animClass);
+      setTimeout(() => btn.classList.remove(animClass), 700);
+    }
+
+    // 推动：CSS 弹跳 + anime.js 路径变形
+    const PUSH_REST_D  = 'M12 3l2.5 5h-1.5v3h-2V8H9.5L12 3zM12 21l-2.5-5h1.5v-3h2v3h2.5L12 21zM3 12l5-2.5v1.5h3v2H8v1.5L3 12zM21 12l-5 2.5v-1.5h-3v-2h3V9.5L21 12z';
+    const PUSH_BURST_D = 'M12 1l3.5 6.5h-2.5v4h-2v-4H8.5L12 1zM12 23l-3.5-6.5h2.5v-4h2v4h2.5L12 23zM1 12l6.5-3.5v2.5h4v2H7.5v2.5L1 12zM23 12l-6.5 3.5v-2.5h-4v-2h4V8.5L23 12z';
+
+    function animatePushIcon() {
+      popButton('btn-push', 'pop');
+      if (!animeReady) return;
+      const path = document.querySelector('#btn-push .icon-path');
+      if (!path) return;
+      try {
+        animeAnimate(path, {
+          d: animeSvg.morphTo(PUSH_BURST_D),
+          duration: 160,
+          ease: 'outQuad',
+          onComplete: () => {
+            animeAnimate(path, {
+              d: animeSvg.morphTo(PUSH_REST_D),
+              duration: 340,
+              ease: 'outElastic(1, .5)'
+            });
+          }
+        });
+      } catch (e) { console.warn('morphTo 出错:', e); }
+    }
+
+    function animateGrabIcon() {
+      popButton('btn-grab', 'pop');
+      if (!animeReady) return;
+      const svgEl = document.querySelector('#btn-grab svg');
+      if (!svgEl) return;
+      animeAnimate(svgEl, {
+        scale: [1, 1.3, 1], duration: 350, ease: 'outQuad'
+      });
+    }
+
+    function animateExplodeIcon() {
+      popButton('btn-explode', 'spin');
+      if (!animeReady) return;
+      const svgEl = document.querySelector('#btn-explode svg');
+      if (!svgEl) return;
+      animeAnimate(svgEl, {
+        scale: [1, 1.45, 1], rotate: [0, -15, 15, 0],
+        duration: 480, ease: 'outQuad'
+      });
+    }
+
+    function animateTornadoIcon() {
+      popButton('btn-vacuum', 'spin');
+      if (!animeReady) return;
+      try {
+        const arr = animeSvg.createDrawable('#tornado-path');
+        const drawable = Array.isArray(arr) ? arr[0] : arr;
+        animeAnimate(drawable, {
+          draw: ['0 0', '0 1'],
+          duration: 600,
+          ease: 'outCubic'
+        });
+      } catch (e) { console.warn('createDrawable 出错:', e); }
+    }
+
+    // ============================================================
+    //  按钮绑定
+    // ============================================================
+    function setupButtons() {
+      const map = {
+        'btn-jump': () => { if (game.playerBody.position.y <= 0.8 && !game.isDead) game.playerBody.velocity.y = game.config.jumpForce; },
+        'btn-place': () => { const p = getPlacement(); if (p.valid && p.pos) { const e = createPlacedShape(game.shapes.types[game.shapes.index], game.shapes.colors[game.shapes.colorIndex], p.pos, game.holdK); game.undoStack.push({ entries: [e] }); } },
+        'btn-remove': () => { game.raycaster.setFromCamera(new THREE.Vector2(0,0), game.camera); const hits = game.raycaster.intersectObjects(game.allPlaceables, false); for (let h of hits) { if (h.object.name === 'placed-shape') { const ent = game.placedItems.find(i => i.mesh === h.object); if (ent) removeEntry(ent); break; } } },
+        'btn-next': () => { game.shapes.index = (game.shapes.index + 1) % game.shapes.types.length; updateHUD(); refreshPreview(); },
+        'btn-grab':    () => { applyForceToAll(true);  animateGrabIcon(); },
+        'btn-push':    () => { applyForceToAll(false); animatePushIcon(); },
+        'btn-explode': () => { explode(); animateExplodeIcon(); },
+        'btn-vacuum':  () => { vacuum();  animateTornadoIcon(); },
+        'btn-color': () => { game.shapes.colorIndex = (game.shapes.colorIndex + 1) % game.shapes.colors.length; updateHUD(); refreshPreview(); },
+        'btn-panel': () => document.getElementById('cheat-panel').classList.toggle('visible'),
+      };
+      Object.keys(map).forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('pointerdown', (e) => { e.preventDefault(); map[id](); });
+      });
+    }
+
+    // ============================================================
+    //  键盘
+    // ============================================================
+    document.addEventListener('keydown', (e) => {
+      game.input.keys[e.code] = true;
+      if (e.code === 'KeyK') game.holdK = true;
+      if (e.code >= 'Digit1' && e.code <= 'Digit8') {
+        game.shapes.index = parseInt(e.code.slice(-1)) - 1;
+        updateHUD(); refreshPreview();
+      }
+      if (e.code === 'KeyR') {
+        game.shapes.colorIndex = (game.shapes.colorIndex + 1) % game.shapes.colors.length;
+        updateHUD(); refreshPreview();
+      }
+      if (e.code === 'Space' && game.playerBody.position.y <= 0.8 && !game.isDead) {
+        e.preventDefault();
+        game.playerBody.velocity.y = game.config.jumpForce;
+      }
+      if (e.code === 'KeyF') { e.preventDefault(); resetPlayer(); }
+      if (e.code === 'KeyG') { applyForceToAll(true);  animateGrabIcon(); }
+      if (e.code === 'KeyH') { applyForceToAll(false); animatePushIcon(); }
+      if (e.code === 'KeyB') { explode(); animateExplodeIcon(); }
+      if (e.code === 'KeyV') { vacuum();  animateTornadoIcon(); }
+    });
+    document.addEventListener('keyup', (e) => {
+      game.input.keys[e.code] = false;
+      if (e.code === 'KeyK') game.holdK = false;
+    });
+
+    // ============================================================
+    //  控制台
+    // ============================================================
+    function initCheatPanel() {
+      document.getElementById('cheat-fly').addEventListener('change', e => {
+        const isFly = e.target.checked;
+        if (isFly) {
+          game._gravityBeforeFly = game.world.gravity.y;
+          game.world.gravity.set(0, 0, 0);
+        } else {
+          game.world.gravity.set(0, game._gravityBeforeFly, 0);
+          document.getElementById('cheat-gravity').value = game._gravityBeforeFly;
+          game._gravityDefault = game._gravityBeforeFly;
+        }
+        game.cheat.fly = isFly;
+      });
+      document.getElementById('cheat-god').addEventListener('change', e => game.cheat.god = e.target.checked);
+      document.getElementById('cheat-range').addEventListener('change', e => game.cheat.range = e.target.checked);
+      document.getElementById('cheat-auto').addEventListener('change', e => game.cheat.auto = e.target.checked);
+      document.getElementById('cheat-gravity').addEventListener('input', e => {
+        const val = parseFloat(e.target.value);
+        game.world.gravity.set(0, val, 0);
+        game._gravityDefault = val;
+        if (!game.cheat.fly) game._gravityBeforeFly = val;
+      });
+      document.getElementById('cheat-speed').addEventListener('input', e => game.config.moveSpeed = parseFloat(e.target.value));
+      document.getElementById('cheat-jump').addEventListener('input', e => game.config.jumpForce = parseFloat(e.target.value));
+      document.getElementById('btn-spawn-batch').addEventListener('click', () => spawnBatch(30));
+      document.getElementById('btn-random-color').addEventListener('click', () => {
+        game.shapes.colorIndex = Math.floor(Math.random() * game.shapes.colors.length);
+        updateHUD(); refreshPreview();
+      });
+      document.getElementById('btn-exec-script').addEventListener('click', execScript);
+      document.getElementById('panel-close').addEventListener('click', () => {
+        document.getElementById('cheat-panel').classList.remove('visible');
+      });
+    }
+
+    // ============================================================
+    //  面板拖拽
+    // ============================================================
+    function initPanelDrag() {
+      const panel = document.getElementById('cheat-panel');
+      const handle = document.getElementById('panel-drag-handle');
+      let isDragging = false;
+      let dragStartX, dragStartY, panelStartX, panelStartY;
+      let dragPointerId = null;
+
+      function onDragStart(e) {
+        if (e.target.closest('.close-btn')) return;
+        if (!panel.classList.contains('visible')) return;
+        isDragging = true;
+        dragPointerId = e.pointerId;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        const rect = panel.getBoundingClientRect();
+        panelStartX = rect.left;
+        panelStartY = rect.top;
+        panel.style.cursor = 'grabbing';
+        panel.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      }
+      function onDragMove(e) {
+        if (!isDragging || dragPointerId !== e.pointerId) return;
+        const dx = e.clientX - dragStartX;
+        const dy = e.clientY - dragStartY;
+        let newX = panelStartX + dx;
+        let newY = panelStartY + dy;
+        const r = panel.getBoundingClientRect();
+        newX = Math.max(0, Math.min(window.innerWidth - r.width, newX));
+        newY = Math.max(0, Math.min(window.innerHeight - r.height, newY));
+        panel.style.left = newX + 'px';
+        panel.style.top = newY + 'px';
+        panel.style.right = 'auto';
+      }
+      function onDragEnd(e) {
+        if (isDragging && dragPointerId === e.pointerId) {
+          isDragging = false;
+          dragPointerId = null;
+          panel.style.cursor = 'grab';
+        }
+      }
+      handle.addEventListener('pointerdown', onDragStart);
+      document.addEventListener('pointermove', onDragMove);
+      document.addEventListener('pointerup', onDragEnd);
+      document.addEventListener('pointercancel', onDragEnd);
+    }
+
+    // ============================================================
+    //  演示
+    // ============================================================
+    function initDemo() {
+      const demos = [[0,1,-2,'cube','#ff6b6b'],[3,1,1,'sphere','#4ecdc4'],[-3,1,2,'cylinder','#ffe66d'],[2,1,3,'pyramid','#a29bfe'],[-2,1,-3,'capsule','#00d2d3'],[0,1,4,'octahedron','#fd79a8']];
+      demos.forEach(([x,y,z,type,color]) => createPlacedShape(type, color, new THREE.Vector3(x,y,z), false));
+    }
+
+    // ============================================================
+    //  动画循环
+    // ============================================================
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(game.clock.getDelta(), 0.033);
+
+      const jx = game.joystick.x, jy = game.joystick.y;
+      const dead = 0.15;
+      const ax = Math.abs(jx) > dead ? jx : 0;
+      const ay = Math.abs(jy) > dead ? jy : 0;
+      const joyW = ay > 0.2, joyS = ay < -0.2, joyA = ax < -0.2, joyD = ax > 0.2;
+
+      if (!game.isDead) {
+        if (game.cheat.fly) {
+          const speed = game.config.moveSpeed * 1.2;
+          const forward = new THREE.Vector3();
+          game.camera.getWorldDirection(forward);
+          forward.y = 0;
+          if (forward.length()) forward.normalize();
+          const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
+          const moveDir = new THREE.Vector3()
+            .addScaledVector(forward, (joyW || game.input.keys.KeyW) ? 1 : (joyS || game.input.keys.KeyS) ? -1 : 0)
+            .addScaledVector(right, (joyA || game.input.keys.KeyA) ? -1 : (joyD || game.input.keys.KeyD) ? 1 : 0);
+          if (moveDir.length() > 0) moveDir.normalize();
+          game.playerBody.velocity.x = moveDir.x * speed;
+          game.playerBody.velocity.z = moveDir.z * speed;
+          if (game.input.keys.ShiftLeft || game.input.keys.ShiftRight) game.playerBody.velocity.y = -speed * 0.8;
+          else if (game.input.keys.Space || game.input.keys.KeyW) game.playerBody.velocity.y = speed * 0.8;
+          else game.playerBody.velocity.y = 0;
+        } else {
+          let f = 0, r = 0;
+          if (joyW || game.input.keys.KeyW) f++;
+          if (joyS || game.input.keys.KeyS) f--;
+          if (joyA || game.input.keys.KeyA) r--;
+          if (joyD || game.input.keys.KeyD) r++;
+          const camDir = new THREE.Vector3();
+          game.camera.getWorldDirection(camDir);
+          camDir.y = 0;
+          if (camDir.length()) camDir.normalize();
+          const rightVec = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0,1,0)).normalize();
+          const dir = new THREE.Vector3().addScaledVector(camDir, f).addScaledVector(rightVec, r);
+          if (dir.length()) dir.normalize();
+          game.playerBody.velocity.x = dir.x * game.config.moveSpeed;
+          game.playerBody.velocity.z = dir.z * game.config.moveSpeed;
+        }
+      } else {
+        game.playerBody.velocity.set(0,0,0);
+        game.playerBody.angularVelocity.set(0,0,0);
+      }
+
+      game.world.step(1/60, dt, 3);
+
+      for (let item of game.placedItems) {
+        item.mesh.position.copy(item.body.position);
+        item.mesh.quaternion.copy(item.body.quaternion);
+      }
+
+      const p = game.playerBody.position;
+      game.playerMesh.position.copy(p);
+      const camPos = new THREE.Vector3().copy(p);
+      camPos.y += 0.6;
+      game.camera.position.copy(camPos);
+
+      const place = getPlacement();
+      if (place.valid && place.pos) {
+        game.previewMesh.position.copy(place.pos);
+        game.previewMesh.visible = true;
+        game.previewMesh.material.color.set(game.shapes.colors[game.shapes.colorIndex]);
+      } else {
+        game.previewMesh.visible = false;
+      }
+
+      if (!game.isDead && game.cheat.auto) {
+        game._autoTimer = (game._autoTimer || 0) + dt;
+        if (game._autoTimer > 0.12) {
+          game._autoTimer = 0;
+          const pl = getPlacement();
+          if (pl.valid && pl.pos) createPlacedShape(game.shapes.types[game.shapes.index], game.shapes.colors[game.shapes.colorIndex], pl.pos, game.holdK);
+        }
+      }
+
+      if (!game.isDead && !game.cheat.god && p.y < -8) die();
+
+      document.getElementById('obj-count').textContent = game.placedItems.length;
+
+      const now = performance.now();
+      if (!game.statsTime) game.statsTime = now;
+      game.statsFrames++;
+      if (now - game.statsTime >= 500) {
+        document.getElementById('fps-val').textContent = Math.round(game.statsFrames / ((now - game.statsTime) / 1000));
+        game.statsFrames = 0;
+        game.statsTime = now;
+      }
+
+      game.renderer.render(game.scene, game.camera);
+    }
+
+    // ============================================================
+    //  启动
+    // ============================================================
+    function init() {
+      const loading = document.createElement('div');
+      loading.id = 'loading-overlay';
+      loading.style.cssText = `
+        position:fixed; inset:0; background:#0b0f1a; display:flex;
+        flex-direction:column; align-items:center; justify-content:center;
+        z-index:9999; color:#4ecdc4; font-family:inherit;
+      `;
+      loading.innerHTML = `
+        <div style="width:36px;height:36px;border:3px solid rgba(78,205,196,0.2);border-top:3px solid #4ecdc4;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:12px;"></div>
+        <p style="font-size:0.8rem;">加载物理引擎 ...</p>
+        <style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
+      `;
+      document.body.appendChild(loading);
+
+      initGraphics();
+      initPhysics();
+      initDemo();
+      updateHUD();
+      refreshPreview();
+      setupButtons();
+      initCheatPanel();
+      initPanelDrag();
+
+      game.cheat.god = true;
+      document.getElementById('cheat-god').checked = true;
+
+      const startOverlay = document.getElementById('start-overlay');
+      const startBox = document.getElementById('start-box');
+      startBox.addEventListener('click', () => {
+        startOverlay.classList.add('hidden');
+      }, { once: true });
+
+      document.getElementById('respawn-btn').addEventListener('click', resetPlayer);
+
+      animate();
+
+      setTimeout(() => {
+        const ld = document.getElementById('loading-overlay');
+        if (ld) { ld.style.opacity = 0; setTimeout(() => ld.style.display = 'none', 500); }
+      }, 600);
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Truchet 3D 管迷宫</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #05060c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(5,6,12,0.8), rgba(5,6,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">管迷宫 <b id="m">霓虹</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">拖动 = 旋转球体 · 双指捏合 = 缩放</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+              || (navigator.maxTouchPoints > 1);
+
+// ---------- 参数 ----------
+const CFG = {
+  scale: 1.0,          // 球体大小
+  spin: 0.15,          // 自动旋转速度
+  hueFlow: 0.4,        // 光流动速度
+  colorA: '#5be0ff',
+  colorB: '#ff2fd0',
+  background: '#05060c',
+  camDist: 4.5
+};
+
+const PIXEL_RATIO = isMobile ? 0.5 : 0.75;
+
+const canvasEl = document.getElementById('cv');
+const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: false });
+renderer.setPixelRatio(PIXEL_RATIO);
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+// 3D 球面 Truchet 管迷宫
+const frag = /* glsl */`
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+  uniform float uTime;
+  uniform float uScale;
+  uniform float uSpin;
+  uniform float uHueFlow;
+  uniform vec3  uColorA;
+  uniform vec3  uColorB;
+  uniform vec3  uBackground;
+
+  #define TAU 6.28318530718
+  #define PI 3.14159265359
+
+  mat2 rot(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, -s, s, c);
+  }
+
+  // 伪随机
+  float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+  float hash31(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
+  }
+
+  // 圆管的距离
+  float sdTube(vec2 p, float r) {
+    return length(p) - r;
+  }
+  // 半圆弧管（中心在格角，半径 0.5）
+  float sdArcTube(vec2 f, vec2 corner, float r) {
+    return abs(length(f - corner) - 0.5) - r;
+  }
+  // 直线管（过格心的斜线）
+  float sdLineTube(vec2 f, float angle, float r) {
+    vec2 dir = vec2(cos(angle), sin(angle));
+    float proj = dot(f, dir);
+    return abs(f.y * dir.x - f.x * dir.y) - r;   // 到直线的距离
+  }
+
+  // 球面 Truchet：把球面切分成小块，每块放一个管件
+  float truchetSphere(vec3 p, float tiles, float tubeR, float t) {
+    // 用球坐标量化
+    float r = length(p);
+    // 单位方向
+    vec3 n = p / r;
+
+    // 用球面上的 6 面立方体投影（避免极点奇点）
+    // 取绝对值最大的分量作为"主面"
+    vec3 an = abs(n);
+    float primary;
+    vec2 uv;
+    if (an.x >= an.y && an.x >= an.z) {
+      primary = 0.0;
+      uv = vec2(n.y, n.z) / an.x;
+    } else if (an.y >= an.z) {
+      primary = 1.0;
+      uv = vec2(n.x, n.z) / an.y;
+    } else {
+      primary = 2.0;
+      uv = vec2(n.x, n.y) / an.z;
+    }
+
+    // 加一个随时间缓慢变化的偏置，让图案"流动"
+    uv += vec2(sin(t * 0.1), cos(t * 0.13)) * 0.1;
+
+    // 网格化
+    vec2 tileUV = uv * tiles;
+    vec2 cell = floor(tileUV);
+    vec2 f = fract(tileUV) - 0.5;
+
+    // 每格的翻转（用 hash 决定是弧线还是直线）
+    float h = hash21(cell + primary * 71.3);
+    bool isArc = h < 0.65;
+    bool flip = hash21(cell + 33.7) > 0.5;
+
+    float d;
+    if (isArc) {
+      // 弧线：翻转决定弧心
+      vec2 c1 = flip ? vec2(-0.5, -0.5) : vec2(-0.5, 0.5);
+      vec2 c2 = flip ? vec2(0.5, 0.5) : vec2(0.5, -0.5);
+      d = min(
+        abs(length(f - c1) - 0.5),
+        abs(length(f - c2) - 0.5)
+      );
+    } else {
+      // 直线：翻转决定方向
+      float angle = flip ? PI * 0.25 : -PI * 0.25;
+      d = abs(f.x * cos(angle) + f.y * sin(angle));
+    }
+    return d - tubeR;
+  }
+
+  // 主 map：球面管迷宫 + 球体
+  float map(vec3 p) {
+    // 球体半径
+    float sphereR = 1.0 * uScale;
+
+    // 球体本身
+    float dSphere = length(p) - sphereR;
+
+    // 只在外层加管件（球壳厚度）
+    // 让管件突出于球面
+    float dTube = truchetSphere(p, 8.0, 0.10, uTime * 0.3);
+
+    // 关键：管件只在球面附近生效
+    // 用 smoothstep 混合球体和管件
+    // 如果 p 离球面太远，就忽略管件
+    float blend = smoothstep(0.35, 0.1, abs(dSphere));
+    float d = mix(dSphere, max(dSphere, dTube), blend);
+
+    return d;
+  }
+
+  vec3 calcNormal(vec3 p) {
+    vec2 e = vec2(0.001, 0.0);
+    return normalize(vec3(
+      map(p + e.xyy) - map(p - e.xyy),
+      map(p + e.yxy) - map(p - e.yxy),
+      map(p + e.yyx) - map(p - e.yyx)
+    ));
+  }
+
+  vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+  }
+
+  void main() {
+    vec2 uv = (vUv - 0.5) * 2.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    // 相机
+    vec2 mouseOffset = (uMouse - 0.5) * 2.0;
+    float yaw = mouseOffset.x * 3.14 + uTime * uSpin * 0.5;
+    float pitch = mouseOffset.y * 1.0;
+
+    float camDist = 3.2;
+    vec3 camPos = vec3(
+      sin(yaw) * cos(pitch) * camDist,
+      sin(pitch) * camDist,
+      cos(yaw) * cos(pitch) * camDist
+    );
+
+    vec3 forward = normalize(-camPos);
+    vec3 worldUp = vec3(0.0, 1.0, 0.0);
+    vec3 right = normalize(cross(worldUp, forward));
+    vec3 up = cross(forward, right);
+
+    vec3 dir = normalize(forward + uv.x * right * 0.85 + uv.y * up * 0.85);
+    vec3 ro = camPos;
+
+    // ray march
+    float t = 0.0;
+    float glow = 0.0;
+    bool hit = false;
+    vec3 p = ro;
+
+    for (int i = 0; i < 96; i++) {
+      p = ro + dir * t;
+      float d = map(p);
+      glow += 0.008 / (0.02 + abs(d));
+      if (d < 0.001) { hit = true; break; }
+      t += d * 0.6;
+      if (t > 12.0) break;
+    }
+
+    vec3 col = uBackground;
+    if (hit) {
+      vec3 n = calcNormal(p);
+      vec3 lightDir = normalize(vec3(0.6, 0.8, 0.5));
+      float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+      float fres = pow(1.0 - clamp(dot(n, -dir), 0.0, 1.0), 3.0);
+
+      // 色相：沿球面位置 + 时间流动
+      float hueT = atan(p.z, p.x) / TAU + 0.5;
+      hueT = fract(hueT + uTime * uHueFlow * 0.05 + p.y * 0.15);
+
+      vec3 base = palette(hueT,
+        (uColorA + uColorB) * 0.5,
+        (uColorB - uColorA) * 0.5,
+        vec3(1.0),
+        vec3(0.0, 0.15, 0.3)
+      );
+
+      col = base * (0.3 + 0.9 * diff) + fres * base * 1.2;
+      col = mix(col, uBackground, clamp(t / 12.0, 0.0, 0.8));
+    }
+
+    // 中心辉光
+    col += mix(uColorA, uColorB, 0.5) * glow * 0.02;
+
+    // 色调映射
+    col = col / (1.0 + col * 0.4);
+    col = pow(max(col, 0.0), vec3(0.9));
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    uTime: { value: 0 },
+    uScale: { value: CFG.scale },
+    uSpin: { value: CFG.spin },
+    uHueFlow: { value: CFG.hueFlow },
+    uColorA: { value: new THREE.Color(CFG.colorA) },
+    uColorB: { value: new THREE.Color(CFG.colorB) },
+    uBackground: { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+function resize() {
+  const W = innerWidth;
+  const H = innerHeight;
+  renderer.setPixelRatio(PIXEL_RATIO);
+  renderer.setSize(W, H, false);
+  material.uniforms.uResolution.value.set(W * PIXEL_RATIO, H * PIXEL_RATIO);
+}
+resize();
+
+const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5 };
+const rect = () => canvasEl.getBoundingClientRect();
+
+const onDown = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onMove = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+
+canvasEl.addEventListener('touchstart', onDown, { passive: false });
+canvasEl.addEventListener('touchmove', onMove, { passive: false });
+canvasEl.addEventListener('mousedown', onDown);
+canvasEl.addEventListener('mousemove', onMove);
+
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+  pointer.x += (pointer.targetX - pointer.x) * 0.08;
+  pointer.y += (pointer.targetY - pointer.y) * 0.08;
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uMouse.value.set(pointer.x, pointer.y);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+const mEl = document.getElementById('m');
+const SCHEMES = [
+  { name: '霓虹',   colorA: '#5be0ff', colorB: '#ff2fd0', background: '#05030a' },
+  { name: '电路',   colorA: '#39ff88', colorB: '#00c2ff', background: '#020a06' },
+  { name: '黄金',   colorA: '#ffd86b', colorB: '#ff6a2c', background: '#0a0503' },
+  { name: '极光',   colorA: '#4ecb8d', colorB: '#b26bff', background: '#030810' },
+  { name: '珊瑚',   colorA: '#ff8a5c', colorB: '#ff4d94', background: '#0a0408' },
+  { name: '冰蓝',   colorA: '#dff6ff', colorB: '#4b7fff', background: '#020610' }
+];
+let schemeIdx = 0;
+
+function applyScheme(s) {
+  const u = material.uniforms;
+  u.uColorA.value.set(s.colorA);
+  u.uColorB.value.set(s.colorB);
+  u.uBackground.value.set(s.background);
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  startTime = performance.now();
+  pointer.targetX = 0.5;
+  pointer.targetY = 0.5;
+});
+
+document.getElementById('btn-change').addEventListener('click', () => {
+  schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+  applyScheme(SCHEMES[schemeIdx]);
+  mEl.textContent = SCHEMES[schemeIdx].name;
+});
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+applyScheme(SCHEMES[0]);
+mEl.textContent = SCHEMES[0].name;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

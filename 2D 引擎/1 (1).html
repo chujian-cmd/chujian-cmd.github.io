@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>2D 物理引擎 · 真实滚动</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            background: #0b0e16;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            padding: 12px;
+        }
+        .container {
+            background: #141b26;
+            padding: 18px 18px 20px;
+            border-radius: 32px;
+            box-shadow: 0 24px 48px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(255,255,255,0.04);
+            max-width: 1000px;
+            width: 100%;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            aspect-ratio: 900 / 640;
+            border-radius: 18px;
+            background: #111824;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+            cursor: crosshair;
+            touch-action: none;
+        }
+        .toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px 14px;
+            margin-top: 18px;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .btn {
+            background: #263040;
+            border: none;
+            padding: 7px 18px;
+            border-radius: 40px;
+            color: #d0ddf5;
+            font-weight: 600;
+            font-size: 13px;
+            letter-spacing: 0.02em;
+            box-shadow: 0 4px 0 #0f131e;
+            transition: 0.08s linear;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+        .btn-primary { background: #6c5ce7; color: #fff; box-shadow: 0 4px 0 #3d2f9e; }
+        .btn-danger  { background: #e74c6f; color: #fff; box-shadow: 0 4px 0 #9e2a45; }
+        .btn-success { background: #2ecc71; color: #0b0d14; box-shadow: 0 4px 0 #1a8a4a; }
+        .btn-warning { background: #f39c12; color: #0b0d14; box-shadow: 0 4px 0 #b36d0a; }
+        .btn-outline  { background: transparent; box-shadow: inset 0 0 0 1px #3e4a66; color: #b6c6e6; }
+
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #a0b2d6;
+            font-size: 13px;
+            font-weight: 500;
+            background: #1e2738;
+            padding: 4px 16px 4px 14px;
+            border-radius: 40px;
+            height: 38px;
+        }
+        .slider-group input {
+            width: 100px;
+            accent-color: #6c5ce7;
+            cursor: pointer;
+            background: transparent;
+        }
+        .badge {
+            color: #9aabd0;
+            font-size: 13px;
+            background: #1a2332;
+            padding: 4px 16px 4px 14px;
+            border-radius: 40px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            white-space: nowrap;
+        }
+        .badge span {
+            color: #f0f4ff;
+            font-weight: 700;
+            margin: 0 2px;
+        }
+        @media (max-width: 720px) {
+            .toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+            .btn-group { justify-content: center; }
+            .slider-group { justify-content: center; width: 100%; }
+            .badge { justify-content: center; width: 100%; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <canvas id="gameCanvas" width="900" height="640"></canvas>
+    <div class="toolbar">
+        <div class="btn-group">
+            <button class="btn btn-primary" id="addPhysical">⚡ 物理球</button>
+            <button class="btn btn-outline" id="addStatic">🧱 方块</button>
+            <button class="btn btn-success" id="addPowder">✨ 粉末</button>
+            <button class="btn btn-warning" id="addRamp">📐 斜坡</button>
+            <button class="btn btn-danger" id="clearAll">🗑 清除</button>
+        </div>
+        <div class="slider-group">
+            <span>摩擦</span>
+            <input type="range" id="frictionSlider" min="0.70" max="0.99" step="0.01" value="0.94">
+            <span id="frictionVal" style="min-width:36px;">0.94</span>
+        </div>
+        <div class="badge">
+            🧊 <span id="objCount">0</span> &nbsp;✦&nbsp; 💧 <span id="particleCount">0</span>
+        </div>
+    </div>
+</div>
+<script>
+    (function() {
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const W = 900, H = 640;
+
+        // DOM refs
+        const objCountSpan = document.getElementById('objCount');
+        const particleCountSpan = document.getElementById('particleCount');
+        const frictionSlider = document.getElementById('frictionSlider');
+        const frictionVal = document.getElementById('frictionVal');
+
+        // 物理常量
+        const GRAVITY = 0.52;
+        const BOUNCE = 0.32;
+        const PARTICLE_GRAVITY = 0.28;
+        const PARTICLE_FRICTION = 0.91;
+        const MAX_SPEED = 18;
+
+        let FRICTION = 0.94;
+        frictionSlider.addEventListener('input', () => {
+            FRICTION = parseFloat(frictionSlider.value);
+            frictionVal.textContent = FRICTION.toFixed(2);
+        });
+
+        // 数据存储
+        let physicsBodies = [];
+        let staticBodies = [];
+        let powderParticles = [];
+
+        // 尺寸
+        const BODY_RADIUS = 12;
+        const STATIC_HALF = 16;
+        const PARTICLE_RADIUS = 3;
+
+        // ----- 辅助函数 -----
+        function randomColor(alpha = 0.92) {
+            const hue = Math.floor(Math.random() * 360);
+            return `hsla(${hue}, 82%, 60%, ${alpha})`;
+        }
+
+        function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+
+        // ----- 工厂函数 -----
+        function createPhysicalBody(x, y) {
+            return {
+                x, y,
+                vx: (Math.random() - 0.5) * 3.2,
+                vy: (Math.random() - 0.5) * 2.0 - 0.8,
+                radius: BODY_RADIUS,
+                color: randomColor(0.92),
+                groundContact: false,
+                mass: 1.0
+            };
+        }
+
+        function createStaticBody(x, y, w = STATIC_HALF*2, h = STATIC_HALF*2) {
+            return {
+                x, y, w, h,
+                halfW: w/2, halfH: h/2,
+                color: `hsl(218, 18%, 42%)`,
+                type: 'static'
+            };
+        }
+
+        function createRamp(x, y, width = 120, height = 36) {
+            const pieces = 10;
+            const rampBodies = [];
+            for (let i = 0; i < pieces; i++) {
+                const t = (i + 0.5) / pieces;
+                const px = x - width/2 + t * width;
+                const py = y - height/2 + t * height * 0.55;
+                const bw = width / pieces * 0.92;
+                const bh = 7 + Math.sin(t * Math.PI) * 3;
+                rampBodies.push(createStaticBody(px, py, bw, bh));
+            }
+            return rampBodies;
+        }
+
+        function createPowder(x, y) {
+            return {
+                x, y,
+                vx: (Math.random() - 0.5) * 0.9,
+                vy: (Math.random() - 0.5) * 0.6 - 0.4,
+                radius: PARTICLE_RADIUS,
+                color: `hsl(${32 + Math.random() * 28}, 88%, 58%)`,
+            };
+        }
+
+        // ----- 添加物体 (带边界保护) -----
+        function addPhysicalAt(x, y) {
+            const r = BODY_RADIUS;
+            physicsBodies.push(createPhysicalBody(
+                clamp(x, r, W - r),
+                clamp(y, r, H - r)
+            ));
+        }
+
+        function addStaticAt(x, y) {
+            const h = STATIC_HALF;
+            staticBodies.push(createStaticBody(
+                clamp(x, h, W - h),
+                clamp(y, h, H - h)
+            ));
+        }
+
+        function addPowderAt(x, y) {
+            const r = PARTICLE_RADIUS;
+            const count = 6 + Math.floor(Math.random() * 10);
+            for (let i = 0; i < count; i++) {
+                const ox = (Math.random() - 0.5) * 22;
+                const oy = (Math.random() - 0.5) * 18 - 4;
+                powderParticles.push(createPowder(
+                    clamp(x + ox, r, W - r),
+                    clamp(y + oy, r, H - r)
+                ));
+            }
+        }
+
+        function addRampAt(x, y) {
+            const ramp = createRamp(x, y, 130, 40);
+            staticBodies.push(...ramp);
+        }
+
+        // ----- 物理更新 (核心) -----
+        function updatePhysics() {
+            const friction = FRICTION;
+            const bounce = BOUNCE;
+
+            // 1. 物理物体 重力 + 速度限制
+            for (let body of physicsBodies) {
+                body.vy += GRAVITY;
+                body.vx *= 0.9995;
+                body.vy *= 0.9995;
+
+                // 速度上限
+                const sp = Math.hypot(body.vx, body.vy);
+                if (sp > MAX_SPEED) {
+                    body.vx = (body.vx / sp) * MAX_SPEED;
+                    body.vy = (body.vy / sp) * MAX_SPEED;
+                }
+
+                body.x += body.vx;
+                body.y += body.vy;
+                body.groundContact = false;
+
+                // 墙壁碰撞
+                const r = body.radius;
+                if (body.x - r < 0) { body.x = r; body.vx = Math.abs(body.vx) * bounce; }
+                if (body.x + r > W) { body.x = W - r; body.vx = -Math.abs(body.vx) * bounce; }
+                if (body.y - r < 0) { body.y = r; body.vy = Math.abs(body.vy) * bounce; }
+                if (body.y + r > H) {
+                    body.y = H - r;
+                    if (body.vy > 0) {
+                        body.vy = -body.vy * bounce;
+                        if (Math.abs(body.vy) < 0.5) body.vy = 0;
+                        body.groundContact = true;
+                    }
+                    // 滚动摩擦
+                    if (Math.abs(body.vx) > 0.08) {
+                        body.vx *= (1 - (1 - friction) * 0.55);
+                    } else {
+                        body.vx *= 0.92;
+                    }
+                }
+            }
+
+            // 2. 物理物体 ↔ 物理物体 (弹性碰撞)
+            for (let i = 0; i < physicsBodies.length; i++) {
+                for (let j = i + 1; j < physicsBodies.length; j++) {
+                    const a = physicsBodies[i];
+                    const b = physicsBodies[j];
+                    const dx = b.x - a.x;
+                    const dy = b.y - a.y;
+                    const dist = Math.hypot(dx, dy);
+                    const minDist = a.radius + b.radius;
+                    if (dist < minDist && dist > 0.001) {
+                        const overlap = (minDist - dist) / 2;
+                        const nx = dx / dist, ny = dy / dist;
+                        a.x -= nx * overlap;
+                        a.y -= ny * overlap;
+                        b.x += nx * overlap;
+                        b.y += ny * overlap;
+
+                        const dvx = a.vx - b.vx;
+                        const dvy = a.vy - b.vy;
+                        const relV = dvx * nx + dvy * ny;
+                        if (relV < 0) {
+                            const impulse = relV * (1 + bounce) / 2;
+                            a.vx -= impulse * nx;
+                            a.vy -= impulse * ny;
+                            b.vx += impulse * nx;
+                            b.vy += impulse * ny;
+                        }
+                    }
+                }
+            }
+
+            // 3. 物理物体 ↔ 静态物体 (矩形 vs 圆形)
+            for (let body of physicsBodies) {
+                body.groundContact = false;
+                for (let stat of staticBodies) {
+                    const cx = body.x, cy = body.y, r = body.radius;
+                    const nearX = clamp(cx, stat.x - stat.halfW, stat.x + stat.halfW);
+                    const nearY = clamp(cy, stat.y - stat.halfH, stat.y + stat.halfH);
+                    const dx = cx - nearX, dy = cy - nearY;
+                    const dist = Math.hypot(dx, dy);
+
+                    if (dist < r && dist > 0.001) {
+                        const overlap = r - dist;
+                        const nx = dx / dist, ny = dy / dist;
+                        body.x += nx * overlap;
+                        body.y += ny * overlap;
+
+                        const vn = body.vx * nx + body.vy * ny;
+                        if (vn < 0) {
+                            body.vx -= (1 + bounce) * vn * nx;
+                            body.vy -= (1 + bounce) * vn * ny;
+                        }
+                        if (ny < -0.4) {
+                            body.groundContact = true;
+                            if (Math.abs(body.vx) > 0.08) {
+                                body.vx *= (1 - (1 - friction) * 0.5);
+                            } else {
+                                body.vx *= 0.90;
+                            }
+                        }
+                    } else if (dist < 0.001) {
+                        // 圆心在矩形内
+                        const signX = (cx < stat.x) ? -1 : 1;
+                        const signY = (cy < stat.y) ? -1 : 1;
+                        body.x += signX * (r + 1);
+                        body.y += signY * (r + 1);
+                    }
+                }
+            }
+
+            // 额外摩擦衰减 (地面接触)
+            for (let body of physicsBodies) {
+                if (body.groundContact && Math.abs(body.vx) > 0.1) {
+                    body.vx *= (1 - (1 - friction) * 0.35);
+                }
+            }
+        }
+
+        // ----- 粉末更新 (优化) -----
+        function updatePowder() {
+            const pGrav = PARTICLE_GRAVITY;
+            const pFric = PARTICLE_FRICTION;
+            const r = PARTICLE_RADIUS;
+
+            for (let p of powderParticles) {
+                p.vy += pGrav;
+                p.vx *= pFric;
+                p.vy *= pFric;
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // 边界
+                if (p.x - r < 0) { p.x = r; p.vx = -p.vx * 0.3; }
+                if (p.x + r > W) { p.x = W - r; p.vx = -p.vx * 0.3; }
+                if (p.y - r < 0) { p.y = r; p.vy = -p.vy * 0.3; }
+                if (p.y + r > H) { p.y = H - r; p.vy = -p.vy * 0.3; }
+
+                // 与静态物体碰撞
+                for (let stat of staticBodies) {
+                    const nearX = clamp(p.x, stat.x - stat.halfW, stat.x + stat.halfW);
+                    const nearY = clamp(p.y, stat.y - stat.halfH, stat.y + stat.halfH);
+                    const dx = p.x - nearX, dy = p.y - nearY;
+                    const dist = Math.hypot(dx, dy);
+                    if (dist < r && dist > 0.001) {
+                        const overlap = r - dist;
+                        const nx = dx / dist, ny = dy / dist;
+                        p.x += nx * overlap;
+                        p.y += ny * overlap;
+                        const vn = p.vx * nx + p.vy * ny;
+                        if (vn < 0) {
+                            p.vx -= (1 + 0.2) * vn * nx;
+                            p.vy -= (1 + 0.2) * vn * ny;
+                        }
+                    }
+                }
+
+                // 与物理物体碰撞
+                for (let body of physicsBodies) {
+                    const dx = p.x - body.x, dy = p.y - body.y;
+                    const dist = Math.hypot(dx, dy);
+                    const minDist = p.radius + body.radius;
+                    if (dist < minDist && dist > 0.001) {
+                        const overlap = minDist - dist;
+                        const nx = dx / dist, ny = dy / dist;
+                        p.x += nx * overlap * 0.5;
+                        p.y += ny * overlap * 0.5;
+                        body.x -= nx * overlap * 0.25;
+                        body.y -= ny * overlap * 0.25;
+                        const relV = (p.vx - body.vx) * nx + (p.vy - body.vy) * ny;
+                        if (relV < 0) {
+                            p.vx -= relV * nx * 0.2;
+                            p.vy -= relV * ny * 0.2;
+                            body.vx += relV * nx * 0.08;
+                            body.vy += relV * ny * 0.08;
+                        }
+                    }
+                }
+
+                // 粒子间碰撞 (减少计算量)
+                for (let other of powderParticles) {
+                    if (other === p) continue;
+                    const dx = p.x - other.x, dy = p.y - other.y;
+                    const dist = Math.hypot(dx, dy);
+                    const minDist = p.radius + other.radius;
+                    if (dist < minDist && dist > 0.001) {
+                        const overlap = (minDist - dist) * 0.2;
+                        const nx = dx / dist, ny = dy / dist;
+                        p.x += nx * overlap;
+                        p.y += ny * overlap;
+                        other.x -= nx * overlap;
+                        other.y -= ny * overlap;
+                    }
+                }
+            }
+        }
+
+        // ----- 渲染 -----
+        function render() {
+            ctx.clearRect(0, 0, W, H);
+
+            // 极简背景网格
+            ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+            ctx.lineWidth = 0.6;
+            for (let i = 0; i < W; i += 45) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, H);
+                ctx.stroke();
+            }
+            for (let i = 0; i < H; i += 45) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(W, i);
+                ctx.stroke();
+            }
+
+            // 静态物体
+            for (let stat of staticBodies) {
+                ctx.fillStyle = stat.color;
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 8;
+                ctx.fillRect(stat.x - stat.halfW, stat.y - stat.halfH, stat.w, stat.h);
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+                ctx.lineWidth = 1.2;
+                ctx.strokeRect(stat.x - stat.halfW, stat.y - stat.halfH, stat.w, stat.h);
+            }
+
+            // 物理物体 (光泽)
+            for (let body of physicsBodies) {
+                const grad = ctx.createRadialGradient(
+                    body.x - body.radius*0.2, body.y - body.radius*0.3, 2,
+                    body.x, body.y, body.radius*1.3
+                );
+                grad.addColorStop(0, '#ffffff');
+                grad.addColorStop(0.25, body.color);
+                grad.addColorStop(1, body.color);
+                ctx.beginPath();
+                ctx.arc(body.x, body.y, body.radius, 0, Math.PI*2);
+                ctx.fillStyle = grad;
+                ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                ctx.shadowBlur = 18;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                ctx.lineWidth = 1.0;
+                ctx.stroke();
+            }
+
+            // 粉末粒子
+            for (let p of powderParticles) {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2);
+                ctx.fillStyle = p.color;
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = 'rgba(0,0,0,0.25)';
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+
+            // 更新计数
+            objCountSpan.textContent = physicsBodies.length + staticBodies.length;
+            particleCountSpan.textContent = powderParticles.length;
+        }
+
+        // ----- 主循环 -----
+        function gameLoop() {
+            updatePhysics();
+            updatePowder();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // ----- 鼠标 / 触摸交互 -----
+        function getCanvasCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let clientX, clientY;
+            if (e.touches) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+                e.preventDefault();
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            return {
+                x: clamp((clientX - rect.left) * scaleX, 0, W),
+                y: clamp((clientY - rect.top) * scaleY, 0, H)
+            };
+        }
+
+        function handleCanvasClick(e) {
+            const { x, y } = getCanvasCoords(e);
+            addPhysicalAt(x, y);
+        }
+
+        // ----- 按钮绑定 -----
+        document.getElementById('addPhysical').addEventListener('click', () => {
+            addPhysicalAt(80 + Math.random() * 740, 60 + Math.random() * 480);
+        });
+        document.getElementById('addStatic').addEventListener('click', () => {
+            addStaticAt(80 + Math.random() * 740, 60 + Math.random() * 480);
+        });
+        document.getElementById('addPowder').addEventListener('click', () => {
+            addPowderAt(80 + Math.random() * 740, 60 + Math.random() * 480);
+        });
+        document.getElementById('addRamp').addEventListener('click', () => {
+            addRampAt(180 + Math.random() * 540, 240 + Math.random() * 240);
+        });
+        document.getElementById('clearAll').addEventListener('click', () => {
+            physicsBodies = [];
+            staticBodies = [];
+            powderParticles = [];
+        });
+
+        canvas.addEventListener('click', handleCanvasClick);
+        canvas.addEventListener('touchstart', (e) => {
+            handleCanvasClick(e);
+            e.preventDefault();
+        }, { passive: false });
+
+        // ----- 启动 + 初始场景 -----
+        // 地面
+        for (let i = 0; i < 22; i++) {
+            staticBodies.push(createStaticBody(30 + i * 42, 620, 42, 18));
+        }
+        // 两个斜坡
+        addRampAt(200, 510);
+        addRampAt(580, 490);
+
+        // 一些物理球
+        for (let i = 0; i < 10; i++) {
+            addPhysicalAt(100 + i * 65 + Math.random() * 20, 120 + Math.random() * 90);
+        }
+
+        // 粉末
+        for (let i = 0; i < 60; i++) {
+            addPowderAt(60 + Math.random() * 780, 40 + Math.random() * 200);
+        }
+
+        gameLoop();
+        console.log('🔥 物理引擎已启动 · 调节摩擦滑块体验真实滚动减速');
+    })();
+</script>
+</body>
+</html>

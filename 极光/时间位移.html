@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>时间位移 TimeShift</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#06070c;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(6,7,12,.85),rgba(6,7,12,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(160,107,255,.24);border-color:rgba(160,107,255,.6);color:#efe4ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);transform:translateY(100%);
+    transition:transform .28s cubic-bezier(.32,.72,0,1);font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff}
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none}
+  #panel .ok{height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(160,107,255,.6);
+    background:rgba(160,107,255,.3);color:#1a0b3a;font:600 14px -apple-system,"PingFang SC",sans-serif;cursor:pointer}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">时间位移 <b id="m">亮度时差</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+<div id="hint">不同像素取自不同时刻的时间扭曲 · 静态图走位移场伪时移</div>
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA', weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    mode: 'lum', depth: 16, intensity: 0.75, smooth: 0.2,
+    throttle: 1, background: '#06070c'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', mode: 'lum',    depth: 24, intensity: 0.85, smooth: 0.15, throttle: 1, background: '#06070c' },
+    { text: '纵向波', mode: 'vscan',  depth: 16, intensity: 0.7,  smooth: 0.1,  throttle: 2, background: '#07080d' },
+    { text: '乱流',   mode: 'noise',  depth: 32, intensity: 0.9,  smooth: 0.35, throttle: 2, background: '#08060e' },
+    { text: '径向',   mode: 'radial', depth: 24, intensity: 0.8,  smooth: 0.1,  throttle: 1, background: '#050b10' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true, sig = '';
+  var time = 0, lastT = performance.now();
+
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null, maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) { size = Math.max(6, Math.floor(size * maxW / widest)); setF(size); }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) { size = Math.max(6, Math.floor(size * maxH / totalH)); setF(size); }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 核心 ----------
+  // 思路：把当前 mask 存进环形缓冲，每帧取一帧。delay 场决定"这个像素该取几帧前"。
+  // 静态图情况下没历史帧，就退化为「按 delay 场做位移 + 色相偏移」。
+
+  var BUFN = 32;
+  var DOWN = 320;
+  var buf = [];
+  var bufIdx = 0, bufCount = 0;
+  var sw = 0, sh = 0;
+  var field = null, fieldKey = '';
+
+  var tmpCv = document.createElement('canvas');
+  var tmpCtx = tmpCv.getContext('2d');
+  var outCv = document.createElement('canvas');
+  var outCtx = outCv.getContext('2d');
+  var outImg = null;
+
+  function ensureBuffers() {
+    var asp = W / H;
+    var nw, nh;
+    if (asp >= 1) { nw = DOWN; nh = Math.max(2, Math.round(DOWN / asp)); }
+    else { nh = DOWN; nw = Math.max(2, Math.round(DOWN * asp)); }
+    if (nw === sw && nh === sh && buf.length === BUFN) return;
+    sw = nw; sh = nh;
+    buf = [];
+    for (var i = 0; i < BUFN; i++) buf.push(null);
+    bufIdx = 0; bufCount = 0;
+    tmpCv.width = sw; tmpCv.height = sh;
+    outCv.width = sw; outCv.height = sh;
+    outImg = outCtx.createImageData(sw, sh);
+  }
+
+  function hash2(x, y, s) {
+    var t = Math.sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453;
+    return t - Math.floor(t);
+  }
+
+  function buildField() {
+    var key = CFG.mode + '|' + sw + 'x' + sh + '|' + CFG.smooth.toFixed(2) + '|' + CFG.intensity.toFixed(2);
+    if (key === fieldKey && field) return;
+    fieldKey = key;
+    var n = sw * sh;
+    field = new Float32Array(n);
+    if (CFG.mode === 'vscan') {
+      for (var y = 0; y < sh; y++) {
+        var v = sh > 1 ? y / (sh - 1) : 0;
+        for (var x = 0; x < sw; x++) field[y * sw + x] = v;
+      }
+    } else if (CFG.mode === 'hscan') {
+      for (var y2 = 0; y2 < sh; y2++) {
+        for (var x2 = 0; x2 < sw; x2++) field[y2 * sw + x2] = sw > 1 ? x2 / (sw - 1) : 0;
+      }
+    } else if (CFG.mode === 'radial') {
+      var cx = (sw - 1) / 2, cy = (sh - 1) / 2;
+      var maxR = Math.hypot(cx, cy) || 1;
+      for (var y3 = 0; y3 < sh; y3++) {
+        for (var x3 = 0; x3 < sw; x3++) {
+          field[y3 * sw + x3] = Math.hypot(x3 - cx, y3 - cy) / maxR;
+        }
+      }
+    } else if (CFG.mode === 'noise') {
+      var l = 5; // 噪声尺度
+      for (var y4 = 0; y4 < sh; y4++) {
+        for (var x4 = 0; x4 < sw; x4++) {
+          // 值噪声：格内双线性插值
+          var fx = x4 / l, fy = y4 / l;
+          var ix = Math.floor(fx), iy = Math.floor(fy);
+          var tx = fx - ix, ty = fy - iy;
+          tx = tx * tx * (3 - 2 * tx);
+          ty = ty * ty * (3 - 2 * ty);
+          var a = hash2(ix, iy, 0);
+          var b = hash2(ix + 1, iy, 0);
+          var c = hash2(ix, iy + 1, 0);
+          var d = hash2(ix + 1, iy + 1, 0);
+          field[y4 * sw + x4] = (a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty;
+        }
+      }
+    } else { // lum
+      field.fill(0);
+    }
+    // 简单多次盒式模糊
+    var radius = Math.round(CFG.smooth * 10);
+    if (radius > 0) {
+      var tmp = new Float32Array(n);
+      for (var r = 0; r < 2; r++) {
+        // 横向
+        for (var yy = 0; yy < sh; yy++) {
+          var sum = 0, cnt = 0;
+          for (var xx = -radius; xx <= radius; xx++) {
+            var xxC = Math.max(0, Math.min(sw - 1, xx));
+            sum += field[yy * sw + xxC]; cnt++;
+          }
+          for (var xx2 = 0; xx2 < sw; xx2++) {
+            tmp[yy * sw + xx2] = sum / cnt;
+            var out = Math.max(0, Math.min(sw - 1, xx2 - radius));
+            var inn = Math.max(0, Math.min(sw - 1, xx2 + radius + 1));
+            sum += field[yy * sw + inn] - field[yy * sw + out];
+          }
+        }
+        // 纵向
+        for (var xx3 = 0; xx3 < sw; xx3++) {
+          var sum2 = 0, cnt2 = 0;
+          for (var yy2 = -radius; yy2 <= radius; yy2++) {
+            var yyC = Math.max(0, Math.min(sh - 1, yy2));
+            sum2 += tmp[yyC * sw + xx3]; cnt2++;
+          }
+          for (var yy3 = 0; yy3 < sh; yy3++) {
+            field[yy3 * sw + xx3] = sum2 / cnt2;
+            var outY = Math.max(0, Math.min(sh - 1, yy3 - radius));
+            var innY = Math.max(0, Math.min(sh - 1, yy3 + radius + 1));
+            sum2 += tmp[innY * sw + xx3] - tmp[outY * sw + xx3];
+          }
+        }
+      }
+    }
+    // 若 mode=lum，用当前 mask 亮度作为 delay 场
+    if (CFG.mode === 'lum') {
+      // 直接用 mask 缩到 sw x sh 的 alpha 作为 delay
+      tmpCv.width = sw; tmpCv.height = sh;
+      tmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+      tmpCtx.clearRect(0, 0, sw, sh);
+      tmpCtx.drawImage(maskCanvas, 0, 0, sw, sh);
+      var md = tmpCtx.getImageData(0, 0, sw, sh).data;
+      for (var i = 0; i < n; i++) field[i] = 1 - md[i * 4 + 3] / 255; // 亮→delay小，暗→delay大
+    }
+  }
+
+  function captureFrame() {
+    tmpCv.width = sw; tmpCv.height = sh;
+    tmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tmpCtx.clearRect(0, 0, sw, sh);
+    tmpCtx.drawImage(maskCanvas, 0, 0, sw, sh);
+    var d = tmpCtx.getImageData(0, 0, sw, sh).data;
+    // 存进环形缓冲
+    buf[bufIdx] = new Uint8ClampedArray(d);
+    bufIdx = (bufIdx + 1) % BUFN;
+    if (bufCount < BUFN) bufCount++;
+  }
+
+  function renderStatic() {
+    // 静态图伪时移：按 field 做位移 + 色相偏移
+    buildField();
+    var n = sw * sh;
+    var out = outImg.data;
+    var inten = CFG.intensity;
+    var hueAmt = inten * (Math.PI / 3);
+    var cA = 1, sA = Math.sin(hueAmt);
+    var cx = (sw - 1) / 2, cy = (sh - 1) / 2;
+    // 取一帧当前 mask 到 src
+    tmpCv.width = sw; tmpCv.height = sh;
+    tmpCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tmpCtx.clearRect(0, 0, sw, sh);
+    tmpCtx.drawImage(maskCanvas, 0, 0, sw, sh);
+    var src = tmpCtx.getImageData(0, 0, sw, sh).data;
+    var timeShift = time * 0.5;
+    for (var y = 0; y < sh; y++) {
+      for (var x = 0; x < sw; x++) {
+        var id = y * sw + x;
+        var b = field[id];
+        var dx = 0, dy = 0;
+        if (CFG.mode === 'vscan') {
+          dy = Math.sin((b * 2 - 0.5) * Math.PI * 2 + timeShift) * inten * sh * 0.06;
+        } else if (CFG.mode === 'hscan') {
+          dx = Math.sin((b * 2 - 0.5) * Math.PI * 2 + timeShift) * inten * sw * 0.06;
+        } else if (CFG.mode === 'radial') {
+          var rx = x - cx, ry = y - cy;
+          var rl = Math.hypot(rx, ry) || 1;
+          var amp = Math.sin((b * 3 - 0.5) * Math.PI * 2 + timeShift) * inten * sw * 0.05;
+          dx = amp * rx / rl;
+          dy = amp * ry / rl;
+        } else if (CFG.mode === 'noise') {
+          var ang = (b - 0.5) * Math.PI * 2 + timeShift;
+          dx = Math.sin(ang) * inten * sw * 0.05;
+          dy = Math.cos(ang) * inten * sh * 0.05;
+        } else {
+          // lum：亮度决定相位
+          var ph = (b - 0.5) * Math.PI * 2 + timeShift;
+          dx = Math.sin(ph) * inten * sw * 0.03;
+          dy = Math.cos(ph) * inten * sh * 0.03;
+        }
+        var sx = Math.max(0, Math.min(sw - 1, Math.round(x + dx)));
+        var sy = Math.max(0, Math.min(sh - 1, Math.round(y + dy)));
+        var sid = (sy * sw + sx) * 4;
+        var r = src[sid], g = src[sid + 1], bl = src[sid + 2], a = src[sid + 3];
+        // 色相偏移：按 b 决定旋转量
+        var rot = b * hueAmt;
+        var cR = Math.cos(rot), sR = Math.sin(rot);
+        var nr = (0.213 + 0.787 * cR - 0.213 * sR) * r
+               + (0.715 - 0.715 * cR - 0.715 * sR) * g
+               + (0.072 - 0.072 * cR + 0.928 * sR) * bl;
+        var ng = (0.213 - 0.213 * cR + 0.143 * sR) * r
+               + (0.715 + 0.285 * cR + 0.140 * sR) * g
+               + (0.072 - 0.072 * cR - 0.283 * sR) * bl;
+        var nb = (0.213 - 0.213 * cR - 0.787 * sR) * r
+               + (0.715 - 0.715 * cR + 0.715 * sR) * g
+               + (0.072 + 0.928 * cR + 0.072 * sR) * bl;
+        out[id * 4]     = nr < 0 ? 0 : nr > 255 ? 255 : nr;
+        out[id * 4 + 1] = ng < 0 ? 0 : ng > 255 ? 255 : ng;
+        out[id * 4 + 2] = nb < 0 ? 0 : nb > 255 ? 255 : nb;
+        out[id * 4 + 3] = a;
+      }
+    }
+    outCtx.putImageData(outImg, 0, 0);
+  }
+
+  function renderVideo() {
+    // 有历史帧：按 field 决定 delay，取对应历史帧
+    buildField();
+    var n = sw * sh;
+    var out = outImg.data;
+    var maxDepth = Math.min(bufCount, Math.max(2, Math.round(CFG.depth)));
+    for (var y = 0; y < sh; y++) {
+      for (var x = 0; x < sw; x++) {
+        var id = y * sw + x;
+        var d = field[id] * CFG.intensity;
+        var df = Math.max(0, Math.min(maxDepth - 1, d * (maxDepth - 1)));
+        var i0 = Math.floor(df);
+        var frac = df - i0;
+        var idx0 = (bufIdx - 1 - i0 + BUFN * 2) % BUFN;
+        var idx1 = (bufIdx - 1 - (i0 + 1) + BUFN * 2) % BUFN;
+        var f0 = buf[idx0], f1 = buf[idx1] || f0;
+        if (!f0) { continue; }
+        var j = id * 4;
+        out[j]     = f0[j]     * (1 - frac) + f1[j]     * frac;
+        out[j + 1] = f0[j + 1] * (1 - frac) + f1[j + 1] * frac;
+        out[j + 2] = f0[j + 2] * (1 - frac) + f1[j + 2] * frac;
+        out[j + 3] = f0[j + 3] * (1 - frac) + f1[j + 3] * frac;
+      }
+    }
+    outCtx.putImageData(outImg, 0, 0);
+  }
+
+  function drawFrame() {
+    ensureBuffers();
+    buildMask();
+    // 每帧抓一帧（video 语义），静态图抓不抓都行
+    captureFrame();
+    if (bufCount > 4) renderVideo();
+    else renderStatic();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(outCv, 0, 0, W, H);
+  }
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now; time += dt;
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.mode + '|' + CFG.depth + '|' + CFG.intensity + '|' +
+              CFG.smooth + '|' + CFG.throttle + '|' + CFG.background;
+    if (dirty || key !== sig) {
+      fieldKey = ''; // 参数变了重建 delay 场
+      sig = key; dirty = false;
+    }
+    drawFrame();
+    requestAnimationFrame(render);
+  }
+
+  // ---------- UI ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = ''; fieldKey = ''; dirty = true;
+  });
+
+  var CONTENTS = ['AURORA', '时移', 'TIME', '流', '波', '⚡'];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    maskData = null; maskKey = ''; fieldKey = ''; dirty = true;
+  });
+
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  document.getElementById('btn-custom').addEventListener('click', function () {
+    inp.value = CFG.text;
+    panel.classList.add('open'); backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  });
+
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    panel.classList.remove('open'); backdrop.classList.remove('open'); inp.blur();
+    maskData = null; maskKey = ''; fieldKey = ''; dirty = true;
+  });
+
+  backdrop.addEventListener('click', function () {
+    panel.classList.remove('open'); backdrop.classList.remove('open'); inp.blur();
+  });
+
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('btn-ok').click();
+    }
+  });
+
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

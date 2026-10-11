@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>文字光栅卡</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06070c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(6,7,12,0.8), rgba(6,7,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">文字卡 <b id="m">4 帧</b></div>
+  <button class="btn" id="btn-change">换内容</button>
+  <button class="btn pri" id="btn-style">换样式</button>
+</div>
+
+<div id="hint">拖动卡片 = 旋转看文字变换 · 松开自动摆动</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ========== 参数 ==========
+  const CFG = {
+    // 帧内容（每组 = 一个"面"）
+    // 拖动卡片从一帧到另一帧，文字在变
+    frames: [
+      { text: '你好', color: '#5be0ff', bg: '#06121a', tag: 'AURORA' },
+      { text: '世界', color: '#ff6bd6', bg: '#1a0610', tag: 'AURORA' },
+      { text: '光栅', color: '#ffe066', bg: '#1a1206', tag: 'AURORA' },
+      { text: '立体', color: '#4ecb8d', bg: '#061a10', tag: 'AURORA' }
+    ],
+    font: '"PingFang SC", "Microsoft YaHei", "Heiti SC", sans-serif',
+    weight: 900,
+    letterSpacing: 0.02,
+
+    // 卡面
+    aspect: 1.5,           // 卡片宽高比
+    rotateRange: 55,       // 最大旋转角度（度）
+    crossfade: 0.12,       // 交叉淡化
+    autoWobble: 0.7,       // 自动摆动幅度
+    wobbleSpeed: 0.6,      // 自动摆动速度
+    radius: 0.12,          // 圆角
+
+    // 扫光
+    sheen: 0.35,
+    sheenStyle: 'holo',    // holo | mono | metal | glow | none
+
+    // 背景
+    background: '#06070c'
+  };
+
+  // ========== 帧缓存 ==========
+  const frameCanvases = [];   // 每帧预渲染成一个 canvas
+
+  function buildFrames() {
+    frameCanvases.length = 0;
+    const W = 1024;
+    const H = Math.round(W / CFG.aspect);
+
+    for (let i = 0; i < CFG.frames.length; i++) {
+      const f = CFG.frames[i];
+      const c = document.createElement('canvas');
+      c.width = W;
+      c.height = H;
+      const g = c.getContext('2d');
+
+      // 背景
+      g.fillStyle = f.bg;
+      g.fillRect(0, 0, W, H);
+
+      // 装饰：细网格
+      g.strokeStyle = 'rgba(255,255,255,0.04)';
+      g.lineWidth = 1;
+      for (let y = 0; y < H; y += 24) {
+        g.beginPath();
+        g.moveTo(0, y);
+        g.lineTo(W, y);
+        g.stroke();
+      }
+      for (let x = 0; x < W; x += 24) {
+        g.beginPath();
+        g.moveTo(x, 0);
+        g.lineTo(x, H);
+        g.stroke();
+      }
+
+      // 文字
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+
+      const lines = (f.text || '你好').split('\n').filter(l => l.length > 0);
+      const maxW = W * 0.82;
+      const maxH = H * 0.68;
+
+      let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+      const setFont = s => { g.font = `${CFG.weight} ${s}px ${CFG.font}`; };
+      setFont(size);
+
+      // 字间距（Canvas2D letterSpacing）
+      if ('letterSpacing' in g) {
+        g.letterSpacing = `${Math.round(size * CFG.letterSpacing)}px`;
+      }
+
+      let widest = 0;
+      for (const l of lines) widest = Math.max(widest, g.measureText(l).width);
+      if (widest > maxW) {
+        size = Math.max(8, Math.floor(size * maxW / widest));
+        setFont(size);
+        if ('letterSpacing' in g) {
+          g.letterSpacing = `${Math.round(size * CFG.letterSpacing)}px`;
+        }
+      }
+      const totalH = size * 1.15 * lines.length;
+      if (totalH > maxH) {
+        size = Math.max(8, Math.floor(size * maxH / totalH));
+        setFont(size);
+      }
+
+      // 文字渐变
+      const grad = g.createLinearGradient(0, H * 0.2, 0, H * 0.8);
+      grad.addColorStop(0, f.color);
+      grad.addColorStop(1, shade(f.color, 0.6));
+      g.fillStyle = grad;
+
+      // 发光阴影
+      g.shadowColor = f.color;
+      g.shadowBlur = 40;
+      g.shadowOffsetX = 0;
+      g.shadowOffsetY = 0;
+
+      const lineH = size * 1.15;
+      const startY = H / 2 - (lines.length - 1) * lineH / 2;
+      for (let k = 0; k < lines.length; k++) {
+        g.fillText(lines[k], W / 2, startY + k * lineH);
+      }
+
+      // 顶部小标签
+      g.shadowBlur = 0;
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.font = `500 ${Math.round(H * 0.035)}px ui-monospace, monospace`;
+      if ('letterSpacing' in g) g.letterSpacing = '2px';
+      g.fillText(f.tag || '', W / 2, H * 0.13);
+
+      // 底部序号
+      g.fillStyle = 'rgba(255,255,255,0.25)';
+      g.fillText(`${i + 1} / ${CFG.frames.length}`, W / 2, H * 0.88);
+
+      frameCanvases.push(c);
+    }
+
+    document.getElementById('m').textContent = `${frameCanvases.length} 帧`;
+  }
+
+  // 颜色明暗调整
+  function shade(hex, k) {
+    const s = hex.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    const r = Math.round((n >> 16 & 255) * k);
+    const g = Math.round((n >> 8 & 255) * k);
+    const b = Math.round((n & 255) * k);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ========== 卡片状态 ==========
+  const card = {
+    rotY: 0,
+    targetRotY: 0,
+    dragging: false,
+    lastX: 0,
+    lastInteract: -10
+  };
+  let zoom = 1;
+
+  // ========== 指针交互 ==========
+  const rect = () => cv.getBoundingClientRect();
+
+  cv.addEventListener('mousedown', e => {
+    const r = rect();
+    card.dragging = true;
+    card.lastX = e.clientX - r.left;
+  });
+  cv.addEventListener('mousemove', e => {
+    const r = rect();
+    if (card.dragging) {
+      const dx = (e.clientX - r.left) - card.lastX;
+      card.lastX = e.clientX - r.left;
+      const range = CFG.rotateRange * Math.PI / 180;
+      card.targetRotY = Math.max(-range, Math.min(range, card.targetRotY + dx * 0.006));
+      card.lastInteract = performance.now() / 1000;
+    }
+  });
+  window.addEventListener('mouseup', () => { card.dragging = false; });
+
+  cv.addEventListener('touchstart', e => {
+    if (e.touches.length > 1) return;
+    const t = e.touches[0];
+    const r = rect();
+    card.dragging = true;
+    card.lastX = t.clientX - r.left;
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchmove', e => {
+    if (e.touches.length > 1) return;
+    const t = e.touches[0];
+    const r = rect();
+    const x = t.clientX - r.left;
+    if (card.dragging) {
+      const dx = x - card.lastX;
+      card.lastX = x;
+      const range = CFG.rotateRange * Math.PI / 180;
+      card.targetRotY = Math.max(-range, Math.min(range, card.targetRotY + dx * 0.008));
+      card.lastInteract = performance.now() / 1000;
+    }
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchend', () => { card.dragging = false; });
+
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoom = Math.max(0.4, Math.min(3, zoom * Math.exp(-e.deltaY * 0.001)));
+  }, { passive: false });
+
+  // ========== 圆角矩形 ==========
+  function roundRect(x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  // ========== 主循环 ==========
+  let startTime = performance.now();
+  let lastTime = startTime;
+
+  function frame(now) {
+    const t = (now - startTime) / 1000;
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    const [br, bg, bb] = hex2rgb(CFG.background);
+    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+    ctx.fillRect(0, 0, W, H);
+
+    if (!frameCanvases.length) {
+      requestAnimationFrame(frame);
+      return;
+    }
+
+    // 自动摆动
+    if (!card.dragging && t - card.lastInteract > 1.2) {
+      const range = CFG.rotateRange * Math.PI / 180;
+      card.targetRotY = Math.sin(t * CFG.wobbleSpeed) * range * CFG.autoWobble;
+    }
+
+    // 平滑跟随
+    card.rotY += (card.targetRotY - card.rotY) * 0.12;
+
+    // 卡片尺寸
+    const aspect = CFG.aspect;
+    const maxW = Math.min(W * 0.75, H * 0.85 * aspect) * zoom;
+    const cw = Math.min(maxW, W * 0.9);
+    const ch = cw / aspect;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    // 当前帧
+    const range = CFG.rotateRange * Math.PI / 180;
+    const n = frameCanvases.length;
+    const normalized = n > 1 ? (card.rotY + range) / (2 * range) : 0;
+    const exact = normalized * (n - 1);
+    const i0 = Math.max(0, Math.min(n - 1, Math.floor(exact)));
+    const i1 = Math.min(n - 1, i0 + 1);
+    const mix = exact - i0;
+
+    // 透视缩放
+    const perspW = Math.cos(card.rotY) * 0.7 + 0.3;
+    const dispW = cw * perspW;
+    const dispH = ch;
+
+    ctx.save();
+
+    // 卡片阴影
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 40;
+    ctx.shadowOffsetY = 20;
+
+    // 卡面
+    ctx.fillStyle = '#0d0f16';
+    roundRect(cx - dispW / 2, cy - dispH / 2, dispW, dispH, CFG.radius * Math.min(dispW, dispH));
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // 裁剪
+    ctx.save();
+    roundRect(cx - dispW / 2, cy - dispH / 2, dispW, dispH, CFG.radius * Math.min(dispW, dispH));
+    ctx.clip();
+
+    // 绘制帧
+    if (CFG.crossfade <= 0.001 || n === 1) {
+      const idx = Math.max(0, Math.min(n - 1, Math.round(exact)));
+      ctx.drawImage(frameCanvases[idx], cx - dispW / 2, cy - dispH / 2, dispW, dispH);
+    } else {
+      ctx.globalAlpha = 1 - mix;
+      ctx.drawImage(frameCanvases[i0], cx - dispW / 2, cy - dispH / 2, dispW, dispH);
+      ctx.globalAlpha = mix;
+      ctx.drawImage(frameCanvases[i1], cx - dispW / 2, cy - dispH / 2, dispW, dispH);
+      ctx.globalAlpha = 1;
+    }
+
+    // 扫光
+    if (CFG.sheen > 0.001 && CFG.sheenStyle !== 'none') {
+      drawSheen(cx - dispW / 2, cy - dispH / 2, dispW, dispH, card.rotY);
+    }
+
+    // 柱状光栅纹理
+    if (CFG.sheenStyle === 'holo' || CFG.sheenStyle === 'lens') {
+      ctx.globalAlpha = 0.05;
+      ctx.fillStyle = '#fff';
+      for (let x = cx - dispW / 2; x < cx + dispW / 2; x += 3) {
+        ctx.fillRect(x, cy - dispH / 2, 1, dispH);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.restore();  // 取消裁剪
+
+    // 边框
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    roundRect(cx - dispW / 2, cy - dispH / 2, dispW, dispH, CFG.radius * Math.min(dispW, dispH));
+    ctx.stroke();
+
+    ctx.restore();
+
+    requestAnimationFrame(frame);
+  }
+
+  function drawSheen(x, y, w, h, rot) {
+    const angle = rot * 3 + performance.now() / 2000;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const s = CFG.sheen;
+    if (CFG.sheenStyle === 'holo') {
+      const g = ctx.createLinearGradient(x, y, x + w, y + h);
+      const hue = (Math.sin(angle) * 0.5 + 0.5) * 360;
+      g.addColorStop(0, `hsla(${hue}, 90%, 70%, ${s * 0.35})`);
+      g.addColorStop(0.5, `hsla(${(hue + 120) % 360}, 90%, 70%, ${s * 0.5})`);
+      g.addColorStop(1, `hsla(${(hue + 240) % 360}, 90%, 70%, ${s * 0.35})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    } else if (CFG.sheenStyle === 'mono') {
+      const band = (Math.sin(angle * 0.8) * 0.5 + 0.5);
+      const px = x + (w * 1.4) * band - w * 0.2;
+      const g = ctx.createLinearGradient(px - w * 0.15, 0, px + w * 0.15, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, `rgba(255,255,255,${s * 0.4})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    } else if (CFG.sheenStyle === 'metal') {
+      const m = ((rot * 0.8 + 0.5) % 1 + 1) % 1;
+      const g = ctx.createLinearGradient(x, y + h * (m - 0.1), x, y + h * (m + 0.1));
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, `rgba(200,220,255,${s * 0.5})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    } else if (CFG.sheenStyle === 'glow') {
+      const gx = x + w * (0.5 + 0.3 * Math.sin(angle * 0.7));
+      const gy = y + h * (0.5 + 0.25 * Math.cos(angle * 0.9));
+      const r = Math.min(w, h) * 0.6;
+      const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+      const hue = (angle * 60) % 360;
+      g.addColorStop(0, `hsla(${hue}, 80%, 70%, ${s * 0.5})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    }
+    ctx.restore();
+  }
+
+  // ========== 内容预设 ==========
+  const CONTENTS = [
+    {
+      name: '你好 → 世界',
+      frames: [
+        { text: '你好', color: '#5be0ff', bg: '#06121a', tag: 'HELLO' },
+        { text: '世界', color: '#ff6bd6', bg: '#1a0610', tag: 'WORLD' },
+        { text: '光栅', color: '#ffe066', bg: '#1a1206', tag: 'LENTICULAR' },
+        { text: '立体', color: '#4ecb8d', bg: '#061a10', tag: 'STEREO' }
+      ]
+    },
+    {
+      name: 'A → B → C → D',
+      frames: [
+        { text: 'A', color: '#5be0ff', bg: '#06121a', tag: 'ALPHA' },
+        { text: 'B', color: '#ff6bd6', bg: '#1a0610', tag: 'BETA' },
+        { text: 'C', color: '#ffe066', bg: '#1a1206', tag: 'GAMMA' },
+        { text: 'D', color: '#4ecb8d', bg: '#061a10', tag: 'DELTA' }
+      ]
+    },
+    {
+      name: '四季',
+      frames: [
+        { text: '春', color: '#ff8fb0', bg: '#1a0a10', tag: 'SPRING' },
+        { text: '夏', color: '#5be0ff', bg: '#061a1a', tag: 'SUMMER' },
+        { text: '秋', color: '#ffb347', bg: '#1a1206', tag: 'AUTUMN' },
+        { text: '冬', color: '#dff6ff', bg: '#0a1220', tag: 'WINTER' }
+      ]
+    },
+    {
+      name: '两帧 · 极简',
+      frames: [
+        { text: '黑', color: '#ffffff', bg: '#050505', tag: 'BLACK' },
+        { text: '白', color: '#000000', bg: '#f0f0f0', tag: 'WHITE' }
+      ]
+    },
+    {
+      name: '霓虹诗',
+      frames: [
+        { text: '月光', color: '#a8b8ff', bg: '#0a0a1a', tag: 'MOONLIGHT' },
+        { text: '霓虹', color: '#ff2fd0', bg: '#1a0612', tag: 'NEON' },
+        { text: '夜色', color: '#7c4bff', bg: '#0c0418', tag: 'NIGHT' },
+        { text: '清晨', color: '#ffb347', bg: '#1a1008', tag: 'DAWN' }
+      ]
+    },
+    {
+      name: '数字',
+      frames: [
+        { text: '1', color: '#5be0ff', bg: '#06070c', tag: 'ONE' },
+        { text: '2', color: '#7de0c0', bg: '#06070c', tag: 'TWO' },
+        { text: '3', color: '#ffe066', bg: '#06070c', tag: 'THREE' },
+        { text: '4', color: '#ff9d5c', bg: '#06070c', tag: 'FOUR' },
+        { text: '5', color: '#ff6bd6', bg: '#06070c', tag: 'FIVE' }
+      ]
+    }
+  ];
+  let contentIdx = 0;
+
+  // ========== 样式预设 ==========
+  const STYLES = [
+    { name: '全息炫彩', crossfade: 0.14, sheen: 0.9, sheenStyle: 'holo', radius: 0.14 },
+    { name: '真实光栅', crossfade: 0.0, sheen: 0.4, sheenStyle: 'holo', radius: 0.12 },
+    { name: '金属拉丝', crossfade: 0.08, sheen: 0.6, sheenStyle: 'metal', radius: 0.10 },
+    { name: '磨砂柔光', crossfade: 0.2, sheen: 0.5, sheenStyle: 'glow', radius: 0.18 },
+    { name: '无扫光', crossfade: 0.05, sheen: 0, sheenStyle: 'none', radius: 0.08 }
+  ];
+  let styleIdx = 0;
+
+  // ========== 按钮 ==========
+  const mEl = document.getElementById('m');
+
+  function applyContent(c) {
+    CFG.frames = c.frames;
+    buildFrames();
+    mEl.textContent = `${frameCanvases.length} 帧`;
+    card.rotY = 0;
+    card.targetRotY = 0;
+  }
+
+  function applyStyle(s) {
+    Object.assign(CFG, s);
+  }
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    applyContent(CONTENTS[contentIdx]);
+  });
+
+  document.getElementById('btn-style').addEventListener('click', () => {
+    styleIdx = (styleIdx + 1) % STYLES.length;
+    applyStyle(STYLES[styleIdx]);
+    mEl.textContent = `${frameCanvases.length} 帧 · ${STYLES[styleIdx].name}`;
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  applyStyle(STYLES[0]);
+  applyContent(CONTENTS[0]);
+
+  // 等字体加载完再渲染
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      buildFrames();
+      requestAnimationFrame(frame);
+    });
+  } else {
+    setTimeout(() => {
+      buildFrames();
+      requestAnimationFrame(frame);
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>

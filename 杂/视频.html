@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>随机抖音视频播放</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        body {
+            background: #121212;
+            color: #fff;
+            padding: 20px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .container {
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.3);
+        }
+        h2 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #ffffff;
+            font-size: 18px;
+        }
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            background: #fe2c55;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-bottom: 15px;
+            transition: 0.2s;
+        }
+        .btn:disabled {
+            background: #66101f;
+            cursor: not-allowed;
+        }
+        .loading {
+            text-align: center;
+            padding: 10px;
+            color: #aaa;
+            display: none;
+        }
+        .video-box {
+            width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #000;
+            margin-top: 10px;
+            display: none;
+        }
+        video {
+            width: 100%;
+            display: block;
+            max-height: 70vh;
+        }
+        .url-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            word-break: break-all;
+            color: #ccc;
+            font-size: 12px;
+            display: none;
+        }
+        .tips {
+            margin-top: 15px;
+            color: #888;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🎬 随机抖音视频播放器</h2>
+        <button class="btn" id="getVideo">获取随机抖音视频</button>
+        <div class="loading" id="loading">正在获取视频中...</div>
+        <div class="video-box" id="videoBox">
+            <video id="videoPlayer" controls playsinline></video>
+        </div>
+        <div class="url-info" id="urlInfo"></div>
+        <div class="tips">
+            💡 说明：公开接口有跨域限制，若一直失败，可尝试：<br>
+            1. 切换手机网络（Wi-Fi/流量）<br>
+            2. 换一个浏览器打开（推荐Chrome/Edge）
+        </div>
+    </div>
+
+    <script>
+        // 准备了3个备用接口，自动切换
+        const API_LIST = [
+            "https://api.vvhan.com/api/douyin",
+            "https://api.btstu.cn/douyin/api.php?type=json",
+            "https://api.ghser.com/douyin/"
+        ];
+        let currentApiIndex = 0;
+
+        const btn = document.getElementById('getVideo');
+        const loading = document.getElementById('loading');
+        const videoBox = document.getElementById('videoBox');
+        const videoPlayer = document.getElementById('videoPlayer');
+        const urlInfo = document.getElementById('urlInfo');
+
+        async function tryGetVideo() {
+            btn.disabled = true;
+            btn.innerText = "获取中...";
+            loading.style.display = 'block';
+            videoBox.style.display = 'none';
+            urlInfo.style.display = 'none';
+
+            // 遍历尝试所有接口
+            for (let i = 0; i < API_LIST.length; i++) {
+                const apiUrl = API_LIST[(currentApiIndex + i) % API_LIST.length];
+                try {
+                    // 使用JSONP的思路，或者直接fetch（部分接口会被CORS限制）
+                    const res = await fetch(apiUrl, {
+                        method: 'GET',
+                        mode: 'cors',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data = await res.json();
+                    
+                    // 适配不同接口的返回格式
+                    let videoUrl = null;
+                    if (data.url) {
+                        videoUrl = data.url;
+                    } else if (data.data?.url) {
+                        videoUrl = data.data.url;
+                    } else if (data.video) {
+                        videoUrl = data.video;
+                    }
+
+                    if (videoUrl) {
+                        // 成功获取视频
+                        currentApiIndex = (currentApiIndex + i) % API_LIST.length;
+                        videoPlayer.src = videoUrl;
+                        urlInfo.innerText = "视频地址：" + videoUrl;
+                        
+                        videoBox.style.display = 'block';
+                        urlInfo.style.display = 'block';
+                        videoPlayer.play().catch(() =

@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR 双手手势交互 · 流畅优化</title>
+    <!-- ES Module 本地MediaPipe映射 -->
+    <script type="importmap">
+        {
+            "imports": {
+                "@mediapipe/tasks-vision": "./vision_bundle.mjs"
+            }
+        }
+    </script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050508;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #f0f0f5;
+            touch-action: none;
+        }
+        #app-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+        canvas#output_canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #webcam {
+            display: none;
+        }
+        /* 顶部状态提示 */
+        #status-message {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(20, 20, 25, 0.8);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        #status-message.hidden {
+            opacity: 0;
+        }
+        /* FPS面板 */
+        #fps-meter {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            color: #34d399;
+            z-index: 100;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+        /* 底部控制面板 */
+        #control-panel {
+            position: absolute;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(12, 12, 18, 0.7);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 14px 22px;
+            border-radius: 16px;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            transition: opacity 0.35s ease;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+            min-width: 280px;
+        }
+        #control-panel.dimmed {
+            opacity: 0.2;
+            pointer-events: none;
+        }
+        .control-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .slider-row {
+            font-size: 13px;
+            color: #b0b0c0;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        input[type="range"] {
+            accent-color: #4a90e2;
+            cursor: pointer;
+            width: 140px;
+            height: 4px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.15);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #4a90e2;
+            cursor: pointer;
+            box-shadow: 0 0 12px rgba(74, 144, 226, 0.4);
+        }
+        .btn {
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #f0f0f5;
+            padding: 7px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            touch-action: manipulation;
+        }
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.16);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        .btn:active {
+            transform: scale(0.96);
+        }
+        .btn.primary {
+            background: #2563eb;
+            border-color: #3b82f6;
+        }
+        .btn.primary:hover {
+            background: #1d4ed8;
+            border-color: #60a5fa;
+        }
+        /* 移动端适配 */
+        @media (max-width: 480px) {
+            #control-panel {
+                min-width: unset;
+                width: 92%;
+                padding: 12px 16px;
+                bottom: 16px;
+            }
+            .control-row {
+                gap: 6px;
+            }
+            input[type="range"] {
+                width: 100px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <video id="webcam" playsinline muted></video>
+        <canvas id="output_canvas"></canvas>
+        <div id="status-message">正在加载 MediaPipe 模型...</div>
+        <div id="fps-meter">⚡ -- FPS</div>
+        <div id="control-panel">
+            <div class="control-row">
+                <button id="btn-start" class="btn primary">📷 启动</button>
+                <button id="btn-demo" class="btn">✨ 演示</button>
+                <button id="btn-reset" class="btn">↺ 重置</button>
+            </div>
+            <div class="control-row slider-row">
+                <label for="smoothing-range">平滑 <span id="smoothing-val">0.55</span></label>
+                <input type="range" id="smoothing-range" min="0.0" max="0.9" step="0.05" value="0.55">
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
+
+        // ====================== 常量定义区 ======================
+        const CONST = {
+            // MediaPipe 模型配置
+            MODEL_PATH: "./hand_landmarker.task",
+            WASM_PATH: "./wasm",
+            MAX_HANDS: 2,
+            DETECT_CONFIDENCE: 0.6,
+            TRACK_CONFIDENCE: 0.5,
+            // 平滑参数范围
+            SMOOTH_MIN: 0,
+            SMOOTH_MAX: 0.9,
+            SMOOTH_STEP: 0.05,
+            DEFAULT_SMOOTH: 0.55,
+            // 摄像头理想分辨率
+            CAM_WIDTH: 640,
+            CAM_HEIGHT: 480,
+            // 纹理画布尺寸
+            PATTERN_CANVAS_SIZE: 48,
+            // 渲染常量
+            QUAD_STROKE_WIDTH: 2,
+            PALM_RADIUS: 8,
+            GLOW_BLUR: 12,
+            PALM_GLOW_BLUR: 20,
+            // 手指关键点索引
+            FINGER_TIPS: {
+                thumb: 4,
+                index: 8,
+                middle: 12,
+                pinky: 20
+            }
+        };
+
+        // ====================== DOM 缓存单例 ======================
+        const DOM = Object.freeze({
+            video: document.getElementById('webcam'),
+            canvas: document.getElementById('output_canvas'),
+            ctx: document.getElementById('output_canvas').getContext('2d'),
+            btnStart: document.getElementById('btn-start'),
+            btnDemo: document.getElementById('btn-demo'),
+            btnReset: document.getElementById('btn-reset'),
+            smoothRange: document.getElementById('smoothing-range'),
+            smoothValText: document.getElementById('smoothing-val'),
+            statusEl: document.getElementById('status-message'),
+            fpsEl: document.getElementById('fps-meter'),
+            panel: document.getElementById('control-panel')
+        });
+
+        // ====================== 全局状态管理 ======================
+        const AppState = {
+            handLandmarker: null,
+            isCameraRunning: false,
+            isDemoMode: false,
+            lastVideoTime: -1,
+            smoothFactor: CONST.DEFAULT_SMOOTH,
+            smoothedPoints: {}, // 平滑关键点缓存 {key: {x,y}}
+            // FPS统计
+            frameCount: 0,
+            lastFpsCalcTime: performance.now(),
+            // 纹理图案缓存
+            patterns: {
+                red: null,
+                blue: null,
+                green: null
+            }
+        };
+
+        // ====================== 工具函数模块 ======================
+        const Utils = {
+            /**
+             * 弹出状态提示，自动消失
+             * @param {string} text 提示文案
+             * @param {number} duration 显示时长，0=常驻
+             */
+            showStatus(text, duration = 3000) {
+                DOM.statusEl.textContent = text;
+                DOM.statusEl.classList.remove('hidden');
+                clearTimeout(window._msgTimer);
+                if (duration > 0) {
+                    window._msgTimer = setTimeout(() => DOM.statusEl.classList.add('hidden'), duration);
+                }
+            },
+
+            /** 自适应画布尺寸 */
+            resizeCanvas() {
+                const w = window.innerWidth;
+                const h = window.innerHeight;
+                if (DOM.canvas.width !== w || DOM.canvas.height !== h) {
+                    DOM.canvas.width = w;
+                    DOM.canvas.height = h;
+                }
+            },
+
+            /**
+             * 归一化坐标映射画布 + 镜像翻转
+             * @param {import("@mediapipe/tasks-vision").NormalizedLandmark} pt 归一化点
+             * @param {number} w 画布宽
+             * @param {number} h 画布高
+             * @returns {null | {x: number, y: number}}
+             */
+            mapNormalPoint(pt, w, h) {
+                if (!pt) return null;
+                return { x: (1 - pt.x) * w, y: pt.y * h };
+            },
+
+            /**
+             * 指数移动平均平滑关键点
+             * @param {string} cacheKey 缓存标识
+             * @param {{x:number,y:number}} target 目标坐标
+             * @returns {{x:number,y:number}} 平滑后坐标
+             */
+            smoothLandmark(cacheKey, target) {
+                if (!target) return null;
+                const cache = AppState.smoothedPoints[cacheKey];
+                if (!cache) {
+                    AppState.smoothedPoints[cacheKey] = { x: target.x, y: target.y };
+                    return AppState.smoothedPoints[cacheKey];
+                }
+                const sf = AppState.smoothFactor;
+                cache.x = cache.x * sf + target.x * (1 - sf);
+                cache.y = cache.y * sf + target.y * (1 - sf);
+                return cache;
+            },
+
+            /**
+             * 创建平铺纹理图案
+             * @param {(ctx:CanvasRenderingContext2D,w:number,h:number)=>void} drawFn 绘制回调
+             * @returns {CanvasPattern}
+             */
+            createCanvasPattern(drawFn) {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = CONST.PATTERN_CANVAS_SIZE;
+                tempCanvas.height = CONST.PATTERN_CANVAS_SIZE;
+                const tempCtx = tempCanvas.getContext('2d');
+                drawFn(tempCtx, tempCanvas.width, tempCanvas.height);
+                return DOM.ctx.createPattern(tempCanvas, 'repeat');
+            },
+
+            /** 释放摄像头全部轨道 */
+            stopCameraTracks() {
+                if (!DOM.video.srcObject) return;
+                DOM.video.srcObject.getTracks().forEach(track => track.stop());
+                DOM.video.srcObject = null;
+            },
+
+            /** 清空画布 & 重置平滑点缓存 */
+            clearAllCanvas() {
+                const { width, height } = DOM.canvas;
+                DOM.ctx.clearRect(0, 0, width, height);
+                AppState.smoothedPoints = {};
+            }
+        };
+
+        // ====================== 纹理图案初始化 ======================
+        function initPatternTextures() {
+            // 红色纹理 - 拇指食指区域
+            AppState.patterns.red = Utils.createCanvasPattern((ctx, w, h) => {
+                ctx.fillStyle = '#f5f2eb';
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = '#ff3366';
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2, 12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.beginPath();
+                ctx.arc(w / 2 - 4, h / 2 - 4, 4, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 青色纹理 - 食指中指区域
+            AppState.patterns.blue = Utils.createCanvasPattern((ctx, w, h) => {
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = '#06b6d4';
+                ctx.fillRect(0, 0, w, 4);
+                ctx.fillStyle = 'rgba(6, 182, 212, 0.3)';
+                for (let i = 0; i < 6; i++) ctx.fillRect(i * 10, 20, 4, 8);
+            });
+
+            // 绿色纹理 - 中指小指区域
+            AppState.patterns.green = Utils.createCanvasPattern((ctx, w, h) => {
+                ctx.fillStyle = '#1b3b2b';
+                ctx.fillRect(0, 0, w, h);
+                ctx.fillStyle = '#10b981';
+                ctx.beginPath();
+                ctx.arc(w / 2, h / 2, 9, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                ctx.beginPath();
+                ctx.arc(w / 2 - 3, h / 2 - 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // ====================== 渲染绘制模块 ======================
+        const Render = {
+            /**
+             * 绘制四边形纹理填充框
+             * @param {Array<{x:number,y:number}>} fourPoints 四点数组
+             * @param {CanvasPattern} pattern 填充纹理
+             */
+            drawQuadFrame(fourPoints, pattern) {
+                if (fourPoints.some(p => !p)) return;
+                const ctx = DOM.ctx;
+                ctx.save();
+                // 构建闭合路径
+                ctx.beginPath();
+                ctx.moveTo(fourPoints[0].x, fourPoints[0].y);
+                for (let i = 1; i < fourPoints.length; i++) ctx.lineTo(fourPoints[i].x, fourPoints[i].y);
+                ctx.closePath();
+                // 裁剪填充纹理
+                ctx.clip();
+                ctx.fillStyle = pattern;
+                ctx.fillRect(0, 0, DOM.canvas.width, DOM.canvas.height);
+                // 发光描边
+                ctx.shadowColor = 'rgba(0, 200, 255, 0.25)';
+                ctx.shadowBlur = CONST.GLOW_BLUR;
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = CONST.QUAD_STROKE_WIDTH;
+                ctx.stroke();
+                // 重置绘图状态
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            },
+
+            /**
+             * 绘制掌心发光圆点
+             * @param {{x:number,y:number}} palmPoint 掌心坐标
+             * @param {string} fillColor 填充色
+             * @param {string} glowColor 发光色
+             */
+            drawPalmGlow(palmPoint, fillColor, glowColor) {
+                const ctx = DOM.ctx;
+                ctx.beginPath();
+                ctx.arc(palmPoint.x, palmPoint.y, CONST.PALM_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = fillColor;
+                ctx.shadowColor = glowColor;
+                ctx.shadowBlur = CONST.PALM_GLOW_BLUR;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            },
+
+            /**
+             * AR手势联动渲染主逻辑
+             * @param {import("@mediapipe/tasks-vision").NormalizedLandmark[]} leftHand 左手关键点
+             * @param {import("@mediapipe/tasks-vision").NormalizedLandmark[]} rightHand 右手关键点
+             * @param {number} canvasW
+             * @param {number} canvasH
+             */
+            renderARHandEffect(leftHand, rightHand, canvasW, canvasH) {
+                const { thumb, index, middle, pinky } = CONST.FINGER_TIPS;
+                const getTip = (hand, idx) => hand ? Utils.mapNormalPoint(hand[idx], canvasW, canvasH) : null;
+
+                // 平滑缓存左右手指尖
+                const l4 = Utils.smoothLandmark('l4', getTip(leftHand, thumb));
+                const l8 = Utils.smoothLandmark('l8', getTip(leftHand, index));
+                const l12 = Utils.smoothLandmark('l12', getTip(leftHand, middle));
+                const l20 = Utils.smoothLandmark('l20', getTip(leftHand, pinky));
+
+                const r4 = Utils.smoothLandmark('r4', getTip(rightHand, thumb));
+                const r8 = Utils.smoothLandmark('r8', getTip(rightHand, index));
+                const r12 = Utils.smoothLandmark('r12', getTip(rightHand, middle));
+                const r20 = Utils.smoothLandmark('r20', getTip(rightHand, pinky));
+
+                // 分区渲染三色四边形
+                if (l4 && l8 && r4 && r8) Render.drawQuadFrame([l4, r4, r8, l8], AppState.patterns.red);
+                if (l8 && l12 && r8 && r12) Render.drawQuadFrame([l8, r8, r12, l12], AppState.patterns.blue);
+                if (l12 && l20 && r12 && r20) Render.drawQuadFrame([l12, r12, r20, l20], AppState.patterns.green);
+
+                // 掌心发光装饰
+                if (leftHand) {
+                    const palm = Utils.mapNormalPoint(leftHand[0], canvasW, canvasH);
+                    if (palm) Render.drawPalmGlow(palm, 'rgba(255,200,100,0.25)', 'rgba(255,200,100,0.6)');
+                }
+                if (rightHand) {
+                    const palm = Utils.mapNormalPoint(rightHand[0], canvasW, canvasH);
+                    if (palm) Render.drawPalmGlow(palm, 'rgba(100,200,255,0.25)', 'rgba(100,200,255,0.6)');
+                }
+            },
+
+            /**
+             * 离线演示场景（无摄像头）
+             * @param {number} w
+             * @param {number} h
+             */
+            renderDemoScene(w, h) {
+                const ctx = DOM.ctx;
+                // 背景底色
+                ctx.fillStyle = '#0a0a10';
+                ctx.fillRect(0, 0, w, h);
+                // 网格背景
+                ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+                ctx.lineWidth = 1;
+                const gridStep = 70;
+                for (let x = 0; x < w; x += gridStep) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                }
+                for (let y = 0; y < h; y += gridStep) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+                }
+                // 演示四边形点位
+                const cx = w / 2, cy = h / 2;
+                const quad1 = [{ x: cx - 300, y: cy - 100 }, { x: cx - 100, y: cy - 120 }, { x: cx - 100, y: cy + 80 }, { x: cx - 300, y: cy + 100 }];
+                const quad2 = [{ x: cx - 80, y: cy - 120 }, { x: cx + 80, y: cy - 120 }, { x: cx + 80, y: cy + 80 }, { x: cx - 80, y: cy + 80 }];
+                const quad3 = [{ x: cx + 100, y: cy - 120 }, { x: cx + 300, y: cy - 100 }, { x: cx + 300, y: cy + 100 }, { x: cx + 100, y: cy + 80 }];
+                Render.drawQuadFrame(quad1, AppState.patterns.red);
+                Render.drawQuadFrame(quad2, AppState.patterns.blue);
+                Render.drawQuadFrame(quad3, AppState.patterns.green);
+                // 提示文字
+                ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                ctx.font = '24px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('✨ 双手演示模式', cx, cy + 6);
+            },
+
+            /** 主渲染循环帧 */
+            frameLoop(now) {
+                if (!AppState.isCameraRunning && !AppState.isDemoMode) return;
+                // FPS 计算
+                AppState.frameCount++;
+                if (now - AppState.lastFpsCalcTime >= 1000) {
+                    const fps = Math.round((AppState.frameCount * 1000) / (now - AppState.lastFpsCalcTime));
+                    DOM.fpsEl.textContent = `⚡ ${fps} FPS`;
+                    AppState.frameCount = 0;
+                    AppState.lastFpsCalcTime = now;
+                }
+                const { width, height } = DOM.canvas;
+                Utils.clearAllCanvas();
+
+                if (AppState.isDemoMode) {
+                    Render.renderDemoScene(width, height);
+                } else {
+                    // 摄像头实时模式
+                    if (DOM.video.readyState >= 2 && DOM.video.currentTime !== AppState.lastVideoTime) {
+                        AppState.lastVideoTime = DOM.video.currentTime;
+                        // 绘制镜像视频画面
+                        const ctx = DOM.ctx;
+                        ctx.save();
+                        ctx.scale(-1, 1);
+                        ctx.drawImage(DOM.video, -width, 0, width, height);
+                        ctx.restore();
+
+                        // MediaPipe手部推理
+                        const detectResult = AppState.handLandmarker.detectForVideo(DOM.video, performance.now());
+                        let leftHand = null, rightHand = null;
+                        if (detectResult.landmarks?.length > 0) {
+                            for (let i = 0; i < detectResult.landmarks.length; i++) {
+                                const handLabel = detectResult.handedness[i][0].categoryName;
+                                // 画面镜像：模型输出Left=画面右侧（真实右手）
+                                if (handLabel === 'Left') rightHand = detectResult.landmarks[i];
+                                else leftHand = detectResult.landmarks[i];
+                            }
+                            // 单/双手提示
+                            if (detectResult.landmarks.length === 1) {
+                                Utils.showStatus('只识别到一只手，请伸出双手体验联动', 1500);
+                            } else {
+                                DOM.statusEl.classList.add('hidden');
+                            }
+                        } else {
+                            Utils.showStatus('🤚 请将双手置于摄像头前', 0);
+                        }
+                        // 渲染AR特效
+                        if (leftHand || rightHand) Render.renderARHandEffect(leftHand, rightHand, width, height);
+                    }
+                }
+                requestAnimationFrame(Render.frameLoop);
+            }
+        };
+
+        // ====================== MediaPipe 初始化 ======================
+        async function initMediaPipeModel() {
+            try {
+                Utils.showStatus('⏳ 加载MediaPipe手部模型...', 0);
+                const visionResolver = await FilesetResolver.forVisionTasks(CONST.WASM_PATH);
+                AppState.handLandmarker = await HandLandmarker.createFromOptions(visionResolver, {
+                    baseOptions: {
+                        modelAssetPath: CONST.MODEL_PATH,
+                        delegate: 'GPU'
+                    },
+                    runningMode: 'VIDEO',
+                    numHands: CONST.MAX_HANDS,
+                    minHandDetectionConfidence: CONST.DETECT_CONFIDENCE,
+                    minTrackingConfidence: CONST.TRACK_CONFIDENCE
+                });
+                Utils.showStatus('✅ 模型加载完成', 1500);
+                console.log('[MediaPipe] 本地模型初始化成功');
+            } catch (err) {
+                console.error('[MediaPipe] 模型加载失败：', err);
+                Utils.showStatus(`❌ 模型加载失败: ${err.message}`, 0);
+            }
+        }
+
+        // ====================== 摄像头启动逻辑 ======================
+        async function startCameraCapture() {
+            if (!AppState.handLandmarker) {
+                Utils.showStatus('⏳ 模型尚未加载完成，请等待', 2000);
+                return;
+            }
+            if (AppState.isCameraRunning) {
+                Utils.showStatus('摄像头已在运行中', 1200);
+                return;
+            }
+            try {
+                // 请求前置摄像头
+                const mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: CONST.CAM_WIDTH },
+                        height: { ideal: CONST.CAM_HEIGHT },
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+                DOM.video.srcObject = mediaStream;
+                await DOM.video.play();
+                // 切换运行状态
+                AppState.isCameraRunning = true;
+                AppState.isDemoMode = false;
+                DOM.panel.classList.add('dimmed');
+                Utils.showStatus('📷 摄像头启动成功', 1800);
+                requestAnimationFrame(Render.frameLoop);
+            } catch (err) {
+                console.error('[Camera] 启动失败：', err);
+                let tip = '无法打开摄像头：';
+                switch (err.name) {
+                    case 'NotAllowedError': tip += '未授予摄像头权限'; break;
+                    case 'NotFoundError': tip += '设备未检测到摄像头'; break;
+                    case 'NotReadableError': tip += '摄像头被其他程序占用'; break;
+                    default: tip += err.message;
+                }
+                Utils.showStatus(tip, 4000);
+            }
+        }
+
+        // ====================== 全局事件绑定 ======================
+        function bindGlobalEvents() {
+            // 窗口尺寸自适应
+            window.addEventListener('resize', Utils.resizeCanvas);
+            Utils.resizeCanvas();
+
+            // 按钮事件
+            DOM.btnStart.addEventListener('click', startCameraCapture);
+            DOM.btnDemo.addEventListener('click', () => {
+                Utils.stopCameraTracks();
+                AppState.isCameraRunning = false;
+                AppState.isDemoMode = true;
+                DOM.panel.classList.remove('dimmed');
+                Utils.showStatus('✨ 切换至演示模式', 1500);
+                requestAnimationFrame(Render.frameLoop);
+            });
+            DOM.btnReset.addEventListener('click', () => {
+                Utils.stopCameraTracks();
+                AppState.isCameraRunning = false;
+                AppState.isDemoMode = false;
+                Utils.clearAllCanvas();
+                DOM.panel.classList.remove('dimmed');
+                Utils.showStatus('↺ 已重置所有状态', 1200);
+            });
+
+            // 平滑滑块
+            DOM.smoothRange.addEventListener('input', (e) => {
+                AppState.smoothFactor = parseFloat(e.target.value);
+                DOM.smoothValText.textContent = AppState.smoothFactor.toFixed(2);
+            });
+
+            // 页面关闭释放资源
+            window.addEventListener('beforeunload', () => {
+                Utils.stopCameraTracks();
+            });
+        }
+
+        // ====================== 程序入口初始化 ======================
+        function bootstrap() {
+            initPatternTextures();
+            bindGlobalEvents();
+            initMediaPipeModel();
+        }
+        bootstrap();
+    </script>
+</body>
+</html>

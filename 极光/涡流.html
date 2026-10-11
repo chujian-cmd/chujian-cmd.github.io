@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Curl Noise 涡流</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #05060c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(5,6,12,0.8), rgba(5,6,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">涡流 <b id="m">星云</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 扰动涡流</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    count: isMobile ? 1200 : 2200,   // 粒子数
+    size: isMobile ? 1.8 : 1.6,      // 粒子大小
+    speed: 0.6,                       // 速度
+    curl: 2.0,                        // 卷曲强度
+    noiseScale: 0.0018,               // 噪声密度
+    evolve: 0.15,                     // 场演化速度
+    damping: 0.96,                    // 阻尼
+    trail: 0.06,                      // 拖尾
+    mouseForce: 1.6,                  // 鼠标扰动
+    mouseRadius: 180,
+
+    colorMode: 'speed',               // speed | rainbow
+    colorA: '#5be0ff',                // 慢
+    colorB: '#ff6bd6',                // 快
+    background: '#05060c'
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (px.length) seed();
+  }
+
+  // ---------- 快速噪声（正弦叠加，比 simplex 轻得多） ----------
+  // 用 3 个不同频率的 sin 叠加做伪噪声，性能比 simplex 好 5 倍
+  function noise2(x, y) {
+    return Math.sin(x * 1.7 + y * 2.3) * 0.5
+         + Math.sin(x * 3.1 - y * 1.9 + 1.7) * 0.3
+         + Math.sin(x * 5.7 + y * 4.1 + 3.3) * 0.2;
+  }
+
+  // Curl Noise：对噪声场求旋度
+  // 二维情况下 curl = (∂n/∂y, -∂n/∂x)
+  // 用有限差分近似偏导
+  function curl(x, y, t, out) {
+    const eps = 0.5;
+    const ns = CFG.noiseScale;
+    const ev = t * CFG.evolve;
+
+    const nx1 = noise2((x + eps) * ns, y * ns + ev);
+    const nx2 = noise2((x - eps) * ns, y * ns + ev);
+    const ny1 = noise2(x * ns, (y + eps) * ns + ev);
+    const ny2 = noise2(x * ns, (y - eps) * ns + ev);
+
+    // ∂n/∂x 和 ∂n/∂y
+    const dndx = (nx1 - nx2) / (2 * eps);
+    const dndy = (ny1 - ny2) / (2 * eps);
+
+    // curl = (dndy, -dndx)
+    out[0] = dndy;
+    out[1] = -dndx;
+    return out;
+  }
+
+  // ---------- 粒子 ----------
+  const px = new Float32Array(CFG.count);
+  const py = new Float32Array(CFG.count);
+  const vx = new Float32Array(CFG.count);
+  const vy = new Float32Array(CFG.count);
+
+  function seed() {
+    for (let i = 0; i < CFG.count; i++) {
+      px[i] = Math.random() * W;
+      py[i] = Math.random() * H;
+      vx[i] = (Math.random() - 0.5) * 2;
+      vy[i] = (Math.random() - 0.5) * 2;
+    }
+  }
+  seed();
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const t = e.touches ? e.touches[0] : e;
+    const r = rect();
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    pointer.down = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const t = e.touches ? e.touches[0] : e;
+    const r = rect();
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.down = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 配色 ----------
+  let colA, colB, bgRGB;
+  function buildColors() {
+    colA = hex2rgb(CFG.colorA);
+    colB = hex2rgb(CFG.colorB);
+    bgRGB = hex2rgb(CFG.background);
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  let startTime = lastTime;
+
+  // 复用的临时数组（避免 GC）
+  const curlOut = [0, 0];
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    const t = (now - startTime) / 1000;
+
+    // 背景
+    const [br, bg, bb] = bgRGB;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(${br},${bg},${bb},${CFG.trail})`;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    const speed = CFG.speed;
+    const curlStrength = CFG.curl;
+    const damp = CFG.damping;
+    const z = clamp(dt * 60, 0, 2.5);
+
+    const useMouse = pointer.inside && pointer.down;
+    const mx = pointer.x, my = pointer.y;
+    const mr2 = CFG.mouseRadius * CFG.mouseRadius;
+    const mForce = CFG.mouseForce;
+
+    const [ar, ag, ab] = colA;
+    const [cr, cg, cb] = colB;
+    const mode = CFG.colorMode;
+
+    for (let i = 0; i < CFG.count; i++) {
+      let x = px[i];
+      let y = py[i];
+      let vX = vx[i];
+      let vY = vy[i];
+
+      // Curl Noise 速度场
+      curl(x, y, t, curlOut);
+      let ax = curlOut[0] * curlStrength * 40;
+      let ay = curlOut[1] * curlStrength * 40;
+
+      // 鼠标扰动：从指针向外推
+      if (useMouse) {
+        const dx = x - mx;
+        const dy = y - my;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < mr2 && d2 > 1) {
+          const d = Math.sqrt(d2);
+          const f = (1 - d / CFG.mouseRadius) * mForce;
+          ax += dx / d * f * 200;
+          ay += dy / d * f * 200;
+        }
+      }
+
+      // 速度更新（带阻尼）
+      vX = (vX + ax * z * 0.02) * damp;
+      vY = (vY + ay * z * 0.02) * damp;
+      vx[i] = vX;
+      vy[i] = vY;
+
+      // 位置更新
+      x += vX * z * speed;
+      y += vY * z * speed;
+
+      // 边界环绕
+      if (x < -20) x += W + 40;
+      else if (x > W + 20) x -= W + 40;
+      if (y < -20) y += H + 40;
+      else if (y > H + 20) y -= H + 40;
+
+      px[i] = x;
+      py[i] = y;
+
+      // 颜色
+      const sp = Math.hypot(vX, vY);
+      if (mode === 'rainbow') {
+        const hue = (Math.atan2(vY, vX) / Math.PI * 180 + 360 + t * 20) % 360;
+        ctx.fillStyle = `hsla(${hue | 0}, 75%, 62%, 0.75)`;
+      } else {
+        const k = clamp(sp / 4, 0, 1);
+        const R = ar + (cr - ar) * k | 0;
+        const G = ag + (cg - ag) * k | 0;
+        const B = ab + (cb - ab) * k | 0;
+        const alpha = 0.4 + k * 0.5;
+        ctx.fillStyle = `rgba(${R},${G},${B},${alpha})`;
+      }
+      const sz = CFG.size;
+      const half = sz * 0.5;
+      ctx.fillRect(x - half, y - half, sz, sz);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+
+  document.getElementById('btn-reset').addEventListener('click', seed);
+
+  const SCHEMES = [
+    { name: '星云', colorMode: 'speed', colorA: '#5be0ff', colorB: '#ff6bd6',
+      background: '#05060c', curl: 2.0, speed: 0.6, noiseScale: 0.0018, trail: 0.06 },
+    { name: '火焰', colorMode: 'speed', colorA: '#ffd86b', colorB: '#ff2e4e',
+      background: '#0a0300', curl: 2.5, speed: 0.8, noiseScale: 0.0022, trail: 0.08 },
+    { name: '深海', colorMode: 'speed', colorA: '#1a4a8a', colorB: '#5bffd0',
+      background: '#020610', curl: 1.5, speed: 0.4, noiseScale: 0.0014, trail: 0.05 },
+    { name: '彩虹', colorMode: 'rainbow', colorA: '#5be0ff', colorB: '#ff6bd6',
+      background: '#04040a', curl: 2.2, speed: 0.7, noiseScale: 0.0018, trail: 0.07 },
+    { name: '极光', colorMode: 'speed', colorA: '#4ecb8d', colorB: '#b26bff',
+      background: '#030810', curl: 1.8, speed: 0.5, noiseScale: 0.0016, trail: 0.06 },
+    { name: '冰蓝', colorMode: 'speed', colorA: '#3a5a9a', colorB: '#dff6ff',
+      background: '#030810', curl: 1.6, speed: 0.45, noiseScale: 0.0015, trail: 0.05 }
+  ];
+  let schemeIdx = 0;
+
+  function applyScheme(s) {
+    CFG.colorMode = s.colorMode;
+    CFG.colorA = s.colorA;
+    CFG.colorB = s.colorB;
+    CFG.background = s.background;
+    CFG.curl = s.curl;
+    CFG.speed = s.speed;
+    CFG.noiseScale = s.noiseScale;
+    CFG.trail = s.trail;
+    buildColors();
+  }
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+    applyScheme(SCHEMES[schemeIdx]);
+    mEl.textContent = SCHEMES[schemeIdx].name;
+  });
+
+  // ---------- 启动 ----------
+  buildColors();
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  mEl.textContent = SCHEMES[0].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

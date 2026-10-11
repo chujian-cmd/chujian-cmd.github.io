@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, user-scalable=no,initial-scale=1,minimum-scale=1,maximum-scale=1">
+    <title></title>
+    <style type="text/css">
+        body {
+            background: #fff;
+            font-family: "Helvetica Neue", Helvetica, STHeiTi, sans-serif
+        }
+
+        .m_wording {
+            text-align: center
+        }
+
+        .m_icon {
+            background-image: url("./img/jump_new.png?max_age=31536000");
+            width: 159px;
+            height: 159px;
+            margin: 50px auto 0;
+            background-size: cover
+        }
+
+        .m_title {
+            font-weight: 700
+        }
+
+        .m_text {
+            color: #585858
+        }
+
+        .m_text a {
+            color: #218de2;
+            text-decoration: none;
+            font-weight: 700
+        }
+    </style>
+    <script src="https://cdn-go.cn/aegis/aegis-sdk/latest/aegis.min.js?_bid=3977"></script>
+    <script>
+        if (window.Aegis) {
+            var uinMatch = document.cookie.match(/uin=o(\d+)/);
+            var uin;
+            if (uinMatch.length === 2) {
+                uin = parseInt(uinMatch[1], 10);
+            }
+            var aegisConfig = {
+                id: '6835',
+                reportApiSpeed: false,
+                reportAssetSpeed: false,
+            };
+            if (uin) {
+                aegisConfig['uin'] = uin;
+            }
+            window.__aegis = new Aegis(aegisConfig);
+        }
+    </script>
+</head>
+
+<body>
+    <div id="m_container" class="m_wording">
+        <div>
+            <div class="m_icon"></div>
+            <p class="m_title">该链接会唤起手机QQ，</p>
+
+            <p class="m_text">若无法正常跳转请先<a id="update_link" href="javascript:">安装QQ或升级QQ</a>。</p>
+
+            <p class="m_text">若您已经安装了QQ，</p>
+
+            <p class="m_text">请您点击右上角，用浏览器打开。</p>
+        </div>
+    </div>
+    <script>
+        (function () {
+
+            var utils = {
+                'compareVersion': function (a, b) {
+                    var i, l, r, len;
+                    a = String(a).split('.');
+                    b = String(b).split('.');
+                    for (i = 0, len = Math.max(a.length, b.length); i < len; i++) {
+                        l = isFinite(a[i]) && Number(a[i]) || 0;
+                        r = isFinite(b[i]) && Number(b[i]) || 0;
+                        if (l < r) {
+                            return -1;
+                        } else if (l > r) {
+                            return 1;
+                        }
+                    }
+                    return 0;
+                },
+
+                'isNewWeiXin': function () {
+                    var ua = navigator.userAgent,
+                        REGEXP_WEIXIN = /\bMicroMessenger\/([\d\.]+)/,
+                        m = ua.match(REGEXP_WEIXIN),
+                        minVersion = "6.5.6"; //此版本后拉起手Q用新api
+
+                    if (m && m[0] && m[1]) {
+                        if (utils.compareVersion(m[1], minVersion) >= 0) {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+
+                },
+
+                'getToken': function () {
+                    var cookie = {
+                        get: function (name) {
+                            if (document.cookie && document.cookie != '') {
+                                var cookieArr = document.cookie.split('; ');
+                                for (var i = 0, cl = cookieArr.length, name = encodeURIComponent(name),
+                                    tmpArr; i < cl; i++) {
+                                    tmpArr = cookieArr[i].split('=');
+                                    if (name == tmpArr[0]) {
+                                        return decodeURIComponent(tmpArr[1] || '');
+                                    }
+                                }
+                            }
+
+                            return null;
+                        }
+                    };
+
+                    var hash = 5381;
+                    var skey = cookie.get('skey') || '';
+                    for (var i = 0, len = skey.length; i < len; ++i) hash += (hash << 5) + skey.charCodeAt(i);
+                    return hash & 2147483647
+                }
+            };
+
+            function main() {
+
+                var ENV = (function () {
+
+                    var ua = navigator.userAgent.toLowerCase();
+                    var ua2 = navigator.userAgent;
+
+                    var platform = function (os) {
+                        var ver = ('' + (new RegExp(os + '(\\d+((\\.|_)\\d+)*)').exec(ua) || [, 0])[1]).replace(/_/g, '.');
+                        // undefined < 3 === false, but null < 3 === true
+                        return !!parseFloat(ver);
+                    };
+
+                    return {
+                        is_mqq: /(iPad|iPhone|iPod).*? (IPad)?QQ\/([\d\.]+)/.test(ua2) || /\bV1_AND_SQI?_([\d\.]+)(.*? QQ\/([\d\.]+))?/.test(ua2),
+                        is_ios: platform('os '),
+                        is_android: platform('android[/ ]'),
+                        is_pc: !platform('os ') && !platform('android[/ ]')
+                    }
+                })();
+
+                var jump_url = '';
+
+                if (ENV.is_ios) {
+                    jump_url = 'itms-apps://itunes.apple.com/cn/app/qq-2011/id444934666?mt=8';
+                } else if (ENV.is_android) {
+                    jump_url = 'http://im.qq.com/mobileqq/';
+                }
+
+                document.getElementById('update_link').href = jump_url;
+
+                if (ENV.is_ios) {
+                    callQQ(getUrlParam('url'), { env: 'ios' });
+                } else if (ENV.is_android) {
+                    callQQ(getUrlParam('url'), { env: 'android' });
+                }
+
+                function getUrlParam(name, url) {
+
+                    //这里使用惰性正则表达式，完善这里的正则表达式，完美支持HASH
+                    var reg = new RegExp("(^|&|\\?|#)" + name + "=([^&]*?)(&|#|$)");
+
+                    url = url || location.href;
+
+                    var tempHash = url.match(/#.*/) ? url.match(/#.*/)[0] : ''; //临时存储hash
+                    url = url.replace(/#.*/, ''); //url
+                    if (reg.test(tempHash)) {
+                        //HASH优先
+                        return decodeURIComponent(tempHash.match(reg)[2]);
+                    } else if (reg.test(url)) {
+                        return decodeURIComponent(url.match(reg)[2]);
+                    } else {
+
+                        return ''
+                    }
+                }
+
+                //手Q跳转
+                function callQQ(url, options) {
+
+                    var settings = {
+                        env: options && options.env || 'unknown'
+                    };
+
+
+                    var checkUrl = function (url) {
+                        // polyfill for old browsers
+                        if (!String.prototype.endsWith) {
+                            String.prototype.endsWith = function (search, this_len) {
+                                if (this_len === undefined || this_len > this.length) {
+                                    this_len = this.length;
+                                }
+                                return this.substring(this_len - search.length, this_len) === search;
+                            };
+                        }
+
+                        if (!String.prototype.startsWith) {
+                            Object.defineProperty(String.prototype, 'startsWith', {
+                                value: function (search, pos) {
+                                    pos = !pos || pos < 0 ? 0 : +pos;
+                                    return this.substring(pos, pos + search.length) === search;
+                                }
+                            });
+                        }
+
+                        var a = document.createElement('a');
+                        a.href = url;
+                        var targetHostname = a.hostname;
+                        var targetPathname = a.pathname;
+                        var allowHostname = ['vip.qq.com', 'qzone.qq.com'];
+                        var allowHostnameAndPathname = [
+                            {
+                                hostname: 'cmshow.qq.com',
+                                pathnames: ['/act_apollo/', '/apollo/', '/atom_data/']
+                            }
+                        ]
+                        for (var i = 0; i < allowHostname.length; ++i) {
+                            var hostname = allowHostname[i];
+                            if (targetHostname === hostname ||
+                                targetHostname.endsWith('.' + hostname)) {
+                                return true;
+                            }
+                        }
+                        for (var i = 0; i < allowHostnameAndPathname.length; ++i) {
+                            var allowInfo = allowHostnameAndPathname[i];
+                            if (allowInfo.hostname === targetHostname) {
+                                for (var j = 0; j < allowInfo.pathnames.length; ++j) {
+                                    var allowPathname = allowInfo.pathnames[j];
+                                    if (targetPathname.startsWith(allowPathname)) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+
+                        window.__aegis && window.__aegis.infoAll('middle page try to open the following address but failed: ' + url);
+                        return false;
+                    };
+
+                    if (checkUrl(url)) {
+                        jumpUrl(url);
+                    }
+
+                    function jumpUrl(url) {
+
+                        if (settings.env == 'android') {
+                            url = 'mqqapi://forward/url?plg_auth=1&url_prefix=' + btoa(url);
+                        } else if (settings.env == 'ios') {
+                            url = 'mqqapi://forward/url?version=1&src_type=web&url_prefix=' + btoa(url);
+                        }
+
+                        //这里分微信版本
+                        if (utils.isNewWeiXin()) {
+                            //大于等于6.5.6
+                            if (typeof WeixinJSBridge !== 'undefined') {
+                                WeixinJSBridge.invoke('launchApplication', {
+                                    "schemeUrl": url
+                                }, function (res) {
+                                });
+                            } else {
+                                document.addEventListener('WeixinJSBridgeReady', function () {
+                                    setTimeout(function () {
+                                        WeixinJSBridge.invoke('launchApplication', {
+                                            "schemeUrl": url
+                                        }, function (res) {
+                                        });
+                                    }, 500);
+
+                                });
+                            }
+
+                        } else {
+                            //就是在iframe.src 赋值伪协议之前先setTimeout 300ms以上，能大大提高唤起手Q的成功率
+                            setTimeout(function () {
+                                location.href = url
+                            }, 500)
+                        }
+                    }
+
+                }
+            }
+
+            main();
+
+        })()
+    </script>
+
+</body>
+
+</html>

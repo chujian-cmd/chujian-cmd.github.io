@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>火柴人 · 布娃娃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #ffffff;
+    overflow: hidden;
+    font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+  }
+  #world {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    touch-action: none;
+  }
+  /* 每个身体部件：黑色胶囊 */
+  .part {
+    position: absolute;
+    background: #111;
+    border-radius: 999px;
+    will-change: transform;
+    pointer-events: none;
+  }
+  /* 头：空心圆 */
+  .part.head {
+    background: #ffffff;
+    border: 4px solid #111;
+    border-radius: 50%;
+  }
+  /* 地面线 */
+  #ground {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: 60px;
+    height: 2px;
+    background: #111;
+    pointer-events: none;
+  }
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    color: #999;
+    font-size: 13px;
+    letter-spacing: 1px;
+    pointer-events: none;
+    user-select: none;
+  }
+  #reset {
+    position: fixed;
+    right: 18px;
+    top: 18px;
+    background: #fff;
+    border: 2px solid #111;
+    color: #111;
+    padding: 7px 18px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    transition: background .15s, color .15s;
+  }
+  #reset:hover { background: #111; color: #fff; }
+</style>
+</head>
+<body>
+<div id="world"></div>
+<div id="ground"></div>
+<div class="hint">拖动火柴人 · 空格重置</div>
+<button id="reset">重 置</button>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+const { Engine, Runner, Bodies, Body, Composite, Constraint,
+        Mouse, MouseConstraint, Events } = Matter;
+
+// ================= 引擎 =================
+const engine = Engine.create();
+engine.gravity.y = 1;
+engine.positionIterations = 16;
+engine.velocityIterations = 12;
+const world = engine.world;
+
+// ================= 布局尺寸 =================
+const W = window.innerWidth;
+const H = window.innerHeight;
+const GROUND_Y = H - 60;
+
+// 火柴人部件尺寸
+const headD  = 56;
+const neckW  = 10, neckH  = 12;
+const torsoW = 12, torsoH = 96;
+const uArmW  = 9,  uArmH  = 48;
+const fArmW  = 8,  fArmH  = 44;
+const hipW   = 10, hipH   = 12;
+const thighW = 11, thighH = 58;
+const shinW  = 9,  shinH  = 54;
+const footW  = 24, footH  = 9;
+
+const H_HEAD  = headD / 2;     // 28
+const H_NECK  = neckH / 2;     // 6
+const H_TORSO = torsoH / 2;    // 48
+const H_HIP   = hipH / 2;      // 6
+const H_THIGH = thighH / 2;    // 29
+const H_SHIN  = shinH / 2;     // 27
+const H_FOOT  = footH / 2;     // 4.5
+const H_UARM  = uArmH / 2;     // 24
+const H_FARM  = fArmH / 2;     // 22
+
+// 从地面往上堆叠，算出每个部件中心的 Y
+const footY  = GROUND_Y - H_FOOT;
+const shinY  = footY  - H_FOOT - H_SHIN;
+const thighY = shinY  - H_SHIN - H_THIGH;
+const hipY   = thighY - H_THIGH - H_HIP;
+const torsoY = hipY   - H_HIP - H_TORSO;
+const neckY  = torsoY - H_TORSO - H_NECK;
+const headY  = neckY  - H_NECK - H_HEAD;
+
+const cx   = W / 2;
+const legX = 10;
+// 关键：手臂中心正好贴在躯干两侧，肩关节左右完全对齐
+const armX = torsoW / 2 + uArmW / 2;   // 6 + 4.5 = 10.5
+
+const SHOULDER_OFF = 12;                                   // 肩在躯干顶部往下 12px
+const shoulderY = torsoY - H_TORSO + SHOULDER_OFF;         // = torsoY - 36
+const uArmY = shoulderY + H_UARM;                          // = torsoY - 12
+const fArmY = uArmY + H_UARM + H_FARM;                     // = torsoY + 34
+
+// ================= 地面 & 墙 =================
+const ground = Bodies.rectangle(W / 2, H - 30, W * 2, 60, {
+  isStatic: true, friction: 0.9, render: { visible: false }
+});
+const wallL = Bodies.rectangle(-30, H / 2, 60, H * 2, { isStatic: true, render: { visible: false } });
+const wallR = Bodies.rectangle(W + 30, H / 2, 60, H * 2, { isStatic: true, render: { visible: false } });
+Composite.add(world, [ground, wallL, wallR]);
+
+// ================= 部件定义 =================
+const parts = [
+  { name: 'head',      w: headD,  h: headD,  x: cx,         y: headY  },
+  { name: 'neck',      w: neckW,  h: neckH,  x: cx,         y: neckY  },
+  { name: 'torso',     w: torsoW, h: torsoH, x: cx,         y: torsoY },
+  { name: 'upperArmL', w: uArmW,  h: uArmH,  x: cx - armX,  y: uArmY  },
+  { name: 'forearmL',  w: fArmW,  h: fArmH,  x: cx - armX,  y: fArmY  },
+  { name: 'upperArmR', w: uArmW,  h: uArmH,  x: cx + armX,  y: uArmY  },
+  { name: 'forearmR',  w: fArmW,  h: fArmH,  x: cx + armX,  y: fArmY  },
+  { name: 'hip',       w: hipW,   h: hipH,   x: cx,         y: hipY   },
+  { name: 'thighL',    w: thighW, h: thighH, x: cx - legX,  y: thighY },
+  { name: 'shinL',     w: shinW,  h: shinH,  x: cx - legX,  y: shinY  },
+  { name: 'thighR',    w: thighW, h: thighH, x: cx + legX,  y: thighY },
+  { name: 'shinR',     w: shinW,  h: shinH,  x: cx + legX,  y: shinY  },
+  { name: 'footL',     w: footW,  h: footH,  x: cx - legX,  y: footY  },
+  { name: 'footR',     w: footW,  h: footH,  x: cx + legX,  y: footY  },
+];
+
+// ================= 创建刚体 + DOM =================
+const worldEl = document.getElementById('world');
+const bodyMap = {};
+const domMap  = {};
+
+parts.forEach(p => {
+  const opts = {
+    friction: 0.7,
+    frictionStatic: 1,
+    frictionAir: 0.01,
+    restitution: 0.05,
+    density: 0.0015,
+    chamfer: { radius: 3 },
+  };
+  const body = p.name === 'head'
+    ? Bodies.circle(p.x, p.y, H_HEAD, opts)
+    : Bodies.rectangle(p.x, p.y, p.w, p.h, opts);
+
+  bodyMap[p.name] = body;
+  Composite.add(world, body);
+
+  const el = document.createElement('div');
+  el.className = 'part ' + p.name;
+  el.style.width  = p.w + 'px';
+  el.style.height = p.h + 'px';
+  worldEl.appendChild(el);
+  domMap[p.name] = el;
+});
+
+// ================= 关节约束 =================
+// 所有 pointA / pointB 都经过计算，使初始时两点世界坐标完全重合（零拉力）
+//
+//   head  ── neck   : head 上 (±6, 26)  ≡  neck 上 (±6, -8)    世界 y = neckY-8
+//   neck  ── torso  : neck 下 (±3, 6)   ≡  torso 上 (±3, -48)  世界 y = neckY+6
+//   torso ── arm    : torso (±armX, -36) ≡ uArm 上 (0, -24)    世界 y = torsoY-36
+//   torso ── hip    : torso 下 (±3, 48)  ≡  hip 上 (±3, -6)
+//   hip   ── thigh  : hip (±legX, 6)     ≡  thigh 上 (0, -29)
+//   thigh ── shin   : (±0, 29) ≡ (±0, -27)
+//   shin  ── foot   : (0, 27) 到脚上 (±7, -4.5)，初始距离正好 7
+const joints = [
+  // —— 头 - 脖子（两点，完全对称，防止头偏/乱转）
+  { a: 'head', b: 'neck', pa: { x: -6, y: 26 }, pb: { x: -6, y: -8 }, len: 0, stiff: 1.0 },
+  { a: 'head', b: 'neck', pa: { x:  6, y: 26 }, pb: { x:  6, y: -8 }, len: 0, stiff: 1.0 },
+
+  // —— 脖子 - 躯干（两点）
+  { a: 'neck', b: 'torso', pa: { x: -3, y:  H_NECK }, pb: { x: -3, y: -H_TORSO }, len: 0, stiff: 0.95 },
+  { a: 'neck', b: 'torso', pa: { x:  3, y:  H_NECK }, pb: { x:  3, y: -H_TORSO }, len: 0, stiff: 0.95 },
+
+  // —— 肩（单点，可自由摆动；x 已对齐）
+  { a: 'torso', b: 'upperArmL', pa: { x: -armX, y: -H_TORSO + SHOULDER_OFF }, pb: { x: 0, y: -H_UARM }, len: 0, stiff: 0.75 },
+  { a: 'torso', b: 'upperArmR', pa: { x:  armX, y: -H_TORSO + SHOULDER_OFF }, pb: { x: 0, y: -H_UARM }, len: 0, stiff: 0.75 },
+
+  // —— 肘（单点）
+  { a: 'upperArmL', b: 'forearmL', pa: { x: 0, y:  H_UARM }, pb: { x: 0, y: -H_FARM }, len: 0, stiff: 0.85 },
+  { a: 'upperArmR', b: 'forearmR', pa: { x: 0, y:  H_UARM }, pb: { x: 0, y: -H_FARM }, len: 0, stiff: 0.85 },
+
+  // —— 腰（两点）
+  { a: 'torso', b: 'hip', pa: { x: -3, y: H_TORSO }, pb: { x: -3, y: -H_HIP }, len: 0, stiff: 0.95 },
+  { a: 'torso', b: 'hip', pa: { x:  3, y: H_TORSO }, pb: { x:  3, y: -H_HIP }, len: 0, stiff: 0.95 },
+
+  // —— 髋（单点）
+  { a: 'hip', b: 'thighL', pa: { x: -legX, y: H_HIP }, pb: { x: 0, y: -H_THIGH }, len: 0, stiff: 0.8 },
+  { a: 'hip', b: 'thighR', pa: { x:  legX, y: H_HIP }, pb: { x: 0, y: -H_THIGH }, len: 0, stiff: 0.8 },
+
+  // —— 膝（单点）
+  { a: 'thighL', b: 'shinL', pa: { x: 0, y: H_THIGH }, pb: { x: 0, y: -H_SHIN }, len: 0, stiff: 0.9 },
+  { a: 'thighR', b: 'shinR', pa: { x: 0, y: H_THIGH }, pb: { x: 0, y: -H_SHIN }, len: 0, stiff: 0.9 },
+
+  // —— 踝（两点，长度 7 让脚保持水平、初始零拉力）
+  { a: 'shinL', b: 'footL', pa: { x: 0, y: H_SHIN }, pb: { x: -7, y: -H_FOOT }, len: 7, stiff: 0.9 },
+  { a: 'shinL', b: 'footL', pa: { x: 0, y: H_SHIN }, pb: { x:  7, y: -H_FOOT }, len: 7, stiff: 0.9 },
+  { a: 'shinR', b: 'footR', pa: { x: 0, y: H_SHIN }, pb: { x: -7, y: -H_FOOT }, len: 7, stiff: 0.9 },
+  { a: 'shinR', b: 'footR', pa: { x: 0, y: H_SHIN }, pb: { x:  7, y: -H_FOOT }, len: 7, stiff: 0.9 },
+];
+
+joints.forEach(j => {
+  Composite.add(world, Constraint.create({
+    bodyA: bodyMap[j.a],
+    bodyB: bodyMap[j.b],
+    pointA: j.pa,
+    pointB: j.pb,
+    length: j.len,
+    stiffness: j.stiff,
+    damping: 0.15,
+    render: { visible: false }
+  }));
+});
+
+// ================= 鼠标拖拽 =================
+const mouse = Mouse.create(worldEl);
+const mouseConstraint = MouseConstraint.create(engine, {
+  mouse,
+  constraint: { stiffness: 0.2, damping: 0.1, render: { visible: false } }
+});
+Composite.add(world, mouseConstraint);
+
+// 禁止滚轮缩放
+mouse.element.removeEventListener('wheel', mouse.mousewheel);
+mouse.element.addEventListener('wheel', e => e.preventDefault(), { passive: false });
+
+// ================= DOM 同步 =================
+function syncDOM() {
+  for (const p of parts) {
+    const b = bodyMap[p.name];
+    const el = domMap[p.name];
+    const x = b.position.x - p.w / 2;
+    const y = b.position.y - p.h / 2;
+    el.style.transform = `translate(${x}px, ${y}px) rotate(${b.angle}rad)`;
+  }
+}
+Events.on(engine, 'afterUpdate', syncDOM);
+
+// ================= 重置 =================
+const initialState = parts.map(p => ({ name: p.name, x: p.x, y: p.y }));
+
+function reset() {
+  for (const { name, x, y } of initialState) {
+    const b = bodyMap[name];
+    Body.setVelocity(b, { x: 0, y: 0 });
+    Body.setAngularVelocity(b, 0);
+    Body.setAngle(b, 0);
+    Body.setPosition(b, { x, y });
+    b.force.x = 0; b.force.y = 0; b.torque = 0;
+  }
+  syncDOM();
+}
+
+document.getElementById('reset').addEventListener('click', reset);
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); reset(); }
+});
+
+// ================= 启动 =================
+Runner.run(Runner.create(), engine);
+syncDOM();
+
+// ================= resize =================
+window.addEventListener('resize', () => {
+  const nw = window.innerWidth;
+  const nh = window.innerHeight;
+  Body.setPosition(ground, { x: nw / 2, y: nh - 30 });
+  Body.setPosition(wallR, { x: nw + 30, y: nh / 2 });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>3D 物理沙盒</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', sans-serif;
+      overflow: hidden;
+      background: #0a0e1a;
+      user-select: none;
+      touch-action: none;
+      position: fixed;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ===== 主布局 ===== */
+    #app {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
+      width: 100vw;
+      height: 100vh;
+      background: #0a0e1a;
+      gap: 6px;
+      padding: 6px;
+    }
+
+    /* ===== 3D场景 (左上) ===== */
+    #scene-container {
+      grid-row: 1 / 3;
+      grid-column: 1 / 2;
+      background: #1a1e2e;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.06);
+      position: relative;
+    }
+    #scene-container canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* ===== 右上：触控板1（只负责左键/右键） ===== */
+    #touchpad-wrap {
+      grid-row: 1 / 2;
+      grid-column: 2 / 3;
+      background: rgba(20,28,50,0.6);
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.05);
+      backdrop-filter: blur(8px);
+      display: flex;
+      flex-direction: column;
+      padding: 6px;
+    }
+    #touchpad-label {
+      color: #5a7a9a;
+      font-size: 0.55rem;
+      text-align: center;
+      letter-spacing: 2px;
+      flex-shrink: 0;
+      padding-bottom: 3px;
+    }
+    #touchpad {
+      flex: 1;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+      position: relative;
+      touch-action: none;
+      cursor: pointer;
+      overflow: hidden;
+      min-height: 60px;
+    }
+    #touchpad .divider {
+      position: absolute;
+      top: 0; bottom: 0; left: 50%;
+      width: 1px;
+      background: rgba(255,255,255,0.05);
+    }
+    #touchpad .label-left,
+    #touchpad .label-right {
+      position: absolute;
+      bottom: 4px;
+      font-size: 0.4rem;
+      color: rgba(255,255,255,0.08);
+      letter-spacing: 1px;
+    }
+    #touchpad .label-left { left: 10px; }
+    #touchpad .label-right { right: 10px; }
+    #touchpad .cursor-dot {
+      position: absolute;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(78,205,196,0.4), rgba(78,205,196,0.05));
+      border: 1.5px solid rgba(78,205,196,0.25);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+    }
+    #touchpad .cursor-dot.active { display: block; }
+
+    /* ===== 左下区域：摇杆 + 跳跃 + 触控板2 ===== */
+    #left-bottom {
+      grid-row: 2 / 3;
+      grid-column: 2 / 3;
+      display: grid;
+      grid-template-columns: 1fr 0.6fr 1.4fr;
+      gap: 6px;
+      padding: 6px;
+      background: rgba(20,28,50,0.6);
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.05);
+      backdrop-filter: blur(8px);
+      align-items: center;
+    }
+
+    /* 摇杆 */
+    #joystick-area {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1/1;
+      max-width: 110px;
+      touch-action: none;
+      pointer-events: auto;
+      justify-self: center;
+    }
+    #joystick-base {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      border: 1.5px solid rgba(255,255,255,0.08);
+      box-shadow: 0 0 30px rgba(0,0,0,0.3);
+    }
+    #joystick-thumb {
+      position: absolute;
+      width: 40%;
+      height: 40%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #6eddd6, #1f8a82);
+      border: 2px solid rgba(255,255,255,0.3);
+      box-shadow: 0 0 24px rgba(78,205,196,0.15);
+      top: 30%; left: 30%;
+      transition: none;
+      pointer-events: none;
+    }
+    #joystick-label {
+      position: absolute;
+      bottom: 2px;
+      left: 0; right: 0;
+      text-align: center;
+      color: #4a6a8a;
+      font-size: 0.4rem;
+      letter-spacing: 1px;
+    }
+
+    /* 跳跃按钮（大） */
+    #btn-jump-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+    }
+    #btn-jump {
+      width: 100%;
+      max-width: 80px;
+      aspect-ratio: 1/1;
+      border: none;
+      border-radius: 50%;
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+      box-shadow: 0 4px 20px rgba(255,107,107,0.3);
+      cursor: pointer;
+      touch-action: none;
+      transition: 0.06s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #btn-jump:active {
+      transform: scale(0.85);
+    }
+
+    /* 触控板2（专门拖动视角，高灵敏度） */
+    #touchpad2-wrap {
+      display: flex;
+      flex-direction: column;
+      padding: 2px 4px;
+      height: 100%;
+    }
+    #touchpad2-label {
+      color: #5a7a9a;
+      font-size: 0.4rem;
+      text-align: center;
+      letter-spacing: 1px;
+      flex-shrink: 0;
+    }
+    #touchpad2 {
+      flex: 1;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+      position: relative;
+      touch-action: none;
+      cursor: pointer;
+      overflow: hidden;
+      min-height: 40px;
+    }
+    #touchpad2 .cursor-dot {
+      position: absolute;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,215,0,0.4), rgba(255,215,0,0.05));
+      border: 1.5px solid rgba(255,215,0,0.3);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+    }
+    #touchpad2 .cursor-dot.active { display: block; }
+    #touchpad2 .hint {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: rgba(255,255,255,0.06);
+      font-size: 0.5rem;
+      letter-spacing: 2px;
+      pointer-events: none;
+    }
+
+    /* ===== 底部：功能按键 ===== */
+    #btn-grid {
+      grid-row: 3 / 4;
+      grid-column: 1 / 3;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 4px;
+      padding: 4px;
+      background: rgba(20,28,50,0.6);
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.05);
+      backdrop-filter: blur(8px);
+      align-content: center;
+    }
+    #btn-grid button {
+      height: 34px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.55rem;
+      font-weight: 600;
+      color: #c0d4f0;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.04);
+      cursor: pointer;
+      touch-action: none;
+      transition: 0.06s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      font-family: inherit;
+    }
+    #btn-grid button:active {
+      transform: scale(0.88);
+      background: rgba(78,205,196,0.15);
+      border-color: rgba(78,205,196,0.15);
+    }
+    #btn-grid .action {
+      background: rgba(255,107,107,0.08);
+      border-color: rgba(255,107,107,0.08);
+    }
+    #btn-grid .action:active {
+      background: rgba(255,107,107,0.2);
+    }
+
+    /* ===== HUD (悬浮在场景上) ===== */
+    #hud {
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 4px 14px;
+      background: rgba(8,12,28,0.7);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0.05);
+      color: #b0c8e8;
+      font-size: 0.55rem;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #hud .dot {
+      width: 12px; height: 12px;
+      border-radius: 4px;
+      display: inline-block;
+      border: 1.5px solid rgba(255,255,255,0.2);
+      vertical-align: middle;
+      margin-right: 2px;
+    }
+    #hud .dot.circle { border-radius: 50%; }
+    #hud .name { color: #e0ecff; font-weight: 600; }
+    #hud .right {
+      display: flex;
+      gap: 10px;
+      font-family: monospace;
+      font-size: 0.5rem;
+      color: #4ecdc4;
+    }
+
+    /* ===== 启动遮罩 ===== */
+    #start-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, rgba(8,12,26,0.98), rgba(0,0,0,0.99));
+      backdrop-filter: blur(16px);
+      transition: opacity 0.5s ease, visibility 0.5s ease;
+      visibility: visible;
+    }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+    #start-box {
+      background: rgba(18,26,48,0.95);
+      border: 1.5px solid rgba(78,205,196,0.2);
+      border-radius: 28px;
+      padding: 24px 22px;
+      text-align: center;
+      color: #eaf2ff;
+      max-width: 340px;
+      width: 92%;
+    }
+    #start-box h1 {
+      font-size: 1.6rem;
+      margin-bottom: 4px;
+      background: linear-gradient(135deg, #4ecdc4, #ff6b6b);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    #start-box .sub { color: #4ecdc4; font-size: 0.8rem; margin-bottom: 6px; }
+    #start-box p { font-size: 0.6rem; color: #8aa4c8; margin: 2px 0; }
+    #start-box .key {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.45rem;
+      display: inline-block;
+      color: #b0c8e8;
+    }
+
+    /* ===== 死亡遮罩 ===== */
+    #death-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.8);
+      z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.4s ease;
+      backdrop-filter: blur(6px);
+    }
+    #death-overlay.active { opacity: 1; pointer-events: auto; }
+    #death-box {
+      background: rgba(18,10,22,0.96);
+      border: 1px solid rgba(255,107,107,0.2);
+      border-radius: 24px;
+      padding: 20px 28px;
+      text-align: center;
+      color: #fff;
+    }
+    #death-box button {
+      background: linear-gradient(135deg, #ff6b6b, #e84a4a);
+      border: none;
+      color: #fff;
+      font-weight: 600;
+      padding: 8px 24px;
+      border-radius: 40px;
+      cursor: pointer;
+      margin-top: 8px;
+      font-size: 0.8rem;
+    }
+
+    /* ===== 控制台 ===== */
+    #cheat-panel {
+      position: fixed; top: 60px; right: 10px; width: 200px;
+      z-index: 9999;
+      background: rgba(8,16,32,0.92);
+      border: 1px solid rgba(78,205,196,0.12);
+      color: #b0f0e0;
+      padding: 10px;
+      border-radius: 14px;
+      opacity: 0; pointer-events: none;
+      transition: 0.25s;
+      font-family: monospace;
+      font-size: 0.5rem;
+      backdrop-filter: blur(14px);
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    #cheat-panel.visible { opacity: 1; pointer-events: auto; }
+    #cheat-panel h3 { color: #4ecdc4; font-size: 0.7rem; margin-bottom: 4px; }
+    #cheat-panel input[type="range"] { width: 70px; accent-color: #4ecdc4; }
+    .cheat-btn {
+      width: 100%; padding: 3px; margin: 2px 0;
+      background: rgba(0,255,200,0.05);
+      border: 1px solid rgba(0,255,200,0.1);
+      color: #b0f0e0;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.5rem;
+      font-family: inherit;
+    }
+    .cheat-btn:active { background: rgba(0,255,200,0.12); }
+    #cheat-panel textarea {
+      width: 100%;
+      background: rgba(0,10,0,0.3);
+      border: 1px solid rgba(0,255,200,0.08);
+      color: #b0f0e0;
+      padding: 3px;
+      border-radius: 6px;
+      min-height: 30px;
+      font-size: 0.45rem;
+      font-family: monospace;
+      resize: vertical;
+    }
+
+    /* ===== 响应式 ===== */
+    @media (max-width: 600px) {
+      #app { gap: 4px; padding: 4px; }
+      #btn-grid { gap: 3px; padding: 3px; }
+      #btn-grid button { height: 28px; font-size: 0.45rem; border-radius: 6px; }
+      #hud { font-size: 0.45rem; gap: 8px; padding: 3px 10px; top: 4px; }
+      #hud .dot { width: 10px; height: 10px; }
+      #hud .right { font-size: 0.4rem; gap: 6px; }
+      #touchpad-label { font-size: 0.45rem; }
+      #touchpad { min-height: 40px; }
+      #touchpad .label-left, #touchpad .label-right { font-size: 0.3rem; bottom: 2px; }
+      #touchpad .cursor-dot { width: 14px; height: 14px; }
+      #joystick-area { max-width: 80px; }
+      #btn-jump { max-width: 60px; font-size: 1.2rem; }
+      #left-bottom { gap: 4px; padding: 4px; }
+      #touchpad2 { min-height: 30px; }
+      #touchpad2 .cursor-dot { width: 14px; height: 14px; }
+      #cheat-panel { width: 160px; right: 4px; top: 44px; font-size: 0.4rem; padding: 6px; }
+    }
+    @media (max-width: 420px) {
+      #btn-grid button { height: 24px; font-size: 0.4rem; border-radius: 4px; }
+      #hud { font-size: 0.4rem; gap: 4px; padding: 2px 8px; }
+      #hud .dot { width: 8px; height: 8px; }
+      #hud .right { font-size: 0.35rem; gap: 4px; }
+      #touchpad { min-height: 30px; }
+      #touchpad .cursor-dot { width: 12px; height: 12px; }
+      #joystick-area { max-width: 60px; }
+      #btn-jump { max-width: 48px; font-size: 1rem; }
+      #touchpad2 .cursor-dot { width: 12px; height: 12px; }
+      #cheat-panel { width: 140px; font-size: 0.35rem; padding: 4px; }
+      #cheat-panel input[type="range"] { width: 50px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 启动遮罩 -->
+  <div id="start-overlay">
+    <div id="start-box">
+      <h1>🎮 物理沙盒</h1>
+      <p class="sub">👆 点击开始</p>
+      <p><span class="key">摇杆</span>移动 · <span class="key">跳跃</span>大按钮</p>
+      <p><span class="key">右上触控板</span>左/右键 · <span class="key">左下触控板</span>视角</p>
+    </div>
+  </div>
+
+  <!-- 死亡遮罩 -->
+  <div id="death-overlay">
+    <div id="death-box">
+      <h2>💀 坠落</h2>
+      <p style="margin:4px 0;font-size:0.7rem;">点击重生</p>
+      <button id="respawn-btn">重生</button>
+    </div>
+  </div>
+
+  <!-- 主布局 -->
+  <div id="app">
+
+    <!-- 左上：3D场景 -->
+    <div id="scene-container">
+      <div id="hud">
+        <span><span class="dot" id="shape-dot"></span><span class="name" id="shape-name">立方体</span></span>
+        <span><span class="dot circle" id="color-dot"></span>颜色</span>
+        <span class="right">📦 <span id="obj-count">0</span> ⚡ <span id="fps-val">60</span>fps</span>
+      </div>
+    </div>
+
+    <!-- 右上：触控板1（只负责左键/右键） -->
+    <div id="touchpad-wrap">
+      <div id="touchpad-label">◀ 左键 · 右键 ▶</div>
+      <div id="touchpad">
+        <div class="divider"></div>
+        <span class="label-left">◀ 左键</span>
+        <span class="label-right">右键 ▶</span>
+        <div class="cursor-dot" id="cursor-dot"></div>
+      </div>
+    </div>
+
+    <!-- 左下：摇杆 + 跳跃 + 触控板2 -->
+    <div id="left-bottom">
+      <!-- 摇杆 -->
+      <div id="joystick-area">
+        <div id="joystick-base"></div>
+        <div id="joystick-thumb"></div>
+        <div id="joystick-label">摇杆</div>
+      </div>
+
+      <!-- 跳跃（大） -->
+      <div id="btn-jump-wrap">
+        <button id="btn-jump">⬆</button>
+      </div>
+
+      <!-- 触控板2（专门拖动视角，高灵敏度） -->
+      <div id="touchpad2-wrap">
+        <div id="touchpad2-label">◀ 视角拖动 ▶</div>
+        <div id="touchpad2">
+          <span class="hint">↕ 视角</span>
+          <div class="cursor-dot" id="cursor-dot2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部：功能按键 -->
+    <div id="btn-grid">
+      <button class="action" id="btn-place">➕放</button>
+      <button class="action" id="btn-remove">➖删</button>
+      <button id="btn-next">▶切</button>
+      <button id="btn-grab">🌀吸</button>
+      <button id="btn-push">💨推</button>
+      <button id="btn-explode">💥爆</button>
+      <button id="btn-vacuum">🌪全吸</button>
+      <button id="btn-respawn">↻重生</button>
+      <button id="btn-color">🎨色</button>
+      <button id="btn-panel">⚙面板</button>
+      <button id="btn-clear">🗑清</button>
+    </div>
+
+  </div>
+
+  <!-- 控制台 -->
+  <div id="cheat-panel">
+    <h3>⚡ 控制台</h3>
+    <div><label>🕊️ 飞行</label><input type="checkbox" id="cheat-fly"></div>
+    <div><label>👑 上帝</label><input type="checkbox" id="cheat-god" checked></div>
+    <div><label>🎯 无限放置</label><input type="checkbox" id="cheat-range"></div>
+    <div><label>⚡ 自动放置</label><input type="checkbox" id="cheat-auto"></div>
+    <div>重力 <input type="range" id="cheat-gravity" min="-20" max="20" value="-12" step="0.5"></div>
+    <div>速度 <input type="range" id="cheat-speed" min="2" max="30" value="6" step="0.5"></div>
+    <div>跳跃 <input type="range" id="cheat-jump" min="2" max="20" value="7" step="0.5"></div>
+    <button class="cheat-btn" id="btn-spawn-batch">💣 批量生成(30)</button>
+    <button class="cheat-btn" id="btn-random-color">🎨 随机颜色</button>
+    <label>📜 脚本</label>
+    <textarea id="cheat-script-input">// setGravity(-9.8); spawnSphere(0,5,0,'#ff0000');</textarea>
+    <button class="cheat-btn" id="btn-exec-script">执行</button>
+  </div>
+
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js" } }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    // ============================================================
+    //  游戏核心
+    // ============================================================
+    const game = {
+      scene: new THREE.Scene(),
+      camera: new THREE.PerspectiveCamera(68, 1, 0.1, 200),
+      renderer: new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" }),
+      clock: new THREE.Clock(),
+      raycaster: new THREE.Raycaster(),
+      world: null, groundBody: null, playerBody: null, playerMesh: null,
+      isLocked: true, isDead: false, holdK: false,
+      cheat: { fly: false, god: true, range: false, auto: false },
+      config: { moveSpeed: 6, jumpForce: 7, forceStrength: 1500 },
+      placedItems: [], allPlaceables: [], undoStack: [],
+      shapes: {
+        types: ['cube','sphere','cylinder','cone','torus','pyramid','capsule','octahedron'],
+        names: ['立方体','球体','圆柱','圆锥','圆环','金字塔','胶囊','八面体'],
+        index: 0,
+        colors: ['#ff6b6b','#ff9f43','#feca57','#54a0ff','#5f27cd','#00d2d3','#55efc4','#fd79a8','#ffffff','#e056a0'],
+        colorIndex: 0
+      },
+      input: { keys: {}, euler: new THREE.Euler(0,0,0,'YXZ') },
+      geometries: {}, previewMesh: null,
+      directionalLight: null, ambientLight: null,
+      statsFrames: 0, statsTime: 0,
+      joystick: { x: 0, y: 0 }
+    };
+
+    const container = document.getElementById('scene-container');
+
+    // ---- 图形初始化 ----
+    function initGraphics() {
+      const rect = container.getBoundingClientRect();
+      const w = rect.width || 400, h = rect.height || 300;
+      game.renderer.setSize(w, h);
+      game.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      game.renderer.shadowMap.enabled = true;
+      game.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      game.renderer.setClearColor('#87CEEB');
+      container.appendChild(game.renderer.domElement);
+
+      game.scene.background = new THREE.Color('#87CEEB');
+      game.scene.fog = new THREE.Fog('#87CEEB', 40, 110);
+
+      game.ambientLight = new THREE.AmbientLight('#bcd4f0', 0.6);
+      game.scene.add(game.ambientLight);
+
+      game.directionalLight = new THREE.DirectionalLight('#fff8e7', 1.2);
+      game.directionalLight.position.set(20,30,10);
+      game.directionalLight.castShadow = true;
+      game.directionalLight.shadow.mapSize.width = 1024;
+      game.directionalLight.shadow.mapSize.height = 1024;
+      game.scene.add(game.directionalLight);
+
+      const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(36,36),
+        new THREE.MeshStandardMaterial({ color: '#d5c4a1', roughness: 0.8 })
+      );
+      groundMesh.rotation.x = -Math.PI/2;
+      groundMesh.position.y = -0.2;
+      groundMesh.receiveShadow = true;
+      game.scene.add(groundMesh);
+      game.allPlaceables.push(groundMesh);
+
+      game.scene.add(new THREE.GridHelper(36,36,'#c4b99a','#e0d5c0'));
+
+      game.previewMesh = new THREE.Mesh(
+        getGeometry('cube'),
+        new THREE.MeshStandardMaterial({ color: '#ff6b6b', transparent: true, opacity: 0.3 })
+      );
+      game.previewMesh.visible = false;
+      game.scene.add(game.previewMesh);
+
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.4, 16, 12),
+        new THREE.MeshStandardMaterial({ color: '#4ecdc4', emissive: '#4ecdc4', emissiveIntensity: 0.15 })
+      );
+      sphere.position.set(0, 2, 8);
+      game.scene.add(sphere);
+      game.playerMesh = sphere;
+
+      game.camera.position.set(0, 2.6, 8);
+      game.camera.lookAt(0,0,0);
+
+      const ro = new ResizeObserver(() => {
+        const r = container.getBoundingClientRect();
+        const w2 = r.width || 400, h2 = r.height || 300;
+        game.camera.aspect = w2 / h2;
+        game.camera.updateProjectionMatrix();
+        game.renderer.setSize(w2, h2);
+      });
+      ro.observe(container);
+      window.addEventListener('resize', () => {
+        const r = container.getBoundingClientRect();
+        const w2 = r.width || 400, h2 = r.height || 300;
+        game.camera.aspect = w2 / h2;
+        game.camera.updateProjectionMatrix();
+        game.renderer.setSize(w2, h2);
+      });
+    }
+
+    function getGeometry(type) {
+      if (!game.geometries[type]) {
+        const g = game.geometries;
+        switch(type) {
+          case 'cube': g.cube = new THREE.BoxGeometry(0.95,0.95,0.95); break;
+          case 'sphere': g.sphere = new THREE.SphereGeometry(0.48,24,18); break;
+          case 'cylinder': g.cylinder = new THREE.CylinderGeometry(0.48,0.48,0.95,16); break;
+          case 'cone': g.cone = new THREE.ConeGeometry(0.48,0.95,16); break;
+          case 'torus': g.torus = new THREE.TorusGeometry(0.4,0.18,12,24); break;
+          case 'pyramid': g.pyramid = new THREE.ConeGeometry(0.48,0.9,4); break;
+          case 'capsule': g.capsule = new THREE.CylinderGeometry(0.32,0.32,0.8,12); break;
+          case 'octahedron': g.octahedron = new THREE.OctahedronGeometry(0.48); break;
+          default: g.cube = new THREE.BoxGeometry(0.95,0.95,0.95);
+        }
+      }
+      return game.geometries[type];
+    }
+
+    function getPhysicsShape(type) {
+      switch(type) {
+        case 'cube': return new CANNON.Box(new CANNON.Vec3(0.48,0.48,0.48));
+        case 'sphere': return new CANNON.Sphere(0.48);
+        case 'cylinder': return new CANNON.Cylinder(0.48,0.48,0.95,8);
+        case 'cone': return new CANNON.Cylinder(0,0.48,0.95,8);
+        case 'torus': return new CANNON.Sphere(0.45);
+        case 'pyramid': return new CANNON.Cylinder(0,0.48,0.9,4);
+        case 'capsule': return new CANNON.Cylinder(0.32,0.32,0.8,8);
+        case 'octahedron': return new CANNON.Sphere(0.48);
+        default: return new CANNON.Box(new CANNON.Vec3(0.48,0.48,0.48));
+      }
+    }
+
+    function createPlacedShape(type, colorHex, position, isStatic = false) {
+      const mesh = new THREE.Mesh(
+        getGeometry(type),
+        new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.35, metalness: 0.05 })
+      );
+      mesh.position.copy(position);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.name = 'placed-shape';
+      game.scene.add(mesh);
+      game.allPlaceables.push(mesh);
+
+      const shape = getPhysicsShape(type);
+      const body = new CANNON.Body({ mass: isStatic ? 0 : 1 });
+      body.addShape(shape);
+      body.position.set(position.x, position.y, position.z);
+      body.linearDamping = 0.3;
+      body.angularDamping = 0.1;
+      game.world.addBody(body);
+
+      const entry = { mesh, body, shapeType: type, isStatic };
+      game.placedItems.push(entry);
+      return entry;
+    }
+
+    function removeEntry(entry) {
+      game.world.removeBody(entry.body);
+      game.scene.remove(entry.mesh);
+      const idx = game.placedItems.indexOf(entry);
+      if (idx !== -1) game.placedItems.splice(idx, 1);
+      const pIdx = game.allPlaceables.indexOf(entry.mesh);
+      if (pIdx !== -1) game.allPlaceables.splice(pIdx, 1);
+    }
+
+    function initPhysics() {
+      game.world = new CANNON.World();
+      game.world.gravity.set(0, -12, 0);
+      game.world.broadphase = new CANNON.NaiveBroadphase();
+      game.world.defaultContactMaterial.restitution = 0.4;
+
+      const groundShape = new CANNON.Box(new CANNON.Vec3(18,0.2,18));
+      game.groundBody = new CANNON.Body({ mass: 0 });
+      game.groundBody.addShape(groundShape);
+      game.groundBody.position.set(0, -0.3, 0);
+      game.world.addBody(game.groundBody);
+
+      const bounds = 17.5;
+      const wallPos = [[0,0,-bounds],[0,0,bounds],[-bounds,0,0],[bounds,0,0]];
+      const wallSizes = [[bounds*2,10,0.5],[bounds*2,10,0.5],[0.5,10,bounds*2],[0.5,10,bounds*2]];
+      wallPos.forEach((pos, i) => {
+        const box = new CANNON.Box(new CANNON.Vec3(wallSizes[i][0], wallSizes[i][1], wallSizes[i][2]));
+        const body = new CANNON.Body({ mass: 0 });
+        body.addShape(box);
+        body.position.set(pos[0], pos[1], pos[2]);
+        game.world.addBody(body);
+      });
+
+      const playerShape = new CANNON.Sphere(0.4);
+      game.playerBody = new CANNON.Body({ mass: 1 });
+      game.playerBody.addShape(playerShape);
+      game.playerBody.position.set(0, 2, 8);
+      game.playerBody.linearDamping = 0.9;
+      game.world.addBody(game.playerBody);
+    }
+
+    function resetPlayer() {
+      game.playerBody.position.set(0, 2, 8);
+      game.playerBody.velocity.set(0,0,0);
+      game.world.gravity.set(0, -12, 0);
+      game.camera.position.set(0, 2.6, 8);
+      game.input.euler.set(0,0,0);
+      game.camera.quaternion.setFromEuler(game.input.euler);
+      game.isDead = false;
+      document.getElementById('death-overlay').classList.remove('active');
+    }
+
+    function die() {
+      if (game.isDead || game.cheat.god) return;
+      game.isDead = true;
+      document.getElementById('death-overlay').classList.add('active');
+    }
+
+    function getPlacement() {
+      game.raycaster.setFromCamera(new THREE.Vector2(0,0), game.camera);
+      game.raycaster.far = game.cheat.range ? 100 : 30;
+      const hits = game.raycaster.intersectObjects(game.allPlaceables, false);
+      if (hits.length) {
+        const point = hits[0].point.clone();
+        const normal = hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+        const pos = point.add(normal.multiplyScalar(0.48));
+        pos.x = THREE.MathUtils.clamp(pos.x, -17, 17);
+        pos.z = THREE.MathUtils.clamp(pos.z, -17, 17);
+        pos.y = Math.max(pos.y, 0.2);
+        const validDist = game.cheat.range || pos.distanceTo(game.camera.position) >= 0.9;
+        return { pos, valid: validDist };
+      }
+      return { pos: null, valid: false };
+    }
+
+    function applyForceToAll(attract) {
+      const p = game.playerBody.position;
+      const str = game.config.forceStrength;
+      game.placedItems.forEach(item => {
+        if (item.isStatic) return;
+        const dx = p.x - item.body.position.x, dy = p.y - item.body.position.y, dz = p.z - item.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 8 && dist > 0.3) {
+          const power = (1 - dist / 8) * str;
+          const fx = dx / dist * power, fy = dy / dist * power, fz = dz / dist * power;
+          if (!attract) item.body.applyForce(new CANNON.Vec3(-fx, -fy, -fz), item.body.position);
+          else item.body.applyForce(new CANNON.Vec3(fx, fy, fz), item.body.position);
+        }
+      });
+    }
+
+    function explode() {
+      const p = game.playerBody.position;
+      const str = game.config.forceStrength * 0.7;
+      game.placedItems.forEach(item => {
+        if (item.isStatic) return;
+        const dx = item.body.position.x - p.x, dy = item.body.position.y - p.y, dz = item.body.position.z - p.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 10 && dist > 0.3) {
+          const factor = (1 - dist / 10) * str;
+          const inv = 1 / dist;
+          item.body.applyImpulse(new CANNON.Vec3(dx * inv * factor, (dy+0.5)*inv*factor, dz*inv*factor), item.body.position);
+        }
+      });
+    }
+
+    function vacuum() {
+      const p = game.playerBody.position;
+      game.placedItems.forEach(item => {
+        if (item.isStatic) return;
+        const dx = p.x - item.body.position.x, dy = p.y + 0.5 - item.body.position.y, dz = p.z - item.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist > 1 && dist < 15) item.body.applyImpulse(new CANNON.Vec3(dx*12, dy*12, dz*12), item.body.position);
+      });
+    }
+
+    function clearWorld() {
+      while (game.placedItems.length) removeEntry(game.placedItems[0]);
+      game.undoStack = [];
+    }
+
+    function spawnBatch(count) {
+      const num = Math.max(1, Math.floor(count));
+      const type = game.shapes.types[game.shapes.index];
+      const color = game.shapes.colors[game.shapes.colorIndex];
+      const dir = new THREE.Vector3();
+      game.camera.getWorldDirection(dir);
+      const base = game.camera.position.clone().add(dir.multiplyScalar(3));
+      for (let i = 0; i < num; i++) {
+        const ang = (i / num) * Math.PI * 2 + Math.random() * 0.5;
+        const r = 1.5 + Math.random() * 3;
+        const x = base.x + Math.cos(ang) * r, z = base.z + Math.sin(ang) * r, y = base.y + Math.random() * 2;
+        createPlacedShape(type, color, new THREE.Vector3(x, y, z), game.holdK);
+      }
+    }
+
+    function execScript() {
+      const code = document.getElementById('cheat-script-input').value;
+      try {
+        const ctx = {
+          setGravity: (v) => { game.world.gravity.set(0, v, 0); document.getElementById('cheat-gravity').value = v; },
+          spawnSphere: (x,y,z,col) => createPlacedShape('sphere', col || '#ff6b6b', new THREE.Vector3(x,y,z)),
+          spawnCube: (x,y,z,col) => createPlacedShape('cube', col || '#ff6b6b', new THREE.Vector3(x,y,z)),
+          clearAll: clearWorld,
+          log: console.log
+        };
+        new Function(...Object.keys(ctx), code)(...Object.values(ctx));
+      } catch(e) { alert("脚本错误: " + e.message); }
+    }
+
+    function updateHUD() {
+      const col = game.shapes.colors[game.shapes.colorIndex];
+      const name = game.shapes.names[game.shapes.index];
+      document.getElementById('shape-dot').style.background = col;
+      document.getElementById('shape-name').textContent = name;
+      document.getElementById('color-dot').style.background = col;
+    }
+
+    function refreshPreview() {
+      const type = game.shapes.types[game.shapes.index];
+      game.previewMesh.geometry = getGeometry(type);
+      game.previewMesh.material.color.set(game.shapes.colors[game.shapes.colorIndex]);
+    }
+
+    // ============================================================
+    //  摇杆
+    // ============================================================
+    const joystickArea = document.getElementById('joystick-area');
+    const joystickThumb = document.getElementById('joystick-thumb');
+    const maxDist = 30;
+    let joyPointerId = null;
+
+    function updateJoystick(clientX, clientY) {
+      const rect = joystickArea.getBoundingClientRect();
+      const cx = rect.left + rect.width/2;
+      const cy = rect.top + rect.height/2;
+      let dx = clientX - cx, dy = clientY - cy;
+      const dist = Math.hypot(dx, dy);
+      const clamped = Math.min(dist, maxDist);
+      if (dist > 0) { dx = dx/dist*clamped; dy = dy/dist*clamped; }
+      const maxR = maxDist;
+      game.joystick.x = Math.max(-1, Math.min(1, dx/maxR));
+      game.joystick.y = Math.max(-1, Math.min(1, -dy/maxR));
+      joystickThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+
+    function resetJoystick() {
+      game.joystick.x = 0; game.joystick.y = 0;
+      joystickThumb.style.transform = `translate(0px, 0px)`;
+    }
+
+    joystickArea.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      joyPointerId = e.pointerId;
+      joystickArea.setPointerCapture(e.pointerId);
+      updateJoystick(e.clientX, e.clientY);
+    });
+    joystickArea.addEventListener('pointermove', (e) => {
+      if (joyPointerId === null) return;
+      updateJoystick(e.clientX, e.clientY);
+    });
+    joystickArea.addEventListener('pointerup', (e) => {
+      if (joyPointerId === e.pointerId) { joyPointerId = null; resetJoystick(); }
+    });
+    joystickArea.addEventListener('pointercancel', (e) => {
+      if (joyPointerId === e.pointerId) { joyPointerId = null; resetJoystick(); }
+    });
+
+    // ============================================================
+    //  触控板1（右上：只负责左键/右键，无视角拖动）
+    // ============================================================
+    const touchpad = document.getElementById('touchpad');
+    const cursorDot = document.getElementById('cursor-dot');
+
+    function getTouchPos1(e) {
+      const rect = touchpad.getBoundingClientRect();
+      const cx = e.clientX || e.touches?.[0]?.clientX || 0;
+      const cy = e.clientY || e.touches?.[0]?.clientY || 0;
+      const x = (cx - rect.left) / rect.width;
+      const y = (cy - rect.top) / rect.height;
+      return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+    }
+
+    function handleTouchStart1(e) {
+      e.preventDefault();
+      const pos = getTouchPos1(e);
+      cursorDot.style.left = (pos.x * 100) + '%';
+      cursorDot.style.top = (pos.y * 100) + '%';
+      cursorDot.classList.add('active');
+
+      if (pos.x < 0.45) {
+        // 左键 - 放置
+        const place = getPlacement();
+        if (place.valid && place.pos) {
+          const entry = createPlacedShape(
+            game.shapes.types[game.shapes.index],
+            game.shapes.colors[game.shapes.colorIndex],
+            place.pos,
+            game.holdK
+          );
+          game.undoStack.push({ entries: [entry] });
+        }
+      } else if (pos.x > 0.55) {
+        // 右键 - 删除
+        game.raycaster.setFromCamera(new THREE.Vector2(0,0), game.camera);
+        const hits = game.raycaster.intersectObjects(game.allPlaceables, false);
+        for (let hit of hits) {
+          if (hit.object.name === 'placed-shape') {
+            const ent = game.placedItems.find(i => i.mesh === hit.object);
+            if (ent) removeEntry(ent);
+            break;
+          }
+        }
+      }
+    }
+
+    function handleTouchEnd1(e) {
+      e.preventDefault();
+      cursorDot.classList.remove('active');
+    }
+
+    touchpad.addEventListener('pointerdown', handleTouchStart1);
+    touchpad.addEventListener('pointerup', handleTouchEnd1);
+    touchpad.addEventListener('pointercancel', handleTouchEnd1);
+
+    // ============================================================
+    //  触控板2（左下：专门拖动视角，高灵敏度）
+    // ============================================================
+    const touchpad2 = document.getElementById('touchpad2');
+    const cursorDot2 = document.getElementById('cursor-dot2');
+    let isDragging2 = false;
+
+    function getTouchPos2(e) {
+      const rect = touchpad2.getBoundingClientRect();
+      const cx = e.clientX || e.touches?.[0]?.clientX || 0;
+      const cy = e.clientY || e.touches?.[0]?.clientY || 0;
+      const x = (cx - rect.left) / rect.width;
+      const y = (cy - rect.top) / rect.height;
+      return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
+    }
+
+    function handleTouchStart2(e) {
+      e.preventDefault();
+      isDragging2 = true;
+      const pos = getTouchPos2(e);
+      cursorDot2.style.left = (pos.x * 100) + '%';
+      cursorDot2.style.top = (pos.y * 100) + '%';
+      cursorDot2.classList.add('active');
+    }
+
+    function handleTouchMove2(e) {
+      e.preventDefault();
+      if (!isDragging2) return;
+      const pos = getTouchPos2(e);
+      cursorDot2.style.left = (pos.x * 100) + '%';
+      cursorDot2.style.top = (pos.y * 100) + '%';
+
+      // 高灵敏度视角拖动
+      const dx = (pos.x - 0.5) * 2;
+      const dy = (pos.y - 0.5) * 2;
+      game.input.euler.y -= dx * 0.015;  // 更高灵敏度
+      game.input.euler.x -= dy * 0.015;
+      game.input.euler.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, game.input.euler.x));
+      game.camera.quaternion.setFromEuler(game.input.euler);
+    }
+
+    function handleTouchEnd2(e) {
+      e.preventDefault();
+      isDragging2 = false;
+      cursorDot2.classList.remove('active');
+    }
+
+    touchpad2.addEventListener('pointerdown', handleTouchStart2);
+    touchpad2.addEventListener('pointermove', handleTouchMove2);
+    touchpad2.addEventListener('pointerup', handleTouchEnd2);
+    touchpad2.addEventListener('pointercancel', handleTouchEnd2);
+
+    // ============================================================
+    //  按键
+    // ============================================================
+    function setupButtons() {
+      const map = {
+        'btn-jump': () => { if (game.playerBody.position.y <= 0.8) game.playerBody.velocity.y = game.config.jumpForce; },
+        'btn-place': () => { const p = getPlacement(); if (p.valid && p.pos) { const e = createPlacedShape(game.shapes.types[game.shapes.index], game.shapes.colors[game.shapes.colorIndex], p.pos, game.holdK); game.undoStack.push({ entries: [e] }); } },
+        'btn-remove': () => { game.raycaster.setFromCamera(new THREE.Vector2(0,0), game.camera); const hits = game.raycaster.intersectObjects(game.allPlaceables, false); for (let h of hits) { if (h.object.name === 'placed-shape') { const ent = game.placedItems.find(i => i.mesh === h.object); if (ent) removeEntry(ent); break; } } },
+        'btn-next': () => { game.shapes.index = (game.shapes.index + 1) % game.shapes.types.length; updateHUD(); refreshPreview(); },
+        'btn-grab': () => applyForceToAll(true),
+        'btn-push': () => applyForceToAll(false),
+        'btn-explode': () => explode(),
+        'btn-vacuum': () => vacuum(),
+        'btn-respawn': () => resetPlayer(),
+        'btn-color': () => { game.shapes.colorIndex = (game.shapes.colorIndex + 1) % game.shapes.colors.length; updateHUD(); refreshPreview(); },
+        'btn-panel': () => document.getElementById('cheat-panel').classList.toggle('visible'),
+        'btn-clear': () => clearWorld()
+      };
+      Object.keys(map).forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) btn.addEventListener('pointerdown', (e) => { e.preventDefault(); map[id](); });
+      });
+    }
+
+    // ============================================================
+    //  键盘
+    // ============================================================
+    document.addEventListener('keydown', (e) => {
+      game.input.keys[e.code] = true;
+      if (e.code === 'KeyK') game.holdK = true;
+      if (e.code >= 'Digit1' && e.code <= 'Digit8') {
+        game.shapes.index = parseInt(e.code.slice(-1)) - 1;
+        updateHUD(); refreshPreview();
+      }
+      if (e.code === 'KeyR') {
+        game.shapes.colorIndex = (game.shapes.colorIndex + 1) % game.shapes.colors.length;
+        updateHUD(); refreshPreview();
+      }
+      if (e.code === 'Space' && game.playerBody.position.y <= 0.8) {
+        e.preventDefault();
+        game.playerBody.velocity.y = game.config.jumpForce;
+      }
+      if (e.code === 'KeyF') { e.preventDefault(); resetPlayer(); }
+      if (e.code === 'KeyG') applyForceToAll(true);
+      if (e.code === 'KeyH') applyForceToAll(false);
+      if (e.code === 'KeyB') explode();
+      if (e.code === 'KeyV') vacuum();
+    });
+    document.addEventListener('keyup', (e) => {
+      game.input.keys[e.code] = false;
+      if (e.code === 'KeyK') game.holdK = false;
+    });
+
+    // ============================================================
+    //  控制台
+    // ============================================================
+    function initCheatPanel() {
+      document.getElementById('cheat-fly').addEventListener('change', e => game.cheat.fly = e.target.checked);
+      document.getElementById('cheat-god').addEventListener('change', e => game.cheat.god = e.target.checked);
+      document.getElementById('cheat-range').addEventListener('change', e => game.cheat.range = e.target.checked);
+      document.getElementById('cheat-auto').addEventListener('change', e => game.cheat.auto = e.target.checked);
+      document.getElementById('cheat-gravity').addEventListener('input', e => game.world.gravity.set(0, parseFloat(e.target.value), 0));
+      document.getElementById('cheat-speed').addEventListener('input', e => game.config.moveSpeed = parseFloat(e.target.value));
+      document.getElementById('cheat-jump').addEventListener('input', e => game.config.jumpForce = parseFloat(e.target.value));
+      document.getElementById('btn-spawn-batch').addEventListener('click', () => spawnBatch(30));
+      document.getElementById('btn-random-color').addEventListener('click', () => {
+        game.shapes.colorIndex = Math.floor(Math.random() * game.shapes.colors.length);
+        updateHUD(); refreshPreview();
+      });
+      document.getElementById('btn-exec-script').addEventListener('click', execScript);
+    }
+
+    // ============================================================
+    //  演示
+    // ============================================================
+    function initDemo() {
+      const demos = [[0,1,-2,'cube','#ff6b6b'],[3,1,1,'sphere','#4ecdc4'],[-3,1,2,'cylinder','#ffe66d'],[2,1,3,'pyramid','#a29bfe'],[-2,1,-3,'capsule','#00d2d3'],[0,1,4,'octahedron','#fd79a8']];
+      demos.forEach(([x,y,z,type,color]) => createPlacedShape(type, color, new THREE.Vector3(x,y,z), false));
+    }
+
+    // ============================================================
+    //  动画循环
+    // ============================================================
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(game.clock.getDelta(), 0.033);
+
+      // 摇杆 → WASD
+      const jx = game.joystick.x, jy = game.joystick.y;
+      const dead = 0.15;
+      const ax = Math.abs(jx) > dead ? jx : 0;
+      const ay = Math.abs(jy) > dead ? jy : 0;
+      const keys = game.input.keys;
+      keys['KeyA'] = ax < -0.2;
+      keys['KeyD'] = ax > 0.2;
+      keys['KeyW'] = ay > 0.2;
+      keys['KeyS'] = ay < -0.2;
+
+      if (!game.isDead) {
+        let f = 0, r = 0;
+        if (keys.KeyW) f++;
+        if (keys.KeyS) f--;
+        if (keys.KeyA) r--;
+        if (keys.KeyD) r++;
+        const camDir = new THREE.Vector3();
+        game.camera.getWorldDirection(camDir);
+        camDir.y = 0;
+        if (camDir.length()) camDir.normalize();
+        const rightVec = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0,1,0)).normalize();
+        const dir = new THREE.Vector3().addScaledVector(camDir, f).addScaledVector(rightVec, r);
+        if (dir.length()) dir.normalize();
+        game.playerBody.velocity.x = dir.x * game.config.moveSpeed;
+        game.playerBody.velocity.z = dir.z * game.config.moveSpeed;
+      }
+
+      game.world.step(1/60, dt, 3);
+
+      for (let item of game.placedItems) {
+        item.mesh.position.copy(item.body.position);
+        item.mesh.quaternion.copy(item.body.quaternion);
+      }
+
+      const p = game.playerBody.position;
+      game.playerMesh.position.copy(p);
+      game.camera.position.copy(p);
+      game.camera.position.y += 0.6;
+
+      const place = getPlacement();
+      if (place.valid && place.pos) {
+        game.previewMesh.position.copy(place.pos);
+        game.previewMesh.visible = true;
+        game.previewMesh.material.color.set(game.shapes.colors[game.shapes.colorIndex]);
+      } else {
+        game.previewMesh.visible = false;
+      }
+
+      if (game.cheat.auto) {
+        game._autoTimer = (game._autoTimer || 0) + dt;
+        if (game._autoTimer > 0.12) {
+          game._autoTimer = 0;
+          const pl = getPlacement();
+          if (pl.valid && pl.pos) createPlacedShape(game.shapes.types[game.shapes.index], game.shapes.colors[game.shapes.colorIndex], pl.pos, game.holdK);
+        }
+      }
+
+      if (!game.isDead && !game.cheat.god && p.y < -8) die();
+
+      document.getElementById('obj-count').textContent = game.placedItems.length;
+
+      const now = performance.now();
+      if (!game.statsTime) game.statsTime = now;
+      game.statsFrames++;
+      if (now - game.statsTime >= 500) {
+        document.getElementById('fps-val').textContent = Math.round(game.statsFrames / ((now - game.statsTime) / 1000));
+        game.statsFrames = 0;
+        game.statsTime = now;
+      }
+
+      game.renderer.render(game.scene, game.camera);
+    }
+
+    // ============================================================
+    //  启动
+    // ============================================================
+    function init() {
+      const loading = document.createElement('div');
+      loading.id = 'loading-overlay';
+      loading.style.cssText = `
+        position:fixed; inset:0; background:#0a0e1a; display:flex;
+        flex-direction:column; align-items:center; justify-content:center;
+        z-index:9999; color:#4ecdc4; font-family:inherit;
+      `;
+      loading.innerHTML = `
+        <div style="width:36px;height:36px;border:3px solid rgba(78,205,196,0.2);border-top:3px solid #4ecdc4;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:12px;"></div>
+        <p style="font-size:0.8rem;">加载物理引擎 ...</p>
+        <style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
+      `;
+      document.body.appendChild(loading);
+
+      initGraphics();
+      initPhysics();
+      initDemo();
+      updateHUD();
+      refreshPreview();
+      setupButtons();
+      initCheatPanel();
+
+      game.cheat.god = true;
+      document.getElementById('cheat-god').checked = true;
+
+      document.getElementById('start-overlay').classList.add('hidden');
+      document.getElementById('respawn-btn').addEventListener('click', resetPlayer);
+
+      animate();
+
+      setTimeout(() => {
+        const ld = document.getElementById('loading-overlay');
+        if (ld) { ld.style.opacity = 0; setTimeout(() => ld.style.display = 'none', 500); }
+      }, 600);
+    }
+
+    init();
+  </script>
+</body>
+</html>

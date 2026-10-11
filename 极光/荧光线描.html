@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>荧光线描 Neon</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#05060b;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(5,6,11,.85),rgba(5,6,11,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(79,214,255,.24);border-color:rgba(79,214,255,.6);color:#dbf6ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);transform:translateY(100%);
+    transition:transform .28s cubic-bezier(.32,.72,0,1);font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff}
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none}
+  #panel .ok{height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(79,214,255,.6);
+    background:rgba(79,214,255,.3);color:#04202a;font:600 14px -apple-system,"PingFang SC",sans-serif;cursor:pointer}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">荧光线描 <b id="m">霓虹蓝描</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+<div id="hint">轮廓变霓虹辉光线稿 · 描线徐徐显现</div>
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA', weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    threshold: 0.16, lineColor: '#4fd6ff', color2: '#8a7dff',
+    glowIntensity: 0.75, bgKeep: 0.14,
+    revealSpeed: 0.1, revealMode: 'loop', pulseAmp: 0.35,
+    coreWidth: 1.2, glowRadius: 9,
+    colorFlow: 'solid', background: '#05060b'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', lineColor: '#4fd6ff', color2: '#8a7dff', colorFlow: 'solid',  revealMode: 'loop',     glowIntensity: 0.8,  bgKeep: 0.12, background: '#04070c', glowRadius: 9,  revealSpeed: 0.1 },
+    { text: '霓虹',   lineColor: '#ff7de0', color2: '#8a7dff', colorFlow: 'sweep',  revealMode: 'loop',     glowIntensity: 0.85, bgKeep: 0.1,  background: '#070510', glowRadius: 11 },
+    { text: '电光',   lineColor: '#57ff8f', color2: '#eaff6b', colorFlow: 'orient', revealMode: 'pingpong', glowIntensity: 0.9,  bgKeep: 0.08, background: '#020804', pulseAmp: 0.5, revealSpeed: 0.18 },
+    { text: '白炽',   lineColor: '#f5f7ff', color2: '#f5f7ff', colorFlow: 'solid',  revealMode: 'always',   glowIntensity: 0.5,  bgKeep: 0.3,  background: '#0a0b0f', coreWidth: 1, glowRadius: 6, pulseAmp: 0.2 }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true, sig = '';
+  var time = 0, lastT = performance.now();
+
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null, maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) { size = Math.max(6, Math.floor(size * maxW / widest)); setF(size); }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) { size = Math.max(6, Math.floor(size * maxH / totalH)); setF(size); }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  var GMAX = 6500;
+  var SAMPLE = 280;
+
+  // 缓存的采样点（mask 变了才重建）
+  var pts = [];
+  var ptsKey = '';
+
+  function buildPoints() {
+    var pk = maskKey + '|' + W + 'x' + H + '|' + CFG.threshold;
+    if (pk === ptsKey && pts.length) return;
+    ptsKey = pk;
+    pts = [];
+    var asp = W / H, gw, gh;
+    if (asp >= 1) { gw = SAMPLE; gh = Math.max(2, Math.round(SAMPLE / asp)); }
+    else { gh = SAMPLE; gw = Math.max(2, Math.round(SAMPLE * asp)); }
+    var cellW = W / gw, cellH = H / gh;
+    var n = gw * gh;
+    var lum = new Float32Array(n);
+    var gxArr = new Float32Array(n);
+    var gyArr = new Float32Array(n);
+    var mag = new Float32Array(n);
+    for (var y = 0; y < gh; y++) {
+      for (var x = 0; x < gw; x++) {
+        lum[y * gw + x] = alphaAt((x + 0.5) * cellW, (y + 0.5) * cellH);
+      }
+    }
+    var maxMag = 1e-6;
+    for (var yy = 1; yy < gh - 1; yy++) {
+      for (var xx = 1; xx < gw - 1; xx++) {
+        var i = yy * gw + xx;
+        var Gx = lum[i + 1] - lum[i - 1];
+        var Gy = lum[i + gw] - lum[i - gw];
+        gxArr[i] = Gx; gyArr[i] = Gy;
+        var gg = Math.hypot(Gx, Gy);
+        mag[i] = gg;
+        if (gg > maxMag) maxMag = gg;
+      }
+    }
+    for (var k = 0; k < n; k++) mag[k] /= maxMag;
+    var cxSum = 0, cySum = 0, wSum = 0;
+    for (var jj = 1; jj < gh - 1; jj++) {
+      for (var ii = 1; ii < gw - 1; ii++) {
+        var id = jj * gw + ii;
+        var m = mag[id];
+        if (m < CFG.threshold) continue;
+        var px = (ii + 0.5) * cellW;
+        var py = (jj + 0.5) * cellH;
+        var ux = -gyArr[id], uy = gxArr[id];
+        var ul = Math.hypot(ux, uy) || 1;
+        pts.push({ x: px, y: py, ux: ux / ul, uy: uy / ul, s: m });
+        cxSum += px * m; cySum += py * m; wSum += m;
+      }
+    }
+    if (!pts.length) return;
+    var cx0 = cxSum / wSum, cy0 = cySum / wSum;
+    for (var oi = 0; oi < pts.length; oi++) pts[oi].a = Math.atan2(pts[oi].y - cy0, pts[oi].x - cx0);
+    pts.sort(function (a, b) { return a.a - b.a; });
+    if (pts.length > GMAX) {
+      var step = pts.length / GMAX;
+      var kept = [];
+      for (var g = 0; g < GMAX; g++) kept.push(pts[Math.floor(g * step)]);
+      pts = kept;
+    }
+  }
+
+  function drawFrame(cfg, dt) {
+    buildMask();
+    buildPoints();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+    var N = pts.length;
+    if (!N) return;
+
+    var cA = hex2rgb(cfg.lineColor);
+    var cB = hex2rgb(cfg.color2);
+    var flow = cfg.colorFlow;
+    var cellW = W / SAMPLE, cellH = H / SAMPLE;
+    var stepLen = Math.max(cellW, cellH) * 1.9;
+
+    // 显影进度
+    var rev = 1;
+    if (cfg.revealMode === 'loop') {
+      rev = Math.min(1, (time * cfg.revealSpeed * 1.2) % 1.2);
+    } else if (cfg.revealMode === 'pingpong') {
+      var pp = (time * cfg.revealSpeed * 2) % 2;
+      rev = pp < 1 ? pp : 2 - pp;
+    }
+    var pulse = 1 + cfg.pulseAmp * 0.4 * Math.sin(time * Math.PI);
+
+    // 背景保留
+    if (cfg.bgKeep > 0.005) {
+      ctx.save();
+      ctx.globalAlpha = cfg.bgKeep;
+      ctx.drawImage(maskCanvas, 0, 0, W, H);
+      ctx.restore();
+    }
+
+    ctx.save();
+    if (cfg.revealMode !== 'always') {
+      ctx.beginPath();
+      ctx.moveTo(W / 2, H / 2);
+      var R = Math.hypot(W, H);
+      var a0 = -Math.PI / 2;
+      var a1 = a0 + rev * Math.PI * 2;
+      ctx.arc(W / 2, H / 2, R, a0, a1);
+      ctx.closePath();
+      ctx.clip();
+    }
+    ctx.lineCap = 'round';
+    ctx.globalCompositeOperation = 'lighter';
+
+    // 光晕层
+    ctx.lineWidth = cfg.glowRadius;
+    for (var i1 = 0; i1 < N; i1++) {
+      var p = pts[i1];
+      var t = flow === 'sweep' ? i1 / N
+            : flow === 'orient' ? (Math.atan2(p.uy, p.ux) / (Math.PI * 2) + 1) % 1
+            : 0;
+      var r = cA[0] + (cB[0] - cA[0]) * t;
+      var g = cA[1] + (cB[1] - cA[1]) * t;
+      var b = cA[2] + (cB[2] - cA[2]) * t;
+      var len = stepLen * (0.8 + 0.4 * p.s);
+      var hx = p.ux * len * 0.5;
+      var hy = p.uy * len * 0.5;
+      var alpha = (0.1 + 0.14 * p.s) * pulse;
+      ctx.strokeStyle = 'rgba(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ',' + alpha.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.moveTo(p.x - hx, p.y - hy);
+      ctx.lineTo(p.x + hx, p.y + hy);
+      ctx.stroke();
+    }
+
+    // 芯线
+    ctx.lineWidth = cfg.coreWidth;
+    for (var i2 = 0; i2 < N; i2++) {
+      var p2 = pts[i2];
+      var t2 = flow === 'sweep' ? i2 / N
+             : flow === 'orient' ? (Math.atan2(p2.uy, p2.ux) / (Math.PI * 2) + 1) % 1
+             : 0;
+      var r2 = cA[0] + (cB[0] - cA[0]) * t2;
+      var g2 = cA[1] + (cB[1] - cA[1]) * t2;
+      var b2 = cA[2] + (cB[2] - cA[2]) * t2;
+      var len2 = stepLen * (0.8 + 0.4 * p2.s);
+      var hx2 = p2.ux * len2 * 0.5;
+      var hy2 = p2.uy * len2 * 0.5;
+      var alpha2 = (0.45 + 0.5 * p2.s) * pulse;
+      ctx.strokeStyle = 'rgba(' +
+        Math.min(255, (r2 + 130) | 0) + ',' +
+        Math.min(255, (g2 + 130) | 0) + ',' +
+        Math.min(255, (b2 + 130) | 0) + ',' + alpha2.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.moveTo(p2.x - hx2, p2.y - hy2);
+      ctx.lineTo(p2.x + hx2, p2.y + hy2);
+      ctx.stroke();
+    }
+
+    // 起笔亮点
+    if (rev > 0 && rev < 1) {
+      var headIdx = Math.floor(N * rev);
+      var hp = pts[Math.max(0, Math.min(N - 1, headIdx))];
+      if (hp) {
+        var hg = ctx.createRadialGradient(hp.x, hp.y, 0, hp.x, hp.y, 24);
+        hg.addColorStop(0, 'rgba(255,255,255,0.95)');
+        hg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hg;
+        ctx.fillRect(hp.x - 24, hp.y - 24, 48, 48);
+      }
+    }
+
+    ctx.restore();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now; time += dt;
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.threshold + '|' + CFG.lineColor + '|' + CFG.color2 + '|' +
+              CFG.colorFlow + '|' + CFG.coreWidth + '|' + CFG.glowRadius + '|' +
+              CFG.background + '|' + CFG.bgKeep;
+    if (dirty) { ptsKey = ''; dirty = false; sig = ''; }
+    // 每帧重画（有动画时不再依赖 key）
+    if (key !== sig || CFG.revealMode !== 'always' || CFG.pulseAmp > 0.01) {
+      drawFrame(CFG, dt);
+      sig = key;
+    }
+    requestAnimationFrame(render);
+  }
+
+  // ---------- UI ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = ''; ptsKey = ''; dirty = true;
+  });
+
+  var CONTENTS = ['AURORA', '霓虹', 'NEON', '光', '线', '⚡'];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    maskData = null; maskKey = ''; ptsKey = ''; dirty = true;
+  });
+
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  document.getElementById('btn-custom').addEventListener('click', function () {
+    inp.value = CFG.text;
+    panel.classList.add('open'); backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  });
+
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    panel.classList.remove('open'); backdrop.classList.remove('open'); inp.blur();
+    maskData = null; maskKey = ''; ptsKey = ''; dirty = true;
+  });
+
+  backdrop.addEventListener('click', function () {
+    panel.classList.remove('open'); backdrop.classList.remove('open'); inp.blur();
+  });
+
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('btn-ok').click();
+    }
+  });
+
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

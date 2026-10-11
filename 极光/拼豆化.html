@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>拼豆化 Perler Beads</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0b10;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,11,16,.85),rgba(10,11,16,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(94,106,210,.28);border-color:rgba(94,106,210,.6);color:#eaeaff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(94,106,210,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(94,106,210,.6);
+    background:rgba(94,106,210,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(94,106,210,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">拼豆化 <b id="m">经典熨烫</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">5mm 拼豆成品 · 融化度/孔径/缝隙可调 · 真实色板 LAB 匹配</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    board: 58,
+    palette: 'classic48',
+    maxColors: 24,
+    melt: 0.55,
+    holeRatio: 0.5,
+    gap: 0.08,
+    highlight: 0.6,
+    jitter: 0.3,
+    beadShape: 'round',       // round | square
+    dithering: 'none',        // none | fs
+    colorA: '#ff4d6d',
+    colorB: '#ffd166',
+    colorC: '#5b6cff',
+    background: '#0a0b10'
+  };
+
+  // 精选 48 色拼豆板
+  var PALETTE_48 = [
+    [244,241,236],[232,224,208],[242,231,218],[201,204,209],[138,141,145],[85,87,92],[46,47,50],
+    [240,24,32],[194,30,46],[142,31,44],[255,106,85],[255,127,39],[255,169,77],[232,93,4],[217,108,44],
+    [236,216,0],[255,233,127],[247,181,0],[14,87,72],[28,117,62],[63,163,77],[75,111,68],[140,203,94],[197,224,99],
+    [42,168,160],[127,212,204],[27,42,85],[43,63,135],[45,107,216],[111,168,255],[175,203,239],[116,210,231],
+    [90,62,158],[139,108,201],[185,166,228],[232,67,147],[201,58,118],[255,143,193],[255,196,218],
+    [107,74,47],[154,107,67],[188,147,113],[217,180,143],[238,186,178],[245,214,198],
+    [183,243,77],[255,90,210],[0,194,255]
+  ];
+  var PALETTE_CANDY = [
+    [244,241,236],[232,224,208],[255,233,127],[255,169,77],[255,106,85],[255,196,218],[255,143,193],
+    [185,166,228],[175,203,239],[111,168,255],[127,212,204],[197,224,99],[140,203,94],[238,186,178],[217,180,143],[138,141,145]
+  ];
+  var PALETTE_GB = [[15,56,15],[48,98,48],[139,172,15],[155,188,15]];
+  var PALETTE_MONO = (function () {
+    var arr = [];
+    for (var i = 0; i < 8; i++) {
+      var v = Math.round(28 + i * 212 / 7);
+      arr.push([v,v,v]);
+    }
+    return arr;
+  })();
+
+  var PALETTES = {
+    classic48: PALETTE_48,
+    candy: PALETTE_CANDY,
+    gameboy: PALETTE_GB,
+    mono: PALETTE_MONO
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', palette: 'classic48', maxColors: 24, melt: 0.65, highlight: 0.5, dithering: 'fs', board: 58, background: '#0a0b10' },
+    { text: '生豆',   palette: 'classic48', maxColors: 32, melt: 0, highlight: 0.8, dithering: 'none', board: 58, gap: 0.12, background: '#0a0b10' },
+    { text: 'GAME',   palette: 'gameboy',  maxColors: 4,  melt: 0.4, highlight: 0.6, dithering: 'fs', board: 29, background: '#dfe6cf' },
+    { text: '黑白',   palette: 'mono',     maxColors: 6,  melt: 0.3, highlight: 0.4, dithering: 'fs', board: 87, background: '#101114' },
+    { text: '糖果',   palette: 'candy',    maxColors: 16, melt: 0.5, highlight: 0.7, dithering: 'fs', board: 58, background: '#0a0812' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜 ----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 色板 LAB 匹配 ----------
+  function srgb2lab(r, g, b) {
+    function f(c) { return c > 0.04045 ? Math.pow((c + 0.055) / 1.055, 2.4) : c / 12.92; }
+    r = f(r / 255); g = f(g / 255); b = f(b / 255);
+    var x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047;
+    var y = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 1.0000;
+    var z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+    function g2(c) { return c > 0.008856 ? Math.cbrt(c) : (7.787 * c + 16 / 116); }
+    x = g2(x); y = g2(y); z = g2(z);
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+  }
+
+  var labCache = {};
+  function paletteLab(name) {
+    if (labCache[name]) return labCache[name];
+    var pal = PALETTES[name] || PALETTES.classic48;
+    var lab = [];
+    for (var i = 0; i < pal.length; i++) {
+      lab.push(srgb2lab(pal[i][0], pal[i][1], pal[i][2]));
+    }
+    labCache[name] = lab;
+    return lab;
+  }
+
+  function nearest(r, g, b, labs, usedColors) {
+    var lab = srgb2lab(r, g, b);
+    var best = 0, bestD = Infinity;
+    for (var i = 0; i < labs.length; i++) {
+      if (usedColors && !usedColors[i]) continue;
+      var dl = labs[i][0] - lab[0];
+      var da = labs[i][1] - lab[1];
+      var db = labs[i][2] - lab[2];
+      var d = dl * dl + da * da + db * db;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  // ---------- 渲染 ----------
+  function render() {
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.board + '|' + CFG.palette + '|' + CFG.maxColors + '|' +
+              CFG.melt + '|' + CFG.holeRatio + '|' + CFG.gap + '|' +
+              CFG.highlight + '|' + CFG.jitter + '|' + CFG.beadShape + '|' +
+              CFG.dithering + '|' + CFG.colorA + '|' + CFG.colorB + '|' +
+              CFG.colorC + '|' + CFG.background;
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.background;
+    ctx.fillRect(0, 0, W, H);
+
+    // 网格尺寸：按 board 决定长边格数
+    var boards = Math.max(8, Math.min(160, Math.round(Number(cfg.board) || 58)));
+    var margin = 0.9;
+    var avail = Math.min(W, H) * margin;
+    var beadSize = Math.max(4, avail / boards);
+    var cols = Math.max(2, Math.round(W / beadSize));
+    var rows = Math.max(2, Math.round(H / beadSize));
+    var cellW = W / cols;
+    var cellH = H / rows;
+
+    var palName = PALETTES[cfg.palette] ? cfg.palette : 'classic48';
+    var pal = PALETTES[palName];
+    var labs = paletteLab(palName);
+    var maxColors = Math.max(2, Math.min(pal.length, Math.round(cfg.maxColors)));
+
+    // 采样掩膜 + 上色
+    var gw = cols, gh = rows;
+    var lum = new Float32Array(gw * gh);
+    var idxArr = new Int16Array(gw * gh);
+    for (var y = 0; y < gh; y++) {
+      for (var x = 0; x < gw; x++) {
+        var sx = (x + 0.5) * cellW;
+        var sy = (y + 0.5) * cellH;
+        var a = alphaAt(sx, sy);
+        lum[y * gw + x] = a;
+      }
+    }
+
+    // 源色：按位置插值 A→B→C
+    var cA = hex2rgb(cfg.colorA);
+    var cB = hex2rgb(cfg.colorB);
+    var cC = hex2rgb(cfg.colorC);
+
+    // 采样颜色（如果掩膜位置有字，则给它上色；否则空）
+    var srcR = new Float32Array(gw * gh);
+    var srcG = new Float32Array(gw * gh);
+    var srcB = new Float32Array(gw * gh);
+    for (var y2 = 0; y2 < gh; y2++) {
+      for (var x2 = 0; x2 < gw; x2++) {
+        var i2 = y2 * gw + x2;
+        var u = x2 / gw;
+        var seg = u * 2.999;
+        var ii = Math.floor(seg) % 3;
+        var t = seg - Math.floor(seg);
+        var c1 = [cA, cB, cC][ii];
+        var c2 = [cA, cB, cC][(ii + 1) % 3];
+        srcR[i2] = c1[0] + (c2[0] - c1[0]) * t;
+        srcG[i2] = c1[1] + (c2[1] - c1[1]) * t;
+        srcB[i2] = c1[2] + (c2[2] - c1[2]) * t;
+      }
+    }
+
+    // 误差扩散抖动
+    var useFS = cfg.dithering === 'fs';
+    if (useFS) {
+      var eR = new Float32Array(gw * gh);
+      var eG = new Float32Array(gw * gh);
+      var eB = new Float32Array(gw * gh);
+      for (var yy = 0; yy < gh; yy++) {
+        var isOdd = (yy & 1) === 1;
+        for (var xx = 0; xx < gh; xx++) {
+          // 蛇形扫描
+          var x3 = isOdd ? gw - 1 - xx : xx;
+          var i3 = yy * gw + x3;
+          if (lum[i3] < 0.4) continue;
+          var r = srcR[i3] + eR[i3];
+          var g = srcG[i3] + eG[i3];
+          var b = srcB[i3] + eB[i3];
+          var pi = nearest(r, g, b, labs, null);
+          idxArr[i3] = pi;
+          var pc = pal[pi];
+          var errR = r - pc[0];
+          var errG = g - pc[1];
+          var errB = b - pc[2];
+          var spread = function (dx, dy, w) {
+            var nx = x3 + (isOdd ? -dx : dx);
+            var ny = yy + dy;
+            if (nx < 0 || nx >= gw || ny < 0 || ny >= gh) return;
+            var ni = ny * gw + nx;
+            eR[ni] += errR * w;
+            eG[ni] += errG * w;
+            eB[ni] += errB * w;
+          };
+          spread(1, 0, 7/16);
+          spread(-1, 1, 3/16);
+          spread(0, 1, 5/16);
+          spread(1, 1, 1/16);
+        }
+      }
+    } else {
+      for (var i4 = 0; i4 < gw * gh; i4++) {
+        if (lum[i4] < 0.4) { idxArr[i4] = -1; continue; }
+        idxArr[i4] = nearest(srcR[i4], srcG[i4], srcB[i4], labs, null);
+      }
+    }
+
+    // 统计用的颜色数
+    var counts = {};
+    for (var i5 = 0; i5 < gw * gh; i5++) {
+      if (idxArr[i5] < 0) continue;
+      counts[idxArr[i5]] = (counts[idxArr[i5]] || 0) + 1;
+    }
+    var entries = [];
+    for (var k in counts) entries.push([Number(k), counts[k]]);
+    entries.sort(function (a, b) { return b[1] - a[1]; });
+    var usedColors = {};
+    for (var e2 = 0; e2 < Math.min(maxColors, entries.length); e2++) {
+      usedColors[entries[e2][0]] = true;
+    }
+
+    // 未在配额内的颜色重新映射到配额内
+    for (var i6 = 0; i6 < gw * gh; i6++) {
+      var idx6 = idxArr[i6];
+      if (idx6 < 0) continue;
+      if (!usedColors[idx6]) {
+        idxArr[i6] = nearest(srcR[i6], srcG[i6], srcB[i6], labs, usedColors);
+      }
+    }
+
+    // 绘制豆子
+    var melt = cfg.melt;
+    var holeRatio = cfg.holeRatio;
+    var gap = cfg.gap;
+    var highlight = cfg.highlight;
+    var jitter = cfg.jitter;
+    var isRound = cfg.beadShape === 'round';
+
+    for (var ry = 0; ry < gh; ry++) {
+      for (var rx = 0; rx < gw; rx++) {
+        var ii2 = ry * gw + rx;
+        if (idxArr[ii2] < 0) continue;
+
+        var pc2 = pal[idxArr[ii2]];
+        var cx = (rx + 0.5) * cellW;
+        var cy = (ry + 0.5) * cellH;
+        var r0 = Math.min(cellW, cellH) * (1 - gap) / 2;
+
+        // 融化度：越小越生豆颗粒分明，越大越融为一体
+        var k = 1 + melt * 0.15;
+        var r = r0 * k;
+        // 孔洞
+        var hole = r * holeRatio * (1 - melt * 0.75);
+
+        // 逐豆色差
+        var jitR = jitter * (hash21(rx, ry) - 0.5) * 30;
+        var jitG = jitter * (hash21(rx + 31, ry + 17) - 0.5) * 30;
+        var jitB = jitter * (hash21(rx + 7, ry + 41) - 0.5) * 30;
+        var rr = Math.max(0, Math.min(255, pc2[0] + jitR));
+        var gg = Math.max(0, Math.min(255, pc2[1] + jitG));
+        var bb = Math.max(0, Math.min(255, pc2[2] + jitB));
+
+        // 融化后相邻粘连
+        if (melt > 0.15) {
+          ctx.fillStyle = 'rgb(' + ((rr * 0.92) | 0) + ',' + ((gg * 0.92) | 0) + ',' + ((bb * 0.92) | 0) + ')';
+          var ext = Math.min(cellW, cellH) * melt * 0.28;
+          ctx.fillRect(cx - r - ext, cy - r - ext, (r + ext) * 2, (r + ext) * 2);
+        }
+
+        // 主体
+        ctx.fillStyle = 'rgb(' + (rr | 0) + ',' + (gg | 0) + ',' + (bb | 0) + ')';
+        if (isRound) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+        }
+
+        // 中心孔
+        if (hole > 0.5) {
+          ctx.fillStyle = 'rgb(' + ((rr * 0.42) | 0) + ',' + ((gg * 0.42) | 0) + ',' + ((bb * 0.42) | 0) + ')';
+          ctx.beginPath();
+          ctx.arc(cx, cy, hole, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // 高光
+        if (highlight > 0.02) {
+          ctx.fillStyle = 'rgba(255,255,255,' + (highlight * 0.55 * (1 - melt * 0.45)).toFixed(3) + ')';
+          ctx.beginPath();
+          ctx.arc(cx - r * 0.34, cy - r * 0.34, r * 0.22, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  function hash21(x, y) {
+    var t = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return t - Math.floor(t);
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 按钮 ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  var CONTENTS = [
+    { text: 'AURORA' },
+    { text: '拼豆' },
+    { text: 'PIXEL' },
+    { text: 'GB\nGAME' },
+    { text: '点心' },
+    { text: '⚡' }
+  ];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx].text;
+    maskData = null; maskKey = '';
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

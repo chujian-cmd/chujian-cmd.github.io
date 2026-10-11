@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>⛏️ 像素挖矿 · Q版小人</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            font-family: 'Courier New', monospace;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: #0b1219;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 8px;
+        }
+        .game-container {
+            max-width: 480px;
+            width: 100%;
+            background: #1a2a3a;
+            border-radius: 28px;
+            padding: 12px 10px 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+            border: 2px solid #3a5a7a;
+            position: relative;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #0f1a24;
+            padding: 4px 10px;
+            border-radius: 40px;
+            margin-bottom: 8px;
+            border-bottom: 2px solid #3e5a74;
+            flex-wrap: wrap;
+            gap: 3px;
+        }
+        .coin-display {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #2b3f52;
+            padding: 2px 10px 2px 6px;
+            border-radius: 40px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5), 0 2px 0 #4f6d8a;
+        }
+        .coin-icon { font-size: 15px; }
+        .coin-amount {
+            font-weight: 700;
+            font-size: 15px;
+            color: #f6d186;
+            text-shadow: 0 2px 0 #7a5a1a;
+        }
+        .vip-badge {
+            background: linear-gradient(145deg, #d4af37, #aa7c2b);
+            padding: 2px 10px;
+            border-radius: 30px;
+            font-size: 11px;
+            font-weight: 800;
+            color: #231f0e;
+            box-shadow: 0 2px 0 #6a4f1a;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .stat-mini {
+            color: #8aaec9;
+            font-size: 10px;
+            background: #142433;
+            padding: 2px 8px;
+            border-radius: 20px;
+        }
+        .fly-status {
+            background: #2c3e50;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #ecf0f1;
+            border: 1px solid #5a7a8a;
+        }
+        .fly-status.active {
+            background: #27ae60;
+            border-color: #82e0aa;
+            color: white;
+            animation: pulse 1s infinite;
+        }
+        .fly-status.locked {
+            background: #c0392b;
+            border-color: #e74c3c;
+            color: #fadbd8;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .mine-map {
+            background: #1d3142;
+            border-radius: 16px;
+            padding: 8px;
+            box-shadow: inset 0 -6px 0 #0c1a26, 0 8px 16px rgba(0,0,0,0.6);
+            border: 1px solid #3e5f7a;
+            margin-bottom: 10px;
+        }
+        .layer-label {
+            color: #8aaec9;
+            font-size: 11px;
+            text-align: center;
+            padding: 3px 0;
+            background: #0f1f2d;
+            border-radius: 12px;
+            margin-bottom: 6px;
+            border: 1px solid #2a4a5a;
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 14px;
+            cursor: pointer;
+        }
+        .layer-label .fly-hint {
+            color: #f39c12;
+            font-size: 10px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 3px;
+        }
+        .cell {
+            aspect-ratio: 1;
+            border-radius: 4px;
+            box-shadow: inset 0 -3px 0 rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: 700;
+            color: rgba(255,255,255,0.7);
+            text-shadow: 0 1px 2px black;
+            position: relative;
+            min-height: 32px;
+            image-rendering: pixelated;
+        }
+        .cell.empty {
+            background: #1a2a3a !important;
+            box-shadow: inset 0 0 0 1px #2a4a5a;
+            opacity: 0.25;
+        }
+
+        /* ===== 真正的像素Q版小人 (8x8 像素风格) ===== */
+        .cell .player {
+            position: absolute;
+            pointer-events: none;
+            z-index: 10;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            image-rendering: pixelated;
+            font-size: 0;
+            line-height: 0;
+        }
+        /* 像素小人用 grid 绘制 8x8 像素块 */
+        .cell .player .pixel-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 3px);
+            grid-template-rows: repeat(8, 3px);
+            gap: 0px;
+            background: transparent;
+            image-rendering: pixelated;
+            width: 24px;
+            height: 24px;
+        }
+        .cell .player .pixel-grid .p {
+            width: 3px;
+            height: 3px;
+            display: block;
+        }
+        /* 透明像素 */
+        .cell .player .pixel-grid .p.x { background: transparent; }
+        /* 肤色 */
+        .cell .player .pixel-grid .p.s { background: #f5cba7; }
+        /* 头发 */
+        .cell .player .pixel-grid .p.h { background: #4a2f1a; }
+        /* 眼睛 */
+        .cell .player .pixel-grid .p.e { background: #1a1a2a; }
+        /* 嘴巴 */
+        .cell .player .pixel-grid .p.m { background: #c0392b; }
+        /* 衣服 (蓝色) */
+        .cell .player .pixel-grid .p.c { background: #3498db; }
+        .cell .player .pixel-grid .p.c2 { background: #2e86c1; }
+        /* 裤子 */
+        .cell .player .pixel-grid .p.p { background: #2c3e50; }
+        /* 鞋子 */
+        .cell .player .pixel-grid .p.b { background: #5a3a2a; }
+        /* 手臂 (肤色) */
+        .cell .player .pixel-grid .p.a { background: #f5cba7; }
+        /* 手臂阴影 */
+        .cell .player .pixel-grid .p.a2 { background: #e8b89a; }
+
+        /* 挖矿时手臂变化 - 用额外class切换 */
+        .cell .player.mining .pixel-grid .p.a-right {
+            background: #f5cba7;
+            animation: armSwing 0.2s infinite alternate;
+        }
+        @keyframes armSwing {
+            0% { background: #f5cba7; }
+            100% { background: #d4a08a; }
+        }
+
+        /* 高亮前方可挖 */
+        .cell .highlight {
+            position: absolute;
+            inset: -2px;
+            border: 3px solid #f6d186;
+            border-radius: 6px;
+            box-shadow: 0 0 20px rgba(246, 209, 134, 0.4);
+            pointer-events: none;
+            animation: glow 0.8s infinite alternate;
+        }
+        @keyframes glow {
+            0% { opacity: 0.5; border-color: #f6d186; }
+            100% { opacity: 1; border-color: #f9e79f; }
+        }
+
+        .cell.minable::after {
+            content: '⛏️';
+            position: absolute;
+            font-size: 10px;
+            bottom: -2px;
+            right: -2px;
+            opacity: 0.6;
+            filter: drop-shadow(0 0 4px rgba(255,215,0,0.5));
+        }
+
+        .player-indicator {
+            text-align: center;
+            font-size: 13px;
+            padding: 3px 0;
+            background: #0f1f2d;
+            border-radius: 12px;
+            border: 2px solid #f6d186;
+            box-shadow: 0 0 20px rgba(246, 209, 134, 0.15);
+            margin-top: 6px;
+            color: #f6d186;
+            font-weight: 700;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .player-indicator span { font-size: 10px; color: #8aaec9; }
+        .player-indicator .pos { color: #f6d186; }
+
+        .control-panel {
+            display: flex;
+            gap: 5px;
+            margin: 8px 0 6px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .ctrl-btn {
+            flex: 1;
+            min-width: 48px;
+            background: #2c3e50;
+            border: none;
+            border-radius: 30px;
+            padding: 8px 4px;
+            color: white;
+            font-weight: 700;
+            font-size: 18px;
+            box-shadow: 0 4px 0 #1a2632, 0 4px 8px rgba(0,0,0,0.4);
+            transition: 0.06s linear;
+            cursor: pointer;
+            border-bottom: 2px solid #5a7a8a;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+        }
+        .ctrl-btn:active {
+            transform: translateY(3px);
+            box-shadow: 0 1px 0 #1a2632;
+        }
+        .ctrl-btn.mine-btn {
+            background: #d4a02b;
+            border-bottom-color: #fad67a;
+            box-shadow: 0 4px 0 #8f6b1b;
+            color: #1d1708;
+            font-size: 15px;
+            flex: 2;
+        }
+        .ctrl-btn.mine-btn:disabled {
+            opacity: 0.4;
+            transform: translateY(3px);
+            box-shadow: 0 1px 0 #8f6b1b;
+            pointer-events: none;
+        }
+
+        .action-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 4px 0 6px;
+        }
+        .action-row {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .action-btn {
+            flex: 1 0 22%;
+            min-width: 48px;
+            background: #263f56;
+            border: none;
+            border-radius: 30px;
+            padding: 5px 3px;
+            color: white;
+            font-weight: 700;
+            font-size: 9px;
+            box-shadow: 0 4px 0 #0f1f2e, 0 4px 8px rgba(0,0,0,0.4);
+            transition: 0.06s linear;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            border-bottom: 2px solid #5b7e9c;
+            cursor: pointer;
+            text-shadow: 0 1px 2px black;
+            font-family: 'Courier New', monospace;
+        }
+        .action-btn:active {
+            transform: translateY(3px);
+            box-shadow: 0 1px 0 #0f1f2e;
+        }
+        .action-btn.ad-btn { background: #3f5f3a; border-bottom-color: #7fb07a; box-shadow: 0 4px 0 #1f3a1c; }
+        .action-btn.pay-btn { background: #b8862c; border-bottom-color: #f3c26b; box-shadow: 0 4px 0 #7a5f1f; color: #1d1708; text-shadow: 0 1px 0 #f5d48a; }
+        .action-btn.super-btn { background: #8e44ad; border-bottom-color: #c58af0; box-shadow: 0 4px 0 #4f2e6b; }
+        .action-btn.gold-btn { background: #d4a02b; border-bottom-color: #fad67a; box-shadow: 0 4px 0 #8f6b1b; color: #1d1708; text-shadow: 0 1px 0 #f5d48a; }
+        .action-btn.fly-btn { background: #2980b9; border-bottom-color: #5dade2; box-shadow: 0 4px 0 #1a5276; }
+        .action-btn.fly-btn.active { background: #27ae60; border-bottom-color: #82e0aa; box-shadow: 0 4px 0 #1e8449; }
+        .action-btn.upgrade-btn { background: #3a4b5e; border-bottom-color: #7a9ab0; }
+        .action-btn.vip-btn { background: #6d4f7a; border-bottom-color: #b88ac8; }
+        .action-btn.mega-btn { background: #b7950b; border-bottom-color: #f0d060; color: #1d1708; text-shadow: 0 1px 0 #f5d48a; }
+        .action-btn:disabled { opacity: 0.4; transform: translateY(3px); box-shadow: 0 1px 0 #0f1f2e; pointer-events: none; }
+
+        .toast-message {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1d2d3d;
+            color: #f0e9d0;
+            padding: 4px 14px;
+            border-radius: 60px;
+            font-weight: 600;
+            font-size: 12px;
+            box-shadow: 0 6px 0 #0b141e, 0 8px 16px #00000088;
+            border: 1px solid #5b7b94;
+            white-space: nowrap;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 100;
+            font-family: 'Courier New', monospace;
+        }
+        .toast-message.show { opacity: 1; }
+        .footer-note {
+            text-align: center;
+            color: #4f718a;
+            font-size: 9px;
+            background: #0f1f2d;
+            padding: 3px 4px;
+            border-radius: 40px;
+            margin-top: 4px;
+            border-top: 1px solid #2c4a60;
+            font-family: 'Courier New', monospace;
+        }
+
+        .modal-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(4px);
+            border-radius: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            padding: 20px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+        }
+        .modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .modal-card {
+            background: #223544;
+            background-image: radial-gradient(circle at 30% 20%, #2f4a62, #142837);
+            width: 100%;
+            max-width: 280px;
+            padding: 22px 14px 20px;
+            border-radius: 40px;
+            box-shadow: 0 20px 40px #000000cc, 0 0 0 2px #57758f inset;
+            text-align: center;
+            border: 1px solid #8bb0cc;
+            transform: scale(0.9);
+            transition: 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .modal-overlay.active .modal-card { transform: scale(1); }
+        .modal-card .modal-icon { font-size: 42px; margin-bottom: 2px; filter: drop-shadow(0 6px 8px #00000066); }
+        .modal-card h3 { color: #f2e9d8; font-size: 18px; margin: 4px 0 6px; text-shadow: 0 3px 0 #0f1e2b; font-family: 'Courier New', monospace; }
+        .modal-card p { color: #bed8ec; font-size: 12px; background: #152b3b; padding: 6px 12px; border-radius: 60px; box-shadow: inset 0 2px 6px #00000077; margin: 6px 0 12px; white-space: pre-line; font-family: 'Courier New', monospace; }
+        .modal-btn {
+            background: #3170a3;
+            border: none;
+            padding: 9px 18px;
+            border-radius: 60px;
+            font-weight: 800;
+            font-size: 16px;
+            color: white;
+            box-shadow: 0 5px 0 #144165, 0 6px 12px #00000066;
+            transition: 0.06s linear;
+            cursor: pointer;
+            border-bottom: 2px solid #79b0db;
+            width: 100%;
+            letter-spacing: 1px;
+            font-family: 'Courier New', monospace;
+        }
+        .modal-btn:active { transform: translateY(4px); box-shadow: 0 1px 0 #144165; }
+        .modal-btn.close-btn { background: #5a4b3b; box-shadow: 0 5px 0 #3d3124; border-bottom-color: #a5886a; margin-top: 6px; }
+        .modal-btn.pay-modal-btn { background: #d4a02b; box-shadow: 0 5px 0 #8f6b1b; border-bottom-color: #fad67a; color: #231d08; }
+    </style>
+</head>
+<body>
+
+<div class="game-container" id="gameContainer">
+    <!-- 状态栏 -->
+    <div class="status-bar">
+        <div class="coin-display">
+            <span class="coin-icon">🪙</span>
+            <span class="coin-amount" id="coinAmount">0</span>
+        </div>
+        <div class="vip-badge">⭐ VIP <span id="vipLevel">0</span></div>
+        <div class="stat-mini" id="statMini">⛏️ Lv.0</div>
+        <div class="fly-status locked" id="flyStatus">🔒 飞行</div>
+    </div>
+
+    <!-- 矿场地图 -->
+    <div class="mine-map">
+        <div class="layer-label" id="layerLabel">
+            <span id="layerDisplay">🌍 第 1 层</span>
+            <span id="depthDisplay">深度: 0m</span>
+            <span class="fly-hint" id="flyHint">✈️ 点击飞往下层</span>
+        </div>
+        <div class="grid" id="gridContainer"></div>
+        <div class="player-indicator">
+            <span>🧑‍🏭</span>
+            <span class="pos" id="playerPos">第 1 层 · (0,0)</span>
+            <span id="layerStatus" style="color:#8aaec9;font-size:10px;">⛏️ 挖矿中</span>
+        </div>
+    </div>
+
+    <!-- 方向控制 + 挖矿 -->
+    <div class="control-panel">
+        <button class="ctrl-btn" id="moveUp">⬆</button>
+        <button class="ctrl-btn" id="moveLeft">⬅</button>
+        <button class="ctrl-btn mine-btn" id="mineBtn">⛏️ 挖!</button>
+        <button class="ctrl-btn" id="moveRight">➡</button>
+        <button class="ctrl-btn" id="moveDown">⬇</button>
+    </div>
+
+    <!-- 广告按钮 -->
+    <div class="action-grid">
+        <div class="action-row">
+            <button class="action-btn ad-btn" id="watchAdBtn">📺 广告×2</button>
+            <button class="action-btn ad-btn" id="watchAdBigBtn">📺 豪华×5</button>
+            <button class="action-btn super-btn" id="superAdBtn">🔥 超级×12</button>
+            <button class="action-btn pay-btn" id="payCoinBtn">💰 充×10</button>
+        </div>
+        <div class="action-row">
+            <button class="action-btn gold-btn" id="premiumPayBtn">💎 至尊×30</button>
+            <button class="action-btn gold-btn" id="superPayBtn">👑 帝王×80</button>
+            <button class="action-btn fly-btn" id="flyUnlockBtn">✈️ 解锁飞行</button>
+            <button class="action-btn fly-btn" id="flyToggleBtn" disabled>✈️ 起飞</button>
+        </div>
+        <div class="action-row">
+            <button class="action-btn upgrade-btn" id="upgradeBtn">⬆ 升级(50💰)</button>
+            <button class="action-btn vip-btn" id="vipUpgradeBtn">👑 升VIP(200💰)</button>
+            <button class="action-btn mega-btn" id="megaUpgradeBtn">⭐ 超级(500💰)</button>
+            <button class="action-btn" id="resetBtn" style="background:#5a3a3a;border-bottom-color:#8a5a5a;">🔄 重置</button>
+        </div>
+    </div>
+
+    <div class="footer-note">
+        <span>🧭 WASD移动 · ⛏️ 空格/挖按钮挖矿 · ✈️ 广告解锁飞行</span>
+    </div>
+
+    <div class="toast-message" id="toastMessage">+5 金币</div>
+
+    <!-- 广告弹窗 -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal-card">
+            <div class="modal-icon" id="modalIcon">📺</div>
+            <h3 id="modalTitle">观看广告</h3>
+            <p id="modalDesc">🎬 观看30秒广告获取奖励</p>
+            <button class="modal-btn" id="modalConfirmBtn">✔ 确认 (模拟)</button>
+            <button class="modal-btn close-btn" id="modalCloseBtn">✖ 关闭</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        "use strict";
+
+        // ---------- 状态 ----------
+        let coins = 30;
+        let upgradeLevel = 0;
+        let vipLevel = 0;
+        let megaUpgradeLevel = 0;
+        const upgradeCost = 50;
+        const vipCost = 200;
+        const megaUpgradeCost = 500;
+
+        let flyUnlocked = false;
+        let flying = false;
+
+        let playerRow = 3;
+        let playerCol = 3;
+        let currentLayer = 0;
+
+        const LAYERS = 6;
+        const ROWS = 8;
+        const COLS = 8;
+        let gridData = [];
+
+        const ORE_TYPES = [
+            { name: '泥土', color: '#8B7D6B', hpRange: [1, 2], weight: 30 },
+            { name: '石头', color: '#7A8A8A', hpRange: [3, 5], weight: 25 },
+            { name: '铁矿', color: '#B87333', hpRange: [6, 10], weight: 20 },
+            { name: '金矿', color: '#D4AF37', hpRange: [12, 18], weight: 12 },
+            { name: '钻石', color: '#4FD0E8', hpRange: [20, 30], weight: 8 },
+            { name: '基岩', color: '#2C2C2C', hpRange: [35, 50], weight: 5 },
+        ];
+
+        function getRandomOreType() {
+            const totalWeight = ORE_TYPES.reduce((s, t) => s + t.weight, 0);
+            let rand = Math.random() * totalWeight;
+            for (let t of ORE_TYPES) {
+                rand -= t.weight;
+                if (rand <= 0) return t;
+            }
+            return ORE_TYPES[0];
+        }
+
+        function generateLayer() {
+            const layer = [];
+            for (let r = 0; r < ROWS; r++) {
+                const row = [];
+                for (let c = 0; c < COLS; c++) {
+                    const type = getRandomOreType();
+                    const [minHp, maxHp] = type.hpRange;
+                    const hp = Math.floor(Math.random() * (maxHp - minHp + 1)) + minHp;
+                    row.push({ hp, maxHp: hp, type, isEmpty: false });
+                }
+                layer.push(row);
+            }
+            return layer;
+        }
+
+        function generateAllLayers() {
+            const data = [];
+            for (let i = 0; i < LAYERS; i++) data.push(generateLayer());
+            return data;
+        }
+        gridData = generateAllLayers();
+
+        // ---------- DOM ----------
+        const gridContainer = document.getElementById('gridContainer');
+        const coinDisplay = document.getElementById('coinAmount');
+        const vipLevelDisplay = document.getElementById('vipLevel');
+        const statMini = document.getElementById('statMini');
+        const layerDisplay = document.getElementById('layerDisplay');
+        const depthDisplay = document.getElementById('depthDisplay');
+        const playerPos = document.getElementById('playerPos');
+        const layerStatus = document.getElementById('layerStatus');
+        const flyStatus = document.getElementById('flyStatus');
+        const flyHint = document.getElementById('flyHint');
+        const flyUnlockBtn = document.getElementById('flyUnlockBtn');
+        const flyToggleBtn = document.getElementById('flyToggleBtn');
+        const mineBtn = document.getElementById('mineBtn');
+        const toast = document.getElementById('toastMessage');
+
+        const moveUp = document.getElementById('moveUp');
+        const moveDown = document.getElementById('moveDown');
+        const moveLeft = document.getElementById('moveLeft');
+        const moveRight = document.getElementById('moveRight');
+
+        const watchAdBtn = document.getElementById('watchAdBtn');
+        const watchAdBigBtn = document.getElementById('watchAdBigBtn');
+        const superAdBtn = document.getElementById('superAdBtn');
+        const payCoinBtn = document.getElementById('payCoinBtn');
+        const premiumPayBtn = document.getElementById('premiumPayBtn');
+        const superPayBtn = document.getElementById('superPayBtn');
+        const upgradeBtn = document.getElementById('upgradeBtn');
+        const vipUpgradeBtn = document.getElementById('vipUpgradeBtn');
+        const megaUpgradeBtn = document.getElementById('megaUpgradeBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        const modalOverlay = document.getElementById('modalOverlay');
+        const modalIcon = document.getElementById('modalIcon');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalDesc = document.getElementById('modalDesc');
+        const modalConfirmBtn = document.getElementById('modalConfirmBtn');
+        const modalCloseBtn = document.getElementById('modalCloseBtn');
+
+        let toastTimeout = null;
+        let facingRow = 1, facingCol = 0;
+        let isMining = false;
+
+        // ---------- 辅助函数 ----------
+        function updateCoinDisplay() {
+            coinDisplay.textContent = Math.floor(coins);
+            vipLevelDisplay.textContent = vipLevel;
+            statMini.textContent = `⛏️ Lv.${upgradeLevel} VIP${vipLevel} ★${megaUpgradeLevel}`;
+        }
+
+        function showToast(text, duration = 700) {
+            toast.textContent = text;
+            toast.classList.add('show');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => { toast.classList.remove('show'); }, duration);
+        }
+
+        function getMiningPower() {
+            return 1 + upgradeLevel + vipLevel * 2 + megaUpgradeLevel * 3;
+        }
+
+        function isLayerEmpty(layerIdx) {
+            const layer = gridData[layerIdx];
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (!layer[r][c].isEmpty) return false;
+                }
+            }
+            return true;
+        }
+
+        function canGoDown() {
+            if (currentLayer >= LAYERS - 1) return false;
+            return isLayerEmpty(currentLayer);
+        }
+
+        function isInBounds(r, c) { return r >= 0 && r < ROWS && c >= 0 && c < COLS; }
+
+        function isStandable(layerIdx, row, col) {
+            if (!isInBounds(row, col)) return false;
+            const cell = gridData[layerIdx][row][col];
+            return cell.isEmpty;
+        }
+
+        function getFrontCell() {
+            const fr = playerRow + facingRow;
+            const fc = playerCol + facingCol;
+            if (!isInBounds(fr, fc)) return null;
+            return { row: fr, col: fc, cell: gridData[currentLayer][fr][fc] };
+        }
+
+        function updateFlyUI() {
+            if (flyUnlocked) {
+                flyStatus.className = 'fly-status active';
+                flyStatus.textContent = '✈️ 已解锁';
+                flyUnlockBtn.disabled = true;
+                flyUnlockBtn.textContent = '✅ 已解锁';
+                flyToggleBtn.disabled = false;
+                flyToggleBtn.textContent = flying ? '✈️ 飞行中' : '✈️ 起飞';
+                flyToggleBtn.className = 'action-btn fly-btn' + (flying ? ' active' : '');
+                flyHint.textContent = '✈️ 点击飞往下层';
+                flyHint.style.color = '#27ae60';
+            } else {
+                flyStatus.className = 'fly-status locked';
+                flyStatus.textContent = '🔒 飞行';
+                flyUnlockBtn.disabled = false;
+                flyUnlockBtn.textContent = '✈️ 解锁飞行';
+                flyToggleBtn.disabled = true;
+                flyToggleBtn.textContent = '✈️ 未解锁';
+                flyToggleBtn.className = 'action-btn fly-btn';
+                flyHint.textContent = '🔒 看广告解锁飞行';
+                flyHint.style.color = '#e74c3c';
+            }
+        }
+
+        function autoGoDown() {
+            if (canGoDown()) {
+                currentLayer++;
+                let startR = Math.floor(ROWS / 2);
+                let startC = Math.floor(COLS / 2);
+                if (!isStandable(currentLayer, startR, startC)) {
+                    for (let dr = -1; dr <= 1; dr++) {
+                        for (let dc = -1; dc <= 1; dc++) {
+                            const r = startR + dr, c = startC + dc;
+                            if (isStandable(currentLayer, r, c)) {
+                                startR = r; startC = c;
+                                break;
+                            }
+                        }
+                    }
+                }
+                playerRow = startR;
+                playerCol = startC;
+                showToast(`⬇️ 到达第 ${currentLayer + 1} 层!`, 1000);
+                updateUI();
+                renderGrid();
+                return true;
+            }
+            return false;
+        }
+
+        function updateUI() {
+            layerDisplay.textContent = `🌍 第 ${currentLayer + 1} 层`;
+            depthDisplay.textContent = `深度: ${currentLayer * 10}m`;
+            playerPos.textContent = `第 ${currentLayer + 1} 层 · (${playerRow},${playerCol})`;
+
+            const cell = gridData[currentLayer][playerRow][playerCol];
+            if (cell.isEmpty) {
+                layerStatus.textContent = '📍 站在空洞上';
+            } else {
+                layerStatus.textContent = `⛏️ ${cell.type.name} (HP:${cell.hp}/${cell.maxHp})`;
+            }
+
+            const front = getFrontCell();
+            if (front && !front.cell.isEmpty) {
+                mineBtn.disabled = false;
+                mineBtn.textContent = `⛏️ 挖 ${front.cell.type.name}`;
+            } else {
+                mineBtn.disabled = true;
+                mineBtn.textContent = front ? '⛏️ 前方无矿' : '⛏️ 边界';
+            }
+
+            updateCoinDisplay();
+            updateFlyUI();
+        }
+
+        // ---------- 渲染网格 ----------
+        function renderGrid() {
+            gridContainer.innerHTML = '';
+            const layer = gridData[currentLayer];
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const cell = layer[r][c];
+                    const div = document.createElement('div');
+                    div.className = 'cell';
+
+                    if (cell.isEmpty) {
+                        div.classList.add('empty');
+                        div.style.background = '#1a2a3a';
+                        div.textContent = '·';
+                    } else {
+                        const hpPercent = cell.hp / cell.maxHp;
+                        div.style.background = cell.type.color;
+                        div.style.opacity = 0.4 + 0.6 * hpPercent;
+                        if (cell.maxHp > 4) {
+                            div.textContent = cell.hp;
+                            div.style.fontSize = '8px';
+                        }
+                    }
+
+                    // ★ 真正的像素Q版小人 (8x8 grid)
+                    if (r === playerRow && c === playerCol) {
+                        const playerDiv = document.createElement('div');
+                        playerDiv.className = 'player' + (isMining ? ' mining' : '');
+                        // 8x8 像素网格
+                        // 行0: 头发
+                        // 行1: 头发+脸
+                        // 行2: 脸+眼睛
+                        // 行3: 脸+眼睛+嘴
+                        // 行4: 身体(衣服)
+                        // 行5: 身体(衣服)
+                        // 行6: 裤子
+                        // 行7: 鞋子
+                        // 用字符串表示每一行: x=透明, s=肤色, h=头发, e=眼睛, m=嘴, c=衣服, p=裤子, b=鞋子
+                        const pixels = [
+                            // 0: 头发
+                            ['x','h','h','h','h','h','h','x'],
+                            // 1: 头发+脸
+                            ['h','s','s','s','s','s','s','h'],
+                            // 2: 脸+眼睛
+                            ['h','s','e','s','s','e','s','h'],
+                            // 3: 脸+嘴
+                            ['h','s','s','m','m','s','s','h'],
+                            // 4: 衣服（蓝色）
+                            ['x','c','c','c','c','c','c','x'],
+                            // 5: 衣服下摆
+                            ['x','c','c','c','c','c','c','x'],
+                            // 6: 裤子
+                            ['x','p','p','x','x','p','p','x'],
+                            // 7: 鞋子
+                            ['x','b','b','x','x','b','b','x'],
+                        ];
+                        // 颜色映射
+                        const colorMap = {
+                            'x': 'transparent',
+                            's': '#f5cba7',  // 肤色
+                            'h': '#4a2f1a',  // 头发
+                            'e': '#1a1a2a',  // 眼睛
+                            'm': '#c0392b',  // 嘴巴
+                            'c': '#3498db',  // 衣服
+                            'p': '#2c3e50',  // 裤子
+                            'b': '#5a3a2a',  // 鞋子
+                        };
+                        const gridDiv = document.createElement('div');
+                        gridDiv.className = 'pixel-grid';
+                        for (let row of pixels) {
+                            for (let char of row) {
+                                const p = document.createElement('span');
+                                p.className = 'p';
+                                p.style.background = colorMap[char] || 'transparent';
+                                gridDiv.appendChild(p);
+                            }
+                        }
+                        playerDiv.appendChild(gridDiv);
+                        div.appendChild(playerDiv);
+                    }
+
+                    // 高亮前方可挖
+                    const front = getFrontCell();
+                    if (front && front.row === r && front.col === c && !front.cell.isEmpty) {
+                        const highlight = document.createElement('div');
+                        highlight.className = 'highlight';
+                        div.appendChild(highlight);
+                        div.classList.add('minable');
+                    }
+
+                    gridContainer.appendChild(div);
+                }
+            }
+            updateUI();
+        }
+
+        // ---------- 移动 ----------
+        function movePlayer(dr, dc) {
+            const newR = playerRow + dr;
+            const newC = playerCol + dc;
+            if (!isInBounds(newR, newC)) {
+                showToast('🚫 边界!', 300);
+                return;
+            }
+            if (!isStandable(currentLayer, newR, newC)) {
+                showToast('🚫 前方有矿物!', 400);
+                return;
+            }
+            facingRow = dr;
+            facingCol = dc;
+            playerRow = newR;
+            playerCol = newC;
+            renderGrid();
+            showToast(`📍 (${playerRow},${playerCol})`, 250);
+        }
+
+        // ---------- 挖矿 ----------
+        function mine() {
+            const front = getFrontCell();
+            if (!front) { showToast('🚫 前方没有方块', 500); return; }
+            if (front.cell.isEmpty) { showToast('⛏️ 已经挖空了', 500); return; }
+
+            isMining = true;
+            renderGrid();
+            setTimeout(() => { isMining = false; renderGrid(); }, 250);
+
+            const power = getMiningPower();
+            front.cell.hp -= power;
+            const earn = 1 + Math.floor(power / 2);
+            coins += earn;
+
+            if (front.cell.hp <= 0) {
+                front.cell.isEmpty = true;
+                const bonus = Math.floor(front.cell.maxHp * 0.5) + 1;
+                coins += bonus;
+                showToast(`⛏️ 挖空! +${earn + bonus} 金币`, 600);
+                if (isLayerEmpty(currentLayer)) {
+                    setTimeout(() => {
+                        if (currentLayer < LAYERS - 1) {
+                            showToast(`🎉 第 ${currentLayer + 1} 层挖完!`, 800);
+                            autoGoDown();
+                        } else {
+                            showToast('🏆 恭喜! 你挖到了最底层!', 1200);
+                        }
+                    }, 300);
+                }
+            } else {
+                showToast(`⛏️ +${earn} 金币`, 300);
+            }
+
+            updateCoinDisplay();
+            renderGrid();
+        }
+
+        // ---------- 飞行 ----------
+        function unlockFly() {
+            showModal('fly_unlock', function() {
+                flyUnlocked = true;
+                flying = true;
+                updateFlyUI();
+                showToast('✈️ 飞行已解锁! 点击层名飞往下层', 1200);
+                renderGrid();
+            });
+        }
+
+        function toggleFly() {
+            if (!flyUnlocked) { showToast('❌ 请先解锁飞行', 800); return; }
+            flying = !flying;
+            updateFlyUI();
+            showToast(flying ? '✈️ 起飞! 点击层名飞行' : '🛬 降落', 600);
+            renderGrid();
+        }
+
+        function flyToLayer(targetLayer) {
+            if (!flyUnlocked || !flying) {
+                showToast('❌ 请先解锁并启动飞行', 800);
+                return;
+            }
+            if (targetLayer === currentLayer) {
+                showToast('📍 已经在当前层', 500);
+                return;
+            }
+            if (targetLayer < 0 || targetLayer >= LAYERS) {
+                showToast('🚫 层数超出范围', 500);
+                return;
+            }
+            if (!isLayerEmpty(targetLayer)) {
+                showToast('❌ 该层还有矿石未挖!', 800);
+                return;
+            }
+            const minLayer = Math.min(currentLayer, targetLayer);
+            const maxLayer = Math.max(currentLayer, targetLayer);
+            for (let i = minLayer; i <= maxLayer; i++) {
+                if (!isLayerEmpty(i) && i !== currentLayer) {
+                    showToast(`❌ 第 ${i+1} 层未挖空，不能飞越`, 800);
+                    return;
+                }
+            }
+
+            currentLayer = targetLayer;
+            let startR = Math.floor(ROWS / 2);
+            let startC = Math.floor(COLS / 2);
+            if (!isStandable(currentLayer, startR, startC)) {
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        const r = startR + dr, c = startC + dc;
+                        if (isStandable(currentLayer, r, c)) {
+                            startR = r; startC = c;
+                            break;
+                        }
+                    }
+                }
+            }
+            playerRow = startR;
+            playerCol = startC;
+            showToast(`✈️ 飞到第 ${currentLayer + 1} 层!`, 800);
+            renderGrid();
+        }
+
+        document.getElementById('layerLabel').addEventListener('click', function() {
+            if (flying && flyUnlocked) {
+                for (let i = currentLayer + 1; i < LAYERS; i++) {
+                    if (isLayerEmpty(i)) { flyToLayer(i); return; }
+                }
+                for (let i = currentLayer - 1; i >= 0; i--) {
+                    if (isLayerEmpty(i)) { flyToLayer(i); return; }
+                }
+                showToast('❌ 没有可飞行的层', 600);
+            } else {
+                showToast('✈️ 请先解锁飞行并起飞', 600);
+            }
+        });
+
+        // ---------- 弹窗 ----------
+        function showModal(type, callback) {
+            const configs = {
+                ad: { icon: '📺', title: '📢 观看广告', desc: '🎬 观看30秒广告 · 获得金币', confirm: '▶ 观看' },
+                ad_big: { icon: '📺✨', title: '🌟 豪华广告', desc: '🎬 观看45秒广告 · 大量金币', confirm: '▶ 观看' },
+                super_ad: { icon: '🔥', title: '🔥 超级广告', desc: '🎬 观看60秒广告 · 超多金币', confirm: '▶ 观看' },
+                fly_unlock: { icon: '✈️', title: '✈️ 解锁飞行', desc: '🎬 观看60秒广告 · 永久解锁飞行!', confirm: '▶ 解锁' },
+            };
+            const cfg = configs[type] || configs.ad;
+            modalIcon.textContent = cfg.icon;
+            modalTitle.textContent = cfg.title;
+            modalDesc.textContent = cfg.desc;
+            modalConfirmBtn.textContent = cfg.confirm;
+            modalConfirmBtn.className = 'modal-btn' + (type === 'fly_unlock' ? ' pay-modal-btn' : '');
+
+            modalOverlay.classList.add('active');
+
+            const confirmHandler = function() {
+                if (typeof callback === 'function') callback();
+                closeModal();
+            };
+            modalConfirmBtn.removeEventListener('click', confirmHandler);
+            modalConfirmBtn.addEventListener('click', confirmHandler);
+
+            const closeHandler = function() { closeModal(); };
+            modalCloseBtn.removeEventListener('click', closeHandler);
+            modalCloseBtn.addEventListener('click', closeHandler);
+        }
+
+        function closeModal() {
+            modalOverlay.classList.remove('active');
+        }
+        modalOverlay.addEventListener('click', function(e) {
+            if (e.target === modalOverlay) closeModal();
+        });
+
+        // ---------- 广告/充钱操作 ----------
+        function watchAd() {
+            const earn = 5 + upgradeLevel * 2 + vipLevel * 3 + megaUpgradeLevel * 2;
+            coins += earn;
+            updateCoinDisplay();
+            showToast(`📺 +${earn} 广告`);
+            renderGrid();
+        }
+        function watchAdBig() {
+            const earn = 12 + upgradeLevel * 3 + vipLevel * 5 + megaUpgradeLevel * 4;
+            coins += earn;
+            updateCoinDisplay();
+            showToast(`✨ +${earn} 豪华`);
+            renderGrid();
+        }
+        function watchSuperAd() {
+            const earn = 25 + upgradeLevel * 5 + vipLevel * 8 + megaUpgradeLevel * 6;
+            coins += earn;
+            updateCoinDisplay();
+            showToast(`🔥 +${earn} 超级`);
+            renderGrid();
+        }
+        function payForBonus() {
+            if (coins < 10) { showToast('❌ 金币不足 10', 1000); return; }
+            coins -= 10;
+            const reward = 25 + upgradeLevel * 3 + vipLevel * 5 + megaUpgradeLevel * 4;
+            coins += reward;
+            updateCoinDisplay();
+            showToast(`💰 +${reward} 充值`);
+            renderGrid();
+        }
+        function premiumPay() {
+            if (coins < 30) { showToast('❌ 金币不足 30', 1000); return; }
+            coins -= 30;
+            const reward = 80 + upgradeLevel * 5 + vipLevel * 10 + megaUpgradeLevel * 8;
+            coins += reward;
+            updateCoinDisplay();
+            showToast(`💎 +${reward} 至尊`);
+            renderGrid();
+        }
+        function superPay() {
+            if (coins < 80) { showToast('❌ 金币不足 80', 1000); return; }
+            coins -= 80;
+            const reward = 200 + upgradeLevel * 10 + vipLevel * 20 + megaUpgradeLevel * 15;
+            coins += reward;
+            updateCoinDisplay();
+            showToast(`👑 +${reward} 帝王`);
+            renderGrid();
+        }
+        function upgrade() {
+            if (coins < upgradeCost) { showToast(`❌ 升级需要 ${upgradeCost}`, 1000); return; }
+            coins -= upgradeCost;
+            upgradeLevel++;
+            updateCoinDisplay();
+            showToast(`⬆ 升级 Lv.${upgradeLevel}`);
+            renderGrid();
+        }
+        function upgradeVip() {
+            if (coins < vipCost) { showToast(`❌ 升VIP需要 ${vipCost}`, 1000); return; }
+            coins -= vipCost;
+            vipLevel++;
+            updateCoinDisplay();
+            showToast(`👑 VIP ${vipLevel}`);
+            renderGrid();
+        }
+        function megaUpgrade() {
+            if (coins < megaUpgradeCost) { showToast(`❌ 超级升级需要 ${megaUpgradeCost}`, 1000); return; }
+            coins -= megaUpgradeCost;
+            megaUpgradeLevel++;
+            updateCoinDisplay();
+            showToast(`⭐ 超级升级 ★${megaUpgradeLevel}`);
+            renderGrid();
+        }
+        function resetGame() {
+            gridData = generateAllLayers();
+            currentLayer = 0;
+            playerRow = Math.floor(ROWS / 2);
+            playerCol = Math.floor(COLS / 2);
+            gridData[0][playerRow][playerCol].isEmpty = true;
+            coins = 30;
+            upgradeLevel = 0;
+            vipLevel = 0;
+            megaUpgradeLevel = 0;
+            flyUnlocked = false;
+            flying = false;
+            facingRow = 1;
+            facingCol = 0;
+            updateCoinDisplay();
+            updateFlyUI();
+            renderGrid();
+            showToast('🔄 游戏已重置!', 800);
+        }
+
+        // ---------- 事件绑定 ----------
+        moveUp.addEventListener('click', () => movePlayer(-1, 0));
+        moveDown.addEventListener('click', () => movePlayer(1, 0));
+        moveLeft.addEventListener('click', () => movePlayer(0, -1));
+        moveRight.addEventListener('click', () => movePlayer(0, 1));
+
+        document.addEventListener('keydown', (e) => {
+            switch(e.key) {
+                case 'w': case 'W': movePlayer(-1, 0); break;
+                case 's': case 'S': movePlayer(1, 0); break;
+                case 'a': case 'A': movePlayer(0, -1); break;
+                case 'd': case 'D': movePlayer(0, 1); break;
+                case ' ': e.preventDefault(); mine(); break;
+            }
+        });
+
+        mineBtn.addEventListener('click', mine);
+
+        watchAdBtn.addEventListener('click', () => showModal('ad', watchAd));
+        watchAdBigBtn.addEventListener('click', () => showModal('ad_big', watchAdBig));
+        superAdBtn.addEventListener('click', () => showModal('super_ad', watchSuperAd));
+
+        payCoinBtn.addEventListener('click', payForBonus);
+        premiumPayBtn.addEventListener('click', premiumPay);
+        superPayBtn.addEventListener('click', superPay);
+
+        upgradeBtn.addEventListener('click', upgrade);
+        vipUpgradeBtn.addEventListener('click', upgradeVip);
+        megaUpgradeBtn.addEventListener('click', megaUpgrade);
+
+        flyUnlockBtn.addEventListener('click', unlockFly);
+        flyToggleBtn.addEventListener('click', toggleFly);
+
+        resetBtn.addEventListener('click', resetGame);
+
+        // ---------- 初始化 ----------
+        gridData[0][playerRow][playerCol].isEmpty = true;
+        updateCoinDisplay();
+        updateFlyUI();
+        renderGrid();
+
+        console.log('⛏️ 真正的像素Q版小人 (8x8)');
+        console.log('🧭 WASD移动 · 空格挖矿');
+    })();
+</script>
+</body>
+</html>

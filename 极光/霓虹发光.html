@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>霓虹发光 · 你好</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #08060f; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ---------- 可调参数 ----------
+const CFG = {
+  text: '你好',
+  font: '"PingFang SC","Microsoft YaHei","Heiti SC","Noto Sans CJK SC",sans-serif',
+  weight: 800,
+  glow: 1.8,           // 辉光强度
+  width: 1.4,          // 灯管亮度
+  pulse: 2.2,          // 脉动速度
+  glowRadius: 2.0,     // 辉光半径
+  colorA: '#5be0ff',   // 灯管色 A（左）
+  colorB: '#ff5ac8',   // 灯管色 B（右）
+  background: '#08060f',
+  zoom: 1
+};
+
+const TEX_W = 1024;
+const TEX_H = 512;
+
+// ---------- 文字栅格化 → 生成 alpha 遮罩纹理 ----------
+const raster = {
+  canvas: document.createElement('canvas'),
+  ctx: null,
+  init() {
+    this.canvas.width = TEX_W;
+    this.canvas.height = TEX_H;
+    this.ctx = this.canvas.getContext('2d');
+  },
+  update(text, weight, font) {
+    const c = this.ctx;
+    c.clearRect(0, 0, TEX_W, TEX_H);
+    c.fillStyle = '#fff';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+
+    const lines = (text || '你好').split('\n').filter(l => l.length > 0);
+    if (!lines.length) return;
+
+    const maxW = TEX_W * 0.9;
+    const maxH = TEX_H * 0.86;
+
+    let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+    const setFont = s => { c.font = `${weight} ${s}px ${font}`; };
+    setFont(size);
+
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, c.measureText(l).width);
+    if (widest > maxW) {
+      size = Math.max(4, Math.floor(size * maxW / widest));
+      setFont(size);
+    }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(4, Math.floor(size * maxH / totalH));
+      setFont(size);
+    }
+
+    const lineH = size * 1.15;
+    const startY = TEX_H / 2 - (lines.length - 1) * lineH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      c.fillText(lines[i], TEX_W / 2, startY + i * lineH);
+    }
+  }
+};
+raster.init();
+
+// ---------- three.js 基础场景 ----------
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// 用一张 CanvasTexture 存文字 alpha
+raster.update(CFG.text, CFG.weight, CFG.font);
+const textTex = new THREE.CanvasTexture(raster.canvas);
+textTex.minFilter = THREE.LinearFilter;
+textTex.magFilter = THREE.LinearFilter;
+textTex.wrapS = THREE.ClampToEdgeWrapping;
+textTex.wrapT = THREE.ClampToEdgeWrapping;
+
+// ---------- Shader ----------
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const frag = /* glsl */`
+  precision highp float;
+  uniform sampler2D uTex;
+  uniform vec2 uTexel;
+  uniform float uTime, uGlow, uGlowR, uPulse, uWidth, uZoom;
+  uniform vec3 uColorA, uColorB, uBg;
+  varying vec2 vUv;
+
+  float m(vec2 uv) { return texture2D(uTex, uv).a; }
+
+  void main() {
+    // 滚轮缩放
+    vec2 uv = (vUv - 0.5) / uZoom + 0.5;
+    float mask = m(uv);
+
+    // 多环采样近似高斯辉光
+    float glow = 0.0;
+    for (int i = 1; i <= 5; i++) {
+      float r = float(i) * uGlowR;
+      glow += m(uv + vec2(r, 0.0)) + m(uv - vec2(r, 0.0))
+            + m(uv + vec2(0.0, r)) + m(uv - vec2(0.0, r));
+      glow += m(uv + vec2(r, r)) + m(uv - vec2(r, r))
+            + m(uv + vec2(r, -r)) + m(uv - vec2(r, -r));
+    }
+    glow /= 40.0;
+
+    float pulse = 0.82 + 0.18 * sin(uTime * uPulse);
+
+    // 沿屏幕 X 做主副色渐变
+    vec3 tube = mix(uColorA, uColorB, uv.x);
+
+    vec3 col = uBg;
+    col += tube * glow * uGlow * pulse;                            // 外发光晕
+    col += tube * smoothstep(0.35, 0.65, mask) * uWidth * pulse;   // 灯管主体
+    col += vec3(1.0) * pow(mask, 5.0) * 0.6;                       // 白色高光芯
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uTex:     { value: textTex },
+    uTexel:   { value: new THREE.Vector2(1 / TEX_W, 1 / TEX_H) },
+    uTime:    { value: 0 },
+    uGlow:    { value: CFG.glow },
+    uGlowR:   { value: CFG.glowRadius / TEX_W },
+    uPulse:   { value: CFG.pulse },
+    uWidth:   { value: CFG.width },
+    uZoom:    { value: CFG.zoom },
+    uColorA:  { value: new THREE.Color(CFG.colorA) },
+    uColorB:  { value: new THREE.Color(CFG.colorB) },
+    uBg:      { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+// ---------- 滚轮缩放 ----------
+let zoom = CFG.zoom;
+addEventListener('wheel', e => {
+  e.preventDefault();
+  zoom = Math.max(0.5, Math.min(4, zoom * Math.exp(-e.deltaY * 0.0012)));
+}, { passive: false });
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uZoom.value = zoom;
+  u.uGlow.value = CFG.glow;
+  u.uWidth.value = CFG.width;
+  u.uPulse.value = CFG.pulse;
+  u.uGlowR.value = CFG.glowRadius / TEX_W;
+  u.uColorA.value.set(CFG.colorA);
+  u.uColorB.value.set(CFG.colorB);
+  u.uBg.value.set(CFG.background);
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+});
+
+// 等字体加载完再栅格化一次
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => {
+    raster.update(CFG.text, CFG.weight, CFG.font);
+    textTex.needsUpdate = true;
+    requestAnimationFrame(loop);
+  });
+} else {
+  setTimeout(() => {
+    raster.update(CFG.text, CFG.weight, CFG.font);
+    textTex.needsUpdate = true;
+    requestAnimationFrame(loop);
+  }, 300);
+}
+</script>
+</body>
+</html>

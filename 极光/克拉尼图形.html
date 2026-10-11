@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>克拉尼图形 Chladni</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06070c;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* 顶部控制条 */
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(6,7,12,0.85), rgba(6,7,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode {
+    flex: 1; font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px; color: #8a8f98;
+  }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: background .15s, border-color .15s;
+  }
+  .btn:active {
+    background: rgba(255,255,255,0.14);
+    border-color: rgba(255,255,255,0.24);
+  }
+  .btn.pri {
+    background: rgba(94,106,210,0.32);
+    border-color: rgba(94,106,210,0.6);
+  }
+
+  /* 底部提示 */
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">模式 <b id="m">4 × 3</b></div>
+  <button class="btn" id="btn-reset">重新撒沙</button>
+  <button class="btn pri" id="btn-change">换图案</button>
+</div>
+
+<div id="hint">拖动屏幕撒沙</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  // ---------- 手机优化的参数 ----------
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+
+  const CFG = {
+    particles: isMobile ? 2200 : 4500,  // 手机降低粒子数
+    n: 4, m: 3,
+    scale: 1.0,
+    jitter: 2.5,
+    particleSize: isMobile ? 1.6 : 1.2,
+    colorMode: 'gradient',
+    colorA: '#e7e9ef',
+    colorB: '#7c86ff',
+    background: '#0a0b10',
+    animate: 0.10,
+    fingerRadius: 70,       // 手指撒沙半径
+    emitPerFrame: 100        // 每帧撒沙数（手指按住时）
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  const makeRng = seed => {
+    let s = seed | 0;
+    return () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; return ((s >>> 0) % 1e6) / 1e6; };
+  };
+
+  // ---------- 粒子 ----------
+  class Chladni {
+    constructor(w, h) {
+      this.w = w; this.h = h;
+      this.rng = makeRng(20260709);
+      this.count = CFG.particles;
+      this.x = new Float32Array(this.count);
+      this.y = new Float32Array(this.count);
+      this.scatter();
+    }
+    resize(w, h) { this.w = w; this.h = h; }
+    scatter() {
+      const r = this.rng;
+      for (let i = 0; i < this.count; i++) {
+        this.x[i] = r() * this.w;
+        this.y[i] = r() * this.h;
+      }
+    }
+    amplitude(nx, ny, scale, N, M) {
+      const a = Math.sin(scale * Math.PI * N * nx) * Math.sin(scale * Math.PI * M * ny);
+      const b = Math.sin(scale * Math.PI * M * nx) * Math.sin(scale * Math.PI * N * ny);
+      return Math.abs(a + b);
+    }
+    update({ ctx2d, time, dt, pointer }) {
+      const w = this.w, h = this.h;
+      const evol = CFG.animate;
+      const N = CFG.n + evol * Math.sin(time * 0.15) * 1.6;
+      const M = CFG.m + evol * Math.cos(time * 0.11) * 1.6;
+      const scale = CFG.scale;
+
+      const [br, bg, bb] = hex2rgb(CFG.background);
+      ctx2d.globalCompositeOperation = 'source-over';
+      ctx2d.fillStyle = `rgb(${br},${bg},${bb})`;
+      ctx2d.fillRect(0, 0, w, h);
+
+      // 手指撒沙
+      if (pointer.down && pointer.inside) {
+        const R = CFG.fingerRadius;
+        const r2 = R * R;
+        for (let k = 0; k < CFG.emitPerFrame; k++) {
+          const idx = (Math.random() * this.count) | 0;
+          const ang = Math.random() * Math.PI * 2;
+          const rad = Math.sqrt(Math.random()) * R;
+          const px = pointer.x + Math.cos(ang) * rad;
+          const py = pointer.y + Math.sin(ang) * rad;
+          if ((px - pointer.x) ** 2 + (py - pointer.y) ** 2 < r2) {
+            this.x[idx] = px; this.y[idx] = py;
+          }
+        }
+      }
+
+      const jitter = CFG.jitter;
+      const size = CFG.particleSize;
+      const half = size / 2;
+      const [caR, caG, caB] = hex2rgb(CFG.colorA);
+      const [cbR, cbG, cbB] = hex2rgb(CFG.colorB);
+      const mode = CFG.colorMode;
+      const z = clamp(dt * 60, 0, 3);
+
+      ctx2d.globalCompositeOperation = 'lighter';
+
+      for (let i = 0; i < this.count; i++) {
+        let px = this.x[i], py = this.y[i];
+        const nx = px / w, ny = py / h;
+        const amp = this.amplitude(nx, ny, scale, N, M);
+
+        const move = (amp + 0.015) * jitter * 5.5 * z;
+        const ang = Math.random() * Math.PI * 2;
+        const dist = move * Math.random();
+        px += Math.cos(ang) * dist;
+        py += Math.sin(ang) * dist;
+
+        if (px < 0) px = -px; else if (px > w) px = 2 * w - px;
+        if (py < 0) py = -py; else if (py > h) py = 2 * h - py;
+        px = clamp(px, 0, w);
+        py = clamp(py, 0, h);
+
+        this.x[i] = px; this.y[i] = py;
+
+        const t = clamp(1 - amp / 2, 0, 1);
+        const v = 0.3 + t * 0.6;
+        let R, G, B;
+        if (mode === 'mono') {
+          R = caR; G = caG; B = caB;
+        } else {
+          R = cbR + (caR - cbR) * t | 0;
+          G = cbG + (caG - cbG) * t | 0;
+          B = cbB + (caB - cbB) * t | 0;
+        }
+        ctx2d.fillStyle = `rgba(${R},${G},${B},${v})`;
+        ctx2d.fillRect(px - half, py - half, size, size);
+      }
+
+      ctx2d.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, sim = null;
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (sim) sim.resize(W, H);
+  }
+
+  // ---------- 指针（触摸 = 撒沙） ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+
+  const onDown = e => {
+    const rect = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - rect.left;
+    pointer.y = t.clientY - rect.top;
+    pointer.down = true;
+    pointer.inside = true;
+    e.preventDefault();
+  };
+  const onMove = e => {
+    const rect = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - rect.left;
+    pointer.y = t.clientY - rect.top;
+    pointer.inside = true;
+    e.preventDefault();
+  };
+  const onUp = () => { pointer.down = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', e => { if (e.buttons) onMove(e); });
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', () => { pointer.inside = false; pointer.down = false; });
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    if (sim) sim.scatter();
+  });
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    let n, m;
+    do {
+      n = 2 + Math.floor(Math.random() * 7);
+      m = 1 + Math.floor(Math.random() * 7);
+    } while (n === m);
+    CFG.n = n; CFG.m = m;
+    mEl.textContent = `${n} × ${m}`;
+    if (sim) sim.scatter();
+  });
+
+  // ---------- 主循环 ----------
+  let startTime = performance.now();
+  let lastTime = startTime;
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    const time = (now - startTime) / 1000;
+    if (!sim) sim = new Chladni(W, H);
+    sim.update({ ctx2d: ctx, time, dt, pointer });
+    requestAnimationFrame(loop);
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  mEl.textContent = `${CFG.n} × ${CFG.m}`;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

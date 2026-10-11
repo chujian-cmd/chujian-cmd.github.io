@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - 坐标追踪版 | Cannon.es物理</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      overflow: hidden;
+      font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+      background: #111;
+    }
+    #info-panel {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(12px);
+      border-radius: 24px;
+      padding: 12px 20px;
+      color: white;
+      font-size: 14px;
+      font-weight: 500;
+      pointer-events: none;
+      z-index: 10;
+      border: 1px solid rgba(255,255,255,0.2);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      font-family: monospace;
+      letter-spacing: 0.5px;
+    }
+    #info-panel span {
+      color: #ffaa66;
+      font-weight: bold;
+    }
+    #coords-panel {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(12px);
+      border-radius: 20px;
+      padding: 10px 18px;
+      color: #0f0;
+      font-family: 'Courier New', monospace;
+      font-weight: bold;
+      font-size: 13px;
+      border: 1px solid #0f0;
+      box-shadow: 0 0 10px rgba(0,255,0,0.3);
+      pointer-events: none;
+      z-index: 10;
+    }
+    #aim-coords-panel {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(12px);
+      border-radius: 20px;
+      padding: 10px 18px;
+      color: #ffaa66;
+      font-family: 'Courier New', monospace;
+      font-weight: bold;
+      font-size: 13px;
+      border: 1px solid #ffaa66;
+      box-shadow: 0 0 10px rgba(255,170,102,0.3);
+      pointer-events: none;
+      z-index: 10;
+      text-align: right;
+    }
+    #controls-hint {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(8px);
+      border-radius: 20px;
+      padding: 8px 16px;
+      color: #ddd;
+      font-size: 12px;
+      font-family: monospace;
+      pointer-events: none;
+      z-index: 10;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    #crosshair {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 24px;
+      height: 24px;
+      transform: translate(-50%, -50%);
+      border: 2px solid rgba(255,255,255,0.9);
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 20;
+      transition: 0.05s linear;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: white;
+    }
+    #crosshair::before {
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      transform: translateY(-50%);
+    }
+    #crosshair::after {
+      top: 0;
+      left: 50%;
+      width: 1px;
+      height: 100%;
+      transform: translateX(-50%);
+    }
+    .toolbar {
+      position: fixed;
+      bottom: 30px;
+      right: 20px;
+      display: flex;
+      gap: 12px;
+      z-index: 15;
+      background: rgba(20,20,30,0.85);
+      backdrop-filter: blur(16px);
+      padding: 12px 20px;
+      border-radius: 48px;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+    .tool-btn {
+      background: rgba(0,0,0,0.6);
+      border: none;
+      color: white;
+      font-size: 20px;
+      cursor: pointer;
+      width: 48px;
+      height: 48px;
+      border-radius: 60px;
+      transition: 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+      font-weight: bold;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .tool-btn.active {
+      background: #ff884d;
+      color: white;
+      box-shadow: 0 0 12px rgba(255,136,77,0.6);
+      transform: scale(1.02);
+    }
+    .tool-btn:active { transform: scale(0.96); }
+    .action-btn {
+      background: #2c3e66;
+    }
+    .action-btn.reset-btn { background: #8b3c2c; }
+    .status-badge {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(12px);
+      padding: 8px 16px;
+      border-radius: 32px;
+      font-size: 13px;
+      font-weight: bold;
+      color: #ffdd99;
+      pointer-events: none;
+      z-index: 10;
+      font-family: monospace;
+    }
+    @media (max-width: 600px) {
+      .tool-btn { width: 44px; height: 44px; font-size: 18px; }
+      #info-panel { font-size: 10px; top: 12px; left: 12px; }
+      #coords-panel, #aim-coords-panel { font-size: 10px; padding: 6px 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="info-panel">
+    📦 物体: <span id="obj-count">0</span> &nbsp;| ⚡ FPS: <span id="fps-val">-</span>
+  </div>
+  
+  <div id="coords-panel">
+    📍 玩家: X:<span id="player-x">0.00</span> Y:<span id="player-y">0.00</span> Z:<span id="player-z">0.00</span>
+  </div>
+  
+  <div id="aim-coords-panel">
+    🎯 瞄准: X:<span id="aim-x">—</span> Y:<span id="aim-y">—</span> Z:<span id="aim-z">—</span>
+  </div>
+  
+  <div id="controls-hint">
+    🖱️ WASD移动 | 鼠标环顾 | 左键放置 | 右键删除 | R重置 | T 冻结物理 | Z 清除所有
+  </div>
+  <div id="crosshair"></div>
+  <div class="toolbar">
+    <button class="tool-btn" data-type="cube" style="background:#d46b4a;">🧊</button>
+    <button class="tool-btn" data-type="sphere" style="background:#5f9e6e;">⚪</button>
+    <button class="tool-btn" data-type="cylinder" style="background:#6a8daf;">▮</button>
+    <button class="action-btn" id="freezeBtn">⏸️</button>
+    <button class="action-btn reset-btn" id="clearBtn">🗑️</button>
+  </div>
+  <div class="status-badge" id="statusText">⚡ 物理活跃</div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    // ========== 使用 Cannon.es 物理引擎 ==========
+    class OptimizedPhysics {
+      constructor() {
+        this.world = new CANNON.World();
+        this.world.gravity = new CANNON.Vec3(0, -18.0, 0);
+        this.world.broadphase = new CANNON.NaiveBroadphase();
+        this.world.defaultContactMaterial.restitution = 0.55;
+        
+        // 材质设置
+        const groundMat = new CANNON.Material("ground");
+        const defaultMat = new CANNON.Material("default");
+        
+        const contactGround = new CANNON.ContactMaterial(groundMat, defaultMat, {
+          friction: 0.4,
+          restitution: 0.65,
+          contactEquationStiffness: 1e8,
+        });
+        this.world.addContactMaterial(contactGround);
+        
+        const contactDefault = new CANNON.ContactMaterial(defaultMat, defaultMat, {
+          friction: 0.3,
+          restitution: 0.6,
+          contactEquationStiffness: 1e8,
+        });
+        this.world.addContactMaterial(contactDefault);
+        
+        this.world.defaultContactMaterial.material1 = defaultMat;
+        this.world.defaultContactMaterial.material2 = defaultMat;
+        
+        this.bodies = [];
+        this.createGround();
+      }
+      
+      createGround() {
+        const groundShape = new CANNON.Box(new CANNON.Vec3(55, 0.3, 55));
+        const groundBody = new CANNON.Body({ mass: 0, material: new CANNON.Material("ground") });
+        groundBody.addShape(groundShape);
+        groundBody.position.set(0, -0.5, 0);
+        this.world.addBody(groundBody);
+        this.groundBody = groundBody;
+      }
+      
+      createBody(x, y, z, mass = 1, radiusOrSize = 0.48, shapeType = 'box') {
+        let shape;
+        if (shapeType === 'sphere') {
+          shape = new CANNON.Sphere(radiusOrSize);
+        } else if (shapeType === 'cylinder') {
+          shape = new CANNON.Cylinder(radiusOrSize, radiusOrSize, radiusOrSize * 1.2, 12);
+        } else {
+          shape = new CANNON.Box(new CANNON.Vec3(radiusOrSize, radiusOrSize, radiusOrSize));
+        }
+        
+        const body = new CANNON.Body({ 
+          mass: mass, 
+          material: new CANNON.Material("default"),
+          linearDamping: mass === 0 ? 0 : 0.1,
+          angularDamping: mass === 0 ? 0 : 0.05
+        });
+        body.addShape(shape);
+        body.position.set(x, y, z);
+        this.world.addBody(body);
+        this.bodies.push(body);
+        return body;
+      }
+      
+      removeBody(body) {
+        if (!body) return;
+        const idx = this.bodies.indexOf(body);
+        if (idx !== -1) this.bodies.splice(idx, 1);
+        this.world.removeBody(body);
+      }
+      
+      step(deltaTime) {
+        this.world.step(1 / 60, deltaTime, 3);
+      }
+      
+      setGravity(enabled) {
+        if (enabled) {
+          this.world.gravity.set(0, -18.0, 0);
+        } else {
+          this.world.gravity.set(0, 0, 0);
+        }
+      }
+    }
+
+    const game = {
+      physics: new OptimizedPhysics(),
+      scene: new THREE.Scene(),
+      camera: new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 200),
+      renderer: new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" }),
+      raycaster: new THREE.Raycaster(),
+      clock: new THREE.Clock(),
+      cache: {
+        geometries: {},
+        placedShapes: [],
+        allPlaceables: [],
+        previewMesh: null,
+        currentType: 'cube',
+        colors: { cube: '#e67e4a', sphere: '#6ab04c', cylinder: '#5498c7' }
+      },
+      player: {
+        yaw: -Math.PI / 4,
+        pitch: 0,
+        position: new THREE.Vector3(0, 1.35, 6),
+        moveState: { w: false, s: false, a: false, d: false },
+        speed: 5.6,
+        mouseLock: false
+      },
+      isDead: false,
+      timeFreeze: false,
+      activeBtnType: 'cube'
+    };
+
+    function initRenderer() {
+      const { renderer } = game;
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.physicallyCorrectLights = true;
+      renderer.setClearColor('#87CEEB');
+      document.body.appendChild(renderer.domElement);
+    }
+
+    function initScene() {
+      const { scene, camera } = game;
+      scene.background = new THREE.Color('#87CEEB');
+      scene.fog = new THREE.Fog('#87CEEB', 45, 130);
+      camera.position.set(0, 1.6, 10);
+      
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.45);
+      scene.add(ambientLight);
+      
+      const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.25);
+      dirLight.position.set(18, 38, 12);
+      dirLight.castShadow = true;
+      dirLight.shadow.mapSize.width = 2048;
+      dirLight.shadow.mapSize.height = 2048;
+      dirLight.shadow.camera.near = 0.5;
+      dirLight.shadow.camera.far = 130;
+      dirLight.shadow.camera.left = -70;
+      dirLight.shadow.camera.right = 70;
+      dirLight.shadow.camera.top = 70;
+      dirLight.shadow.camera.bottom = -70;
+      dirLight.shadow.bias = -0.0008;
+      dirLight.shadow.radius = 2.2;
+      scene.add(dirLight);
+      
+      const fillLight = new THREE.PointLight(0xffaa77, 0.6);
+      fillLight.position.set(3, 5, 6);
+      scene.add(fillLight);
+      
+      const backLight = new THREE.PointLight(0x88aaff, 0.4);
+      backLight.position.set(-4, 5, -6);
+      scene.add(backLight);
+      
+      const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(110, 110),
+        new THREE.MeshStandardMaterial({ color: '#cab88c', roughness: 0.85, metalness: 0.05 })
+      );
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.position.y = -0.22;
+      groundMesh.receiveShadow = true;
+      groundMesh.castShadow = false;
+      groundMesh.name = 'ground';
+      scene.add(groundMesh);
+      
+      const gridHelper = new THREE.GridHelper(44, 32, '#b7a673', '#dfd0aa');
+      gridHelper.position.y = -0.18;
+      scene.add(gridHelper);
+      
+      game.cache.allPlaceables.push(groundMesh);
+      
+      const outlineDeco = new THREE.Mesh(
+        new THREE.BoxGeometry(22, 0.1, 22),
+        new THREE.MeshStandardMaterial({ color: '#aa9466', roughness: 0.4, metalness: 0.2 })
+      );
+      outlineDeco.position.set(0, -0.3, 0);
+      outlineDeco.receiveShadow = true;
+      scene.add(outlineDeco);
+    }
+
+    function initGeometries() {
+      const { geometries } = game.cache;
+      geometries.cube = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+      geometries.sphere = new THREE.SphereGeometry(0.52, 32, 32);
+      geometries.cylinder = new THREE.CylinderGeometry(0.52, 0.52, 0.96, 28);
+      
+      const previewMat = new THREE.MeshStandardMaterial({ 
+        color: 0x88aaff, 
+        emissive: 0x224466, 
+        transparent: true, 
+        opacity: 0.55, 
+        side: THREE.DoubleSide 
+      });
+      game.cache.previewMesh = new THREE.Mesh(geometries.sphere, previewMat);
+      game.cache.previewMesh.castShadow = false;
+      game.cache.previewMesh.receiveShadow = false;
+      game.scene.add(game.cache.previewMesh);
+    }
+
+    function createPlacedShape(type, color, position, isStatic = false) {
+      const { geometries } = game.cache;
+      let geo, cannonType, radius = 0.52;
+      if (type === 'cube') {
+        geo = geometries.cube;
+        cannonType = 'box';
+      } else if (type === 'sphere') {
+        geo = geometries.sphere;
+        cannonType = 'sphere';
+      } else {
+        geo = geometries.cylinder;
+        cannonType = 'cylinder';
+      }
+      
+      const mat = new THREE.MeshStandardMaterial({
+        color: color,
+        roughness: 0.5,
+        metalness: 0.2,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = 'placed-shape';
+      
+      const mass = isStatic ? 0 : 1;
+      const body = game.physics.createBody(position.x, position.y, position.z, mass, radius, cannonType);
+      mesh.userData.body = body;
+      body.userData = { mesh };
+      
+      game.scene.add(mesh);
+      const entry = { mesh, body };
+      game.cache.placedShapes.push(entry);
+      game.cache.allPlaceables.push(mesh);
+      return entry;
+    }
+
+    function getPlacement() {
+      const direction = new THREE.Vector3();
+      game.camera.getWorldDirection(direction);
+      game.raycaster.set(game.camera.position, direction);
+      const intersects = game.raycaster.intersectObjects(
+        game.cache.allPlaceables.filter(obj => obj !== game.cache.previewMesh)
+      );
+      if (intersects.length > 0) {
+        const hit = intersects[0];
+        let point = hit.point.clone();
+        const normal = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 1, 0);
+        if (hit.object.name === 'ground') normal.set(0, 1, 0);
+        normal.transformDirection(hit.object.matrixWorld);
+        normal.normalize();
+        point.addScaledVector(normal, 0.55);
+        point.y = Math.max(0.2, point.y);
+        
+        let valid = true;
+        for (let p of game.cache.placedShapes) {
+          if (p.mesh.position.distanceTo(point) < 0.95) {
+            valid = false;
+            break;
+          }
+        }
+        return { pos: point, valid: valid };
+      }
+      return { pos: null, valid: false };
+    }
+
+    function updateCoordsDisplay() {
+      document.getElementById('player-x').innerText = game.player.position.x.toFixed(2);
+      document.getElementById('player-y').innerText = game.player.position.y.toFixed(2);
+      document.getElementById('player-z').innerText = game.player.position.z.toFixed(2);
+      
+      const direction = new THREE.Vector3();
+      game.camera.getWorldDirection(direction);
+      game.raycaster.set(game.camera.position, direction);
+      const intersects = game.raycaster.intersectObjects(
+        game.cache.allPlaceables.filter(obj => obj !== game.cache.previewMesh)
+      );
+      if (intersects.length > 0) {
+        const hitPoint = intersects[0].point;
+        document.getElementById('aim-x').innerText = hitPoint.x.toFixed(2);
+        document.getElementById('aim-y').innerText = hitPoint.y.toFixed(2);
+        document.getElementById('aim-z').innerText = hitPoint.z.toFixed(2);
+      } else {
+        document.getElementById('aim-x').innerText = '—';
+        document.getElementById('aim-y').innerText = '—';
+        document.getElementById('aim-z').innerText = '—';
+      }
+    }
+
+    function initPlayer() {
+      document.addEventListener('click', () => {
+        if (!game.player.mouseLock) {
+          game.renderer.domElement.requestPointerLock();
+        }
+      });
+      document.addEventListener('pointerlockchange', () => {
+        game.player.mouseLock = document.pointerLockElement === game.renderer.domElement;
+        document.body.style.cursor = game.player.mouseLock ? 'none' : 'default';
+      });
+      
+      window.addEventListener('mousemove', (e) => {
+        if (!game.player.mouseLock || game.isDead) return;
+        const sens = 0.0022;
+        game.player.yaw -= e.movementX * sens;
+        game.player.pitch -= e.movementY * sens;
+        game.player.pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, game.player.pitch));
+      });
+      
+      window.addEventListener('keydown', (e) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w') game.player.moveState.w = true;
+        if (key === 's') game.player.moveState.s = true;
+        if (key === 'a') game.player.moveState.a = true;
+        if (key === 'd') game.player.moveState.d = true;
+        if (key === 'r') resetScene();
+        if (key === 't') toggleFreeze();
+        if (key === 'z') clearAllShapes();
+        if (['w','s','a','d','r','t','z'].includes(key)) e.preventDefault();
+      });
+      
+      window.addEventListener('keyup', (e) => {
+        const key = e.key.toLowerCase();
+        if (key === 'w') game.player.moveState.w = false;
+        if (key === 's') game.player.moveState.s = false;
+        if (key === 'a') game.player.moveState.a = false;
+        if (key === 'd') game.player.moveState.d = false;
+      });
+    }
+
+    function updatePlayer(delta) {
+      const camDir = game.camera.getWorldDirection(new THREE.Vector3());
+      const forward = new THREE.Vector3(camDir.x, 0, camDir.z).normalize();
+      const right = new THREE.Vector3(-forward.z, 0, forward.x);
+      let move = new THREE.Vector3(0, 0, 0);
+      if (game.player.moveState.w) move.add(forward);
+      if (game.player.moveState.s) move.sub(forward);
+      if (game.player.moveState.d) move.add(right);
+      if (game.player.moveState.a) move.sub(right);
+      if (move.length() > 0) move.normalize();
+      
+      game.player.position.x += move.x * game.player.speed * delta;
+      game.player.position.z += move.z * game.player.speed * delta;
+      game.player.position.x = Math.min(38, Math.max(-38, game.player.position.x));
+      game.player.position.z = Math.min(38, Math.max(-38, game.player.position.z));
+      game.player.position.y = 1.35;
+      
+      game.camera.position.copy(game.player.position);
+      const euler = new THREE.Euler(game.player.pitch, game.player.yaw, 0, 'YXZ');
+      game.camera.quaternion.setFromEuler(euler);
+    }
+
+    function handlePlaceRemove() {
+      window.addEventListener('mousedown', (e) => {
+        if (!game.player.mouseLock || game.isDead || game.timeFreeze) return;
+        if (e.button === 0) {
+          const placement = getPlacement();
+          if (placement.pos && placement.valid) {
+            const type = game.cache.currentType;
+            const color = game.cache.colors[type];
+            createPlacedShape(type, color, placement.pos, false);
+            document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+          }
+        } else if (e.button === 2) {
+          e.preventDefault();
+          const direction = new THREE.Vector3();
+          game.camera.getWorldDirection(direction);
+          game.raycaster.set(game.camera.position, direction);
+          const intersects = game.raycaster.intersectObjects(game.cache.placedShapes.map(s => s.mesh));
+          if (intersects.length > 0) {
+            const hitMesh = intersects[0].object;
+            const entry = game.cache.placedShapes.find(ent => ent.mesh === hitMesh);
+            if (entry) {
+              game.scene.remove(entry.mesh);
+              game.physics.removeBody(entry.body);
+              const idx = game.cache.placedShapes.indexOf(entry);
+              if (idx !== -1) game.cache.placedShapes.splice(idx, 1);
+              const idxAll = game.cache.allPlaceables.indexOf(entry.mesh);
+              if (idxAll !== -1) game.cache.allPlaceables.splice(idxAll, 1);
+              document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+            }
+          }
+        }
+      });
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    function resetScene() {
+      for (let ent of game.cache.placedShapes.slice()) {
+        game.scene.remove(ent.mesh);
+        game.physics.removeBody(ent.body);
+      }
+      game.cache.placedShapes = [];
+      game.cache.allPlaceables = game.cache.allPlaceables.filter(obj => obj.name === 'ground');
+      document.getElementById('obj-count').textContent = 0;
+      game.player.position.set(0, 1.35, 5);
+      game.player.yaw = -0.8;
+      game.player.pitch = 0.1;
+    }
+    
+    function clearAllShapes() {
+      for (let ent of game.cache.placedShapes.slice()) {
+        game.scene.remove(ent.mesh);
+        game.physics.removeBody(ent.body);
+      }
+      game.cache.placedShapes = [];
+      game.cache.allPlaceables = game.cache.allPlaceables.filter(obj => obj.name === 'ground' || obj === game.cache.previewMesh);
+      document.getElementById('obj-count').textContent = 0;
+    }
+    
+    function toggleFreeze() {
+      game.timeFreeze = !game.timeFreeze;
+      const statusDiv = document.getElementById('statusText');
+      const freezeBtn = document.getElementById('freezeBtn');
+      if (game.timeFreeze) {
+        game.physics.setGravity(false);
+        statusDiv.innerHTML = '❄️ 物理冻结';
+        freezeBtn.style.background = '#3a6ea5';
+        freezeBtn.textContent = '▶️';
+      } else {
+        game.physics.setGravity(true);
+        statusDiv.innerHTML = '⚡ 物理活跃';
+        freezeBtn.style.background = '#2c3e66';
+        freezeBtn.textContent = '⏸️';
+      }
+    }
+
+    function initEvents() {
+      handlePlaceRemove();
+      document.querySelectorAll('.tool-btn[data-type]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const type = btn.dataset.type;
+          game.cache.currentType = type;
+          document.querySelectorAll('.tool-btn[data-type]').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          // 更新预览模型形状
+          const geo = game.cache.geometries[type];
+          if (geo) game.cache.previewMesh.geometry = geo;
+        });
+      });
+      document.getElementById('freezeBtn').addEventListener('click', toggleFreeze);
+      document.getElementById('clearBtn').addEventListener('click', clearAllShapes);
+      document.querySelector('.tool-btn[data-type="cube"]').classList.add('active');
+    }
+
+    let lastTime = performance.now();
+    let fpsCounter = 0;
+    let fpsLastUpdate = performance.now();
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      const now = performance.now();
+      let delta = Math.min(0.033, (now - lastTime) / 1000);
+      lastTime = now;
+      if (delta < 0.003) delta = 0.016;
+      
+      if (!game.isDead && !game.timeFreeze) {
+        game.physics.step(delta);
+        for (let { mesh, body } of game.cache.placedShapes) {
+          mesh.position.copy(body.position);
+          mesh.quaternion.copy(body.quaternion);
+        }
+      }
+      updatePlayer(delta);
+      updateCoordsDisplay();
+      
+      if (game.player.mouseLock && !game.isDead && !game.timeFreeze) {
+        const placement = getPlacement();
+        if (placement.pos && placement.valid) {
+          game.cache.previewMesh.position.copy(placement.pos);
+          game.cache.previewMesh.visible = true;
+          game.cache.previewMesh.material.color.setHex(0xaaddff);
+        } else {
+          game.cache.previewMesh.visible = false;
+        }
+      } else {
+        game.cache.previewMesh.visible = false;
+      }
+      
+      fpsCounter++;
+      if (now - fpsLastUpdate >= 1000) {
+        document.getElementById('fps-val').textContent = fpsCounter;
+        fpsCounter = 0;
+        fpsLastUpdate = now;
+      }
+      document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+      
+      game.renderer.render(game.scene, game.camera);
+    }
+    
+    function start() {
+      initRenderer();
+      initScene();
+      initGeometries();
+      initPlayer();
+      initEvents();
+      // 添加几个演示物体
+      createPlacedShape('cube', '#e67e4a', new THREE.Vector3(2, 0.55, 2), false);
+      createPlacedShape('sphere', '#6ab04c', new THREE.Vector3(-1.5, 0.55, 1.8), false);
+      animate();
+    }
+    
+    start();
+  </script>
+</body>
+</html>

@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - 冻结悬浮版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      overflow: hidden; background: #000; user-select: none;
+    }
+    canvas { display: block; }
+
+    /* 开始界面优化 */
+    #start-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, rgba(15, 20, 40, 0.95) 0%, rgba(0, 0, 0, 0.98) 100%);
+      backdrop-filter: blur(12px);
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+      visibility: visible;
+    }
+    #start-overlay.hidden { 
+      opacity: 0; 
+      pointer-events: none;
+      visibility: hidden;
+    }
+
+    #start-box {
+      background: rgba(25, 30, 60, 0.98);
+      border: 2px solid rgba(255, 107, 107, 0.4);
+      border-radius: 24px;
+      padding: 45px 55px;
+      text-align: center;
+      color: #fff;
+      box-shadow: 0 0 80px rgba(255, 107, 107, 0.2), inset 0 0 20px rgba(255, 255, 255, 0.05);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 580px;
+      width: 92%;
+      line-height: 1.7;
+      position: relative;
+      overflow: hidden;
+    }
+    #start-box::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, rgba(255, 107, 107, 0.05) 0%, rgba(94, 205, 196, 0.05) 100%);
+      z-index: -1;
+    }
+    #start-box:hover { 
+      transform: translateY(-5px) scale(1.02); 
+      border-color: #ff6b6b;
+      box-shadow: 0 0 90px rgba(255, 107, 107, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.08);
+    }
+    #start-box:active { 
+      transform: translateY(0) scale(0.98); 
+    }
+    #start-box h1 { 
+      font-size: 2.4rem; 
+      margin-bottom: 18px; 
+      text-shadow: 0 0 15px rgba(255, 107, 107, 0.4);
+      background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    #start-box .subtitle { 
+      color: #ff6b6b; 
+      font-size: 1.2rem; 
+      margin-bottom: 20px; 
+      animation: pulse 1.8s infinite ease-in-out;
+      font-weight: 600;
+    }
+    @keyframes pulse { 
+      0%,100% { opacity:1; transform: scale(1); } 
+      50% { opacity:0.7; transform: scale(1.05); } 
+    }
+    #start-box p { 
+      color: #ccd6f6; 
+      margin: 8px 0; 
+      font-size: 0.95rem; 
+    }
+
+    /* HUD样式优化 */
+    .hud {
+      position: fixed; z-index: 20; pointer-events: none;
+      color: #e6f1ff;
+      background: rgba(15, 25, 50, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 12px 24px;
+      opacity: 0; 
+      transition: opacity 0.4s ease;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    .hud.visible { opacity: 1; }
+    #hud-top { 
+      top:20px; left:50%; transform:translateX(-50%); 
+      font-size:0.9rem; 
+      min-width: 320px;
+      text-align: center;
+    }
+    #hud-bottom { 
+      bottom:25px; left:50%; transform:translateX(-50%); 
+      font-size:0.8rem; 
+      display:flex; gap:20px; flex-wrap:wrap; justify-content:center;
+      max-width: 90%;
+    }
+
+    /* 形状指示器优化 */
+    .shape-dot { 
+      width:16px; height:16px; 
+      border-radius:4px; display:inline-block; 
+      border:2px solid rgba(255,255,255,0.7);
+      margin: 0 4px;
+      box-shadow: 0 0 8px rgba(0,0,0,0.3);
+    }
+    .shape-dot.sphere,.shape-dot.cone,.shape-dot.torus { border-radius:50%; }
+
+    /* 按键样式优化 */
+    .key { 
+      background:linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+      border:1px solid rgba(255,255,255,0.3); 
+      border-radius:6px; 
+      padding:4px 8px; 
+      font-size:0.75rem; 
+      font-weight:bold; 
+      margin:0 3px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      min-width: 24px;
+      display: inline-block;
+      text-align: center;
+    }
+
+    /* 性能统计优化 */
+    #stats {
+      position: fixed; top:20px; left:20px; z-index:30;
+      color:#a8f0f0; 
+      font-size:0.75rem; 
+      font-family:monospace;
+      background:rgba(0, 20, 40, 0.9); 
+      padding:8px 15px; 
+      border-radius:12px;
+      opacity:0; 
+      transition:opacity 0.4s ease;
+      border: 1px solid rgba(0, 210, 211, 0.3);
+      box-shadow: 0 4px 16px rgba(0, 210, 211, 0.1);
+    }
+    #stats.visible { opacity:1; }
+
+    /* 死亡界面优化 */
+    #death-overlay {
+      position:fixed; inset:0; 
+      background:radial-gradient(circle at center, rgba(0,0,0,0.9) 0%, rgba(40, 10, 10, 0.95) 100%); 
+      z-index:200;
+      display:flex; align-items:center; justify-content:center;
+      opacity:0; pointer-events:none; 
+      transition:opacity 0.5s ease;
+      backdrop-filter: blur(8px);
+    }
+    #death-overlay.active { opacity:1; pointer-events:auto; }
+
+    #death-box {
+      background:rgba(35, 20, 40, 0.98); 
+      border:1px solid rgba(255, 107, 107, 0.4);
+      border-radius:24px; 
+      padding:40px 50px; 
+      text-align:center; 
+      color:#fff;
+      box-shadow: 0 0 60px rgba(255, 107, 107, 0.3);
+      min-width: 320px;
+      max-width: 90%;
+    }
+    #death-box h2 { 
+      color:#ff6b6b; 
+      margin-bottom:15px; 
+      font-size: 1.8rem;
+      text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
+    }
+    #death-box button {
+      background:linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);
+      border:none; 
+      color:#fff; 
+      font-weight:bold;
+      padding:12px 30px; 
+      border-radius:25px; 
+      cursor:pointer; 
+      margin-top:15px;
+      transition:all 0.2s ease;
+      font-size: 0.95rem;
+      box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+    }
+    #death-box button:hover { 
+      background:linear-gradient(135deg, #ff8787 0%, #ffa0a0 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+    }
+    #death-box button:active {
+      transform: translateY(0);
+    }
+
+    /* 作弊面板优化 */
+    #cheat-panel {
+      position:fixed; top:20px; right:20px; z-index:9999;
+      width:280px; 
+      background:linear-gradient(180deg, #0f172a 0%, #081020 100%);
+      border:1px solid #00ff00;
+      font-family:monospace; 
+      color:#00ff00; 
+      padding:15px;
+      opacity:0; 
+      pointer-events:none; 
+      transition:opacity 0.3s ease, transform 0.3s ease;
+      max-height:85vh; 
+      overflow-y:auto;
+      box-shadow:0 0 20px rgba(0,255,0,0.4);
+      border-radius: 12px;
+      transform: translateX(20px);
+    }
+    #cheat-panel.visible { 
+      opacity:1; 
+      pointer-events:auto;
+      transform: translateX(0);
+    }
+    #cheat-panel h3 {
+      text-align: center;
+      margin-bottom: 15px;
+      font-size: 1.1rem;
+      text-shadow: 0 0 8px rgba(0,255,0,0.5);
+      border-bottom: 1px solid rgba(0,255,0,0.3);
+      padding-bottom: 8px;
+    }
+    .cheat-row {
+      margin: 10px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .cheat-divider {
+      height: 1px;
+      background: rgba(0,255,0,0.2);
+      margin: 12px 0;
+    }
+    .cheat-btn {
+      width: 100%;
+      padding: 8px;
+      margin: 6px 0;
+      background: rgba(0,255,0,0.1);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: monospace;
+    }
+    .cheat-btn:hover {
+      background: rgba(0,255,0,0.2);
+      box-shadow: 0 0 10px rgba(0,255,0,0.3);
+    }
+    #cheat-script-input {
+      width: 100%;
+      background: rgba(0,10,0,0.8);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      padding: 8px;
+      border-radius: 6px;
+      margin: 8px 0;
+      min-height: 80px;
+      font-family: monospace;
+      resize: vertical;
+    }
+    #cheat-panel input[type="range"],
+    #cheat-panel input[type="number"] {
+      width: 120px;
+      background: rgba(0,10,0,0.5);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      padding: 4px;
+      border-radius: 4px;
+    }
+    #cheat-panel input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #00ff00;
+    }
+
+    /* 滚动条美化 */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0,20,0,0.3);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #00ff00;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #00cc00;
+    }
+  </style>
+</head>
+<body>
+
+<div id="start-overlay">
+  <div id="start-box">
+    <h1>🎮 3D 物理沙盒</h1>
+    <p class="subtitle">👆 点击开始游戏</p>
+    <p>WASD 移动 · 空格跳跃 · 鼠标控制视角</p>
+    <p>左键放置 · 右键删除 · 滚轮切换形状</p>
+    <p style="font-size:0.9rem; margin-top:15px; line-height: 1.8;">
+      <span class="key">1-5</span>形状 &nbsp;&nbsp;
+      <span class="key">R</span>换色 &nbsp;&nbsp;
+      <span class="key">G</span>吸引 &nbsp;&nbsp;
+      <span class="key">H</span>推远 &nbsp;&nbsp;
+      <span class="key">B</span>爆炸<br>
+      <span class="key">V</span>全吸 &nbsp;&nbsp;
+      <span class="key">N</span>反重力 &nbsp;&nbsp;
+      <span class="key">F</span>重生 &nbsp;&nbsp;
+      <span class="key">U</span>鼠标 &nbsp;&nbsp;
+      <span class="key">K</span>冻结放置<br>
+      <span class="key">~</span>面板
+    </p>
+  </div>
+</div>
+
+<div id="stats">📦 <span id="obj-count">0</span> ⚡ <span id="fps-val">60</span> FPS</div>
+<div id="hud-top" class="hud">
+  形状: <span id="shape-dot" class="shape-dot" style="background:#ff6b6b;"></span>
+  <span id="shape-name">立方体</span> | 颜色: 
+  <span id="color-dot" style="width:16px;height:16px;border-radius:50%;background:#ff6b6b;display:inline-block;border:2px solid rgba(255,255,255,0.7);"></span>
+</div>
+<div id="hud-bottom" class="hud">
+  <span><span class="key">1-5</span>形状</span>
+  <span><span class="key">R</span>换色</span>
+  <span><span class="key">G</span>吸引</span>
+  <span><span class="key">H</span>推远</span>
+  <span><span class="key">B</span>爆炸</span>
+  <span><span class="key">F</span>重生</span>
+  <span><span class="key">U</span>鼠标</span>
+  <span><span class="key">K</span>冻结放置</span>
+  <span><span class="key">~</span>面板</span>
+</div>
+
+<div id="death-overlay">
+  <div id="death-box">
+    <h2>💀 掉出世界了</h2>
+    <p>按 F 重生 或 点击下方按钮</p>
+    <button id="respawn-btn">🔄 重生</button>
+  </div>
+</div>
+
+<div id="cheat-panel">
+  <h3>⚡ 控制台</h3>
+  <div class="cheat-row"><label>🕊️ 飞行</label><input type="checkbox" id="cheat-fly"></div>
+  <div class="cheat-row"><label>👑 上帝模式</label><input type="checkbox" id="cheat-god"></div>
+  <div class="cheat-row"><label>🎯 无限放置</label><input type="checkbox" id="cheat-range"></div>
+  <div class="cheat-row"><label>⚡ 自动放置</label><input type="checkbox" id="cheat-auto"></div>
+  <div class="cheat-divider"></div>
+  <div class="cheat-row"><label>重力</label><input type="range" id="cheat-gravity" min="-20" max="20" value="-12" step="0.5"></div>
+  <div class="cheat-row"><label>速度</label><input type="range" id="cheat-speed" min="2" max="30" value="8" step="0.5"></div>
+  <div class="cheat-row"><label>跳跃</label><input type="range" id="cheat-jump" min="2" max="20" value="8" step="0.5"></div>
+  <div class="cheat-row"><label>力度</label><input type="range" id="cheat-force" min="500" max="5000" value="1500" step="100"></div>
+  <div class="cheat-divider"></div>
+  <div class="cheat-row"><label>批量数量</label><input type="number" id="cheat-batch" value="100" min="1" max="5000"></div>
+  <button class="cheat-btn" id="btn-spawn-batch">💣 批量生成</button>
+  <button class="cheat-btn" id="btn-clear">🗑️ 清空世界</button>
+  <button class="cheat-btn" id="btn-random-color">🎨 随机颜色</button>
+  <div class="cheat-divider"></div>
+  <label>📜 脚本 (回车执行)</label>
+  <textarea id="cheat-script-input">// setGravity(-2); spawnSphere(0,5,0);</textarea>
+  <button class="cheat-btn" id="btn-exec-script">▶️ 执行脚本</button>
+</div>
+
+<script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script>
+class SimplePhysics {
+  constructor() {
+    this.gravity = -12;
+    this.bodies = [];
+    this.groundY = -0.2;
+  }
+  createBody(x, y, z, mass=1, size=0.5) {
+    const body = {
+      position: { x, y, z }, velocity: { x:0, y:0, z:0 },
+      mass, size, isStatic: mass===0, isSleeping: false, sleepTimer:0
+    };
+    this.bodies.push(body);
+    return body;
+  }
+  removeBody(body) {
+    const i = this.bodies.indexOf(body);
+    if(i!==-1) this.bodies.splice(i,1);
+  }
+  step(dt) {
+    const subDt = dt/3;
+    for(let s=0;s<3;s++){
+      for(const b of this.bodies){
+        if(b.isStatic||b.isSleeping)continue;
+        b.velocity.y += this.gravity * subDt;
+        const bottom = b.position.y - b.size;
+        if(bottom < this.groundY){
+          b.position.y = this.groundY + b.size;
+          if(b.velocity.y<0){ b.velocity.y*=-0.3; b.velocity.x*=0.8; b.velocity.z*=0.8; }
+        }
+        const lim=17.5;
+        if(Math.abs(b.position.x)>lim){ b.position.x=Math.sign(b.position.x)*lim; b.velocity.x*=-0.3; }
+        if(Math.abs(b.position.z)>lim){ b.position.z=Math.sign(b.position.z)*lim; b.velocity.z*=-0.3; }
+        b.position.x += b.velocity.x*subDt;
+        b.position.y += b.velocity.y*subDt;
+        b.position.z += b.velocity.z*subDt;
+        b.velocity.x*=0.995; b.velocity.y*=0.995; b.velocity.z*=0.995;
+        const sp = Math.hypot(b.velocity.x,b.velocity.y,b.velocity.z);
+        if(sp<0.01){ b.sleepTimer+=subDt; if(b.sleepTimer>1){ b.isSleeping=true; b.velocity.x=b.velocity.y=b.velocity.z=0; } }
+        else b.sleepTimer=0;
+      }
+      for(let i=0;i<this.bodies.length;i++){
+        for(let j=i+1;j<this.bodies.length;j++){
+          const a=this.bodies[i], b=this.bodies[j];
+          if(a.isSleeping&&b.isSleeping)continue;
+          if(a.isStatic&&b.isStatic)continue;
+          const dx=b.position.x-a.position.x, dy=b.position.y-a.position.y, dz=b.position.z-a.position.z;
+          const d=Math.hypot(dx,dy,dz), minD=a.size+b.size;
+          if(d<minD&&d>0.001){
+            const nx=dx/d, ny=dy/d, nz=dz/d, overlap=minD-d;
+            if(!a.isStatic&&!b.isStatic){
+              const tm=a.mass+b.mass;
+              a.position.x-=nx*overlap*(b.mass/tm); a.position.y-=ny*overlap*(b.mass/tm); a.position.z-=nz*overlap*(b.mass/tm);
+              b.position.x+=nx*overlap*(a.mass/tm); b.position.y+=ny*overlap*(a.mass/tm); b.position.z+=nz*overlap*(a.mass/tm);
+            }else if(a.isStatic){ b.position.x+=nx*overlap; b.position.y+=ny*overlap; b.position.z+=nz*overlap; }
+            else if(b.isStatic){ a.position.x-=nx*overlap; a.position.y-=ny*overlap; a.position.z-=nz*overlap; }
+            a.isSleeping=a.sleepTimer=0; b.isSleeping=b.sleepTimer=0;
+          }
+        }
+      }
+    }
+  }
+  applyForce(b,fx,fy,fz){ if(b.isStatic)return; b.isSleeping=b.sleepTimer=0; b.velocity.x+=fx/b.mass; b.velocity.y+=fy/b.mass; b.velocity.z+=fz/b.mass; }
+  applyImpulse(b,ix,iy,iz){ if(b.isStatic)return; b.isSleeping=b.sleepTimer=0; b.velocity.x+=ix/b.mass; b.velocity.y+=iy/b.mass; b.velocity.z+=iz/b.mass; }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+const physics = new SimplePhysics();
+
+const startOverlay = document.getElementById('start-overlay');
+const startBox = document.getElementById('start-box');
+const hudTop = document.getElementById('hud-top');
+const hudBottom = document.getElementById('hud-bottom');
+const shapeDot = document.getElementById('shape-dot');
+const shapeNameEl = document.getElementById('shape-name');
+const colorDot = document.getElementById('color-dot');
+const deathOverlay = document.getElementById('death-overlay');
+const respawnBtn = document.getElementById('respawn-btn');
+const cheatPanel = document.getElementById('cheat-panel');
+const stats = document.getElementById('stats');
+const objCountSpan = document.getElementById('obj-count');
+const fpsSpan = document.getElementById('fps-val');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#87CEEB');
+scene.fog = new THREE.Fog('#87CEEB',45,130);
+const camera = new THREE.PerspectiveCamera(68, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(0,1.6,10);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight('#bcd4f0',0.8));
+const sun = new THREE.DirectionalLight('#fff8e7',4.5);
+sun.position.set(20,30,10);
+sun.castShadow=true;
+sun.shadow.mapSize.width=sun.shadow.mapSize.height=1024;
+sun.shadow.camera.near=0.5; sun.shadow.camera.far=100;
+sun.shadow.camera.left=sun.shadow.camera.right=30;
+sun.shadow.camera.top=30; sun.shadow.camera.bottom=-30;
+scene.add(sun);
+
+const sharedGeos = {
+  cube: new THREE.BoxGeometry(0.95,0.95,0.95),
+  sphere: new THREE.SphereGeometry(0.48,20,20),
+  cylinder: new THREE.CylinderGeometry(0.48,0.48,0.95,20),
+  cone: new THREE.ConeGeometry(0.48,0.95,20),
+  torus: new THREE.TorusGeometry(0.4,0.18,10,20)
+};
+
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(36,36),
+  new THREE.MeshStandardMaterial({color:'#d5c4a1',roughness:0.75})
+);
+groundMesh.rotation.x=-Math.PI/2;
+groundMesh.position.y=-0.2;
+groundMesh.receiveShadow=true;
+groundMesh.name='ground';
+scene.add(groundMesh);
+scene.add(new THREE.GridHelper(36,36,'#c4b99a','#e0d5c0'));
+
+const shapeTypes=['cube','sphere','cylinder','cone','torus'];
+const shapeNames=['立方体','球体','圆柱体','圆锥','圆环'];
+let shapeIndex=0;
+const colors=['#ff6b6b','#ff9f43','#feca57','#54a0ff','#5f27cd','#00d2d3','#55efc4','#fd79a8','#ffffff','#e056a0'];
+let colorIndex=0;
+const getType=()=>shapeTypes[shapeIndex];
+const getColor=()=>colors[colorIndex];
+
+function updateHUD(){
+  shapeDot.style.background=getColor();
+  shapeDot.className='shape-dot '+getType();
+  shapeNameEl.textContent=shapeNames[shapeIndex];
+  colorDot.style.background=getColor();
+}
+
+const placedShapes=[];
+const allPlaceables=[groundMesh];
+const undoStack=[];
+
+function createPlacedShape(type,color,pos,isStatic=false){
+  const geo=sharedGeos[type]||sharedGeos.cube;
+  const mat=new THREE.MeshStandardMaterial({color,roughness:0.35,metalness:0.05});
+  const mesh=new THREE.Mesh(geo,mat);
+  mesh.position.copy(pos);
+  mesh.castShadow=mesh.receiveShadow=true;
+  mesh.name='placed-shape';
+  
+  const body=physics.createBody(pos.x,pos.y,pos.z,isStatic?0:1,0.48);
+  mesh.userData.body=body;
+  body.userData={mesh};
+  scene.add(mesh);
+  const entry={mesh,body};
+  placedShapes.push(entry);
+  allPlaceables.push(mesh);
+  return entry;
+}
+
+function removeEntry(entry){
+  if(!entry)return;
+  physics.removeBody(entry.body);
+  scene.remove(entry.mesh);
+  const i=placedShapes.indexOf(entry);
+  if(i!==-1)placedShapes.splice(i,1);
+  const j=allPlaceables.indexOf(entry.mesh);
+  if(j!==-1)allPlaceables.splice(j,1);
+  if(entry.mesh.material)entry.mesh.material.dispose();
+}
+
+[
+  ['cube',3,1,-2,'#ff6b6b'],['cube',3,2,-2,'#ff9f43'],
+  ['sphere',-3,1,1,'#4ecdc4'],['cylinder',0,1,-4,'#ffe66d'],
+  ['cube',-1,1,-3,'#a29bfe'],['sphere',5,1,3,'#55efc4']
+].forEach(([t,x,y,z,c])=>createPlacedShape(t,c,new THREE.Vector3(x,y,z)));
+
+const previewMat=new THREE.MeshStandardMaterial({
+  color:getColor(),roughness:0.3,transparent:true,opacity:0.35,depthWrite:false
+});
+const previewMesh=new THREE.Mesh(sharedGeos.cube,previewMat);
+previewMesh.visible=false;
+previewMesh.renderOrder=999;
+scene.add(previewMesh);
+
+function refreshPreview(){
+  previewMesh.geometry=sharedGeos[getType()]||sharedGeos.cube;
+  previewMat.color.set(getColor());
+}
+
+const raycaster=new THREE.Raycaster();
+raycaster.far=30;
+
+function getPlacement(){
+  raycaster.setFromCamera(new THREE.Vector2(0,0),camera);
+  const hits=raycaster.intersectObjects(allPlaceables,false);
+  if(hits.length>0){
+    const p=hits[0].point.clone();
+    const n=hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+    const pos=p.add(n.multiplyScalar(0.475));
+    pos.x=THREE.MathUtils.clamp(pos.x,-17.5,17.5);
+    pos.z=THREE.MathUtils.clamp(pos.z,-17.5,17.5);
+    pos.y=Math.max(pos.y,0.3);
+    return {pos,valid:true};
+  }
+  return {pos:null,valid:false};
+}
+
+const euler=new THREE.Euler(0,0,0,'YXZ');
+euler.setFromQuaternion(camera.quaternion);
+let mouseSensitivity=0.002;
+
+document.addEventListener('mousemove',e=>{
+  if(document.pointerLockElement!==renderer.domElement||isDead)return;
+  const mx=e.movementX||e.mozMovementX||e.webkitMovementX||0;
+  const my=e.movementY||e.mozMovementY||e.webkitMovementY||0;
+  euler.setFromQuaternion(camera.quaternion);
+  euler.y-=mx*mouseSensitivity;
+  euler.x-=my*mouseSensitivity;
+  euler.x=Math.max(-Math.PI/2.2,Math.min(Math.PI/2.2,euler.x));
+  camera.quaternion.setFromEuler(euler);
+});
+
+const playerBody=physics.createBody(0,2,8,1,0.35);
+let isLocked=false,isDead=false,panelVisible=false;
+let cheatFly=false,cheatGod=false,cheatRange=false,cheatAuto=false;
+let moveSpeed=8,jumpForce=8,forceStrength=1500,timeFreeze=false;
+let holdK=false;
+const keys={};
+
+function isOnGround(){
+  if(cheatFly)return true;
+  return playerBody.position.y<=0.5;
+}
+
+function resetPlayer(){
+  playerBody.position.x=0; playerBody.position.y=2; playerBody.position.z=8;
+  playerBody.velocity.x=0; playerBody.velocity.y=0; playerBody.velocity.z=0;
+  physics.gravity=-12; document.getElementById('cheat-gravity').value=-12;
+  camera.position.set(0,2.6,8);
+  euler.set(0,0,0,'YXZ');
+  camera.quaternion.setFromEuler(euler);
+  previewMesh.visible=false;
+  isDead=false; timeFreeze=false;
+}
+
+function die(){
+  if(isDead||cheatGod)return;
+  isDead=true;
+  document.exitPointerLock();
+  deathOverlay.classList.add('active');
+  startOverlay.classList.add('hidden');
+}
+
+function respawn(){ resetPlayer(); deathOverlay.classList.remove('active'); }
+
+document.addEventListener('pointerlockchange',()=>{
+  if(window.__FROM_U_KEY) return;
+  isLocked=document.pointerLockElement===renderer.domElement;
+  if(isLocked){
+    startOverlay.classList.add('hidden');
+    hudTop.classList.add('visible');
+    hudBottom.classList.add('visible');
+    stats.classList.add('visible');
+    previewMesh.visible=true;
+  }else{
+    if(!isDead) startOverlay.classList.remove('hidden');
+    hudTop.classList.remove('visible');
+    hudBottom.classList.remove('visible');
+    stats.classList.remove('visible');
+    previewMesh.visible=false;
+  }
+});
+
+startBox.addEventListener('click',e=>{
+  e.stopPropagation();
+  if(!isLocked&&!isDead) renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='KeyK') holdK=true;
+  if(e.code==='Digit1'){shapeIndex=0;updateHUD();refreshPreview();}
+  if(e.code==='Digit2'){shapeIndex=1;updateHUD();refreshPreview();}
+  if(e.code==='Digit3'){shapeIndex=2;updateHUD();refreshPreview();}
+  if(e.code==='Digit4'){shapeIndex=3;updateHUD();refreshPreview();}
+  if(e.code==='Digit5'){shapeIndex=4;updateHUD();refreshPreview();}
+  if(e.code==='KeyR'&&!e.ctrlKey&&!e.metaKey){
+    colorIndex=(colorIndex+1)%colors.length; updateHUD();refreshPreview();
+  }
+  if(e.code==='Space'&&isLocked&&!isDead&&isOnGround()){
+    e.preventDefault(); if(!cheatFly)playerBody.velocity.y=jumpForce;
+  }
+  if(e.code==='Backquote'){
+    e.preventDefault(); panelVisible=!panelVisible; cheatPanel.classList.toggle('visible',panelVisible);
+  }
+  if(e.code==='Enter'&&panelVisible){e.preventDefault();execScript();}
+  if(e.code==='KeyZ'&&(e.ctrlKey||e.metaKey)&&isLocked&&!isDead){
+    e.preventDefault(); if(undoStack.length>0)undoStack.pop()?.entries?.forEach(removeEntry);
+  }
+  if(e.code==='KeyF'){ e.preventDefault(); resetPlayer(); }
+
+  if(e.code==='KeyU'){
+    e.preventDefault();
+    window.__FROM_U_KEY = true;
+    if(document.pointerLockElement === renderer.domElement){
+      document.exitPointerLock();
+    }else{
+      renderer.domElement.requestPointerLock();
+    }
+    setTimeout(()=>{window.__FROM_U_KEY=false;},50);
+  }
+
+  if(e.code==='KeyN'){
+    physics.gravity=physics.gravity<0?4:-12;
+    document.getElementById('cheat-gravity').value=physics.gravity;
+  }
+});
+
+document.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='KeyK') holdK=false;
+});
+
+document.addEventListener('wheel',e=>{
+  if(!isLocked||isDead)return;
+  e.preventDefault();
+  shapeIndex=(shapeIndex+(e.deltaY>0?1:-1)+shapeTypes.length)%shapeTypes.length;
+  updateHUD();refreshPreview();
+},{passive:false});
+
+document.addEventListener('mousedown',e=>{
+  if(!isLocked||isDead)return;
+  if(e.button===0){
+    const info=getPlacement();
+    if(info.valid&&info.pos&&(cheatRange||info.pos.distanceTo(camera.position)>=0.9)){
+      // ========== 按住K = 冻结悬浮放置 ==========
+      createPlacedShape(getType(),getColor(),info.pos, holdK);
+    }
+  }
+  if(e.button===2){
+    raycaster.setFromCamera(new THREE.Vector2(0,0),camera);
+    const hits=raycaster.intersectObjects(allPlaceables,false);
+    if(hits.length>0&&hits[0].object.name==='placed-shape'){
+      const entry=placedShapes.find(s=>s.mesh===hits[0].object);
+      if(entry)removeEntry(entry);
+    }
+  }
+});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+function applyForce(attract){
+  const pp=playerBody.position;
+  placedShapes.forEach(({body})=>{
+    const dx=pp.x-body.position.x; const dy=pp.y-body.position.y; const dz=pp.z-body.position.z;
+    const dist=Math.hypot(dx,dy,dz);
+    if(dist<8&&dist>0.3){
+      const power=(1-dist/8)*forceStrength;
+      const fx=(dx/dist)*power; const fy=(dy/dist)*power; const fz=(dz/dist)*power;
+      if(!attract){ physics.applyForce(body,-fx,-fy,-fz); }
+      else{ physics.applyForce(body,fx,fy,fz); }
+    }
+  });
+}
+
+function explode(){
+  const pp=playerBody.position;
+  placedShapes.forEach(({body})=>{
+    const dx=body.position.x-pp.x, dy=body.position.y-pp.y, dz=body.position.z-pp.z;
+    const d=Math.hypot(dx,dy,dz);
+    if(d<10&&d>0.3){
+      const s=(1-d/10)*forceStrength*0.7; const invD=1/d;
+      physics.applyImpulse(body,dx*invD*s,(dy+0.5)*invD*s,dz*invD*s);
+    }
+  });
+}
+
+function vacuumToPlayer(){
+  const pp=playerBody.position;
+  placedShapes.forEach(({body})=>{
+    const dx=pp.x-body.position.x, dy=pp.y+0.5-body.position.y, dz=pp.z-body.position.z;
+    const d=Math.hypot(dx,dy,dz);
+    if(d>1&&d<15)physics.applyImpulse(body,dx*12,dy*12,dz*12);
+  });
+}
+
+function execScript(){
+  const code=document.getElementById('cheat-script-input').value.trim();
+  if(!code)return;
+  try{
+    const ctx={physics,scene,camera,playerBody,placedShapes,createPlacedShape,removeEntry,getColor,getType,
+      setGravity:v=>{physics.gravity=v;document.getElementById('cheat-gravity').value=v;},
+      setSpeed:v=>{moveSpeed=v;document.getElementById('cheat-speed').value=v;},
+      spawnSphere:(x,y,z,c)=>createPlacedShape('sphere',c||getColor(),new THREE.Vector3(x,y,z)),
+      clearAll:()=>{while(placedShapes.length)removeEntry(placedShapes[0]);undoStack.length=0;},log:console.log};
+    new Function(...Object.keys(ctx),code)(...Object.values(ctx));
+  }catch(err){console.error('脚本错误:',err);}
+}
+
+document.getElementById('cheat-fly').addEventListener('change',e=>cheatFly=e.target.checked);
+document.getElementById('cheat-god').addEventListener('change',e=>cheatGod=e.target.checked);
+document.getElementById('cheat-range').addEventListener('change',e=>cheatRange=e.target.checked);
+document.getElementById('cheat-auto').addEventListener('change',e=>cheatAuto=e.target.checked);
+document.getElementById('cheat-gravity').addEventListener('input',e=>physics.gravity=parseFloat(e.target.value));
+document.getElementById('cheat-speed').addEventListener('input',e=>moveSpeed=parseFloat(e.target.value));
+document.getElementById('cheat-jump').addEventListener('input',e=>jumpForce=parseFloat(e.target.value));
+document.getElementById('cheat-force').addEventListener('input',e=>forceStrength=parseFloat(e.target.value));
+document.getElementById('btn-spawn-batch').addEventListener('click',()=>{
+  const n=Math.min(parseInt(document.getElementById('cheat-batch').value)||100,500);
+  const t=getType(),c=getColor();
+  const dir=new THREE.Vector3();camera.getWorldDirection(dir);
+  const base=camera.position.clone().add(dir.multiplyScalar(3));
+  const batch=[];
+  for(let i=0;i<n;i++){
+    const a=(i/n)*Math.PI*2+Math.random()*0.3;
+    const r=1.5+Math.random()*3.5;
+    batch.push(createPlacedShape(t,c,new THREE.Vector3(
+      base.x+Math.cos(a)*r,base.y+Math.random()*2.5,base.z+Math.sin(a)*r
+    )));
+  }
+  undoStack.push({entries:batch});
+});
+document.getElementById('btn-clear').addEventListener('click',()=>{
+  while(placedShapes.length)removeEntry(placedShapes[0]);undoStack.length=0;
+});
+document.getElementById('btn-random-color').addEventListener('click',()=>{
+  colorIndex=Math.floor(Math.random()*colors.length);updateHUD();refreshPreview();
+});
+document.getElementById('btn-exec-script').addEventListener('click',execScript);
+respawnBtn.addEventListener('click',respawn);
+
+const clock=new THREE.Clock();
+let fpsFrames=0,fpsTime=performance.now();
+let previewTimer=0;
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=Math.min(clock.getDelta(),0.2);
+  if(isLocked&&!isDead&&!timeFreeze){
+    if(keys.KeyG)applyForce(true); if(keys.KeyH)applyForce(false); if(keys.KeyB)explode(); if(keys.KeyV)vacuumToPlayer();
+    if(cheatAuto){
+      if(!keys._autoT)keys._autoT=0; keys._autoT+=dt;
+      if(keys._autoT>0.1){ keys._autoT=0; const info=getPlacement(); if(info.valid&&info.pos)createPlacedShape(getType(),getColor(),info.pos); }
+    }
+    if(cheatFly){
+      let f=0,r=0,u=0;
+      if(keys.KeyW)f++;if(keys.KeyS)f--; if(keys.KeyA)r--;if(keys.KeyD)r++;
+      if(keys.Space)u++;if(keys.ShiftLeft||keys.ShiftRight)u--;
+      const fwd=new THREE.Vector3();camera.getWorldDirection(fwd);fwd.y=0;
+      if(fwd.length()>0.001)fwd.normalize();
+      const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+      const move=new THREE.Vector3().addScaledVector(fwd,f).addScaledVector(right,r);move.y+=u;
+      if(move.length()>0.001){ move.normalize().multiplyScalar(moveSpeed*dt);
+        playerBody.position.x+=move.x;playerBody.position.y+=move.y;playerBody.position.z+=move.z; }
+      camera.position.copy(playerBody.position); camera.position.y+=0.6;
+    }else{
+      let f=0,r=0; if(keys.KeyW)f++;if(keys.KeyS)f--; if(keys.KeyA)r--;if(keys.KeyD)r++;
+      const fwd=new THREE.Vector3();camera.getWorldDirection(fwd);fwd.y=0;
+      if(fwd.length()>0.001)fwd.normalize();
+      const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+      const dir=new THREE.Vector3().addScaledVector(fwd,f).addScaledVector(right,r);
+      if(dir.length()>0.001){dir.normalize();playerBody.velocity.x=dir.x*moveSpeed;playerBody.velocity.z=dir.z*moveSpeed;}
+    }
+    previewTimer+=dt;
+    if(previewTimer>0.05){ previewTimer=0;
+      const info=getPlacement();
+      if(info.valid&&info.pos&&(cheatRange||info.pos.distanceTo(camera.position)>=0.9)){ previewMesh.position.copy(info.pos);previewMesh.visible=true;previewMat.color.set(getColor()); }
+      else previewMesh.visible=false;
+    }
+  }
+  if(!timeFreeze)physics.step(dt);
+  placedShapes.forEach(({mesh,body})=>{if(!body.isStatic)mesh.position.copy(body.position);});
+  if(!cheatFly&&isLocked)camera.position.set(playerBody.position.x,playerBody.position.y+0.6,playerBody.position.z);
+  if(!isDead&&!cheatGod&&playerBody.position.y<-15)die();
+  fpsFrames++;
+  const now=performance.now();
+  if(now-fpsTime>=500){
+    const fps=Math.round(fpsFrames/((now-fpsTime)/1000));
+    fpsFrames=0;fpsTime=now;
+    objCountSpan.textContent=placedShapes.length;
+    fpsSpan.textContent=fps;
+  }
+  renderer.render(scene,camera);
+}
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+resetPlayer(); refreshPreview(); updateHUD(); requestAnimationFrame(animate);
+</script>
+</body>
+</html>

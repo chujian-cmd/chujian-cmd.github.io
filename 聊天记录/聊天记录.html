@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>微信聊天记录</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f0f0;
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; padding: 12px;
+        }
+        .phone-frame {
+            width: 100%; max-width: 420px; height: 780px;
+            background-color: #f5f5f5; border-radius: 36px;
+            box-shadow: 0 20px 40px rgba(0,0,0,.15), 0 4px 12px rgba(0,0,0,.1);
+            display: flex; flex-direction: column; overflow: hidden;
+            position: relative; border: 1px solid rgba(0,0,0,.08);
+        }
+        .page {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            background-color: #f5f5f5;
+            transition: transform .3s ease;
+        }
+        .page.hidden-left { transform: translateX(-100%); }
+        .page.hidden-right { transform: translateX(100%); }
+        .status-bar {
+            background-color: #ededed; padding: 12px 20px 8px;
+            display: flex; justify-content: space-between;
+            font-size: 14px; font-weight: 600; color: #1a1a1a;
+            border-bottom: 1px solid #d9d9d9; flex-shrink: 0;
+        }
+        .status-left, .status-right { display: flex; gap: 6px; align-items: center; }
+        .nav-bar {
+            background-color: #ededed; padding: 10px 16px;
+            display: flex; align-items: center; justify-content: space-between;
+            border-bottom: 1px solid #d9d9d9; flex-shrink: 0;
+        }
+        .nav-back, .nav-more { font-size: 22px; color: #1a1a1a; width: 32px; }
+        .nav-back { text-align: left; cursor: pointer; user-select: none; }
+        .nav-more { text-align: right; letter-spacing: 1px; }
+        .nav-title { font-size: 17px; font-weight: 600; color: #1a1a1a; flex: 1; text-align: center; }
+        .chat-container {
+            flex: 1; overflow-y: auto; padding: 16px 14px 12px;
+            display: flex; flex-direction: column; gap: 16px;
+            scroll-behavior: smooth;
+        }
+        .chat-container::-webkit-scrollbar { width: 4px; }
+        .chat-container::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,.15); border-radius: 8px; }
+        .message-row { display: flex; align-items: flex-start; gap: 10px; max-width: 100%; animation: fadeIn .2s ease; }
+        .avatar {
+            width: 44px; height: 44px; border-radius: 12px;
+            background: linear-gradient(145deg, #5e9bff, #3a7aff);
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-weight: 600; font-size: 20px; flex-shrink: 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,.05); user-select: none;
+        }
+        .avatar.other { background: linear-gradient(145deg, #6ecf7a, #48b85a); }
+        .bubble-wrapper { display: flex; flex-direction: column; max-width: calc(100% - 70px); }
+        .bubble {
+            background-color: #fff; padding: 12px 16px; border-radius: 18px;
+            border-top-left-radius: 4px; font-size: 15px; line-height: 1.5;
+            color: #1a1a1a; word-break: break-word;
+            box-shadow: 0 1px 2px rgba(0,0,0,.04); border: 1px solid #e9e9e9;
+        }
+        .timestamp { font-size: 11px; color: #8e8e93; margin-top: 5px; margin-left: 4px; }
+        .history-card {
+            background-color: #fff; border-radius: 16px;
+            border: 1px solid #e0e0e0; padding: 12px 14px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.02);
+            max-width: 100%; cursor: pointer;
+            transition: background-color .15s ease, box-shadow .15s ease;
+        }
+        .history-card:hover { background-color: #fafafa; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+        .history-card:active { background-color: #f0f0f0; }
+        .history-title {
+            font-size: 13px; font-weight: 600; color: #6c6c70;
+            margin-bottom: 8px; display: flex; align-items: center;
+            justify-content: space-between;
+        }
+        .history-title::before { content: "📋 聊天记录"; font-size: 13px; }
+        .history-arrow { color: #b0b0b5; font-size: 16px; font-weight: 400; }
+        .preview-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+        .preview-tag {
+            display: inline-flex; align-items: center; gap: 4px;
+            background-color: #f2f2f7; padding: 3px 8px; border-radius: 10px;
+            font-size: 11px; color: #1c1c1e; border: 1px solid #e5e5ea;
+        }
+        .preview-tag::before { font-size: 12px; }
+        .preview-tag.video::before { content: "🎬"; }
+        .preview-tag.file::before { content: "📄"; }
+        .preview-tag.image::before { content: "🖼️"; }
+        .preview-tag.text::before { content: "💬"; }
+        .history-list { display: flex; flex-direction: column; gap: 14px; }
+        .history-item { display: flex; flex-direction: column; gap: 4px; }
+        .history-time { font-size: 10px; color: #a0a0a5; margin-bottom: 2px; }
+        .history-bubble {
+            background-color: #f2f2f7; padding: 8px 12px; border-radius: 14px;
+            border-top-left-radius: 4px; font-size: 13px; line-height: 1.4;
+            color: #1c1c1e; border: 1px solid #e5e5ea; align-self: flex-start;
+            max-width: 100%; word-break: break-word;
+        }
+        .file-tag, .video-tag, .image-tag {
+            display: inline-flex; align-items: center; gap: 6px;
+            background-color: #e9e9ed; padding: 5px 10px; border-radius: 14px;
+            font-size: 12px; font-weight: 500; color: #1c1c1e;
+            border: 1px solid #dadade; width: fit-content;
+            text-decoration: none; cursor: pointer;
+        }
+        .file-tag::before { content: "📄"; font-size: 14px; }
+        .video-tag::before { content: "🎬"; font-size: 14px; }
+        .image-tag::before { content: "🖼️"; font-size: 14px; }
+        .image-message { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+        .base64-image {
+            max-width: 100%; max-height: 240px; border-radius: 14px;
+            border: 1px solid #e0e0e0; box-shadow: 0 2px 8px rgba(0,0,0,.06);
+            object-fit: cover; background-color: #fafafa; cursor: pointer;
+            transition: transform .15s ease;
+        }
+        .base64-image:hover { transform: scale(1.01); }
+        .base64-video {
+            max-width: 100%; max-height: 240px; border-radius: 14px;
+            border: 1px solid #e0e0e0; box-shadow: 0 2px 8px rgba(0,0,0,.06);
+            background-color: #000;
+        }
+        .base64-file {
+            display: inline-flex; align-items: center; gap: 8px;
+            background-color: #e9e9ed; padding: 8px 12px; border-radius: 14px;
+            font-size: 12px; font-weight: 500; color: #1c1c1e;
+            border: 1px solid #dadade; width: fit-content;
+            text-decoration: none;
+        }
+        .base64-file::before { content: "📎"; font-size: 14px; }
+        .image-caption, .video-caption, .file-caption {
+            font-size: 11px; color: #8e8e93; margin-top: 2px;
+        }
+        .image-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,.85); z-index: 999; justify-content: center;
+            align-items: center; padding: 20px; backdrop-filter: blur(2px);
+        }
+        .image-modal.active { display: flex; }
+        .image-modal img, .image-modal video {
+            max-width: 90%; max-height: 90%; border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,.5); object-fit: contain; background-color: #fff;
+        }
+        .image-modal video { background-color: #000; }
+        .image-modal-close {
+            position: absolute; top: 20px; right: 24px; font-size: 32px;
+            color: #fff; cursor: pointer; font-weight: 300; line-height: 1;
+            opacity: .8; user-select: none;
+        }
+        .image-modal-close:hover { opacity: 1; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        @media (max-width: 400px) {
+            .phone-frame { height: 700px; border-radius: 28px; }
+            .avatar { width: 40px; height: 40px; font-size: 18px; }
+            .bubble { font-size: 14px; padding: 10px 14px; }
+            .bubble-wrapper { max-width: calc(100% - 64px); }
+            .base64-image, .base64-video { max-height: 180px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="phone-frame">
+
+        <!-- ========== 页面 1：聊天列表 ========== -->
+        <div class="page" id="pageMain">
+            <div class="status-bar">
+                <div class="status-left"><span>9:41</span></div>
+                <div class="status-right"><span>📶</span><span>📶</span><span>🔋</span></div>
+            </div>
+            <div class="nav-bar">
+                <div class="nav-back">←</div>
+                <div class="nav-title">初见</div>
+                <div class="nav-more">⋯</div>
+            </div>
+            <div class="chat-container" id="chatContainer">
+                <div class="message-row">
+                    
+                    <div class="bubble-wrapper">
+                        <div class="bubble">3D 霓虹</div>
+                        <div class="timestamp">22:35</div>
+                    </div>
+                </div>
+                <div class="message-row">
+                    
+                    <div class="bubble-wrapper">
+                        <div class="history-card" onclick="openDetail('detail1')">
+                            <div class="history-title"><span>聊天记录</span><span class="history-arrow">›</span></div>
+                            <div class="preview-tags">
+                                <span class="preview-tag video">视频</span>
+                                <span class="preview-tag file">文件</span>
+                                <span class="preview-tag text">不能用浏览器</span>
+                            </div>
+                        </div>
+                        <div class="timestamp">22:35</div>
+                    </div>
+                </div>
+                <div class="message-row">
+                    
+                    <div class="bubble-wrapper">
+                        <div class="bubble">打开教程</div>
+                        <div class="timestamp">22:36</div>
+                    </div>
+                </div>
+                <div class="message-row">
+                    
+                    <div class="bubble-wrapper">
+                        <div class="history-card" onclick="openDetail('detail2')">
+                            <div class="history-title"><span>聊天记录</span><span class="history-arrow">›</span></div>
+                            <div class="preview-tags">
+                                <span class="preview-tag video">视频</span>
+                                <span class="preview-tag image">5张图片</span>
+                            </div>
+                        </div>
+                        <div class="timestamp">22:37</div>
+                    </div>
+                </div>
+                <div class="message-row">
+                    
+                    <div class="bubble-wrapper">
+                        <div class="bubble">3D 粒子烟花磁铁</div>
+                        <div class="timestamp">22:38</div>
+                    </div>
+                </div>
+                <div class="message-row">
+                    
+                    <div class="bubble-wrapper">
+                        <div class="history-card" onclick="openDetail('detail3')">
+                            <div class="history-title"><span>聊天记录</span><span class="history-arrow">›</span></div>
+                            <div class="preview-tags">
+                                <span class="preview-tag file">文件</span>
+                                <span class="preview-tag video">视频</span>
+                            </div>
+                        </div>
+                        <div class="timestamp">22:38</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 页面 2：详情页 1 ========== -->
+        <div class="page hidden-right" id="detail1">
+            <div class="status-bar">
+                <div class="status-left"><span>9:41</span></div>
+                <div class="status-right"><span>📶</span><span>📶</span><span>🔋</span></div>
+            </div>
+            <div class="nav-bar">
+                <div class="nav-back" onclick="closeDetail('detail1')">←</div>
+                <div class="nav-title">聊天记录</div>
+                <div class="nav-more">⋯</div>
+            </div>
+            <div class="chat-container">
+                <div class="history-list">
+                    <div class="history-item">
+                        <div class="history-time">17:41</div>
+                        <div class="history-bubble">
+                            <!-- 🔻 替换这里：视频 V1 🔻 -->
+                            <video class="base64-video" controls src=""></video>
+                            <!-- 🔺 替换结束 🔺 -->
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">17:42</div>
+                        <div class="history-bubble">
+                            <!-- 🔻 替换这里：文件 F1 🔻 -->
+                            <a class="base64-file" href="" download="3D 霓虹 (13).html">3D 霓虹 (13).html</a>
+                            <!-- 🔺 替换结束 🔺 -->
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">17:42</div>
+                        <div class="history-bubble">不能用浏览器</div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">17:43</div>
+                        <div class="history-bubble">mt 管理器 html 功能里的预览</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 页面 3：详情页 2 ========== -->
+        <div class="page hidden-right" id="detail2">
+            <div class="status-bar">
+                <div class="status-left"><span>9:41</span></div>
+                <div class="status-right"><span>📶</span><span>📶</span><span>🔋</span></div>
+            </div>
+            <div class="nav-bar">
+                <div class="nav-back" onclick="closeDetail('detail2')">←</div>
+                <div class="nav-title">聊天记录</div>
+                <div class="nav-more">⋯</div>
+            </div>
+            <div class="chat-container">
+                <div class="history-list">
+                    <div class="history-item">
+                        <div class="history-time">19:38</div>
+                        <div class="history-bubble">
+                            <!-- 🔻 替换这里：视频 V2 🔻 -->
+                            <video class="base64-video" controls src=""></video>
+                            <!-- 🔺 替换结束 🔺 -->
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">19:55</div>
+                        <div class="history-bubble" style="padding:6px;">
+                            <div class="image-message">
+                                <!-- 🔻 替换这里：图片 A 🔻 -->
+                                <img class="base64-image" src="" onclick="openModal(this.src)" />
+                                <!-- 🔺 替换结束 🔺 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">19:55</div>
+                        <div class="history-bubble" style="padding:6px;">
+                            <div class="image-message">
+                                <!-- 🔻 替换这里：图片 B 🔻 -->
+                                <img class="base64-image" src="" onclick="openModal(this.src)" />
+                                <!-- 🔺 替换结束 🔺 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">19:55</div>
+                        <div class="history-bubble" style="padding:6px;">
+                            <div class="image-message">
+                                <!-- 🔻 替换这里：图片 C 🔻 -->
+                                <img class="base64-image" src="" onclick="openModal(this.src)" />
+                                <!-- 🔺 替换结束 🔺 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">19:55</div>
+                        <div class="history-bubble" style="padding:6px;">
+                            <div class="image-message">
+                                <!-- 🔻 替换这里：图片 D 🔻 -->
+                                <img class="base64-image" src="" onclick="openModal(this.src)" />
+                                <!-- 🔺 替换结束 🔺 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">19:55</div>
+                        <div class="history-bubble" style="padding:6px;">
+                            <div class="image-message">
+                                <!-- 🔻 替换这里：图片 E 🔻 -->
+                                <img class="base64-image" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMTUwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjE1MCIgZmlsbD0idXJsKCNnKSIvPjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+PHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6IzNhN2FmZiIvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3R5bGU9InN0b3AtY29sb3I6IzZlY2Y3YSIvPjwvbGluZWFyR3JhZGllbnQ+PC9kZWZzPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSJ3aGl0ZSIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiPkJhc2U2NDwvdGV4dD48L3N2Zz4=" onclick="openModal(this.src)" />
+                                <!-- 🔺 替换结束 🔺 -->
+                                <div class="image-caption">点击放大</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 页面 4：详情页 3 ========== -->
+        <div class="page hidden-right" id="detail3">
+            <div class="status-bar">
+                <div class="status-left"><span>9:41</span></div>
+                <div class="status-right"><span>📶</span><span>📶</span><span>🔋</span></div>
+            </div>
+            <div class="nav-bar">
+                <div class="nav-back" onclick="closeDetail('detail3')">←</div>
+                <div class="nav-title">聊天记录</div>
+                <div class="nav-more">⋯</div>
+            </div>
+            <div class="chat-container">
+                <div class="history-list">
+                    <div class="history-item">
+                        <div class="history-time">22:32</div>
+                        <div class="history-bubble">
+                            <!-- 🔻 替换这里：文件 F2 🔻 -->
+                            <a class="base64-file" href="" download="cdn 版.html">cdn 版.html</a>
+                            <!-- 🔺 替换结束 🔺 -->
+                        </div>
+                    </div>
+                    <div class="history-item">
+                        <div class="history-time">22:32</div>
+                        <div class="history-bubble">
+                            <!-- 🔻 替换这里：视频 V3 🔻 -->
+                            <video class="base64-video" controls src=""></video>
+                            <!-- 🔺 替换结束 🔺 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="image-modal" id="imageModal" onclick="closeModal(event)">
+        <span class="image-modal-close" onclick="closeModal(event)">&times;</span>
+        <img id="modalImage" src="" alt="放大图片" style="display:none;">
+        <video id="modalVideo" controls style="display:none;"></video>
+    </div>
+
+    <script>
+        window.addEventListener('load', function() {
+            const c = document.getElementById('chatContainer');
+            if (c) c.scrollTop = c.scrollHeight;
+        });
+        function openDetail(id) {
+            document.getElementById('pageMain').classList.add('hidden-left');
+            const detail = document.getElementById(id);
+            detail.classList.remove('hidden-right');
+            const scroller = detail.querySelector('.chat-container');
+            if (scroller) scroller.scrollTop = 0;
+        }
+        function closeDetail(id) {
+            const detail = document.getElementById(id);
+            detail.classList.add('hidden-right');
+            document.getElementById('pageMain').classList.remove('hidden-left');
+        }
+        function openModal(src) {
+            const modal = document.getElementById('imageModal');
+            const img = document.getElementById('modalImage');
+            const video = document.getElementById('modalVideo');
+            if (modal && img) {
+                video.style.display = 'none';
+                video.pause();
+                img.style.display = 'block';
+                img.src = src;
+                modal.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+        function closeModal(e) {
+            const modal = document.getElementById('imageModal');
+            const video = document.getElementById('modalVideo');
+            if (modal) {
+                modal.classList.remove('active');
+                document.body.style.overflow = '';
+                if (video) { video.pause(); video.src = ''; }
+            }
+            if (e) e.stopPropagation();
+        }
+        document.getElementById('imageModal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeModal();
+        });
+    </script>
+</body>
+</html>

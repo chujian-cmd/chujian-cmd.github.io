@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown 实时预览器 · 无依赖</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #1e1e2f;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background: #2d2d44;
+            color: #e0e0e0;
+            padding: 0.75rem 1.5rem;
+            font-weight: 500;
+            font-size: 1.1rem;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid #3e3e5a;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            gap: 1px;
+            background: #3e3e5a;
+        }
+
+        .editor-pane, .preview-pane {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: #1e1e2f;
+        }
+
+        .pane-header {
+            padding: 0.6rem 1rem;
+            background: #2a2a3e;
+            color: #b0b0c0;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #3e3e5a;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .pane-header span {
+            opacity: 0.8;
+        }
+
+        #editor {
+            flex: 1;
+            width: 100%;
+            padding: 1.2rem;
+            border: none;
+            outline: none;
+            resize: none;
+            font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
+            font-size: 15px;
+            line-height: 1.6;
+            background: #1e1e2f;
+            color: #e4e4f0;
+            caret-color: #7aa2f7;
+            border-right: 1px solid #2d2d44;
+        }
+
+        #editor::placeholder {
+            color: #5a5a7a;
+            font-family: system-ui, sans-serif;
+            font-style: italic;
+        }
+
+        #preview {
+            flex: 1;
+            padding: 1.2rem 1.5rem;
+            overflow-y: auto;
+            background: #1e1e2f;
+            color: #e4e4f0;
+            line-height: 1.7;
+            font-size: 15px;
+            word-wrap: break-word;
+        }
+
+        /* Markdown 预览样式 (深色主题) */
+        #preview h1, #preview h2, #preview h3, #preview h4, #preview h5, #preview h6 {
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+            line-height: 1.3;
+            color: #f0f0ff;
+            border-bottom: 1px solid #2f2f4a;
+            padding-bottom: 0.3em;
+        }
+
+        #preview h1 { font-size: 2em; }
+        #preview h2 { font-size: 1.6em; }
+        #preview h3 { font-size: 1.3em; }
+        #preview h4 { font-size: 1.1em; }
+        #preview h5 { font-size: 1em; }
+        #preview h6 { font-size: 0.9em; color: #c0c0d0; }
+
+        #preview p {
+            margin: 0.8em 0;
+        }
+
+        #preview a {
+            color: #7aa2f7;
+            text-decoration: none;
+        }
+
+        #preview a:hover {
+            text-decoration: underline;
+        }
+
+        #preview code {
+            background: #2a2a3e;
+            padding: 0.2em 0.4em;
+            border-radius: 4px;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.9em;
+            color: #e0e0ff;
+        }
+
+        #preview pre {
+            background: #252538;
+            padding: 1em;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1em 0;
+            border: 1px solid #3a3a5a;
+        }
+
+        #preview pre code {
+            background: transparent;
+            padding: 0;
+            color: inherit;
+            font-size: 0.9em;
+            display: block;
+            white-space: pre;
+        }
+
+        #preview blockquote {
+            margin: 1em 0;
+            padding: 0.5em 1em;
+            border-left: 4px solid #7aa2f7;
+            background: #252538;
+            color: #c0c0d8;
+            border-radius: 0 4px 4px 0;
+        }
+
+        #preview ul, #preview ol {
+            padding-left: 2em;
+            margin: 0.8em 0;
+        }
+
+        #preview li {
+            margin: 0.3em 0;
+        }
+
+        #preview table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+            border: 1px solid #3a3a5a;
+        }
+
+        #preview th, #preview td {
+            border: 1px solid #3a3a5a;
+            padding: 0.5em 0.8em;
+            text-align: left;
+        }
+
+        #preview th {
+            background: #2a2a3e;
+            font-weight: 600;
+        }
+
+        #preview tr:nth-child(even) {
+            background: #222236;
+        }
+
+        #preview hr {
+            border: none;
+            border-top: 1px solid #3a3a5a;
+            margin: 1.5em 0;
+        }
+
+        #preview img {
+            max-width: 100%;
+            border-radius: 6px;
+            border: 1px solid #3a3a5a;
+            margin: 0.5em 0;
+        }
+
+        /* 滚动条美化 */
+        #editor::-webkit-scrollbar,
+        #preview::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        #editor::-webkit-scrollbar-track,
+        #preview::-webkit-scrollbar-track {
+            background: #1e1e2f;
+        }
+
+        #editor::-webkit-scrollbar-thumb,
+        #preview::-webkit-scrollbar-thumb {
+            background: #3e3e5a;
+            border-radius: 5px;
+            border: 2px solid #1e1e2f;
+        }
+
+        #editor::-webkit-scrollbar-thumb:hover,
+        #preview::-webkit-scrollbar-thumb:hover {
+            background: #5a5a7a;
+        }
+
+        @media (max-width: 700px) {
+            .container {
+                flex-direction: column;
+            }
+            #editor {
+                border-right: none;
+                border-bottom: 1px solid #2d2d44;
+            }
+            .editor-pane, .preview-pane {
+                min-height: 45vh;
+            }
+        }
+
+        .status-bar {
+            background: #2a2a3e;
+            color: #8080a0;
+            font-size: 0.75rem;
+            padding: 0.3rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            border-top: 1px solid #3e3e5a;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span>📝</span> Markdown 实时预览器 <span style="font-size:0.8rem; opacity:0.7; margin-left:auto;">纯原生 · 无依赖</span>
+    </header>
+
+    <div class="container">
+        <div class="editor-pane">
+            <div class="pane-header">
+                <span>✏️ 编辑</span>
+                <span>标准 Markdown</span>
+            </div>
+            <textarea id="editor" placeholder="在这里输入 Markdown 文本..."></textarea>
+        </div>
+
+        <div class="preview-pane">
+            <div class="pane-header">
+                <span>👁️ 预览</span>
+                <span>即时渲染</span>
+            </div>
+            <div id="preview"></div>
+        </div>
+    </div>
+
+    <div class="status-bar">
+        <span>⚡ 输入时即时更新</span>
+        <span>🔧 纯 JavaScript 实现</span>
+    </div>
+
+    <script>
+        (function() {
+            const editor = document.getElementById('editor');
+            const preview = document.getElementById('preview');
+
+            // ---------- 工具函数 ----------
+            // 转义 HTML 特殊字符
+            function escapeHtml(text) {
+                return text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            // 处理行内元素：粗体、斜体、删除线、行内代码、链接、图片
+            function parseInline(text) {
+                // 先处理行内代码 (避免内部内容被其他规则影响)
+                // 使用占位符保护行内代码内容
+                const codePlaceholders = [];
+                let processed = text.replace(/`([^`]+)`/g, (match, code) => {
+                    const placeholder = `%%CODE${codePlaceholders.length}%%`;
+                    codePlaceholders.push(`<code>${escapeHtml(code)}</code>`);
+                    return placeholder;
+                });
+
+                // 转义 HTML 标签 (除了已经处理的占位符)
+                processed = escapeHtml(processed);
+
+                // 恢复行内代码占位符
+                processed = processed.replace(/%%CODE(\d+)%%/g, (match, idx) => {
+                    return codePlaceholders[idx] || '';
+                });
+
+                // 图片 ![alt](url)
+                processed = processed.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
+
+                // 链接 [text](url)
+                processed = processed.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+                // 粗体 **text** 或 __text__
+                processed = processed.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+                processed = processed.replace(/__(.+?)__/g, '<strong>$1</strong>');
+
+                // 斜体 *text* 或 _text_ (注意避免与粗体冲突，使用边界)
+                processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+                processed = processed.replace(/_([^_]+)_/g, '<em>$1</em>');
+
+                // 删除线 ~~text~~
+                processed = processed.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+                return processed;
+            }
+
+            // ---------- 块级解析 ----------
+            function parseMarkdown(md) {
+                // 统一换行符
+                md = md.replace(/\r\n?/g, '\n');
+
+                // 按行分割
+                const lines = md.split('\n');
+
+                // 用于存放最终 HTML 的数组
+                let html = '';
+
+                // 状态变量
+                let inCodeBlock = false;
+                let codeBlockContent = [];
+                let codeBlockLang = '';
+
+                let inBlockquote = false;
+                let blockquoteLines = [];
+
+                let inList = false;
+                let listLines = [];
+                let listType = 'ul'; // 'ul' 或 'ol'
+
+                let inTable = false;
+                let tableLines = [];
+
+                // 辅助函数：将列表行转换为 HTML
+                function flushList() {
+                    if (!inList) return;
+                    if (listLines.length === 0) {
+                        inList = false;
+                        return;
+                    }
+                    const tag = listType === 'ul' ? 'ul' : 'ol';
+                    html += `<${tag}>`;
+                    for (let line of listLines) {
+                        // 移除列表标记
+                        let content = line;
+                        if (listType === 'ul') {
+                            content = content.replace(/^[-*+]\s+/, '');
+                        } else {
+                            content = content.replace(/^\d+\.\s+/, '');
+                        }
+                        // 处理行内元素
+                        html += `<li>${parseInline(content)}</li>`;
+                    }
+                    html += `</${tag}>`;
+                    listLines = [];
+                    inList = false;
+                }
+
+                // 辅助函数：将引用行转换为 HTML
+                function flushBlockquote() {
+                    if (!inBlockquote) return;
+                    if (blockquoteLines.length === 0) {
+                        inBlockquote = false;
+                        return;
+                    }
+                    // 合并引用内容，每行去掉 "> " 前缀
+                    const content = blockquoteLines.map(l => l.replace(/^>\s?/, '')).join('\n');
+                    // 递归解析引用内部的 markdown (简化：只处理行内元素和段落)
+                    // 这里简单处理：将每行作为段落
+                    const paras = content.split('\n').filter(l => l.trim() !== '');
+                    html += '<blockquote>';
+                    if (paras.length > 0) {
+                        for (let para of paras) {
+                            html += `<p>${parseInline(para)}</p>`;
+                        }
+                    } else {
+                        // 空引用
+                    }
+                    html += '</blockquote>';
+                    blockquoteLines = [];
+                    inBlockquote = false;
+                }
+
+                // 辅助函数：将表格行转换为 HTML
+                function flushTable() {
+                    if (!inTable) return;
+                    if (tableLines.length < 2) {
+                        // 至少需要表头和分隔行，否则视为普通段落
+                        for (let line of tableLines) {
+                            html += `<p>${parseInline(line)}</p>`;
+                        }
+                        tableLines = [];
+                        inTable = false;
+                        return;
+                    }
+
+                    // 解析表格
+                    const headerLine = tableLines[0];
+                    const separatorLine = tableLines[1];
+                    // 简单检查分隔行是否合法 (包含 --- 或 :---: 等)
+                    const separatorCells = separatorLine.split('|').map(c => c.trim());
+                    const isValidSeparator = separatorCells.every(c => /^:?-{3,}:?$/.test(c)) || 
+                                             separatorCells.every(c => /^:?-{2,}:?$/.test(c));
+
+                    if (!isValidSeparator) {
+                        // 不是有效表格，按普通文本处理
+                        for (let line of tableLines) {
+                            html += `<p>${parseInline(line)}</p>`;
+                        }
+                        tableLines = [];
+                        inTable = false;
+                        return;
+                    }
+
+                    // 解析表头
+                    const headerCells = headerLine.split('|').map(c => c.trim()).filter((c, idx, arr) => {
+                        // 去除首尾空单元格 (因 | 开头结尾会产生空)
+                        if (idx === 0 && c === '') return false;
+                        if (idx === arr.length - 1 && c === '') return false;
+                        return true;
+                    });
+
+                    // 解析对齐方式 (可选，这里忽略，默认左对齐)
+                    // 构建表格
+                    html += '<table><thead><tr>';
+                    for (let cell of headerCells) {
+                        html += `<th>${parseInline(cell)}</th>`;
+                    }
+                    html += '</tr></thead><tbody>';
+
+                    // 数据行 (从第三行开始)
+                    for (let i = 2; i < tableLines.length; i++) {
+                        const rowLine = tableLines[i];
+                        const rowCells = rowLine.split('|').map(c => c.trim()).filter((c, idx, arr) => {
+                            if (idx === 0 && c === '') return false;
+                            if (idx === arr.length - 1 && c === '') return false;
+                            return true;
+                        });
+                        // 补齐或截断以匹配表头列数
+                        while (rowCells.length < headerCells.length) rowCells.push('');
+                        const cells = rowCells.slice(0, headerCells.length);
+                        html += '<tr>';
+                        for (let cell of cells) {
+                            html += `<td>${parseInline(cell)}</td>`;
+                        }
+                        html += '</tr>';
+                    }
+
+                    html += '</tbody></table>';
+                    tableLines = [];
+                    inTable = false;
+                }
+
+                // 主循环
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const trimmed = line.trim();
+
+                    // 1. 代码块处理 (``` 或 ~~~)
+                    if (!inCodeBlock && (trimmed.startsWith('```') || trimmed.startsWith('~~~'))) {
+                        // 开始代码块
+                        // 先处理其他未完成的状态
+                        flushList();
+                        flushBlockquote();
+                        flushTable();
+
+                        inCodeBlock = true;
+                        const marker = trimmed.startsWith('```') ? '```' : '~~~';
+                        const langMatch = trimmed.slice(marker.length).trim();
+                        codeBlockLang = langMatch || '';
+                        codeBlockContent = [];
+                        continue;
+                    }
+
+                    if (inCodeBlock) {
+                        // 检查是否结束代码块
+                        if (trimmed === '```' || trimmed === '~~~' || trimmed.startsWith('```') && trimmed.slice(3).trim() === '' || trimmed.startsWith('~~~') && trimmed.slice(3).trim() === '') {
+                            // 结束代码块
+                            // 简单转义代码内容
+                            const codeText = codeBlockContent.join('\n');
+                            const escapedCode = escapeHtml(codeText);
+                            // 如果有语言，添加 class (虽然无高亮，但为未来扩展)
+                            const langClass = codeBlockLang ? ` class="language-${escapeHtml(codeBlockLang)}"` : '';
+                            html += `<pre><code${langClass}>${escapedCode}</code></pre>`;
+                            inCodeBlock = false;
+                            codeBlockContent = [];
+                            codeBlockLang = '';
+                        } else {
+                            // 收集代码内容
+                            codeBlockContent.push(line);
+                        }
+                        continue;
+                    }
+
+                    // 2. 空行：结束列表、引用、表格
+                    if (trimmed === '') {
+                        flushList();
+                        flushBlockquote();
+                        flushTable();
+                        // 空行不生成任何内容 (可保留为 <br> 但不需要)
+                        continue;
+                    }
+
+                    // 3. 表格检测 (包含 | 且下一行是分隔行)
+                    // 如果当前不在表格中，且行包含 |，且下一行是类似分隔行
+                    if (!inTable && trimmed.includes('|') && i + 1 < lines.length) {
+                        const nextLine = lines[i + 1].trim();
+                        // 检查下一行是否由 | - : 空格组成
+                        if (/^[\s|:-]+$/.test(nextLine) && nextLine.includes('|')) {
+                            // 可能是表格开始
+                            flushList();
+                            flushBlockquote();
+                            // 收集表格行
+                            inTable = true;
+                            tableLines = [line]; // 当前行作为表头
+                            // 下一行是分隔行，也加入
+                            tableLines.push(lines[i + 1]);
+                            i++; // 跳过下一行
+                            continue;
+                        }
+                    }
+
+                    // 如果在表格中，且行包含 | ，继续收集
+                    if (inTable) {
+                        if (trimmed.includes('|')) {
+                            tableLines.push(line);
+                            continue;
+                        } else {
+                            // 表格结束
+                            flushTable();
+                            // 继续处理当前行 (不 continue，让后面的逻辑处理这一行)
+                        }
+                    }
+
+                    // 4. 引用处理 (>)
+                    if (trimmed.startsWith('>')) {
+                        flushList();
+                        flushTable();
+                        if (!inBlockquote) {
+                            inBlockquote = true;
+                            blockquoteLines = [];
+                        }
+                        blockquoteLines.push(line);
+                        continue;
+                    } else {
+                        // 如果不是引用且之前在引用中，结束引用
+                        if (inBlockquote) {
+                            flushBlockquote();
+                        }
+                    }
+
+                    // 5. 列表处理 (-, *, + 或 数字.)
+                    const isUnordered = /^[-*+]\s+/.test(trimmed);
+                    const isOrdered = /^\d+\.\s+/.test(trimmed);
+
+                    if (isUnordered || isOrdered) {
+                        flushBlockquote();
+                        flushTable();
+
+                        const newType = isUnordered ? 'ul' : 'ol';
+                        if (inList && listType !== newType) {
+                            // 列表类型改变，结束当前列表
+                            flushList();
+                        }
+                        if (!inList) {
+                            inList = true;
+                            listType = newType;
+                            listLines = [];
+                        }
+                        listLines.push(line);
+                        continue;
+                    } else {
+                        // 不是列表项，结束列表
+                        if (inList) {
+                            flushList();
+                        }
+                    }
+
+                    // 6. 标题 (#)
+                    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+                    if (headingMatch) {
+                        flushList();
+                        flushBlockquote();
+                        flushTable();
+                        const level = headingMatch[1].length;
+                        const content = headingMatch[2];
+                        html += `<h${level}>${parseInline(content)}</h${level}>`;
+                        continue;
+                    }
+
+                    // 7. 水平线 (---, ***, ___)
+                    if (/^(---+|\*\*\*+|___+)$/.test(trimmed)) {
+                        flushList();
+                        flushBlockquote();
+                        flushTable();
+                        html += '<hr />';
+                        continue;
+                    }
+
+                    // 8. 普通段落
+                    // 如果当前在列表中，并且这一行不是列表项，则先结束列表
+                    if (inList) {
+                        flushList();
+                    }
+                    if (inBlockquote) {
+                        flushBlockquote();
+                    }
+                    if (inTable) {
+                        flushTable();
+                    }
+                    // 处理行内元素，并包裹为段落
+                    html += `<p>${parseInline(line)}</p>`;
+                }
+
+                // 循环结束后，清理未完成的状态
+                if (inCodeBlock) {
+                    // 未闭合的代码块，按普通代码块处理
+                    const codeText = codeBlockContent.join('\n');
+                    const escapedCode = escapeHtml(codeText);
+                    const langClass = codeBlockLang ? ` class="language-${escapeHtml(codeBlockLang)}"` : '';
+                    html += `<pre><code${langClass}>${escapedCode}</code></pre>`;
+                }
+                flushList();
+                flushBlockquote();
+                flushTable();
+
+                return html;
+            }
+
+            // ---------- 渲染 ----------
+            function render() {
+                const markdownText = editor.value;
+                const html = parseMarkdown(markdownText);
+                preview.innerHTML = html;
+            }
+
+            // 防抖
+            function debounce(fn, delay = 20) {
+                let timer;
+                return function(...args) {
+                    clearTimeout(timer);
+                    timer = setTimeout(() => fn.apply(this, args), delay);
+                };
+            }
+
+            const debouncedRender = debounce(render, 20);
+
+            // 默认示例内容
+            const defaultMarkdown = `# 欢迎使用 Markdown 实时预览器
+
+这是一个**无依赖**的纯前端 Markdown 预览器。在左侧输入，右侧立即看到效果。
+
+## 主要特性
+- 支持 **粗体**、*斜体*、~~删除线~~
+- 支持 \`行内代码\` 和代码块
+- 支持 [链接](https://example.com)
+- 支持列表、表格、引用等
+- 纯原生 JavaScript 实现，无需任何外部库
+
+### 代码块示例
+\`\`\`javascript
+function greet(name) {
+    console.log(\`Hello, \${name}!\`);
+    return true;
+}
+greet('Markdown');
+\`\`\`
+
+### 表格
+| 功能 | 状态 |
+|------|------|
+| 实时预览 | ✅ |
+| 无依赖 | ✅ |
+| 深色主题 | ✅ |
+
+> 这是一个引用块。  
+> 可以写多行。
+
+![小图标](https://img.icons8.com/color/48/000000/markdown.png)
+
+---
+
+开始输入你的 Markdown 吧！`;
+
+            // 初始化
+            editor.value = defaultMarkdown;
+            render();
+
+            // 事件监听
+            editor.addEventListener('input', debouncedRender);
+
+            // Tab 键插入两个空格
+            editor.addEventListener('keydown', (e) => {
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    const start = editor.selectionStart;
+                    const end = editor.selectionEnd;
+                    const value = editor.value;
+                    const indent = '  ';
+                    editor.value = value.substring(0, start) + indent + value.substring(end);
+                    editor.selectionStart = editor.selectionEnd = start + indent.length;
+                    debouncedRender();
+                }
+                // Ctrl+Enter 立即渲染
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    render();
+                }
+            });
+
+            // 自动聚焦
+            editor.focus();
+        })();
+    </script>
+</body>
+</html>

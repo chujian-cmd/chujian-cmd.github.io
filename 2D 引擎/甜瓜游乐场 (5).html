@@ -1,0 +1,2276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1319">
+<title>物理沙盒 · Physics Sandbox</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#0f1319;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+    overscroll-behavior:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    position:fixed;inset:0;
+  }
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+
+  #hud{
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 8px);
+    left:calc(env(safe-area-inset-left,0px) + 10px);
+    color:#7f8ea3;font-size:12px;line-height:1.5;
+    pointer-events:none;font-variant-numeric:tabular-nums;
+    text-shadow:0 1px 3px #000;
+    z-index:5;
+  }
+  #hud b{color:#c9d6e8;font-weight:600;}
+
+  #topbar{
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 8px);
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    display:flex;gap:6px;z-index:20;
+    max-width:calc(100vw - 100px);
+    flex-wrap:wrap;justify-content:flex-end;
+  }
+
+  #bottombar{
+    position:fixed;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 8px);
+    left:calc(env(safe-area-inset-left,0px) + 8px);
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    display:flex;gap:6px;z-index:20;
+    overflow-x:auto;overflow-y:hidden;
+    padding:6px;border-radius:16px;
+    background:rgba(18,22,30,.72);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.07);
+    box-shadow:0 6px 24px rgba(0,0,0,.45);
+    scrollbar-width:none;
+    justify-content:flex-start;
+    flex-wrap:nowrap;
+    -webkit-overflow-scrolling:touch;
+  }
+  #bottombar::-webkit-scrollbar{display:none;}
+  #bottombar .btn:first-child{margin-left:auto;}
+  #bottombar .btn:last-child{margin-right:auto;}
+
+  .btn{
+    flex:0 0 auto;
+    min-width:46px;height:46px;
+    border:none;border-radius:12px;
+    background:rgba(255,255,255,.07);
+    color:#d4deec;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:background .12s,transform .08s,box-shadow .12s;
+    -webkit-user-select:none;user-select:none;
+    touch-action:manipulation;
+    position:relative;
+    padding:0 8px;
+  }
+  .btn:active{transform:scale(.92);}
+  .btn.active{
+    background:linear-gradient(180deg,#3d8bfd,#2563eb);
+    color:#fff;
+    box-shadow:0 0 0 2px rgba(96,165,250,.35),0 4px 14px rgba(37,99,235,.45);
+  }
+  .btn.warn.active{background:linear-gradient(180deg,#f87171,#dc2626);box-shadow:0 0 0 2px rgba(248,113,113,.35);}
+
+  .btn svg{display:block;pointer-events:none;}
+
+  .matdot{
+    position:absolute;bottom:5px;right:5px;
+    width:10px;height:10px;border-radius:50%;
+    border:1.5px solid rgba(0,0,0,.55);
+    box-shadow:0 0 0 1px rgba(255,255,255,.14);
+    pointer-events:none;
+    transition:background .2s;
+  }
+
+  #quickmenu{
+    position:fixed;z-index:40;
+    display:none;
+    padding:8px;border-radius:16px;
+    background:rgba(20,26,36,.94);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 10px 40px rgba(0,0,0,.6);
+    grid-template-columns:repeat(3,1fr);gap:6px;
+    transform:translate(-50%,-50%);
+    visibility:hidden;
+  }
+  #quickmenu.show{display:grid;visibility:visible;}
+  #quickmenu .btn{
+    min-width:58px;height:58px;
+    flex-direction:column;gap:3px;
+    padding:4px;
+  }
+  #quickmenu .lbl{font-size:9px;opacity:.72;line-height:1;letter-spacing:.3px;}
+
+  #toast{
+    position:fixed;left:50%;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 74px);
+    transform:translateX(-50%);
+    background:rgba(0,0,0,.78);color:#e6edf7;
+    padding:8px 16px;border-radius:20px;font-size:13px;
+    pointer-events:none;opacity:0;transition:opacity .25s;
+    z-index:50;white-space:nowrap;
+  }
+  #toast.show{opacity:1;}
+
+  @media (max-width:420px){
+    .btn{min-width:44px;height:44px;}
+    #topbar{gap:4px;}
+    #quickmenu .btn{min-width:54px;height:54px;}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="hud">
+  <div id="stats">FPS -- · 物体 0 · 缩放 100%</div>
+  <div id="hint" style="opacity:.7;font-size:11px"></div>
+</div>
+
+<div id="topbar">
+  <button class="btn" data-act="mat" id="btnMat" title="材质"></button>
+  <button class="btn" data-act="pause" data-icon="pause" title="暂停"></button>
+  <button class="btn" data-act="slow" data-icon="slow" title="慢动作"></button>
+  <button class="btn" data-act="debug" data-icon="debug" title="调试"></button>
+  <button class="btn" data-act="full" data-icon="full" title="全屏"></button>
+  <button class="btn" data-act="reset" data-icon="reset" title="重置"></button>
+  <button class="btn warn" data-act="clear" data-icon="clear" title="清空"></button>
+</div>
+
+<div id="bottombar">
+  <button class="btn tool active" data-tool="hand" data-icon="hand" title="拖拽/投掷"></button>
+  <button class="btn tool" data-tool="box" data-icon="box" title="方块"></button>
+  <button class="btn tool" data-tool="ball" data-icon="ball" title="圆球"></button>
+  <button class="btn tool" data-tool="tri" data-icon="tri" title="三角"></button>
+  <button class="btn tool" data-tool="hex" data-icon="hex" title="六边形"></button>
+  <button class="btn tool" data-tool="ragdoll" data-icon="ragdoll" title="布娃娃"></button>
+  <button class="btn tool" data-tool="tnt" data-icon="tnt" title="TNT"></button>
+  <button class="btn tool" data-tool="gun" data-icon="gun" title="手枪"></button>
+  <button class="btn tool" data-tool="blade" data-icon="blade" title="飞刀"></button>
+  <button class="btn tool" data-tool="bomb" data-icon="bomb" title="炸弹"></button>
+  <button class="btn tool warn" data-tool="delete" data-icon="delete" title="删除"></button>
+</div>
+
+<div id="quickmenu"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =========================================================================
+   0. 环境与工具
+   ========================================================================= */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent)
+              || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const rand  = (a, b) => a + Math.random() * (b - a);
+
+const V = {
+  rotInv: (a, ang) => { const c = Math.cos(-ang), s = Math.sin(-ang); return { x: a.x * c - a.y * s, y: a.x * s + a.y * c }; },
+};
+
+/* =========================================================================
+   0.5  SVG 图标库
+   ========================================================================= */
+const ICONS = {
+  hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  box: '<rect x="4" y="4" width="16" height="16" rx="2.5"/>',
+  ball: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.6"/><ellipse cx="12" cy="12" rx="3.6" ry="9"/>',
+  tri: '<path d="M12 4.5 20.5 19.5h-17z"/>',
+  hex: '<path d="M12 3 20.5 7.8v8.4L12 21 3.5 16.2V7.8z"/>',
+  ragdoll: '<circle cx="12" cy="4.2" r="2.5"/><path d="M12 6.7v6"/><path d="M12 8.2 7.8 11M12 8.2l4.2 2.8"/><path d="M12 12.7 8.8 19.5M12 12.7l3.2 6.8"/>',
+  tnt: '<rect x="4" y="7.5" width="16" height="12.5" rx="2"/><path d="M12 7.5V3.5"/><path d="M9.5 3.5h5"/><path d="M7.5 12h9"/><path d="M7.5 15.5h5"/>',
+  gun: '<path d="M3 8h14v3h4v2h-7l-2 6h-3l2-6H3z"/>',
+  blade: '<path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/>',
+  bomb: '<circle cx="10.5" cy="14.5" r="6.5"/><path d="M14.8 10.2 18 7"/><path d="M18 7c0-1.6 1-2.6 2.6-2.6"/><circle cx="20.6" cy="4.4" r="1.1" fill="currentColor" stroke="none"/>',
+  delete: '<path d="M6 6l12 12M18 6 6 18"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1.2"/><rect x="14" y="4" width="4" height="16" rx="1.2"/>',
+  play: '<path d="M7 4.5 20 12 7 19.5z" fill="currentColor" stroke="none"/>',
+  slow: '<path d="M7 3h10"/><path d="M7 21h10"/><path d="M8.5 3c0 4 3.5 5 3.5 9s-3.5 5-3.5 9"/><path d="M15.5 3c0 4-3.5 5-3.5 9s3.5 5 3.5 9"/>',
+  debug: '<circle cx="12" cy="13" r="5.5"/><path d="M12 7.5V4.5"/><path d="M7.8 9.8 4.8 8.3"/><path d="M16.2 9.8l3-1.5"/><path d="M7.8 16.2l-3 1.5"/><path d="M16.2 16.2l3 1.5"/><path d="M9.6 8.2 8.2 5.3"/><path d="M14.4 8.2l1.4-2.9"/>',
+  full: '<path d="M4 9.5V4h5.5"/><path d="M20 9.5V4h-5.5"/><path d="M4 14.5V20h5.5"/><path d="M20 14.5V20h-5.5"/>',
+  reset: '<path d="M20.5 12a8.5 8.5 0 1 1-2.7-6.2"/><path d="M21 4v5h-5"/>',
+  clear: '<path d="M4 7h16"/><path d="M9.5 7V4.2h5V7"/><path d="M6.6 7l1 13h8.8l1-13"/><path d="M10.5 11v5.5"/><path d="M13.5 11v5.5"/>',
+  mat: '<path d="M12 21.5a9.5 9.5 0 1 1 0-19c5.2 0 9.5 3.8 9.5 8.5 0 2.6-2.1 4.2-4.2 4.2h-2.1a2.1 2.1 0 0 0-1.6 3.5c.3.4.5.9.5 1.3 0 .8-.8 1.5-2.1 1.5z"/><circle cx="7.5" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="9.8" cy="8.3" r="1.15" fill="currentColor" stroke="none"/><circle cx="14" cy="7.3" r="1.15" fill="currentColor" stroke="none"/><circle cx="17.3" cy="10" r="1.15" fill="currentColor" stroke="none"/>',
+};
+
+function makeSvg(name, size = 22, sw = 1.8) {
+  const inner = ICONS[name] || '';
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+
+/* =========================================================================
+   1. 几何工具
+   ========================================================================= */
+function polyArea(verts) {
+  let a = 0;
+  for (let i = 0, n = verts.length; i < n; i++) {
+    const p = verts[i], q = verts[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a * 0.5;
+}
+
+function polyCentroid(verts) {
+  let cx = 0, cy = 0, a = 0;
+  for (let i = 0, n = verts.length; i < n; i++) {
+    const p = verts[i], q = verts[(i + 1) % n];
+    const cr = p.x * q.y - q.x * p.y;
+    a += cr; cx += (p.x + q.x) * cr; cy += (p.y + q.y) * cr;
+  }
+  if (Math.abs(a) < 1e-9) return { x: 0, y: 0 };
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+function polyInertia(verts, mass) {
+  let crSum = 0, num = 0;
+  for (let i = 0, n = verts.length; i < n; i++) {
+    const p = verts[i], q = verts[(i + 1) % n];
+    const cr = p.x * q.y - q.x * p.y;
+    crSum += cr;
+    num += cr * (p.x * p.x + p.x * q.x + q.x * q.x + p.y * p.y + p.y * q.y + q.y * q.y);
+  }
+  if (Math.abs(crSum) < 1e-9) return mass;
+  return (mass / (6 * crSum)) * num;
+}
+
+function ensureCCW(verts) {
+  if (polyArea(verts) < 0) verts.reverse();
+  return verts;
+}
+
+function boxVerts(w, h) {
+  return ensureCCW([
+    { x: -w / 2, y: -h / 2 }, { x: w / 2, y: -h / 2 },
+    { x: w / 2, y: h / 2 }, { x: -w / 2, y: h / 2 },
+  ]);
+}
+
+function ngonVerts(r, sides, phase = 0) {
+  const out = [];
+  for (let i = 0; i < sides; i++) {
+    const a = phase + (i / sides) * TAU;
+    out.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+  }
+  return ensureCCW(out);
+}
+
+function pointInPoly(p, verts) {
+  let sign = 0;
+  const n = verts.length;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    const c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (c > 1e-9) { if (sign < 0) return false; sign = 1; }
+    else if (c < -1e-9) { if (sign > 0) return false; sign = -1; }
+  }
+  return true;
+}
+
+function splitPoly(verts, p1, p2) {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const n = verts.length;
+  const side = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = verts[i];
+    side[i] = dx * (v.y - p1.y) - dy * (v.x - p1.x);
+  }
+  const L = [], R = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const si = side[i], sj = side[j];
+    if (si >= -1e-9) L.push(verts[i]);
+    if (si <= 1e-9) R.push(verts[i]);
+    if ((si > 0 && sj < 0) || (si < 0 && sj > 0)) {
+      const t = si / (si - sj);
+      const ip = {
+        x: verts[i].x + (verts[j].x - verts[i].x) * t,
+        y: verts[i].y + (verts[j].y - verts[i].y) * t
+      };
+      L.push(ip); R.push(ip);
+    }
+  }
+  return [L, R];
+}
+
+/* =========================================================================
+   2. 材质表
+   ========================================================================= */
+const MATERIALS = {
+  wood:   { name: '木头', density: 0.70, restitution: 0.25, friction: 0.62, color: '#b5793a', color2: '#7e4d1e', hp: 100 },
+  metal:  { name: '金属', density: 2.40, restitution: 0.14, friction: 0.45, color: '#9aa7b8', color2: '#5f6c7e', hp: 320 },
+  ice:    { name: '冰块', density: 0.90, restitution: 0.10, friction: 0.05, color: '#a9e7ff', color2: '#5fb6e0', hp: 60 },
+  rubber: { name: '橡胶', density: 1.00, restitution: 0.88, friction: 0.92, color: '#50536a', color2: '#2f3140', hp: 220 },
+  stone:  { name: '石头', density: 2.00, restitution: 0.09, friction: 0.72, color: '#8d8d95', color2: '#5c5c66', hp: 280 },
+  tnt:    { name: 'TNT',  density: 1.20, restitution: 0.20, friction: 0.55, color: '#e34b3b', color2: '#8f2418', hp: 20 },
+  flesh:  { name: '肉体', density: 0.95, restitution: 0.18, friction: 0.70, color: '#e8b98f', color2: '#c08a5c', hp: 80 },
+  bullet: { name: '子弹', density: 6.00, restitution: 0.20, friction: 0.30, color: '#ffe08a', color2: '#c9a13a', hp: 9999 },
+};
+const MAT_KEYS = ['wood', 'metal', 'ice', 'rubber', 'stone'];
+
+/* =========================================================================
+   3. 刚体
+   ========================================================================= */
+let _bodyId = 0;
+
+class Body {
+  constructor(o = {}) {
+    this.id = _bodyId++;
+    this.shape = o.shape || 'poly';
+    this.pos = { x: o.x || 0, y: o.y || 0 };
+    this.vel = { x: o.vx || 0, y: o.vy || 0 };
+    this.angle = o.angle || 0;
+    this.angVel = o.angVel || 0;
+    this.isStatic = !!o.isStatic;
+    this.restitution = o.restitution ?? 0.2;
+    this.friction = o.friction ?? 0.45;
+    this.density = o.density ?? 1;
+    this.color = o.color || '#8b93a5';
+    this.color2 = o.color2 || null;
+    this.tag = o.tag || 'body';
+    this.material = o.material || 'stone';
+    this.hp = o.hp ?? Infinity;
+    this.dead = false;
+    this.selected = false;
+    this.fuse = -1;
+    this.noShatter = !!o.noShatter;
+
+    // —— 休眠（性能优化）——
+    this.sleeping = false;
+    this.sleepTimer = 0;
+
+    // —— 姿势系统（布娃娃“活体”状态）——
+    this.poseActive = false;   // true = 被姿势弹簧固定住（站立）
+    this.poseTarget = null;    // { x, y, angle } 世界空间目标
+    this.poseOrigin = null;    // { x, y } 出生位置，用于拖拽时整体平移
+    this.ragdollGroup = null;  // 所属布娃娃组
+
+    if (this.shape === 'circle') {
+      this.radius = o.radius || 20;
+      this.localVerts = null;
+      this.worldVerts = null;
+      this.area = Math.PI * this.radius * this.radius;
+      this.boundRadius = this.radius;
+    } else {
+      this.localVerts = ensureCCW(o.verts);
+      this.area = Math.abs(polyArea(this.localVerts));
+      this.worldVerts = this.localVerts.map(() => ({ x: 0, y: 0 }));
+      let br = 0;
+      for (const v of this.localVerts) br = Math.max(br, Math.hypot(v.x, v.y));
+      this.boundRadius = br;
+    }
+
+    const MASS_SCALE = 0.0012;
+    if (this.isStatic) {
+      this.mass = 0; this.invMass = 0;
+      this.inertia = 0; this.invInertia = 0;
+    } else {
+      this.mass = Math.max(this.density * this.area * MASS_SCALE, 1e-4);
+      this.invMass = 1 / this.mass;
+      if (this.shape === 'circle') {
+        this.inertia = 0.5 * this.mass * this.radius * this.radius;
+      } else {
+        this.inertia = Math.max(polyInertia(this.localVerts, this.mass), 1e-6);
+      }
+      this.invInertia = 1 / this.inertia;
+    }
+
+    this.updateWorldVerts();
+  }
+
+  wake() {
+    this.sleeping = false;
+    this.sleepTimer = 0;
+  }
+
+  updateWorldVerts() {
+    if (this.shape !== 'poly') return;
+    const lv = this.localVerts, n = lv.length;
+    const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    const px = this.pos.x, py = this.pos.y;
+    const wv = this.worldVerts;
+    for (let i = 0; i < n; i++) {
+      const v = lv[i];
+      wv[i].x = px + v.x * c - v.y * s;
+      wv[i].y = py + v.x * s + v.y * c;
+    }
+  }
+
+  worldPoint(local) {
+    const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    return {
+      x: this.pos.x + local.x * c - local.y * s,
+      y: this.pos.y + local.x * s + local.y * c
+    };
+  }
+
+  containsPoint(px, py) {
+    if (this.shape === 'circle') {
+      const dx = px - this.pos.x, dy = py - this.pos.y;
+      return dx * dx + dy * dy <= this.radius * this.radius;
+    }
+    return pointInPoly({ x: px, y: py }, this.worldVerts);
+  }
+}
+
+/* =========================================================================
+   4. 碰撞检测
+   ========================================================================= */
+function clipSeg(a, b, nx, ny, off) {
+  const da = nx * a.x + ny * a.y - off;
+  const db = nx * b.x + ny * b.y - off;
+  const out = [];
+  if (da >= 0) out.push({ x: a.x, y: a.y });
+  if (db >= 0) out.push({ x: b.x, y: b.y });
+  if (da * db < 0) {
+    const t = da / (da - db);
+    out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  }
+  return out;
+}
+
+function leastPenetration(va, vb) {
+  let bestSep = -Infinity, bestIdx = 0;
+  const n = va.length;
+  for (let i = 0; i < n; i++) {
+    const a = va[i], b = va[(i + 1) % n];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const l = Math.hypot(ex, ey) || 1;
+    const nx = ey / l, ny = -ex / l;
+    let minD = Infinity;
+    for (let j = 0; j < vb.length; j++) {
+      const d = nx * (vb[j].x - a.x) + ny * (vb[j].y - a.y);
+      if (d < minD) minD = d;
+    }
+    if (minD > bestSep) { bestSep = minD; bestIdx = i; }
+  }
+  return { sep: bestSep, idx: bestIdx };
+}
+
+function circleCircle(A, B) {
+  const dx = B.pos.x - A.pos.x, dy = B.pos.y - A.pos.y;
+  const r = A.radius + B.radius;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= r * r) return null;
+  const d = Math.sqrt(d2);
+  let nx, ny;
+  if (d < 1e-6) { nx = 0; ny = -1; }
+  else { nx = dx / d; ny = dy / d; }
+  const pen = r - d;
+  const px = A.pos.x + nx * (A.radius - pen * 0.5);
+  const py = A.pos.y + ny * (A.radius - pen * 0.5);
+  return { normal: { x: nx, y: ny }, points: [{ x: px, y: py, pen }] };
+}
+
+function circlePoly(C, P) {
+  const verts = P.worldVerts;
+  const n = verts.length;
+  let bestD2 = Infinity, bestPt = null, bestIdx = 0;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    const abx = b.x - a.x, aby = b.y - a.y;
+    const apx = C.pos.x - a.x, apy = C.pos.y - a.y;
+    const ab2 = abx * abx + aby * aby;
+    let t = ab2 > 1e-12 ? (apx * abx + apy * aby) / ab2 : 0;
+    t = clamp(t, 0, 1);
+    const cx = a.x + abx * t, cy = a.y + aby * t;
+    const dx = C.pos.x - cx, dy = C.pos.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; bestPt = { x: cx, y: cy }; bestIdx = i; }
+  }
+  const dist = Math.sqrt(bestD2);
+  const inside = pointInPoly(C.pos, verts);
+  if (!inside && dist > C.radius) return null;
+
+  let nx, ny, pen;
+  if (inside) {
+    const a = verts[bestIdx], b = verts[(bestIdx + 1) % n];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const l = Math.hypot(ex, ey) || 1;
+    let onx = ey / l, ony = -ex / l;
+    let cx = 0, cy = 0;
+    for (const v of verts) { cx += v.x; cy += v.y; }
+    cx /= n; cy /= n;
+    if (onx * (cx - a.x) + ony * (cy - a.y) > 0) { onx = -onx; ony = -ony; }
+    nx = -onx; ny = -ony;
+    pen = C.radius + dist;
+  } else {
+    const dx = bestPt.x - C.pos.x, dy = bestPt.y - C.pos.y;
+    const d = Math.hypot(dx, dy) || 1;
+    nx = dx / d; ny = dy / d;
+    pen = C.radius - dist;
+  }
+  return { normal: { x: nx, y: ny }, points: [{ x: bestPt.x, y: bestPt.y, pen }] };
+}
+
+function polyPoly(A, B) {
+  const va = A.worldVerts, vb = B.worldVerts;
+  const r1 = leastPenetration(va, vb);
+  if (r1.sep > 0) return null;
+  const r2 = leastPenetration(vb, va);
+  if (r2.sep > 0) return null;
+
+  let refVerts, incVerts, refIdx, flipped;
+  if (r1.sep > r2.sep) {
+    refVerts = va; incVerts = vb; refIdx = r1.idx; flipped = false;
+  } else {
+    refVerts = vb; incVerts = va; refIdx = r2.idx; flipped = true;
+  }
+
+  const n = refVerts.length;
+  const ra = refVerts[refIdx], rb = refVerts[(refIdx + 1) % n];
+  const ex = rb.x - ra.x, ey = rb.y - ra.y;
+  const el = Math.hypot(ex, ey) || 1;
+  const refDir = { x: ex / el, y: ey / el };
+  const refN = { x: ey / el, y: -ex / el };
+
+  let minDot = Infinity, incIdx = 0;
+  const m = incVerts.length;
+  for (let i = 0; i < m; i++) {
+    const a = incVerts[i], b = incVerts[(i + 1) % m];
+    const ax = b.x - a.x, ay = b.y - a.y;
+    const l = Math.hypot(ax, ay) || 1;
+    const d = (ay / l) * refN.x + (-ax / l) * refN.y;
+    if (d < minDot) { minDot = d; incIdx = i; }
+  }
+  const ia = incVerts[incIdx], ib = incVerts[(incIdx + 1) % m];
+
+  const o1 = refDir.x * ra.x + refDir.y * ra.y;
+  const c1 = clipSeg(ia, ib, refDir.x, refDir.y, o1);
+  if (c1.length < 2) return null;
+
+  const o2 = refDir.x * rb.x + refDir.y * rb.y;
+  const c2 = clipSeg(c1[0], c1[1], -refDir.x, -refDir.y, -o2);
+  if (c2.length < 2) return null;
+
+  const refOff = refN.x * ra.x + refN.y * ra.y;
+  const pts = [];
+  for (const p of c2) {
+    const sep = (refN.x * p.x + refN.y * p.y) - refOff;
+    if (sep <= 0.01) pts.push({ x: p.x, y: p.y, pen: -sep });
+  }
+  if (pts.length === 0) return null;
+
+  const normal = flipped ? { x: -refN.x, y: -refN.y } : refN;
+  return { normal, points: pts };
+}
+
+function collideBodies(A, B) {
+  if (A.shape === 'circle') {
+    if (B.shape === 'circle') return circleCircle(A, B);
+    return circlePoly(A, B);
+  } else {
+    if (B.shape === 'circle') {
+      const m = circlePoly(B, A);
+      if (m) { m.normal.x = -m.normal.x; m.normal.y = -m.normal.y; }
+      return m;
+    }
+    return polyPoly(A, B);
+  }
+}
+
+/* =========================================================================
+   5. 接触约束
+   ========================================================================= */
+class Manifold {
+  constructor(A, B, normal, points) {
+    this.A = A; this.B = B;
+    this.normal = normal;
+    this.points = points;
+    this.e = Math.min(A.restitution, B.restitution);
+    this.mu = Math.sqrt(A.friction * B.friction);
+    this.tangent = { x: -normal.y, y: normal.x };
+    this.prepare();
+  }
+
+  prepare() {
+    const A = this.A, B = this.B, n = this.normal, t = this.tangent;
+    for (const p of this.points) {
+      p.rA = { x: p.x - A.pos.x, y: p.y - A.pos.y };
+      p.rB = { x: p.x - B.pos.x, y: p.y - B.pos.y };
+      p.localA = V.rotInv(p.rA, A.angle);
+      p.localB = V.rotInv(p.rB, B.angle);
+
+      const rnA = p.rA.x * n.y - p.rA.y * n.x;
+      const rnB = p.rB.x * n.y - p.rB.y * n.x;
+      p.massNormal = 1 / (A.invMass + B.invMass +
+        A.invInertia * rnA * rnA + B.invInertia * rnB * rnB + 1e-12);
+
+      const rtA = p.rA.x * t.y - p.rA.y * t.x;
+      const rtB = p.rB.x * t.y - p.rB.y * t.x;
+      p.massTangent = 1 / (A.invMass + B.invMass +
+        A.invInertia * rtA * rtA + B.invInertia * rtB * rtB + 1e-12);
+
+      p.nImpulse = 0;
+      p.tImpulse = 0;
+
+      const rvx = (B.vel.x - B.angVel * p.rB.y) - (A.vel.x - A.angVel * p.rA.y);
+      const rvy = (B.vel.y + B.angVel * p.rB.x) - (A.vel.y + A.angVel * p.rA.x);
+      const vn = rvx * n.x + rvy * n.y;
+      p.vBias = vn < -130 ? -this.e * vn : 0;
+    }
+  }
+
+  solveVelocity() {
+    const A = this.A, B = this.B;
+    const n = this.normal, t = this.tangent, mu = this.mu;
+
+    for (const p of this.points) {
+      let rvx = (B.vel.x - B.angVel * p.rB.y) - (A.vel.x - A.angVel * p.rA.y);
+      let rvy = (B.vel.y + B.angVel * p.rB.x) - (A.vel.y + A.angVel * p.rA.x);
+      const vn = rvx * n.x + rvy * n.y;
+
+      let lambda = -(vn - p.vBias) * p.massNormal;
+      const oldN = p.nImpulse;
+      p.nImpulse = Math.max(oldN + lambda, 0);
+      lambda = p.nImpulse - oldN;
+
+      const jx = n.x * lambda, jy = n.y * lambda;
+      A.vel.x -= jx * A.invMass; A.vel.y -= jy * A.invMass;
+      A.angVel -= (p.rA.x * jy - p.rA.y * jx) * A.invInertia;
+      B.vel.x += jx * B.invMass; B.vel.y += jy * B.invMass;
+      B.angVel += (p.rB.x * jy - p.rB.y * jx) * B.invInertia;
+
+      rvx = (B.vel.x - B.angVel * p.rB.y) - (A.vel.x - A.angVel * p.rA.y);
+      rvy = (B.vel.y + B.angVel * p.rB.x) - (A.vel.y + A.angVel * p.rA.x);
+      const vt = rvx * t.x + rvy * t.y;
+
+      let lt = -vt * p.massTangent;
+      const maxF = mu * p.nImpulse;
+      const oldT = p.tImpulse;
+      p.tImpulse = clamp(oldT + lt, -maxF, maxF);
+      lt = p.tImpulse - oldT;
+
+      const tx = t.x * lt, ty = t.y * lt;
+      A.vel.x -= tx * A.invMass; A.vel.y -= ty * A.invMass;
+      A.angVel -= (p.rA.x * ty - p.rA.y * tx) * A.invInertia;
+      B.vel.x += tx * B.invMass; B.vel.y += ty * B.invMass;
+      B.angVel += (p.rB.x * ty - p.rB.y * tx) * B.invInertia;
+    }
+  }
+
+  solvePosition() {
+    const A = this.A, B = this.B, n = this.normal;
+    const totalInv = A.invMass + B.invMass;
+    if (totalInv <= 0) return;
+    const SLOP = 0.4, PERCENT = 0.55;
+
+    const ca = Math.cos(A.angle), sa = Math.sin(A.angle);
+    const cb = Math.cos(B.angle), sb = Math.sin(B.angle);
+
+    for (const p of this.points) {
+      const pax = A.pos.x + p.localA.x * ca - p.localA.y * sa;
+      const pay = A.pos.y + p.localA.x * sa + p.localA.y * ca;
+      const pbx = B.pos.x + p.localB.x * cb - p.localB.y * sb;
+      const pby = B.pos.y + p.localB.x * sb + p.localB.y * cb;
+      const sep = (pbx - pax) * n.x + (pby - pay) * n.y;
+      const pen = -sep;
+      if (pen <= SLOP) continue;
+
+      const corr = (pen - SLOP) * PERCENT / totalInv;
+      A.pos.x -= n.x * corr * A.invMass;
+      A.pos.y -= n.y * corr * A.invMass;
+      B.pos.x += n.x * corr * B.invMass;
+      B.pos.y += n.y * corr * B.invMass;
+    }
+  }
+}
+
+/* =========================================================================
+   6. 约束
+   ========================================================================= */
+class DistanceConstraint {
+  constructor(a, b, opts = {}) {
+    this.a = a; this.b = b;
+    this.localA = opts.localA ? { ...opts.localA } : { x: 0, y: 0 };
+    this.localB = opts.localB ? { ...opts.localB } : { x: 0, y: 0 };
+    const pa = a.worldPoint(this.localA);
+    const pb = b.worldPoint(this.localB);
+    this.length = opts.length ?? Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    this.stiffness = opts.stiffness ?? 0.9;
+    this.isRope = opts.isRope !== false;
+    this.maxStretch = opts.maxStretch ?? Infinity;
+    this.broken = false;
+    this.color = opts.color || 'rgba(220,220,220,.5)';
+  }
+
+  solve() {
+    if (this.broken) return;
+    const A = this.a, B = this.b;
+    const pa = A.worldPoint(this.localA);
+    const pb = B.worldPoint(this.localB);
+    let dx = pb.x - pa.x, dy = pb.y - pa.y;
+    let d = Math.hypot(dx, dy);
+    if (d < 1e-6) { dx = 0; dy = 1; d = 1e-6; }
+
+    if (d > this.maxStretch) { this.broken = true; return; }
+    if (this.isRope && d <= this.length) return;
+
+    const wA = A.invMass, wB = B.invMass;
+    const wSum = wA + wB;
+    if (wSum === 0) return;
+
+    const diff = (d - this.length) / d * this.stiffness;
+    const cx = dx * diff, cy = dy * diff;
+
+    A.pos.x += cx * (wA / wSum);
+    A.pos.y += cy * (wA / wSum);
+    B.pos.x -= cx * (wB / wSum);
+    B.pos.y -= cy * (wB / wSum);
+
+    if (!A.isStatic) A.wake();
+    if (!B.isStatic) B.wake();
+  }
+}
+
+/* =========================================================================
+   7. 世界
+   ========================================================================= */
+const SLEEP_V2 = 100;
+const SLEEP_W  = 0.15;
+const SLEEP_TIME = 0.55;
+
+// —— 姿势弹簧参数（让“活着的”布娃娃站住）——
+const POSE_K   = 1800;   // 位置刚度
+const POSE_D   = 78;     // 位置阻尼
+const POSE_KA  = 950;    // 角度刚度
+const POSE_DA  = 62;     // 角度阻尼
+
+class World {
+  constructor() {
+    this.bodies = [];
+    this.constraints = [];
+    this.gravity = { x: 0, y: 1500 };
+    this.velIter = IS_MOBILE ? 6 : 8;
+    this.posIter = 4;
+    this.onImpact = null;
+    this.impactThreshold = 140;
+
+    this._proxies = [];
+    this._manifolds = [];
+    this._dynamicCount = 0;
+  }
+
+  add(b) {
+    this.bodies.push(b);
+    if (!b.isStatic) this._dynamicCount++;
+    return b;
+  }
+
+  clear() {
+    this.bodies.length = 0;
+    this.constraints.length = 0;
+    this._dynamicCount = 0;
+  }
+
+  step(dt) {
+    const bodies = this.bodies;
+    const n = bodies.length;
+
+    /* ---------- 1. 重力 + 阻尼 + 姿势弹簧 ---------- */
+    const gx = this.gravity.x * dt, gy = this.gravity.y * dt;
+    for (let i = 0; i < n; i++) {
+      const b = bodies[i];
+      if (b.isStatic || b.sleeping) continue;
+
+      b.vel.x += gx;
+      b.vel.y += gy;
+      b.vel.x *= 0.9994; b.vel.y *= 0.9994;
+      b.angVel *= 0.9985;
+
+      // —— 姿势弹簧：把“活着的”布娃娃拉回站立姿态 ——
+      if (b.poseActive && b.poseTarget) {
+        const t = b.poseTarget;
+        const dx = t.x - b.pos.x;
+        const dy = t.y - b.pos.y;
+        b.vel.x += (dx * POSE_K - b.vel.x * POSE_D) * dt;
+        b.vel.y += (dy * POSE_K - b.vel.y * POSE_D) * dt;
+
+        let da = t.angle - b.angle;
+        while (da > Math.PI) da -= TAU;
+        while (da < -Math.PI) da += TAU;
+        b.angVel += (da * POSE_KA - b.angVel * POSE_DA) * dt;
+      }
+
+      const maxV = (b.tag === 'bullet' || b.tag === 'blade') ? 3000 : 2200;
+      const sp2 = b.vel.x * b.vel.x + b.vel.y * b.vel.y;
+      if (sp2 > maxV * maxV) {
+        const s = maxV / Math.sqrt(sp2);
+        b.vel.x *= s; b.vel.y *= s;
+      }
+      if (b.angVel > 45) b.angVel = 45;
+      else if (b.angVel < -45) b.angVel = -45;
+    }
+
+    /* ---------- 2. 宽相：扫描-剪枝 ---------- */
+    const proxies = this._proxies;
+    let cnt = 0;
+    for (let i = 0; i < n; i++) {
+      const b = bodies[i];
+      if (b.dead) continue;
+      const r = b.boundRadius;
+      let p = proxies[cnt];
+      if (!p) p = proxies[cnt] = { b: null, minX: 0, maxX: 0, minY: 0, maxY: 0 };
+      p.b = b;
+      p.minX = b.pos.x - r; p.maxX = b.pos.x + r;
+      p.minY = b.pos.y - r; p.maxY = b.pos.y + r;
+      cnt++;
+    }
+    proxies.length = cnt;
+    proxies.sort((p, q) => p.minX - q.minX);
+
+    /* ---------- 3. 窄相 + 生成流形 ---------- */
+    const manifolds = this._manifolds;
+    manifolds.length = 0;
+
+    for (let i = 0; i < cnt; i++) {
+      const pa = proxies[i];
+      const A = pa.b;
+      const axMax = pa.maxX;
+      const ayMin = pa.minY, ayMax = pa.maxY;
+
+      for (let j = i + 1; j < cnt; j++) {
+        const pb = proxies[j];
+        if (pb.minX > axMax) break;
+        const B = pb.b;
+        if (A.isStatic && B.isStatic) continue;
+        if (A.sleeping && B.sleeping) continue;
+        if (ayMax < pb.minY || ayMin > pb.maxY) continue;
+
+        const m = collideBodies(A, B);
+        if (m) manifolds.push(new Manifold(A, B, m.normal, m.points));
+      }
+    }
+
+    /* ---------- 4. 碰撞回调 ---------- */
+    if (this.onImpact && manifolds.length) {
+      const th = this.impactThreshold;
+      for (let i = 0; i < manifolds.length; i++) {
+        const m = manifolds[i];
+        const A = m.A, B = m.B;
+        const dx = A.vel.x - B.vel.x, dy = A.vel.y - B.vel.y;
+        if (dx * dx + dy * dy > th * th) {
+          this.onImpact(A, B, Math.sqrt(dx * dx + dy * dy));
+        }
+      }
+    }
+
+    /* ---------- 5. 速度求解迭代 ---------- */
+    const velIter = this.velIter;
+    for (let it = 0; it < velIter; it++)
+      for (let k = 0; k < manifolds.length; k++) manifolds[k].solveVelocity();
+
+    /* ---------- 6. 位置积分 ---------- */
+    for (let i = 0; i < n; i++) {
+      const b = bodies[i];
+      if (b.isStatic || b.sleeping) continue;
+      b.pos.x += b.vel.x * dt;
+      b.pos.y += b.vel.y * dt;
+      b.angle += b.angVel * dt;
+    }
+
+    /* ---------- 7. 位置修正 + 约束 ---------- */
+    const cons = this.constraints;
+    for (let it = 0; it < 4; it++) {
+      if (it < this.posIter) {
+        for (let k = 0; k < manifolds.length; k++) manifolds[k].solvePosition();
+      }
+      for (let k = 0; k < cons.length; k++) cons[k].solve();
+    }
+
+    /* ---------- 8. 休眠判定 ---------- */
+    for (let i = 0; i < n; i++) {
+      const b = bodies[i];
+      if (b.isStatic) continue;
+      // 活着的布娃娃永不休眠
+      if (b.poseActive) { b.sleeping = false; b.sleepTimer = 0; continue; }
+
+      const sp2 = b.vel.x * b.vel.x + b.vel.y * b.vel.y;
+      const w = b.angVel < 0 ? -b.angVel : b.angVel;
+      if (sp2 < SLEEP_V2 && w < SLEEP_W) {
+        if (!b.sleeping) {
+          b.sleepTimer += dt;
+          if (b.sleepTimer >= SLEEP_TIME) {
+            b.sleeping = true;
+            b.vel.x = 0; b.vel.y = 0; b.angVel = 0;
+          }
+        }
+      } else {
+        if (b.sleeping) b.sleeping = false;
+        b.sleepTimer = 0;
+      }
+    }
+
+    /* ---------- 9. 同步世界坐标 ---------- */
+    for (let i = 0; i < n; i++) {
+      const b = bodies[i];
+      if (!b.isStatic) b.updateWorldVerts();
+    }
+
+    /* ---------- 10. 清理已死亡对象 ---------- */
+    let w2 = 0;
+    let dynCount = 0;
+    for (let i = 0; i < n; i++) {
+      const b = bodies[i];
+      if (b.dead) continue;
+      if (!b.isStatic) dynCount++;
+      bodies[w2++] = b;
+    }
+    bodies.length = w2;
+    this._dynamicCount = dynCount;
+
+    let wc = 0;
+    for (let i = 0; i < cons.length; i++) {
+      const c = cons[i];
+      if (!c.broken && !c.a.dead && !c.b.dead) cons[wc++] = c;
+    }
+    cons.length = wc;
+  }
+}
+
+/* =========================================================================
+   8. 渲染器
+   ========================================================================= */
+class Renderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.dpr = 1;
+    this.w = 0; this.h = 0;
+    this._bg = null;
+    this._bgH = -1;
+    this.resize();
+  }
+
+  resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const pw = Math.max(1, Math.floor(w * dpr));
+    const ph = Math.max(1, Math.floor(h * dpr));
+    if (this.canvas.width === pw && this.canvas.height === ph && this.dpr === dpr) return;
+    this.dpr = dpr;
+    this.w = w; this.h = h;
+    this.canvas.width = pw;
+    this.canvas.height = ph;
+    this.canvas.style.width = w + 'px';
+    this.canvas.style.height = h + 'px';
+    this._bg = null;
+  }
+
+  render(app, world) {
+    const ctx = this.ctx;
+    const dpr = this.dpr;
+    const W = this.w, H = this.h;
+    const cam = app.camera;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (!this._bg || this._bgH !== H) {
+      const bg = ctx.createLinearGradient(0, 0, 0, H);
+      bg.addColorStop(0, '#131a26');
+      bg.addColorStop(1, '#0b0e13');
+      this._bg = bg;
+      this._bgH = H;
+    }
+    ctx.fillStyle = this._bg;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(cam.zoom, cam.zoom);
+    ctx.translate(-cam.x, -cam.y);
+
+    const halfW = W / 2 / cam.zoom, halfH = H / 2 / cam.zoom;
+    const viewL = cam.x - halfW, viewR = cam.x + halfW;
+    const viewT = cam.y - halfH, viewB = cam.y + halfH;
+
+    this.drawGrid(ctx, viewL, viewR, viewT, viewB, cam.zoom);
+
+    ctx.lineCap = 'round';
+    const cons = world.constraints;
+    for (let i = 0; i < cons.length; i++) {
+      const c = cons[i];
+      if (c.broken) continue;
+      const pa = c.a.worldPoint(c.localA);
+      if (pa.x < viewL - 40 || pa.x > viewR + 40 || pa.y < viewT - 40 || pa.y > viewB + 40) continue;
+      const pb = c.b.worldPoint(c.localB);
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = Math.max(1.5, 3 / cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+
+    const bodies = world.bodies;
+    const pad = 24 / cam.zoom;
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (b.dead) continue;
+      const r = b.boundRadius + pad;
+      if (b.pos.x + r < viewL || b.pos.x - r > viewR) continue;
+      if (b.pos.y + r < viewT || b.pos.y - r > viewB) continue;
+      this.drawBody(ctx, b, cam.zoom);
+    }
+
+    if (app.selected && !app.selected.dead) {
+      this.drawHighlight(ctx, app.selected, cam.zoom);
+    }
+
+    if (app.drag) {
+      const b = app.drag.body;
+      if (!b.dead) {
+        const gp = b.worldPoint(app.drag.localAnchor);
+        ctx.strokeStyle = 'rgba(120,200,255,.85)';
+        ctx.lineWidth = 2 / cam.zoom;
+        ctx.setLineDash([6 / cam.zoom, 5 / cam.zoom]);
+        ctx.beginPath();
+        ctx.moveTo(gp.x, gp.y);
+        ctx.lineTo(app.drag.target.x, app.drag.target.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(gp.x, gp.y, 5 / cam.zoom, 0, TAU);
+        ctx.fillStyle = 'rgba(120,200,255,.9)';
+        ctx.fill();
+      }
+    }
+
+    this.drawParticles(ctx, app.particles);
+
+    if (app.debug) this.drawDebug(ctx, world, cam.zoom);
+
+    for (let i = 0; i < app.shockwaves.length; i++) {
+      const s = app.shockwaves[i];
+      const t = s.life / s.maxLife;
+      ctx.strokeStyle = `rgba(255,190,110,${t * 0.8})`;
+      ctx.lineWidth = (2 + 8 * t) / cam.zoom;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * (1 - t) + 8, 0, TAU);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  drawGrid(ctx, L, R, T, B, zoom) {
+    let step = 100;
+    while (step * zoom < 40) step *= 2;
+    while (step * zoom > 220) step /= 2;
+
+    ctx.lineWidth = 1 / zoom;
+    ctx.strokeStyle = 'rgba(255,255,255,.035)';
+    ctx.beginPath();
+    const x0 = Math.floor(L / step) * step;
+    const y0 = Math.floor(T / step) * step;
+    for (let x = x0; x <= R; x += step) { ctx.moveTo(x, T); ctx.lineTo(x, B); }
+    for (let y = y0; y <= B; y += step) { ctx.moveTo(L, y); ctx.lineTo(R, y); }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(90,140,200,.13)';
+    ctx.lineWidth = 2 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(L, 0); ctx.lineTo(R, 0);
+    ctx.moveTo(0, T); ctx.lineTo(0, B);
+    ctx.stroke();
+  }
+
+  drawBody(ctx, b, zoom) {
+    const lw = Math.max(1, 2 / zoom);
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = b.color2 || 'rgba(0,0,0,.55)';
+    ctx.fillStyle = b.color;
+
+    if (b.shape === 'circle') {
+      const r = b.radius;
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, r, 0, TAU);
+      ctx.fill();
+      ctx.stroke();
+
+      if (r * zoom > 9) {
+        ctx.beginPath();
+        ctx.arc(b.pos.x, b.pos.y, r * 0.62, Math.PI * 0.9, Math.PI * 1.6);
+        ctx.strokeStyle = 'rgba(255,255,255,.16)';
+        ctx.lineWidth = Math.max(1, r * 0.2);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.moveTo(b.pos.x, b.pos.y);
+      ctx.lineTo(
+        b.pos.x + Math.cos(b.angle) * r * 0.85,
+        b.pos.y + Math.sin(b.angle) * r * 0.85
+      );
+      ctx.strokeStyle = 'rgba(0,0,0,.25)';
+      ctx.lineWidth = Math.max(1, lw * 0.9);
+      ctx.stroke();
+
+      // 活着的布娃娃头部：画个小高光
+      if (b.poseActive) {
+        ctx.beginPath();
+        ctx.arc(b.pos.x - r * 0.3, b.pos.y - r * 0.3, Math.max(1.2, r * 0.18), 0, TAU);
+        ctx.fillStyle = 'rgba(255,255,255,.35)';
+        ctx.fill();
+      }
+    } else {
+      const vs = b.worldVerts;
+      const m = vs.length;
+      if (!vs || m < 3) return;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < m; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    if (b.fuse > 0) {
+      const blink = Math.sin(performance.now() * 0.03) > 0;
+      ctx.globalAlpha = blink ? 0.72 : 0.18;
+      ctx.fillStyle = '#fff2a0';
+      if (b.shape === 'circle') {
+        ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, b.radius, 0, TAU); ctx.fill();
+      } else {
+        const vs = b.worldVerts;
+        ctx.beginPath();
+        ctx.moveTo(vs[0].x, vs[0].y);
+        for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  drawHighlight(ctx, b, zoom) {
+    ctx.strokeStyle = '#66d9ff';
+    ctx.lineWidth = 3 / zoom;
+    ctx.shadowColor = '#66d9ff';
+    ctx.shadowBlur = 12;
+    if (b.shape === 'circle') {
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, b.radius + 3 / zoom, 0, TAU);
+      ctx.stroke();
+    } else {
+      const vs = b.worldVerts;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  drawParticles(ctx, particles) {
+    let lastColor = null;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const a = 1 - p.life / p.maxLife;
+      if (a <= 0) continue;
+      ctx.globalAlpha = a;
+      if (p.color !== lastColor) {
+        ctx.fillStyle = p.color;
+        lastColor = p.color;
+      }
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawDebug(ctx, world, zoom) {
+    ctx.lineWidth = 1 / zoom;
+
+    ctx.strokeStyle = 'rgba(0,255,160,.45)';
+    ctx.beginPath();
+    for (const b of world.bodies) {
+      if (b.shape === 'circle') {
+        ctx.moveTo(b.pos.x + b.radius, b.pos.y);
+        ctx.arc(b.pos.x, b.pos.y, b.radius, 0, TAU);
+      } else {
+        const vs = b.worldVerts;
+        ctx.moveTo(vs[0].x, vs[0].y);
+        for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+        ctx.closePath();
+      }
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,120,80,.9)';
+    ctx.lineWidth = 2 / zoom;
+    ctx.beginPath();
+    for (const b of world.bodies) {
+      if (b.isStatic || b.sleeping) continue;
+      const s = 0.12;
+      ctx.moveTo(b.pos.x, b.pos.y);
+      ctx.lineTo(b.pos.x + b.vel.x * s, b.pos.y + b.vel.y * s);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,220,0,.85)';
+    const dotR = 3 / zoom;
+    for (const b of world.bodies) {
+      if (!b.sleeping) continue;
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, dotR, 0, TAU);
+      ctx.fill();
+    }
+
+    // 调试：姿势目标点
+    ctx.fillStyle = 'rgba(0,220,255,.9)';
+    for (const b of world.bodies) {
+      if (!b.poseActive || !b.poseTarget) continue;
+      ctx.beginPath();
+      ctx.arc(b.poseTarget.x, b.poseTarget.y, dotR * 1.2, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,220,255,.35)';
+      ctx.lineWidth = 1 / zoom;
+      ctx.beginPath();
+      ctx.moveTo(b.pos.x, b.pos.y);
+      ctx.lineTo(b.poseTarget.x, b.poseTarget.y);
+      ctx.stroke();
+    }
+  }
+}
+
+/* =========================================================================
+   9. 应用状态
+   ========================================================================= */
+const App = {
+  world: new World(),
+  renderer: null,
+  camera: { x: 0, y: 180, zoom: 1 },
+  particles: [],
+  shockwaves: [],
+  tool: 'hand',
+  material: 'wood',
+  paused: false,
+  timeScale: 1,
+  debug: false,
+  selected: null,
+  drag: null,
+  groundY: 520,
+  fps: 60,
+  bodyCount: 0,
+};
+
+const MAX_BODIES = IS_MOBILE ? 130 : 320;
+const INSTANT_TOOLS = { gun: 1, blade: 1 };
+
+/* ---------- 粒子 ---------- */
+const PARTICLE_CAP = IS_MOBILE ? 180 : 600;
+
+function spawnParticles(x, y, count, o = {}) {
+  const colors = o.colors || ['#ffb347', '#ff7a45', '#ffd93d', '#ffffff'];
+  for (let i = 0; i < count; i++) {
+    if (App.particles.length >= PARTICLE_CAP) break;
+    const a = o.dir !== undefined ? o.dir + rand(-0.9, 0.9) : rand(0, TAU);
+    const sp = rand(o.spdMin ?? 80, o.spdMax ?? 420);
+    App.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0,
+      maxLife: rand(o.lifeMin ?? 0.3, o.lifeMax ?? 1.1),
+      size: rand(o.sizeMin ?? 1.5, o.sizeMax ?? 5),
+      color: colors[(Math.random() * colors.length) | 0],
+      gravity: o.gravity ?? 900,
+      drag: o.drag ?? 0.985,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  const ps = App.particles;
+  for (let i = ps.length - 1; i >= 0; i--) {
+    const p = ps[i];
+    p.life += dt;
+    if (p.life >= p.maxLife) { ps[i] = ps[ps.length - 1]; ps.pop(); continue; }
+    p.vy += p.gravity * dt;
+    p.vx *= p.drag; p.vy *= p.drag;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+  for (let i = App.shockwaves.length - 1; i >= 0; i--) {
+    const s = App.shockwaves[i];
+    s.life += dt;
+    if (s.life >= s.maxLife) { App.shockwaves[i] = App.shockwaves[App.shockwaves.length - 1]; App.shockwaves.pop(); }
+  }
+}
+
+/* ---------- 工厂 ---------- */
+function addBox(x, y, w, h, matKey = 'wood', isStatic = false, angle = 0, tag = 'body') {
+  const m = MATERIALS[matKey] || MATERIALS.stone;
+  const b = new Body({
+    shape: 'poly', x, y, angle,
+    verts: boxVerts(w, h),
+    isStatic, tag,
+    density: m.density, restitution: m.restitution, friction: m.friction,
+    color: m.color, color2: m.color2, material: matKey, hp: m.hp,
+  });
+  App.world.add(b);
+  return b;
+}
+
+function addCircle(x, y, r, matKey = 'wood', isStatic = false, tag = 'body') {
+  const m = MATERIALS[matKey] || MATERIALS.stone;
+  const b = new Body({
+    shape: 'circle', x, y, radius: r,
+    isStatic, tag,
+    density: m.density, restitution: m.restitution, friction: m.friction,
+    color: m.color, color2: m.color2, material: matKey, hp: m.hp,
+  });
+  App.world.add(b);
+  return b;
+}
+
+function addNgon(x, y, r, sides, matKey = 'wood', tag = 'body') {
+  const m = MATERIALS[matKey] || MATERIALS.stone;
+  const b = new Body({
+    shape: 'poly', x, y,
+    verts: ngonVerts(r, sides, -Math.PI / 2),
+    tag,
+    density: m.density, restitution: m.restitution, friction: m.friction,
+    color: m.color, color2: m.color2, material: matKey, hp: m.hp,
+  });
+  App.world.add(b);
+  return b;
+}
+
+/* ---------- 布娃娃 ---------- */
+function makeRagdoll(cx, cy) {
+  const world = App.world;
+  const flesh = MATERIALS.flesh;
+  const parts = [];
+
+  const mk = (opts) => {
+    const b = new Body(Object.assign({
+      density: flesh.density, restitution: flesh.restitution,
+      friction: flesh.friction, color: flesh.color, color2: flesh.color2,
+      material: 'flesh', hp: flesh.hp, tag: 'ragdoll',
+    }, opts));
+    world.add(b);
+    parts.push(b);
+    return b;
+  };
+
+  const head  = mk({ shape: 'circle', x: cx, y: cy - 62, radius: 13 });
+  const torso = mk({ shape: 'poly', x: cx, y: cy - 22, verts: boxVerts(30, 46) });
+  const armL  = mk({ shape: 'poly', x: cx - 22, y: cy - 26, verts: boxVerts(9, 36) });
+  const armR  = mk({ shape: 'poly', x: cx + 22, y: cy - 26, verts: boxVerts(9, 36) });
+  const legL  = mk({ shape: 'poly', x: cx - 9,  y: cy + 30, verts: boxVerts(11, 40) });
+  const legR  = mk({ shape: 'poly', x: cx + 9,  y: cy + 30, verts: boxVerts(11, 40) });
+
+  const hinge = (a, la, b, lb, stiff = 0.9) => {
+    const c = new DistanceConstraint(a, b, {
+      localA: la, localB: lb, length: 0, stiffness: stiff, isRope: false,
+      color: 'rgba(255,255,255,.18)',
+    });
+    world.constraints.push(c);
+    return c;
+  };
+
+  hinge(head,  { x: 0, y: 13 },  torso, { x: 0, y: -23 });
+  hinge(armL,  { x: 0, y: -18 }, torso, { x: -15, y: -18 });
+  hinge(armR,  { x: 0, y: -18 }, torso, { x: 15, y: -18 });
+  hinge(legL,  { x: 0, y: -20 }, torso, { x: -8, y: 23 });
+  hinge(legR,  { x: 0, y: -20 }, torso, { x: 8, y: 23 });
+
+  // —— 给每个部件注册“站立姿势” ——
+  const group = { parts, alive: true };
+  for (const b of parts) {
+    b.ragdollGroup = group;
+    b.poseActive = true;
+    b.poseOrigin = { x: b.pos.x, y: b.pos.y };
+    b.poseTarget = { x: b.pos.x, y: b.pos.y, angle: b.angle };
+  }
+
+  return parts;
+}
+
+/* ---------- 让布娃娃倒下 ---------- */
+function ragdollHit(group) {
+  if (!group || !group.alive) return;
+  group.alive = false;
+  const parts = group.parts;
+  for (let i = 0; i < parts.length; i++) {
+    const b = parts[i];
+    b.poseActive = false;
+    b.poseTarget = null;
+    b.poseOrigin = null;
+    if (!b.isStatic && !b.dead) b.wake();
+  }
+}
+
+/* ---------- 破碎 ---------- */
+function shatterBody(body) {
+  if (!body || body.dead || body.isStatic || body.noShatter) return;
+  if (body.tag === 'bullet' || body.tag === 'blade') { body.dead = true; return; }
+
+  // 活着的布娃娃被击中 → 先倒下（不碎裂，保持完整）
+  if (body.ragdollGroup && body.ragdollGroup.alive) {
+    ragdollHit(body.ragdollGroup);
+    return;
+  }
+
+  if (body.tag === 'tnt') { triggerTNT(body); return; }
+
+  let baseVerts;
+  if (body.shape === 'circle') {
+    baseVerts = ngonVerts(body.radius, 10, 0);
+  } else {
+    baseVerts = body.localVerts.map(v => ({ x: v.x, y: v.y }));
+  }
+
+  const maxPieces = IS_MOBILE ? 4 : 6;
+  const parts = [baseVerts];
+  let guard = 0;
+  while (parts.length < maxPieces && guard++ < 24) {
+    let bi = 0, ba = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const a = Math.abs(polyArea(parts[i]));
+      if (a > ba) { ba = a; bi = i; }
+    }
+    if (ba < 250) break;
+
+    const part = parts[bi];
+    const c = polyCentroid(part);
+    const ang = rand(0, Math.PI);
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    const L = 2000;
+    const [l, r] = splitPoly(part,
+      { x: c.x - dx * L, y: c.y - dy * L },
+      { x: c.x + dx * L, y: c.y + dy * L });
+    if (l.length >= 3 && r.length >= 3 && Math.abs(polyArea(l)) > 40 && Math.abs(polyArea(r)) > 40) {
+      parts.splice(bi, 1, l, r);
+    } else break;
+  }
+
+  const cosA = Math.cos(body.angle), sinA = Math.sin(body.angle);
+  const world = App.world;
+
+  for (const part of parts) {
+    if (part.length < 3) continue;
+    const area = Math.abs(polyArea(part));
+    if (area < 20) continue;
+
+    const c = polyCentroid(part);
+    const local = part.map(v => ({ x: v.x - c.x, y: v.y - c.y }));
+    if (polyArea(local) < 0) local.reverse();
+
+    const wx = body.pos.x + c.x * cosA - c.y * sinA;
+    const wy = body.pos.y + c.x * sinA + c.y * cosA;
+
+    const piece = new Body({
+      shape: 'poly', x: wx, y: wy, angle: body.angle,
+      verts: local,
+      density: body.density,
+      restitution: body.restitution,
+      friction: body.friction,
+      color: body.color,
+      color2: body.color2,
+      material: body.material,
+      hp: Math.max(5, body.hp * 0.5),
+    });
+
+    const dx = wx - body.pos.x, dy = wy - body.pos.y;
+    const dl = Math.hypot(dx, dy) || 1;
+    const kick = rand(80, 220);
+    piece.vel.x = body.vel.x + (dx / dl) * kick;
+    piece.vel.y = body.vel.y + (dy / dl) * kick - rand(0, 100);
+    piece.angVel = body.angVel + rand(-7, 7);
+
+    world.add(piece);
+  }
+
+  spawnParticles(body.pos.x, body.pos.y, IS_MOBILE ? 8 : 16, {
+    colors: [body.color, body.color2 || '#333', '#ffffff'],
+    spdMin: 60, spdMax: 320, lifeMin: 0.25, lifeMax: 0.8,
+    sizeMin: 1.5, sizeMax: 4.5,
+  });
+
+  body.dead = true;
+  if (App.selected === body) App.selected = null;
+  if (App.drag && App.drag.body === body) App.drag = null;
+}
+
+/* ---------- 爆炸 ---------- */
+function explode(x, y, radius = 220, power = 1500) {
+  App.shockwaves.push({ x, y, r: radius, life: 0, maxLife: 0.45 });
+
+  const world = App.world;
+
+  for (let i = 0; i < world.bodies.length; i++) {
+    const b = world.bodies[i];
+    if (b.dead || b.isStatic) continue;
+    const dx = b.pos.x - x, dy = b.pos.y - y;
+    const d = Math.hypot(dx, dy);
+    if (d > radius) continue;
+
+    // 活着的布娃娃被爆炸波及 → 倒下
+    if (b.tag === 'ragdoll' && b.ragdollGroup) ragdollHit(b.ragdollGroup);
+
+    b.wake();
+
+    const falloff = 1 - d / radius;
+    const nx = dx / (d || 1), ny = dy / (d || 1);
+    const dv = falloff * power * (0.5 + 0.5 * Math.random());
+
+    b.vel.x += nx * dv;
+    b.vel.y += ny * dv;
+    b.angVel += rand(-9, 9) * falloff;
+
+    const maxV = 2200;
+    const sp2 = b.vel.x * b.vel.x + b.vel.y * b.vel.y;
+    if (sp2 > maxV * maxV) {
+      const s = maxV / Math.sqrt(sp2);
+      b.vel.x *= s; b.vel.y *= s;
+    }
+
+    if (b.tag === 'tnt' && b.fuse < 0) {
+      b.fuse = rand(0.08, 0.25);
+    } else if (falloff > 0.55 && Math.random() < 0.6) {
+      shatterBody(b);
+    }
+  }
+
+  spawnParticles(x, y, IS_MOBILE ? 22 : 46, {
+    colors: ['#ffd93d', '#ff8c42', '#ff4d2e', '#ffffff', '#ffb347'],
+    spdMin: 180, spdMax: 900, lifeMin: 0.25, lifeMax: 0.9,
+    sizeMin: 2, sizeMax: 7, gravity: 400,
+  });
+  spawnParticles(x, y, IS_MOBILE ? 10 : 20, {
+    colors: ['#6b6b6b', '#3a3a3a', '#9a9a9a'],
+    spdMin: 40, spdMax: 260, lifeMin: 0.5, lifeMax: 1.6,
+    sizeMin: 3, sizeMax: 10, gravity: -60, drag: 0.97,
+  });
+}
+
+function triggerTNT(b) {
+  if (b.dead) return;
+  b.dead = true;
+  if (App.selected === b) App.selected = null;
+  if (App.drag && App.drag.body === b) App.drag = null;
+  explode(b.pos.x, b.pos.y, 240, 1600);
+}
+
+/* ---------- 场景 ---------- */
+function buildScene() {
+  const world = App.world;
+  world.clear();
+  App.particles.length = 0;
+  App.shockwaves.length = 0;
+  App.selected = null;
+  App.drag = null;
+
+  const GY = App.groundY;
+
+  const ground = addBox(0, GY + 200, 7000, 400, 'stone', true);
+  ground.color = '#2b3444';
+  ground.color2 = '#1b2230';
+
+  const wl = addBox(-1700, GY - 600, 160, 3000, 'stone', true);
+  const wr = addBox( 1700, GY - 600, 160, 3000, 'stone', true);
+  wl.color = wr.color = '#2b3444';
+  wl.color2 = wr.color2 = '#1b2230';
+
+  const p1 = addBox(-520, GY - 240, 320, 30, 'stone', true);
+  const p2 = addBox(520, GY - 380, 320, 30, 'stone', true);
+  const p3 = addBox(0, GY - 560, 260, 30, 'stone', true);
+  for (const p of [p1, p2, p3]) { p.color = '#33405a'; p.color2 = '#20293a'; }
+
+  const ramp = addBox(-900, GY - 60, 420, 26, 'stone', true, -0.28);
+  ramp.color = '#33405a'; ramp.color2 = '#20293a';
+
+  addBox(-200, GY - 60, 46, 46, 'wood');
+  addBox(-160, GY - 120, 46, 46, 'wood');
+  addBox(-120, GY - 180, 46, 46, 'wood');
+  addCircle(120, GY - 60, 24, 'rubber');
+  addCircle(180, GY - 120, 24, 'rubber');
+  addNgon(320, GY - 60, 32, 3, 'metal');
+  addBox(400, GY - 120, 60, 60, 'ice');
+  addBox(700, GY - 60, 50, 50, 'tnt', false, 0, 'tnt');
+  addBox(760, GY - 60, 50, 50, 'tnt', false, 0, 'tnt');
+
+  App.camera.x = 0;
+  App.camera.y = GY - 300;
+  App.camera.zoom = 1;
+}
+
+/* =========================================================================
+   10. 输入系统
+   ========================================================================= */
+const canvas = document.getElementById('cv');
+const quickmenu = document.getElementById('quickmenu');
+
+const pointers = new Map();
+let pinchPrev = null;
+let longPressTimer = null;
+let didLongPress = false;
+
+function screenToWorld(sx, sy) {
+  const cam = App.camera;
+  const W = App.renderer ? App.renderer.w : window.innerWidth;
+  const H = App.renderer ? App.renderer.h : window.innerHeight;
+  return {
+    x: (sx - W / 2) / cam.zoom + cam.x,
+    y: (sy - H / 2) / cam.zoom + cam.y,
+  };
+}
+
+function pickBody(wx, wy) {
+  const bodies = App.world.bodies;
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const b = bodies[i];
+    if (b.dead || b.isStatic) continue;
+    if (b.containsPoint(wx, wy)) return b;
+  }
+  return null;
+}
+
+function spawnAt(wx, wy) {
+  const tool = App.tool;
+  const mat = App.material;
+
+  switch (tool) {
+    case 'box':   addBox(wx, wy, 52, 52, mat); break;
+    case 'ball':  addCircle(wx, wy, 26, mat); break;
+    case 'tri':   addNgon(wx, wy, 36, 3, mat); break;
+    case 'hex':   addNgon(wx, wy, 32, 6, mat); break;
+    case 'ragdoll': makeRagdoll(wx, wy); break;
+    case 'tnt':   addBox(wx, wy, 46, 46, 'tnt', false, 0, 'tnt'); break;
+    case 'gun':   fireBullet(wx, wy); break;
+    case 'blade': fireBlade(wx, wy); break;
+    case 'bomb': {
+      const b = addCircle(wx, wy, 20, 'metal');
+      b.color = '#3a3f4d'; b.color2 = '#1e222c';
+      b.tag = 'tnt'; b.fuse = 1.2; b.noShatter = true;
+      break;
+    }
+  }
+  enforceBodyLimit();
+}
+
+function enforceBodyLimit() {
+  const world = App.world;
+  if (world._dynamicCount <= MAX_BODIES) return;
+
+  const bodies = world.bodies;
+  let removeCount = world._dynamicCount - MAX_BODIES;
+  for (let i = 0; i < bodies.length && removeCount > 0; i++) {
+    const b = bodies[i];
+    if (!b.isStatic && b !== App.selected && b !== (App.drag && App.drag.body)) {
+      b.dead = true;
+      removeCount--;
+    }
+  }
+}
+
+function fireBullet(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+
+  const b = new Body({
+    shape: 'circle', x: wx, y: wy, radius: 5,
+    density: MATERIALS.bullet.density,
+    restitution: 0.2, friction: 0.3,
+    color: '#ffe08a', color2: '#b8860b',
+    tag: 'bullet', noShatter: true, hp: 99999,
+  });
+  b.vel.x = dx * 2000;
+  b.vel.y = dy * 2000;
+  App.world.add(b);
+}
+
+function fireBlade(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+
+  const b = new Body({
+    shape: 'poly', x: wx, y: wy,
+    verts: ensureCCW([
+      { x: -20, y: -3 }, { x: 20, y: -3 }, { x: 26, y: 0 },
+      { x: 20, y: 3 }, { x: -20, y: 3 }, { x: -26, y: 0 },
+    ]),
+    angle: Math.atan2(dy, dx),
+    density: 3, restitution: 0.2, friction: 0.4,
+    color: '#d8e2f0', color2: '#7d8da3',
+    tag: 'blade', noShatter: true, hp: 99999,
+  });
+  b.vel.x = dx * 1500;
+  b.vel.y = dy * 1500;
+  b.angVel = 22;
+  App.world.add(b);
+}
+
+/* ---------- 指针事件 ---------- */
+function onPointerDown(e) {
+  if (quickmenu.classList.contains('show')) {
+    hideQuickMenu();
+    if (e.cancelable) e.preventDefault();
+    return;
+  }
+
+  if (canvas.setPointerCapture) {
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  const p = {
+    x: e.clientX, y: e.clientY,
+    sx: e.clientX, sy: e.clientY,
+    down: true, moved: false,
+    fired: false,
+    t0: performance.now(),
+  };
+  pointers.set(e.pointerId, p);
+  didLongPress = false;
+
+  if (pointers.size === 1) {
+    handleSingleDown(p);
+    clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(() => {
+      if (!p.moved && pointers.size === 1 && !App.drag) {
+        didLongPress = true;
+        showQuickMenu(p.x, p.y);
+      }
+    }, 520);
+  } else if (pointers.size >= 2) {
+    clearTimeout(longPressTimer);
+    App.drag = null;
+    pinchPrev = null;
+  }
+}
+
+function handleSingleDown(p) {
+  const w = screenToWorld(p.x, p.y);
+
+  if (INSTANT_TOOLS[App.tool]) {
+    p.fired = true;
+    if (App.tool === 'gun') fireBullet(w.x, w.y);
+    else fireBlade(w.x, w.y);
+    enforceBodyLimit();
+    return;
+  }
+
+  const hit = pickBody(w.x, w.y);
+  if (hit && App.tool !== 'delete') {
+    App.selected = hit;
+    hit.wake();
+    const local = V.rotInv({ x: w.x - hit.pos.x, y: w.y - hit.pos.y }, hit.angle);
+    App.drag = { body: hit, localAnchor: local, target: { x: w.x, y: w.y } };
+    return;
+  }
+  App.drag = null;
+}
+
+function onPointerMove(e) {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 8) {
+    if (!p.moved) { p.moved = true; clearTimeout(longPressTimer); }
+  }
+
+  if (pointers.size >= 2) {
+    updatePinch();
+    return;
+  }
+
+  if (App.drag) {
+    App.drag.target = screenToWorld(e.clientX, e.clientY);
+  } else if (p.moved) {
+    const cam = App.camera;
+    cam.x -= dx / cam.zoom;
+    cam.y -= dy / cam.zoom;
+  }
+}
+
+function onPointerUp(e) {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  clearTimeout(longPressTimer);
+  if (!p) return;
+
+  if (pointers.size === 0) {
+    const dt = performance.now() - p.t0;
+    const isTap = !p.moved && dt < 320;
+    if (isTap && !didLongPress && !p.fired) handleTap(p.sx, p.sy);
+    App.drag = null;
+    pinchPrev = null;
+    if (!didLongPress) hideQuickMenu();
+  } else if (pointers.size === 1) {
+    pinchPrev = null;
+  }
+}
+
+function handleTap(sx, sy) {
+  const w = screenToWorld(sx, sy);
+
+  if (App.tool === 'delete') {
+    const hit = pickBody(w.x, w.y);
+    if (hit) {
+      hit.dead = true;
+      if (App.selected === hit) App.selected = null;
+      if (App.drag && App.drag.body === hit) App.drag = null;
+      spawnParticles(hit.pos.x, hit.pos.y, 6, {
+        colors: [hit.color, hit.color2 || '#333333', '#ffffff'],
+        spdMin: 40, spdMax: 220, lifeMin: 0.15, lifeMax: 0.5,
+        sizeMin: 1.5, sizeMax: 4,
+      });
+    }
+    return;
+  }
+
+  const hit = pickBody(w.x, w.y);
+  if (hit) {
+    App.selected = hit;
+    hit.wake();
+    if (hit.tag === 'tnt' && hit.fuse < 0 && hit.material === 'tnt') {
+      hit.fuse = 0.35;
+    }
+    return;
+  }
+
+  App.selected = null;
+  if (App.tool === 'hand') return;
+  spawnAt(w.x, w.y);
+}
+
+function updatePinch() {
+  const pts = [];
+  for (const p of pointers.values()) pts.push(p);
+  if (pts.length < 2) return;
+  const a = pts[0], b = pts[1];
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+
+  if (!pinchPrev) { pinchPrev = { dist, cx, cy }; return; }
+
+  const cam = App.camera;
+  const W = App.renderer ? App.renderer.w : window.innerWidth;
+  const H = App.renderer ? App.renderer.h : window.innerHeight;
+
+  const wxp = (cx - W / 2) / cam.zoom + cam.x;
+  const wyp = (cy - H / 2) / cam.zoom + cam.y;
+
+  const scale = dist / (pinchPrev.dist || dist);
+  cam.zoom = clamp(cam.zoom * scale, 0.15, 5);
+
+  cam.x = wxp - (cx - W / 2) / cam.zoom;
+  cam.y = wyp - (cy - H / 2) / cam.zoom;
+
+  cam.x -= (cx - pinchPrev.cx) / cam.zoom;
+  cam.y -= (cy - pinchPrev.cy) / cam.zoom;
+
+  pinchPrev = { dist, cx, cy };
+}
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const cam = App.camera;
+  const W = App.renderer ? App.renderer.w : window.innerWidth;
+  const H = App.renderer ? App.renderer.h : window.innerHeight;
+  const wxp = (e.clientX - W / 2) / cam.zoom + cam.x;
+  const wyp = (e.clientY - H / 2) / cam.zoom + cam.y;
+  const factor = Math.exp(-e.deltaY * 0.0014);
+  cam.zoom = clamp(cam.zoom * factor, 0.15, 5);
+  cam.x = wxp - (e.clientX - W / 2) / cam.zoom;
+  cam.y = wyp - (e.clientY - H / 2) / cam.zoom;
+}, { passive: false });
+
+canvas.addEventListener('pointerdown', onPointerDown);
+canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointerup', onPointerUp);
+canvas.addEventListener('pointercancel', onPointerUp);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('gesturechange', e => e.preventDefault());
+document.addEventListener('gestureend', e => e.preventDefault());
+document.addEventListener('touchmove', e => {
+  if (e.target === canvas) e.preventDefault();
+}, { passive: false });
+document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+
+/* =========================================================================
+   11. 长按快捷菜单
+   ========================================================================= */
+const QUICK_ITEMS = [
+  { tool: 'box',     icon: 'box',     label: '方块' },
+  { tool: 'ball',    icon: 'ball',    label: '圆球' },
+  { tool: 'tri',     icon: 'tri',     label: '三角' },
+  { tool: 'hex',     icon: 'hex',     label: '六边' },
+  { tool: 'ragdoll', icon: 'ragdoll', label: '布娃娃' },
+  { tool: 'tnt',     icon: 'tnt',     label: 'TNT' },
+  { tool: 'gun',     icon: 'gun',     label: '手枪' },
+  { tool: 'blade',   icon: 'blade',   label: '飞刀' },
+  { tool: 'bomb',    icon: 'bomb',    label: '炸弹' },
+  { tool: 'delete',  icon: 'delete',  label: '删除' },
+];
+
+let quickMenuWorldPos = null;
+
+function showQuickMenu(sx, sy) {
+  quickmenu.innerHTML = '';
+  quickMenuWorldPos = screenToWorld(sx, sy);
+
+  for (const item of QUICK_ITEMS) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.innerHTML = makeSvg(item.icon, 22, 1.8) + `<span class="lbl">${item.label}</span>`;
+    btn.addEventListener('pointerdown', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      App.tool = item.tool;
+      updateToolUI();
+      hideQuickMenu();
+      if (quickMenuWorldPos && !INSTANT_TOOLS[item.tool] && item.tool !== 'delete') {
+        spawnAt(quickMenuWorldPos.x, quickMenuWorldPos.y);
+      }
+      quickMenuWorldPos = null;
+    }, { passive: false });
+    quickmenu.appendChild(btn);
+  }
+
+  quickmenu.style.left = '-9999px';
+  quickmenu.style.top = '-9999px';
+  quickmenu.classList.add('show');
+
+  const mw = quickmenu.offsetWidth || 220;
+  const mh = quickmenu.offsetHeight || 220;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const left = clamp(sx, mw / 2 + 10, Math.max(mw / 2 + 10, vw - mw / 2 - 10));
+  const top  = clamp(sy, mh / 2 + 10, Math.max(mh / 2 + 10, vh - mh / 2 - 10));
+  quickmenu.style.left = left + 'px';
+  quickmenu.style.top = top + 'px';
+
+  if (navigator.vibrate) navigator.vibrate(12);
+}
+
+function hideQuickMenu() {
+  quickmenu.classList.remove('show');
+  quickMenuWorldPos = null;
+}
+
+/* =========================================================================
+   12. UI 绑定
+   ========================================================================= */
+const toastEl = document.getElementById('toast');
+const statsEl = document.getElementById('stats');
+let toastTimer = null;
+let lastStatsText = '';
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1200);
+}
+
+const toolButtons = Array.from(document.querySelectorAll('#bottombar .tool'));
+
+function updateToolUI() {
+  for (let i = 0; i < toolButtons.length; i++) {
+    const btn = toolButtons[i];
+    btn.classList.toggle('active', btn.dataset.tool === App.tool);
+  }
+}
+
+toolButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    App.tool = btn.dataset.tool;
+    updateToolUI();
+    hideQuickMenu();
+  });
+});
+
+document.querySelectorAll('#topbar .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    switch (act) {
+      case 'mat': {
+        const i = MAT_KEYS.indexOf(App.material);
+        App.material = MAT_KEYS[(i + 1) % MAT_KEYS.length];
+        updateMatUI();
+        toast('材质：' + MATERIALS[App.material].name);
+        break;
+      }
+      case 'pause':
+        App.paused = !App.paused;
+        btn.classList.toggle('active', App.paused);
+        btn.innerHTML = makeSvg(App.paused ? 'play' : 'pause');
+        toast(App.paused ? '已暂停' : '继续');
+        break;
+      case 'slow': {
+        const scales = [1, 0.4, 0.15];
+        const idx = scales.indexOf(App.timeScale);
+        App.timeScale = scales[(idx + 1) % scales.length];
+        btn.classList.toggle('active', App.timeScale !== 1);
+        toast('时间流速 ' + Math.round(App.timeScale * 100) + '%');
+        break;
+      }
+      case 'debug':
+        App.debug = !App.debug;
+        btn.classList.toggle('active', App.debug);
+        toast(App.debug ? '调试模式开' : '调试模式关');
+        break;
+      case 'full': toggleFullscreen(); break;
+      case 'reset':
+        buildScene();
+        toast('场景已重置');
+        break;
+      case 'clear':
+        App.world.clear();
+        App.particles.length = 0;
+        App.shockwaves.length = 0;
+        App.selected = null;
+        App.drag = null;
+        toast('已清空');
+        break;
+    }
+  });
+});
+
+function updateMatUI() {
+  const m = MATERIALS[App.material];
+  const dot = document.getElementById('matDot');
+  if (dot) dot.style.background = m.color;
+}
+
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el).catch(() => {});
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+  }
+}
+
+/* =========================================================================
+   13. 碰撞回调
+   ========================================================================= */
+const RAGDOLL_TRIGGER_SPEED = 190;
+
+App.world.onImpact = (A, B, speed) => {
+  // —— 布娃娃受击 → 倒下 ——
+  if (speed > RAGDOLL_TRIGGER_SPEED) {
+    if (A.tag === 'ragdoll' && A.ragdollGroup && B.tag !== 'ragdoll') ragdollHit(A.ragdollGroup);
+    if (B.tag === 'ragdoll' && B.ragdollGroup && A.tag !== 'ragdoll') ragdollHit(B.ragdollGroup);
+  }
+
+  // 子弹命中
+  if (A.tag === 'bullet' && B.tag !== 'bullet' && B.tag !== 'blade') {
+    if (!B.isStatic) {
+      shatterBody(B);
+      spawnParticles(A.pos.x, A.pos.y, 8, {
+        colors: ['#ffe08a', '#ff9a3c', '#fff'],
+        spdMin: 80, spdMax: 400, lifeMin: 0.15, lifeMax: 0.45, sizeMin: 1, sizeMax: 3,
+      });
+    }
+    A.dead = true;
+    return;
+  }
+  if (B.tag === 'bullet' && A.tag !== 'bullet' && A.tag !== 'blade') {
+    if (!A.isStatic) {
+      shatterBody(A);
+      spawnParticles(B.pos.x, B.pos.y, 8, {
+        colors: ['#ffe08a', '#ff9a3c', '#fff'],
+        spdMin: 80, spdMax: 400, lifeMin: 0.15, lifeMax: 0.45, sizeMin: 1, sizeMax: 3,
+      });
+    }
+    B.dead = true;
+    return;
+  }
+
+  // 飞刀命中
+  if (A.tag === 'blade' && B.tag !== 'bullet' && B.tag !== 'blade') {
+    if (!B.isStatic) {
+      shatterBody(B);
+      spawnParticles(A.pos.x, A.pos.y, 6, {
+        colors: ['#d8e2f0', '#ffffff', '#8fa8c4'],
+        spdMin: 60, spdMax: 320, lifeMin: 0.15, lifeMax: 0.5, sizeMin: 1, sizeMax: 3,
+      });
+    }
+    return;
+  }
+  if (B.tag === 'blade' && A.tag !== 'bullet' && A.tag !== 'blade') {
+    if (!A.isStatic) {
+      shatterBody(A);
+      spawnParticles(B.pos.x, B.pos.y, 6, {
+        colors: ['#d8e2f0', '#ffffff', '#8fa8c4'],
+        spdMin: 60, spdMax: 320, lifeMin: 0.15, lifeMax: 0.5, sizeMin: 1, sizeMax: 3,
+      });
+    }
+    return;
+  }
+};
+
+/* =========================================================================
+   14. 主循环
+   ========================================================================= */
+const FIXED_DT = 1 / 60;
+let accumulator = 0;
+let lastTime = performance.now();
+let fpsAcc = 0, fpsFrames = 0;
+
+function updateDrag() {
+  if (!App.drag) return;
+  const b = App.drag.body;
+  if (b.dead) { App.drag = null; return; }
+  if (b.sleeping) b.wake();
+
+  // —— 拖拽活着的布娃娃：让整个姿势目标跟随被拖部位平移 ——
+  if (b.poseActive && b.poseTarget && b.poseOrigin && b.ragdollGroup) {
+    const ox = b.pos.x - b.poseOrigin.x;
+    const oy = b.pos.y - b.poseOrigin.y;
+    const parts = b.ragdollGroup.parts;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (p.poseTarget && p.poseOrigin) {
+        p.poseTarget.x = p.poseOrigin.x + ox;
+        p.poseTarget.y = p.poseOrigin.y + oy;
+      }
+    }
+  }
+
+  const gp = b.worldPoint(App.drag.localAnchor);
+  const dx = App.drag.target.x - gp.x;
+  const dy = App.drag.target.y - gp.y;
+
+  const K = 22;
+  b.vel.x = dx * K;
+  b.vel.y = dy * K;
+
+  const sp2 = b.vel.x * b.vel.x + b.vel.y * b.vel.y;
+  const MAX = 2200;
+  if (sp2 > MAX * MAX) {
+    const s = MAX / Math.sqrt(sp2);
+    b.vel.x *= s; b.vel.y *= s;
+  }
+  b.angVel *= 0.92;
+}
+
+function updateFuses(dt) {
+  const bodies = App.world.bodies;
+  for (let i = 0; i < bodies.length; i++) {
+    const b = bodies[i];
+    if (b.fuse > 0) {
+      b.fuse -= dt;
+      if (b.fuse <= 0) {
+        b.fuse = -1;
+        triggerTNT(b);
+      }
+    }
+  }
+}
+
+function loop(now) {
+  requestAnimationFrame(loop);
+
+  const rawDt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  fpsAcc += rawDt; fpsFrames++;
+  if (fpsAcc >= 0.4) {
+    App.fps = Math.round(fpsFrames / fpsAcc);
+    fpsAcc = 0; fpsFrames = 0;
+  }
+
+  if (!App.paused) {
+    updateDrag();
+
+    const scaled = rawDt * App.timeScale;
+    accumulator += scaled;
+
+    let steps = 0;
+    const maxSteps = App.timeScale < 0.5 ? 6 : 4;
+    while (accumulator >= FIXED_DT && steps < maxSteps) {
+      App.world.step(FIXED_DT);
+      updateFuses(FIXED_DT);
+      accumulator -= FIXED_DT;
+      steps++;
+    }
+    if (steps >= maxSteps) accumulator = 0;
+
+    updateParticles(scaled);
+  }
+
+  App.bodyCount = App.world.bodies.length;
+  const statsText =
+    `FPS <b>${App.fps}</b> · 物体 <b>${App.bodyCount}</b> · 缩放 <b>${Math.round(App.camera.zoom * 100)}%</b>`;
+  if (statsText !== lastStatsText) {
+    statsEl.innerHTML = statsText;
+    lastStatsText = statsText;
+  }
+
+  App.renderer.render(App, App.world);
+}
+
+/* =========================================================================
+   15. 启动
+   ========================================================================= */
+function init() {
+  App.renderer = new Renderer(canvas);
+
+  document.querySelectorAll('[data-icon]').forEach(el => {
+    el.innerHTML = makeSvg(el.dataset.icon, 22, 1.8);
+  });
+
+  const btnMat = document.getElementById('btnMat');
+  btnMat.innerHTML = makeSvg('mat', 22, 1.8) + '<span class="matdot" id="matDot"></span>';
+
+  buildScene();
+  updateMatUI();
+  updateToolUI();
+
+  let resizePending = false;
+  const onResize = () => {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(() => {
+      resizePending = false;
+      App.renderer.resize();
+    });
+  };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(onResize, 120);
+    setTimeout(onResize, 400);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+  }
+
+  document.getElementById('hint').textContent = IS_MOBILE
+    ? '单指拖拽物体 · 双指缩放/平移 · 长按呼出菜单'
+    : '左键拖拽物体 · 空白拖拽平移 · 滚轮缩放 · 点按空白生成';
+
+  requestAnimationFrame(loop);
+}
+
+init();
+</script>
+</body>
+</html>

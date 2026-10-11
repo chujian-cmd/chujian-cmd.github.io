@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0f1319">
+<title>物理沙盒</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#0f1319;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    position:fixed;inset:0;
+  }
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+  #hud{
+    position:fixed;top:12px;left:12px;color:#7f8ea3;font-size:12px;
+    pointer-events:none;text-shadow:0 1px 3px #000;z-index:5;
+  }
+  #hud b{color:#c9d6e8;}
+  #topbar{
+    position:fixed;top:12px;right:12px;display:flex;gap:6px;z-index:20;flex-wrap:wrap;
+  }
+  #bottombar{
+    position:fixed;bottom:12px;left:12px;right:12px;display:flex;gap:6px;z-index:20;
+    overflow-x:auto;padding:6px;border-radius:16px;
+    background:rgba(18,22,30,.72);backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.07);
+    scrollbar-width:none;
+  }
+  #bottombar::-webkit-scrollbar{display:none;}
+  .btn{
+    flex:0 0 auto;min-width:46px;height:46px;border:none;border-radius:12px;
+    background:rgba(255,255,255,.07);color:#d4deec;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:background .12s,transform .08s;
+    padding:0 8px;
+  }
+  .btn:active{transform:scale(.92);}
+  .btn.active{
+    background:linear-gradient(180deg,#3d8bfd,#2563eb);color:#fff;
+    box-shadow:0 0 0 2px rgba(96,165,250,.35);
+  }
+  .btn.warn.active{background:linear-gradient(180deg,#f87171,#dc2626);}
+  .btn svg{display:block;pointer-events:none;}
+  #toast{
+    position:fixed;left:50%;bottom:80px;transform:translateX(-50%);
+    background:rgba(0,0,0,.78);color:#e6edf7;padding:8px 16px;
+    border-radius:20px;font-size:13px;pointer-events:none;
+    opacity:0;transition:opacity .25s;z-index:50;white-space:nowrap;
+  }
+  #toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="hud">
+  <div id="stats">FPS -- · 物体 0</div>
+  <div style="opacity:.7;font-size:11px">拖拽物体 · 点击空白生成 · 双指/滚轮缩放</div>
+</div>
+
+<div id="topbar">
+  <button class="btn" data-act="pause" id="btnPause" title="暂停">Ⅱ</button>
+  <button class="btn" data-act="reset" title="重置">↻</button>
+  <button class="btn" data-act="clear" title="清空">🗑</button>
+</div>
+
+<div id="bottombar">
+  <button class="btn tool active" data-tool="hand" title="拖拽">✋</button>
+  <button class="btn tool" data-tool="box" title="方块">■</button>
+  <button class="btn tool" data-tool="ball" title="圆球">●</button>
+  <button class="btn tool" data-tool="tri" title="三角">▲</button>
+  <button class="btn tool" data-tool="ragdoll" title="布娃娃">🚶</button>
+  <button class="btn tool" data-tool="gun" title="手枪">🔫</button>
+  <button class="btn tool warn" data-tool="delete" title="删除">✕</button>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+"use strict";
+const { Engine, Composite, Bodies, Body, Constraint, Events } = Matter;
+
+/* ---------- 引擎 ---------- */
+const engine = Engine.create();
+engine.gravity.y = 1.6;
+engine.positionIterations = 8;
+engine.velocityIterations = 6;
+const world = engine.world;
+
+/* ---------- 状态 ---------- */
+const App = {
+  camera: { x: 0, y: 200, zoom: 1 },
+  tool: 'hand',
+  paused: false,
+  selected: null,
+  drag: null,
+  particles: [],
+  fps: 60,
+};
+
+/* ---------- 场景 ---------- */
+function buildScene() {
+  // 清空
+  Composite.clear(world, false);
+  App.particles.length = 0;
+  App.selected = null;
+  App.drag = null;
+
+  const GY = 500;
+
+  // 地面 + 墙
+  Composite.add(world, [
+    Bodies.rectangle(0, GY + 200, 8000, 400, { isStatic: true, friction: 0.9 }),
+    Bodies.rectangle(-1200, GY - 600, 100, 3000, { isStatic: true }),
+    Bodies.rectangle( 1200, GY - 600, 100, 3000, { isStatic: true }),
+  ]);
+
+  // 平台
+  addBox(-400, GY - 200, 280, 24, true);
+  addBox( 400, GY - 320, 280, 24, true);
+
+  // 一些积木
+  for (let i = 0; i < 3; i++) {
+    addBox(-150 + i * 40, GY - 40 - i * 45, 40, 40);
+  }
+  addBall(150, GY - 40, 22);
+  addTri(300, GY - 40, 30);
+
+  // 初始布娃娃
+  makeRagdoll(0, GY - 10);
+
+  App.camera.x = 0;
+  App.camera.y = GY - 250;
+  App.camera.zoom = 1;
+}
+
+/* ---------- 工厂 ---------- */
+function addBox(x, y, w, h, isStatic = false) {
+  const b = Bodies.rectangle(x, y, w, h, {
+    isStatic,
+    friction: 0.6,
+    frictionAir: 0.01,
+    restitution: 0.15,
+    density: 0.002,
+  });
+  b.plugin = { tag: isStatic ? 'static' : 'box', color: '#b5793a', color2: '#7e4d1e', dead: false };
+  Composite.add(world, b);
+  return b;
+}
+function addBall(x, y, r) {
+  const b = Bodies.circle(x, y, r, {
+    friction: 0.5, frictionAir: 0.01, restitution: 0.3, density: 0.002,
+  });
+  b.plugin = { tag: 'ball', color: '#50536a', color2: '#2f3140', dead: false };
+  Composite.add(world, b);
+  return b;
+}
+function addTri(x, y, r) {
+  const b = Bodies.polygon(x, y, 3, r, {
+    friction: 0.5, frictionAir: 0.01, restitution: 0.2, density: 0.002,
+  });
+  b.plugin = { tag: 'tri', color: '#9aa7b8', color2: '#5f6c7e', dead: false };
+  Composite.add(world, b);
+  return b;
+}
+
+/* ---------- 布娃娃（核心修复版） ----------
+   要点：
+   1. 每个布娃娃分配唯一的负数组 ID → 组内部件互不碰撞，杜绝生成时自爆
+   2. 部件按站立姿势精确摆放，关节 pa/pb 世界坐标重合
+   3. 关节刚度分级（脖子硬、肩膀软），站得稳、晃动自然
+   4. 倒下的判定阈值高（相对速度 > 12），正常落地不会倒
+   5. 倒下后静置 2.5 秒自动起身
+*/
+let _groupId = -1;
+
+function makeRagdoll(cx, cy) {
+  // cy 是脚底中心
+  const foot = cy;
+  const gid = _groupId--;
+
+  const mk = (x, y, w, h) => {
+    const b = Bodies.rectangle(x, y, w, h, {
+      friction: 0.7, frictionAir: 0.015, restitution: 0.05, density: 0.0018,
+      collisionFilter: { group: gid },
+    });
+    b.plugin = { tag: 'ragdoll', color: '#e8b98f', color2: '#c08a5c', dead: false };
+    Composite.add(world, b);
+    return b;
+  };
+  const mkCircle = (x, y, r) => {
+    const b = Bodies.circle(x, y, r, {
+      friction: 0.7, frictionAir: 0.015, restitution: 0.05, density: 0.0018,
+      collisionFilter: { group: gid },
+    });
+    b.plugin = { tag: 'ragdoll', color: '#e8b98f', color2: '#c08a5c', dead: false };
+    Composite.add(world, b);
+    return b;
+  };
+
+  // 尺寸（保持站立时坐标干净）
+  const headR = 14;
+  const torsoW = 30, torsoH = 48;
+  const armW = 10, armH = 40;
+  const legW = 12, legH = 46;
+
+  // 站立布局（脚底 y = foot）
+  const legTopY   = foot - legH / 2;               // 腿中心
+  const torsoY    = legTopY - legH / 2 - torsoH / 2; // 躯干中心
+  const headY     = torsoY - torsoH / 2 - headR;    // 头中心
+  const armY      = torsoY - torsoH / 2 + armH / 2 + 4; // 手臂中心（略低于肩）
+
+  const head  = mkCircle(cx, headY, headR);
+  const torso = mk(cx, torsoY, torsoW, torsoH);
+  const armL  = mk(cx - torsoW / 2 - armW / 2, armY, armW, armH);
+  const armR  = mk(cx + torsoW / 2 + armW / 2, armY, armW, armH);
+  const legL  = mk(cx - legW / 2 - 1, legTopY, legW, legH);
+  const legR  = mk(cx + legW / 2 + 1, legTopY, legW, legH);
+
+  const group = {
+    id: gid,
+    parts: { head, torso, armL, armR, legL, legR },
+    constraints: [],
+    alive: true,           // 站立中
+    downAt: 0,             // 倒下时间
+    dead: false,
+  };
+
+  // 关节：让两侧连接点在"站立姿势"下世界坐标重合
+  // 头部下缘 ≈ 躯干上缘：headY + headR ≈ torsoY - torsoH/2
+  // 手臂顶端 ≈ 躯干上侧：armY - armH/2 ≈ torsoY - torsoH/2 + 2
+  // 腿顶端 ≈ 躯干下缘：legTopY - legH/2 ≈ torsoY + torsoH/2
+
+  const joints = [
+    // 头-躯干（脖子）
+    { a: head,  b: torso, pa: { x: 0, y: headR },        pb: { x: 0, y: -torsoH / 2 }, stiff: 0.95 },
+    // 左臂-躯干（肩）
+    { a: armL,  b: torso, pa: { x: 0, y: -armH / 2 + 2 }, pb: { x: -torsoW / 2 + 2, y: -torsoH / 2 + 6 }, stiff: 0.7 },
+    // 右臂-躯干（肩）
+    { a: armR,  b: torso, pa: { x: 0, y: -armH / 2 + 2 }, pb: { x:  torsoW / 2 - 2, y: -torsoH / 2 + 6 }, stiff: 0.7 },
+    // 左腿-躯干（髋）
+    { a: legL,  b: torso, pa: { x: 0, y: -legH / 2 },    pb: { x: -legW / 2, y: torsoH / 2 }, stiff: 0.85 },
+    // 右腿-躯干（髋）
+    { a: legR,  b: torso, pa: { x: 0, y: -legH / 2 },    pb: { x:  legW / 2, y: torsoH / 2 }, stiff: 0.85 },
+  ];
+
+  for (const j of joints) {
+    const c = Constraint.create({
+      bodyA: j.a, bodyB: j.b,
+      pointA: j.pa, pointB: j.pb,
+      length: 0, stiffness: j.stiff, damping: 0.1,
+    });
+    c.plugin = { baseStiffness: j.stiff };
+    Composite.add(world, c);
+    group.constraints.push(c);
+  }
+
+  // 出生保护：0.4 秒内高阻尼，防止初始抖动
+  for (const n in group.parts) {
+    group.parts[n].frictionAir = 0.06;
+  }
+  group.spawnGuard = 0.4;
+
+  ragdolls.push(group);
+  return group;
+}
+
+function ragdollDown(group) {
+  if (!group || !group.alive || group.dead) return;
+  group.alive = false;
+  group.downAt = performance.now();
+  for (const c of group.constraints) c.stiffness = 0.1;
+}
+
+function ragdollStandUp(group) {
+  if (!group || group.alive || group.dead) return;
+  group.alive = true;
+  group.downAt = 0;
+  for (const c of group.constraints) c.stiffness = c.plugin.baseStiffness;
+
+  // 给一个向上的冲量，配合关节恢复刚度，让它"撑起来"
+  const torso = group.parts.torso;
+  Body.setVelocity(torso, { x: torso.velocity.x * 0.4, y: -4 });
+  Body.setAngularVelocity(torso, 0);
+}
+
+function destroyRagdoll(group) {
+  if (!group) return;
+  for (const c of group.constraints) Composite.remove(world, c);
+  for (const n in group.parts) Composite.remove(world, group.parts[n]);
+  const i = ragdolls.indexOf(group);
+  if (i >= 0) ragdolls.splice(i, 1);
+}
+
+/* ---------- 布娃娃列表 ---------- */
+let ragdolls = [];
+
+/* ---------- 粒子 ---------- */
+function spawnParticles(x, y, count, colors) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 80 + Math.random() * 300;
+    App.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0,
+      maxLife: 0.3 + Math.random() * 0.6,
+      size: 1.5 + Math.random() * 3,
+      color: colors[(Math.random() * colors.length) | 0],
+    });
+  }
+}
+function updateParticles(dt) {
+  const ps = App.particles;
+  for (let i = ps.length - 1; i >= 0; i--) {
+    const p = ps[i];
+    p.life += dt;
+    if (p.life >= p.maxLife) { ps.splice(i, 1); continue; }
+    p.vy += 800 * dt;
+    p.vx *= 0.985; p.vy *= 0.985;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+}
+
+/* ---------- 渲染 ---------- */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+let dpr = 1, vw = 0, vh = 0;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  vw = window.innerWidth;
+  vh = window.innerHeight;
+  canvas.width = vw * dpr;
+  canvas.height = vh * dpr;
+  canvas.style.width = vw + 'px';
+  canvas.style.height = vh + 'px';
+}
+
+function render() {
+  const cam = App.camera;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // 背景
+  const bg = ctx.createLinearGradient(0, 0, 0, vh);
+  bg.addColorStop(0, '#131a26');
+  bg.addColorStop(1, '#0b0e13');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, vw, vh);
+
+  ctx.save();
+  ctx.translate(vw / 2, vh / 2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
+
+  // 网格
+  ctx.lineWidth = 1 / cam.zoom;
+  ctx.strokeStyle = 'rgba(255,255,255,.04)';
+  ctx.beginPath();
+  const step = 100;
+  const L = cam.x - vw / 2 / cam.zoom, R = cam.x + vw / 2 / cam.zoom;
+  const T = cam.y - vh / 2 / cam.zoom, B = cam.y + vh / 2 / cam.zoom;
+  for (let x = Math.floor(L / step) * step; x <= R; x += step) {
+    ctx.moveTo(x, T); ctx.lineTo(x, B);
+  }
+  for (let y = Math.floor(T / step) * step; y <= B; y += step) {
+    ctx.moveTo(L, y); ctx.lineTo(R, y);
+  }
+  ctx.stroke();
+
+  // 刚体
+  const bodies = Composite.allBodies(world);
+  for (const b of bodies) {
+    if (b.plugin.dead) continue;
+
+    // 视口剔除
+    const r = (b.circleRadius || 50) + 40;
+    if (b.position.x + r < L || b.position.x - r > R) continue;
+    if (b.position.y + r < T || b.position.y - r > B) continue;
+
+    const isRagdoll = b.plugin.tag === 'ragdoll';
+    const isStatic = b.isStatic;
+    const color = isStatic ? '#2b3444' : b.plugin.color;
+    const color2 = isStatic ? '#1b2230' : b.plugin.color2;
+
+    // 活着的布娃娃：淡绿光晕
+    if (isRagdoll) {
+      const grp = ragdolls.find(g => g.parts.head === b || g.parts.torso === b || Object.values(g.parts).includes(b));
+      if (grp && grp.alive) {
+        ctx.shadowColor = 'rgba(100,255,150,.5)';
+        ctx.shadowBlur = 8;
+      }
+    }
+
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color2;
+    ctx.lineWidth = Math.max(1, 2 / cam.zoom);
+
+    if (b.circleRadius) {
+      ctx.beginPath();
+      ctx.arc(b.position.x, b.position.y, b.circleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else if (b.vertices && b.vertices.length) {
+      const vs = b.vertices;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    ctx.shadowBlur = 0;
+
+    // 选中高亮
+    if (App.selected === b) {
+      ctx.strokeStyle = '#66d9ff';
+      ctx.lineWidth = 3 / cam.zoom;
+      ctx.shadowColor = '#66d9ff';
+      ctx.shadowBlur = 12;
+      if (b.circleRadius) {
+        ctx.beginPath();
+        ctx.arc(b.position.x, b.position.y, b.circleRadius + 2, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        const vs = b.vertices;
+        ctx.beginPath();
+        ctx.moveTo(vs[0].x, vs[0].y);
+        for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+        ctx.closePath();
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // 粒子
+  for (const p of App.particles) {
+    const a = 1 - p.life / p.maxLife;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 拖拽线
+  if (App.drag && App.drag.body && !App.drag.body.plugin.dead) {
+    const b = App.drag.body;
+    ctx.strokeStyle = 'rgba(120,200,255,.85)';
+    ctx.lineWidth = 2 / cam.zoom;
+    ctx.setLineDash([6 / cam.zoom, 5 / cam.zoom]);
+    ctx.beginPath();
+    ctx.moveTo(b.position.x, b.position.y);
+    ctx.lineTo(App.drag.target.x, App.drag.target.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+/* ---------- 输入 ---------- */
+function screenToWorld(sx, sy) {
+  const cam = App.camera;
+  return {
+    x: (sx - vw / 2) / cam.zoom + cam.x,
+    y: (sy - vh / 2) / cam.zoom + cam.y,
+  };
+}
+
+function pickBody(wx, wy) {
+  const bodies = Composite.allBodies(world);
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const b = bodies[i];
+    if (b.isStatic || b.plugin.dead) continue;
+    let hit = false;
+    if (b.circleRadius) {
+      const dx = wx - b.position.x, dy = wy - b.position.y;
+      hit = dx * dx + dy * dy <= b.circleRadius * b.circleRadius;
+    } else if (b.vertices) {
+      const vs = b.vertices;
+      let sign = 0;
+      const n = vs.length;
+      for (let k = 0; k < n; k++) {
+        const a = vs[k], bb = vs[(k + 1) % n];
+        const c = (bb.x - a.x) * (wy - a.y) - (bb.y - a.y) * (wx - a.x);
+        if (c > 1e-9) { if (sign < 0) { hit = false; sign = 1; break; } sign = 1; }
+        else if (c < -1e-9) { if (sign > 0) { hit = false; sign = -1; break; } sign = -1; }
+      }
+      if (sign !== 0) hit = true;
+    }
+    if (hit) return b;
+  }
+  return null;
+}
+
+let isPanning = false;
+let lastPointer = { x: 0, y: 0 };
+let pointers = new Map();
+let pinchPrev = null;
+let longPressTimer = null;
+
+function onPointerDown(e) {
+  canvas.setPointerCapture(e.pointerId);
+  const p = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: false };
+  pointers.set(e.pointerId, p);
+
+  if (pointers.size === 1) {
+    const w = screenToWorld(p.x, p.y);
+    const hit = pickBody(w.x, w.y);
+
+    if (App.tool === 'gun') {
+      fireBullet(w.x, w.y);
+      return;
+    }
+    if (App.tool === 'delete') {
+      if (hit) {
+        if (hit.plugin.tag === 'ragdoll') {
+          const grp = ragdolls.find(g => Object.values(g.parts).includes(hit));
+          if (grp) destroyRagdoll(grp);
+        } else {
+          Composite.remove(world, hit);
+        }
+      }
+      return;
+    }
+
+    if (hit) {
+      App.selected = hit;
+      App.drag = { body: hit, target: { x: w.x, y: w.y } };
+    } else {
+      isPanning = true;
+      lastPointer.x = p.x; lastPointer.y = p.y;
+    }
+
+    longPressTimer = setTimeout(() => { /* 预留 */ }, 600);
+  } else if (pointers.size >= 2) {
+    App.drag = null;
+    isPanning = false;
+    pinchPrev = null;
+    clearTimeout(longPressTimer);
+  }
+}
+
+function onPointerMove(e) {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6) p.moved = true;
+
+  if (pointers.size >= 2) {
+    updatePinch();
+    return;
+  }
+
+  if (App.drag) {
+    App.drag.target = screenToWorld(e.clientX, e.clientY);
+  } else if (isPanning) {
+    App.camera.x -= dx / App.camera.zoom;
+    App.camera.y -= dy / App.camera.zoom;
+  }
+}
+
+function onPointerUp(e) {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  clearTimeout(longPressTimer);
+  if (!p) return;
+
+  if (pointers.size === 0) {
+    const dt = performance.now() - (p.t0 || 0);
+    const isTap = !p.moved;
+    if (isTap && !App.drag && App.tool !== 'hand' && App.tool !== 'gun' && App.tool !== 'delete') {
+      const w = screenToWorld(p.x, p.y);
+      spawnAt(w.x, w.y);
+    }
+    App.drag = null;
+    isPanning = false;
+    pinchPrev = null;
+  }
+}
+
+function spawnAt(wx, wy) {
+  switch (App.tool) {
+    case 'box': addBox(wx, wy, 46, 46); break;
+    case 'ball': addBall(wx, wy, 24); break;
+    case 'tri': addTri(wx, wy, 32); break;
+    case 'ragdoll': makeRagdoll(wx, wy); break;
+  }
+}
+
+function fireBullet(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+  const b = Bodies.circle(wx, wy, 5, {
+    friction: 0.3, frictionAir: 0.001, restitution: 0.2, density: 0.01,
+  });
+  b.plugin = { tag: 'bullet', color: '#ffe08a', color2: '#c9a13a', dead: false };
+  Composite.add(world, b);
+  Body.setVelocity(b, { x: dx * 30, y: dy * 30 });
+}
+
+function updatePinch() {
+  const pts = [...pointers.values()];
+  if (pts.length < 2) return;
+  const a = pts[0], b = pts[1];
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+
+  if (!pinchPrev) { pinchPrev = { dist, cx, cy }; return; }
+
+  const cam = App.camera;
+  const wxp = (cx - vw / 2) / cam.zoom + cam.x;
+  const wyp = (cy - vh / 2) / cam.zoom + cam.y;
+  const scale = dist / (pinchPrev.dist || dist);
+  cam.zoom = Math.max(0.15, Math.min(5, cam.zoom * scale));
+  cam.x = wxp - (cx - vw / 2) / cam.zoom;
+  cam.y = wyp - (cy - vh / 2) / cam.zoom;
+  cam.x -= (cx - pinchPrev.cx) / cam.zoom;
+  cam.y -= (cy - pinchPrev.cy) / cam.zoom;
+  pinchPrev = { dist, cx, cy };
+}
+
+canvas.addEventListener('pointerdown', onPointerDown);
+canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointerup', onPointerUp);
+canvas.addEventListener('pointercancel', onPointerUp);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const cam = App.camera;
+  const wxp = (e.clientX - vw / 2) / cam.zoom + cam.x;
+  const wyp = (e.clientY - vh / 2) / cam.zoom + cam.y;
+  const factor = Math.exp(-e.deltaY * 0.0014);
+  cam.zoom = Math.max(0.15, Math.min(5, cam.zoom * factor));
+  cam.x = wxp - (e.clientX - vw / 2) / cam.zoom;
+  cam.y = wyp - (e.clientY - vh / 2) / cam.zoom;
+}, { passive: false });
+
+/* ---------- 拖拽物理 ---------- */
+function updateDrag() {
+  if (!App.drag || !App.drag.body) return;
+  const b = App.drag.body;
+  if (b.plugin.dead) { App.drag = null; return; }
+  const dx = App.drag.target.x - b.position.x;
+  const dy = App.drag.target.y - b.position.y;
+  const k = 0.0008;
+  Body.applyForce(b, b.position, { x: dx * k * b.mass, y: dy * k * b.mass });
+  Body.setVelocity(b, { x: b.velocity.x * 0.85, y: b.velocity.y * 0.85 });
+}
+
+/* ---------- 布娃娃状态更新 ---------- */
+function updateRagdolls(now) {
+  for (const g of ragdolls) {
+    if (g.dead) continue;
+
+    // 出生保护结束
+    if (g.spawnGuard > 0) {
+      g.spawnGuard -= 1 / 60;
+      if (g.spawnGuard <= 0) {
+        for (const n in g.parts) g.parts[n].frictionAir = 0.015;
+      }
+    }
+
+    // 活着的：清空 downAt
+    if (g.alive) { g.downAt = 0; continue; }
+
+    // 倒下：等待 + 静置检测
+    if (g.downAt === 0) { g.downAt = now; continue; }
+    const torso = g.parts.torso;
+    if (!torso) continue;
+
+    // 还在明显运动 → 重置计时
+    const sp = Math.hypot(torso.velocity.x, torso.velocity.y);
+    if (sp > 5) { g.downAt = now; continue; }
+
+    // 静置 2.5 秒 → 起身
+    if (now - g.downAt > 2500) {
+      ragdollStandUp(g);
+    }
+  }
+}
+
+/* ---------- 碰撞 ---------- */
+Events.on(engine, 'collisionStart', (ev) => {
+  for (const pair of ev.pairs) {
+    const A = pair.bodyA, B = pair.bodyB;
+    if (A.plugin.dead || B.plugin.dead) continue;
+
+    const rel = Math.hypot(A.velocity.x - B.velocity.x, A.velocity.y - B.velocity.y);
+
+    // 布娃娃被撞 → 倒下（阈值高，正常落地不会触发）
+    if (rel > 12) {
+      if (A.plugin.tag === 'ragdoll' && B.plugin.tag !== 'ragdoll') {
+        const g = ragdolls.find(gr => Object.values(gr.parts).includes(A));
+        if (g) ragdollDown(g);
+      }
+      if (B.plugin.tag === 'ragdoll' && A.plugin.tag !== 'ragdoll') {
+        const g = ragdolls.find(gr => Object.values(gr.parts).includes(B));
+        if (g) ragdollDown(g);
+      }
+    }
+
+    // 子弹命中
+    if (A.plugin.tag === 'bullet' && B.plugin.tag !== 'bullet') {
+      A.plugin.dead = true;
+      Composite.remove(world, A);
+      if (B.plugin.tag === 'ragdoll') {
+        const g = ragdolls.find(gr => Object.values(gr.parts).includes(B));
+        if (g) ragdollDown(g);
+      } else if (!B.isStatic) {
+        B.plugin.dead = true;
+        Composite.remove(world, B);
+        spawnParticles(B.position.x, B.position.y, 6, ['#ffb347', '#fff']);
+      }
+    }
+    if (B.plugin.tag === 'bullet' && A.plugin.tag !== 'bullet') {
+      B.plugin.dead = true;
+      Composite.remove(world, B);
+      if (A.plugin.tag === 'ragdoll') {
+        const g = ragdolls.find(gr => Object.values(gr.parts).includes(A));
+        if (g) ragdollDown(g);
+      } else if (!A.isStatic) {
+        A.plugin.dead = true;
+        Composite.remove(world, A);
+        spawnParticles(A.position.x, A.position.y, 6, ['#ffb347', '#fff']);
+      }
+    }
+  }
+});
+
+/* ---------- 主循环 ---------- */
+let lastTime = performance.now();
+let acc = 0;
+const FIXED = 1 / 60;
+let fpsAcc = 0, fpsCount = 0;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  fpsAcc += dt; fpsCount++;
+  if (fpsAcc >= 0.4) {
+    App.fps = Math.round(fpsCount / fpsAcc);
+    fpsAcc = 0; fpsCount = 0;
+  }
+
+  if (!App.paused) {
+    acc += dt;
+    let steps = 0;
+    while (acc >= FIXED && steps < 4) {
+      updateDrag();
+      Engine.update(engine, FIXED * 1000);
+      acc -= FIXED;
+      steps++;
+    }
+    if (steps >= 4) acc = 0;
+    updateParticles(dt);
+  }
+
+  updateRagdolls(now);
+
+  // 清理标记死亡的刚体
+  const bodies = Composite.allBodies(world);
+  let n = 0;
+  for (const b of bodies) if (!b.isStatic && !b.plugin.dead) n++;
+
+  document.getElementById('stats').innerHTML = `FPS <b>${App.fps}</b> · 物体 <b>${n}</b>`;
+
+  render();
+}
+
+/* ---------- UI 绑定 ---------- */
+document.querySelectorAll('#bottombar .tool').forEach(btn => {
+  btn.addEventListener('click', () => {
+    App.tool = btn.dataset.tool;
+    document.querySelectorAll('#bottombar .tool').forEach(b => {
+      b.classList.toggle('active', b === btn);
+    });
+  });
+});
+
+document.querySelectorAll('#topbar .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    if (act === 'pause') {
+      App.paused = !App.paused;
+      btn.classList.toggle('active', App.paused);
+      btn.textContent = App.paused ? '▶' : 'Ⅱ';
+    } else if (act === 'reset') {
+      buildScene();
+    } else if (act === 'clear') {
+      for (const g of ragdolls.slice()) destroyRagdoll(g);
+      const bodies = Composite.allBodies(world);
+      for (const b of bodies) if (!b.isStatic) Composite.remove(world, b);
+    }
+  });
+});
+
+/* ---------- 启动 ---------- */
+resize();
+window.addEventListener('resize', resize);
+buildScene();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

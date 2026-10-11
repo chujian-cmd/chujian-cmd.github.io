@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>涡流 3D 感</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060c; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  let W, H, dpr;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = W * dpr;
+    cv.height = H * dpr;
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const N = 1800;
+  const x = new Float32Array(N);
+  const y = new Float32Array(N);
+  const vx = new Float32Array(N);
+  const vy = new Float32Array(N);
+  const depth = new Float32Array(N);   // 0 = 近，1 = 远
+  const dphase = new Float32Array(N);  // 深度变化的相位
+
+  function seed() {
+    for (let i = 0; i < N; i++) {
+      x[i] = Math.random() * W;
+      y[i] = Math.random() * H;
+      vx[i] = 0;
+      vy[i] = 0;
+      depth[i] = Math.random();
+      dphase[i] = Math.random() * Math.PI * 2;
+    }
+  }
+  seed();
+
+  // ---------- Curl Noise (2D) ----------
+  function noise2(x, y) {
+    return Math.sin(x * 1.31 + y * 2.17) * 0.55
+         + Math.sin(x * 2.91 - y * 0.83 + 1.7) * 0.30
+         + Math.sin(x * 0.53 - y * 1.43 + 4.3) * 0.15;
+  }
+
+  const EPS = 0.15;
+  function curl2(fx, fy, t, out) {
+    const ev = t * 0.3;
+    const dndx = (noise2(fx + EPS, fy + ev) - noise2(fx - EPS, fy + ev)) / (2 * EPS);
+    const dndy = (noise2(fx, fy + EPS + ev) - noise2(fx, fy - EPS + ev)) / (2 * EPS);
+    out[0] = dndy;
+    out[1] = -dndx;
+  }
+
+  const curlOut = [0, 0];
+
+  // ---------- 指针扰动 ----------
+  let mx = 0, my = 0, mDown = false, mInside = false;
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const t = e.touches ? e.touches[0] : e;
+    const r = rect();
+    mx = t.clientX - r.left;
+    my = t.clientY - r.top;
+    mInside = true; mDown = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const t = e.touches ? e.touches[0] : e;
+    const r = rect();
+    mx = t.clientX - r.left;
+    my = t.clientY - r.top;
+    mInside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { mDown = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 主循环 ----------
+  let startTime = performance.now();
+
+  function loop(now) {
+    const t = (now - startTime) / 1000;
+
+    // 背景拖尾
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(5,6,12,0.08)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    const NS = 0.0018;
+    const CURL_STRENGTH = 60;
+    const DAMP = 0.96;
+
+    for (let i = 0; i < N; i++) {
+      // 深度缓慢变化（正弦振荡，让粒子有"进有出"）
+      depth[i] = 0.5 + 0.5 * Math.sin(t * 0.4 + dphase[i]);
+      const d = depth[i];           // 0 近，1 远
+      const near = 1 - d;           // 1 近，0 远
+
+      // Curl 场
+      curl2(x[i] * NS, y[i] * NS, t, curlOut);
+      let ax = curlOut[0] * CURL_STRENGTH;
+      let ay = curlOut[1] * CURL_STRENGTH;
+
+      // 鼠标扰动
+      if (mInside && mDown) {
+        const dx = x[i] - mx;
+        const dy = y[i] - my;
+        const dd = Math.sqrt(dx * dx + dy * dy) + 0.5;
+        if (dd < 200) {
+          const f = (1 - dd / 200) * 120;
+          ax += dx / dd * f;
+          ay += dy / dd * f;
+        }
+      }
+
+      vx[i] = (vx[i] + ax * 0.016) * DAMP;
+      vy[i] = (vy[i] + ay * 0.016) * DAMP;
+
+      // ★ 深度影响速度：近处的粒子"看起来"动得更快
+      const speedMul = 0.5 + near * 0.9;
+      x[i] += vx[i] * speedMul;
+      y[i] += vy[i] * speedMul;
+
+      // 环绕
+      if (x[i] < -10) x[i] += W + 20;
+      else if (x[i] > W + 10) x[i] -= W + 20;
+      if (y[i] < -10) y[i] += H + 20;
+      else if (y[i] > H + 10) y[i] -= H + 20;
+
+      // ★ 粒子大小：近处大，远处小
+      const size = 0.5 + near * 2.6;
+
+      // ★ 透明度：近处亮，远处暗
+      const alpha = 0.15 + near * 0.75;
+
+      // 速度着色（加上深度影响）
+      const sp = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
+      const k = Math.max(0, Math.min(1, sp / 8));
+      // 慢：青色；快：粉紫；远处整体偏蓝
+      let r = Math.floor(91 + (255 - 91) * k);
+      let g = Math.floor(224 + (107 - 224) * k);
+      let b = Math.floor(255 + (214 - 255) * k);
+      // 远处加深蓝
+      r = Math.floor(r * (0.4 + near * 0.6));
+      g = Math.floor(g * (0.4 + near * 0.6));
+      b = Math.floor(b * (0.4 + near * 0.6) + (1 - near) * 40);
+
+      ctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+      const half = size * 0.5;
+      ctx.fillRect(x[i] - half, y[i] - half, size, size);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(loop);
+  }
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

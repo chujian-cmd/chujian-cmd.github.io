@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>蓝线扫描 TimeWarp</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #05060c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(5,6,12,0.8), rgba(5,6,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(63,169,255,0.28); border-color: rgba(63,169,255,0.6); color: #eaf5ff; }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">蓝线 <b id="m">扫过</b></div>
+  <button class="btn" id="btn-reset">重新扫描</button>
+  <button class="btn pri" id="btn-change">换文字</button>
+</div>
+
+<div id="hint">扫过即冻结 · 定格后点"重新扫描"再扫一次</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ========== 参数 ==========
+  const CFG = {
+    text: '你好',
+    subtext: 'HELLO · 蓝线扫描',
+    font: '"PingFang SC", "Microsoft YaHei", "Heiti SC", sans-serif',
+    weight: 900,
+    textColor: '#5be0ff',
+    subColor: '#8a8f98',
+    background: '#05060c',
+
+    direction: 'right',   // right | left | down | up
+    speed: 0.16,          // 每秒扫过整幅画的比例
+    lineW: 4,             // 线宽
+    lineColor: '#3fa9ff',
+
+    stretchMode: 'freeze', // freeze | stretch | mirror
+    behavior: 'hold',      // hold | restart | pingpong
+
+    // 每帧"静止层"的重绘间隔（小=省性能，但可能一卡一卡）
+    staticDrawInterval: 1
+  };
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    reset();
+  }
+
+  // ========== 离屏画布：动态层 + 冻结层 ==========
+  const liveCanvas = document.createElement('canvas');
+  const freezeCanvas = document.createElement('canvas');
+  let liveCtx = liveCanvas.getContext('2d');
+  let freezeCtx = freezeCanvas.getContext('2d');
+
+  function setupCanvases() {
+    const cw = Math.floor(W * dpr);
+    const ch = Math.floor(H * dpr);
+    liveCanvas.width = freezeCanvas.width = cw;
+    liveCanvas.height = freezeCanvas.height = ch;
+    liveCtx = liveCanvas.getContext('2d');
+    freezeCtx = freezeCanvas.getContext('2d');
+    liveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    freezeCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ========== 绘制"当前"画面（动态层） ==========
+  // 当前画面里，文字带各种时间相关的动效，比如抖动、扫描线、脉冲
+  function drawLive(t) {
+    const [br, bg, bb] = hex2rgb(CFG.background);
+    liveCtx.globalCompositeOperation = 'source-over';
+    liveCtx.fillStyle = `rgb(${br},${bg},${bb})`;
+    liveCtx.fillRect(0, 0, W, H);
+
+    // 主文字：带一点缓慢抖动 + 呼吸缩放
+    const bobY = Math.sin(t * 1.2) * 4;
+    const scale = 1 + Math.sin(t * 1.5) * 0.008;
+
+    liveCtx.save();
+    liveCtx.translate(W / 2, H / 2 + bobY);
+    liveCtx.scale(scale, scale);
+    liveCtx.textAlign = 'center';
+    liveCtx.textBaseline = 'middle';
+
+    const lines = (CFG.text || '你好').split('\n').filter(l => l.length > 0);
+    const maxW = W * 0.82;
+    const maxH = H * 0.5;
+
+    let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.8);
+    const setFont = s => {
+      liveCtx.font = `${CFG.weight} ${s}px ${CFG.font}`;
+      liveCtx.letterSpacing = `${Math.round(s * 0.03)}px`;
+    };
+    setFont(size);
+
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, liveCtx.measureText(l).width);
+    if (widest > maxW) {
+      size = Math.max(8, Math.floor(size * maxW / widest));
+      setFont(size);
+    }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(8, Math.floor(size * maxH / totalH));
+      setFont(size);
+    }
+
+    // 主文字渐变 + 发光
+    const grad = liveCtx.createLinearGradient(0, -size * 0.7, 0, size * 0.7);
+    grad.addColorStop(0, CFG.textColor);
+    grad.addColorStop(1, shade(CFG.textColor, 0.55));
+    liveCtx.fillStyle = grad;
+    liveCtx.shadowColor = CFG.textColor;
+    liveCtx.shadowBlur = 30;
+
+    const lineH = size * 1.15;
+    const startY = -(lines.length - 1) * lineH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      liveCtx.fillText(lines[i], 0, startY + i * lineH);
+    }
+
+    // 副标题
+    liveCtx.shadowBlur = 0;
+    const subSize = Math.max(11, Math.min(16, size * 0.22));
+    liveCtx.font = `500 ${subSize}px ui-monospace, monospace`;
+    liveCtx.letterSpacing = '3px';
+    liveCtx.fillStyle = CFG.subColor;
+    liveCtx.fillText(CFG.subtext, 0, startY + lines.length * lineH + subSize * 1.2);
+
+    liveCtx.restore();
+
+    // 动态层：加一条不断流动的扫描线纹理
+    liveCtx.save();
+    liveCtx.globalCompositeOperation = 'lighter';
+    liveCtx.globalAlpha = 0.06;
+    liveCtx.fillStyle = CFG.textColor;
+    for (let y = 0; y < H; y += 4) {
+      const yy = (y + (t * 40) % 4);
+      liveCtx.fillRect(0, yy, W, 1);
+    }
+    liveCtx.restore();
+  }
+
+  // ========== 冻结：把 liveCanvas 的一段区域复制到 freezeCanvas ==========
+  // 复制方向：sx, sy, sw, sh 是"源区域"（live 的坐标，CSS 像素）
+  function freezeRegion(sx, sy, sw, sh, mode) {
+    if (sw < 0.5 || sh < 0.5) return;
+
+    // 用离屏 canvas 做"镜像/拉伸"处理
+    if (mode === 'freeze') {
+      freezeCtx.drawImage(liveCanvas,
+        sx * dpr, sy * dpr, sw * dpr, sh * dpr,
+        sx, sy, sw, sh);
+    } else if (mode === 'stretch') {
+      // 把当前一行（1px 宽）拉伸到 sw 宽
+      if (sw >= sh) {
+        const lineX = sx + sw * 0.5;
+        freezeCtx.drawImage(liveCanvas,
+          lineX * dpr, sy * dpr, 1 * dpr, sh * dpr,
+          sx, sy, sw, sh);
+      } else {
+        const lineY = sy + sh * 0.5;
+        freezeCtx.drawImage(liveCanvas,
+          sx * dpr, lineY * dpr, sw * dpr, 1 * dpr,
+          sx, sy, sw, sh);
+      }
+    } else if (mode === 'mirror') {
+      // 镜像：把当前源区域沿中线翻转
+      if (sw >= sh) {
+        const cx = sx + sw / 2;
+        freezeCtx.save();
+        freezeCtx.translate(cx, 0);
+        freezeCtx.scale(-1, 1);
+        freezeCtx.drawImage(liveCanvas,
+          (cx - sw / 2) * dpr, sy * dpr, (sw / 2) * dpr, sh * dpr,
+          -sw / 2, sy, sw / 2, sh);
+        freezeCtx.restore();
+        freezeCtx.drawImage(liveCanvas,
+          cx * dpr, sy * dpr, (sw / 2) * dpr, sh * dpr,
+          cx, sy, sw / 2, sh);
+      } else {
+        const cy = sy + sh / 2;
+        freezeCtx.save();
+        freezeCtx.translate(0, cy);
+        freezeCtx.scale(1, -1);
+        freezeCtx.drawImage(liveCanvas,
+          sx * dpr, (cy - sh / 2) * dpr, sw * dpr, (sh / 2) * dpr,
+          sx, -sh / 2, sw, sh / 2);
+        freezeCtx.restore();
+        freezeCtx.drawImage(liveCanvas,
+          sx * dpr, cy * dpr, sw * dpr, (sh / 2) * dpr,
+          sx, cy, sw, sh / 2);
+      }
+    }
+  }
+
+  // ========== 扫描状态 ==========
+  let progress = 0;       // 0 = 起点，1 = 终点
+  let dirSign = 1;        // pingpong 用
+  let prevPos = 0;        // 上一帧扫描位置
+  let state = 'scanning'; // scanning | hold | done
+  let resetTimer = 0;
+
+  function reset() {
+    setupCanvases();
+    freezeCtx.clearRect(0, 0, W, H);
+    progress = 0;
+    dirSign = 1;
+    prevPos = 0;
+    state = 'scanning';
+    resetTimer = 0;
+
+    // 顶栏文字
+    document.getElementById('m').textContent = '扫过';
+  }
+
+  // 根据 progress 计算扫描线位置（像素坐标）
+  function posOf(prog) {
+    if (CFG.direction === 'right' || CFG.direction === 'left') return prog * W;
+    return prog * H;
+  }
+
+  // 根据 pos 和上次 pos，冻结该区间
+  function advanceFreeze(newPos) {
+    const lastPos = prevPos;
+    const dir = CFG.direction;
+    const mode = CFG.stretchMode;
+
+    if (dir === 'right' || dir === 'left') {
+      const a = Math.min(lastPos, newPos);
+      const b = Math.max(lastPos, newPos);
+      freezeRegion(a, 0, b - a, H, mode);
+    } else {
+      const a = Math.min(lastPos, newPos);
+      const b = Math.max(lastPos, newPos);
+      freezeRegion(0, a, W, b - a, mode);
+    }
+    prevPos = newPos;
+  }
+
+  // ========== 主循环 ==========
+  let startTime = performance.now();
+  let lastTime = startTime;
+
+  function frame(now) {
+    const t = (now - startTime) / 1000;
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    // 绘制动态层
+    drawLive(t);
+
+    const total = CFG.direction === 'right' || CFG.direction === 'left' ? W : H;
+
+    // 更新 progress
+    if (state === 'scanning' || state === 'hold') {
+      if (state === 'scanning') {
+        if (CFG.behavior === 'pingpong') {
+          progress += dt * CFG.speed * dirSign;
+          if (progress >= 1) { progress = 1; dirSign = -1; }
+          if (progress <= 0) { progress = 0; dirSign = 1; }
+        } else {
+          progress += dt * CFG.speed;
+          if (progress >= 1) {
+            progress = 1;
+            state = CFG.behavior === 'restart' ? 'restarting' : 'hold';
+          }
+        }
+        advanceFreeze(posOf(progress));
+      }
+    }
+
+    // restart 处理
+    if (state === 'restarting') {
+      resetTimer -= dt;
+      if (resetTimer <= 0) {
+        progress = 0;
+        prevPos = 0;
+        freezeCtx.clearRect(0, 0, W, H);
+        state = 'scanning';
+      }
+    }
+
+    if (state === 'hold') {
+      document.getElementById('m').textContent = '已定格';
+    } else if (state === 'restarting') {
+      document.getElementById('m').textContent = '重扫中…';
+    } else {
+      document.getElementById('m').textContent = `${Math.round(progress * 100)}%`;
+    }
+
+    // ---- 合成 ----
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    // 底层：动态
+    ctx.drawImage(liveCanvas, 0, 0, W, H);
+    // 上层：冻结（覆盖在扫过的区域）
+    ctx.drawImage(freezeCanvas, 0, 0, W, H);
+
+    // 扫描线（未完成时）
+    if (state === 'scanning' || state === 'hold') {
+      const pos = posOf(progress);
+      const isDone = state === 'hold';
+      const isH = CFG.direction === 'right' || CFG.direction === 'left';
+      const lw = CFG.lineW;
+
+      ctx.save();
+      ctx.shadowColor = CFG.lineColor;
+      ctx.shadowBlur = lw * 6 + 14;
+      ctx.fillStyle = CFG.lineColor;
+
+      if (isH) {
+        ctx.fillRect(pos - lw / 2, 0, lw, H);
+      } else {
+        ctx.fillRect(0, pos - lw / 2, W, lw);
+      }
+
+      // 白色内芯
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = isDone ? 0.3 : 0.9;
+      ctx.fillStyle = '#ffffff';
+      if (isH) {
+        ctx.fillRect(pos - Math.max(0.5, lw * 0.15), 0, Math.max(1, lw * 0.3), H);
+      } else {
+        ctx.fillRect(0, pos - Math.max(0.5, lw * 0.15), W, Math.max(1, lw * 0.3));
+      }
+      ctx.restore();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  // ========== 工具 ==========
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const shade = (hex, k) => {
+    const s = hex.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    const r = Math.round((n >> 16 & 255) * k);
+    const g = Math.round((n >> 8 & 255) * k);
+    const b = Math.round((n & 255) * k);
+    return `rgb(${r},${g},${b})`;
+  };
+
+  // ========== 按钮 ==========
+  const CONTENTS = [
+    { text: '你好', subtext: 'HELLO · 蓝线扫描', textColor: '#5be0ff' },
+    { text: '定格', subtext: 'FREEZE · 冻结此刻', textColor: '#ff6bd6' },
+    { text: 'AURORA', subtext: 'ORIGINAL · 数字艺术', textColor: '#ffe066' },
+    { text: '时间切片', subtext: 'TIME SLICE', textColor: '#4ecb8d' },
+    { text: '你好\n世界', subtext: 'HELLO WORLD', textColor: '#ff9d5c' },
+    { text: '⚡', subtext: 'HIGH VOLTAGE', textColor: '#ffd86b' }
+  ];
+  let contentIdx = 0;
+
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    reset();
+  });
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    Object.assign(CFG, CONTENTS[contentIdx]);
+    reset();
+  });
+
+  // 点击屏幕 = 立即重扫
+  cv.addEventListener('click', () => {
+    if (state === 'hold') reset();
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  // 等字体加载完再开始
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      drawLive(0);
+      requestAnimationFrame(frame);
+    });
+  } else {
+    setTimeout(() => {
+      drawLive(0);
+      requestAnimationFrame(frame);
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>

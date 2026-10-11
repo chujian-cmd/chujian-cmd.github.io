@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>极光 Aurora</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #050014;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(5,0,20,0.8), rgba(5,0,20,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">极光 <b id="m">极光帷</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 扰动云纹</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+              || (navigator.maxTouchPoints > 1);
+
+// ---------- 参数 ----------
+const CFG = {
+  scale: 2.4,        // 缩放
+  warp: 1.0,         // 域扭曲强度
+  detail: 5,         // 噪声层数
+  speed: 0.12,       // 流速
+  contrast: 1.3,     // 对比
+  mouseWarp: 0.8,    // 鼠标扰动强度
+  colorA: '#0a0e2a', // 暗部
+  colorB: '#ff8a5c', // 亮部
+  colorC: '#6be6ff', // 点缀
+  background: '#050014'
+};
+
+const PIXEL_RATIO = isMobile ? 0.6 : 0.9;
+
+// ---------- three.js ----------
+const canvasEl = document.getElementById('cv');
+
+const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: false });
+renderer.setPixelRatio(PIXEL_RATIO);
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const frag = /* glsl */`
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+  uniform float uTime;
+  uniform float uScale;
+  uniform float uWarp;
+  uniform float uDetail;
+  uniform float uSpeed;
+  uniform float uContrast;
+  uniform float uMouseWarp;
+  uniform vec3  uColorA;
+  uniform vec3  uColorB;
+  uniform vec3  uColorC;
+  uniform vec3  uBackground;
+
+  #define TAU 6.28318530718
+
+  // 2D simplex 噪声
+  vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+  vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+  vec3 permute(vec3 x) { return mod289(((x * 34.0) + 1.0) * x); }
+  float snoise(vec2 v) {
+    const vec4 C = vec4(0.211324865405187, 0.366025403784439,
+                       -0.577350269189626, 0.024390243902439);
+    vec2 i = floor(v + dot(v, C.yy));
+    vec2 x0 = v - i + dot(i, C.xx);
+    vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+    vec4 x12 = x0.xyxy + C.xxzz;
+    x12.xy -= i1;
+    i = mod289(i);
+    vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0))
+                            + i.x + vec3(0.0, i1.x, 1.0));
+    vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy),
+                            dot(x12.zw, x12.zw)), 0.0);
+    m = m * m; m = m * m;
+    vec3 x = 2.0 * fract(p * C.www) - 1.0;
+    vec3 h = abs(x) - 0.5;
+    vec3 ox = floor(x + 0.5);
+    vec3 a0 = x - ox;
+    m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+    vec3 g;
+    g.x = a0.x * x0.x + h.x * x0.y;
+    g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+    return 130.0 * dot(m, g);
+  }
+
+  float fbm(vec2 p) {
+    float s = 0.0, a = 0.5, f = 1.0;
+    for (int i = 0; i < 8; i++) {
+      if (float(i) >= uDetail) break;
+      s += a * snoise(p * f);
+      f *= 2.0;
+      a *= 0.5;
+    }
+    return s;
+  }
+
+  vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+  }
+
+  void main() {
+    vec2 uv = (vUv - 0.5) * 2.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    // 鼠标扰动
+    vec2 mo = (uMouse - 0.5) * 2.0 * uMouseWarp;
+
+    float t = uTime * uSpeed;
+    vec2 p = uv * uScale;
+
+    // ---- 域扭曲三步 ----
+    vec2 q = vec2(
+      fbm(p + t),
+      fbm(p + vec2(5.2, 1.3) - t)
+    );
+    vec2 r = vec2(
+      fbm(p + uWarp * q + vec2(1.7, 9.2) + mo),
+      fbm(p + uWarp * q + vec2(8.3, 2.8) - mo)
+    );
+    float f = fbm(p + uWarp * r);
+
+    // 三色融合
+    float v = clamp((f * 0.5 + 0.5) * uContrast, 0.0, 1.0);
+    vec3 col = mix(uColorA, uColorB, v);
+
+    // 用 q 的长度做点缀色
+    col = mix(col, uColorC, clamp(length(q), 0.0, 1.0) * 0.6);
+
+    // 用 r.x^2 做二次点缀
+    col = mix(col, uColorC * 1.2, clamp(r.x * r.x, 0.0, 1.0) * 0.4);
+
+    // 明暗调制
+    col *= 0.6 + 0.6 * f;
+
+    // 微微提升对比
+    col = pow(max(col, 0.0), vec3(0.95));
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    uTime: { value: 0 },
+    uScale: { value: CFG.scale },
+    uWarp: { value: CFG.warp },
+    uDetail: { value: CFG.detail },
+    uSpeed: { value: CFG.speed },
+    uContrast: { value: CFG.contrast },
+    uMouseWarp: { value: CFG.mouseWarp },
+    uColorA: { value: new THREE.Color(CFG.colorA) },
+    uColorB: { value: new THREE.Color(CFG.colorB) },
+    uColorC: { value: new THREE.Color(CFG.colorC) },
+    uBackground: { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+// ---------- 尺寸 ----------
+function resize() {
+  const W = innerWidth;
+  const H = innerHeight;
+  renderer.setPixelRatio(PIXEL_RATIO);
+  renderer.setSize(W, H, false);
+  material.uniforms.uResolution.value.set(W * PIXEL_RATIO, H * PIXEL_RATIO);
+}
+resize();
+
+// ---------- 指针 ----------
+const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5, down: false };
+const rect = () => canvasEl.getBoundingClientRect();
+
+const onDown = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  pointer.down = true;
+  if (e.touches) e.preventDefault();
+};
+const onMove = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onUp = () => { pointer.down = false; };
+
+canvasEl.addEventListener('touchstart', onDown, { passive: false });
+canvasEl.addEventListener('touchmove', onMove, { passive: false });
+canvasEl.addEventListener('touchend', onUp);
+canvasEl.addEventListener('touchcancel', onUp);
+canvasEl.addEventListener('mousedown', onDown);
+canvasEl.addEventListener('mousemove', onMove);
+canvasEl.addEventListener('mouseup', onUp);
+canvasEl.addEventListener('mouseleave', onUp);
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+  pointer.x += (pointer.targetX - pointer.x) * 0.08;
+  pointer.y += (pointer.targetY - pointer.y) * 0.08;
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uMouse.value.set(pointer.x, pointer.y);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+// ---------- 按钮 ----------
+const mEl = document.getElementById('m');
+
+const SCHEMES = [
+  { name: '极光帷', colorA: '#050014', colorB: '#0d6759', colorC: '#a0c55f', scale: 2.0, contrast: 1.3, warp: 1.1 },
+  { name: '玫瑰星尘', colorA: '#230f2b', colorB: '#f21d41', colorC: '#bce3c5', scale: 2.2, contrast: 1.3, warp: 1.2 },
+  { name: '紫星云', colorA: '#05030f', colorB: '#7a4bff', colorC: '#ff9de0', scale: 2.0, contrast: 1.3, warp: 1.1 },
+  { name: '青雾', colorA: '#020a0a', colorB: '#2fb8b8', colorC: '#c8fff0', scale: 2.6, contrast: 1.2, warp: 1.0 },
+  { name: '火烬', colorA: '#0a0402', colorB: '#ff5a2c', colorC: '#ffe27a', scale: 2.2, contrast: 1.4, warp: 1.2 },
+  { name: '云海', colorA: '#0a0d16', colorB: '#c9d4ff', colorC: '#ffffff', scale: 2.2, contrast: 1.0, warp: 1.0 }
+];
+let schemeIdx = 0;
+
+function applyScheme(s) {
+  CFG.colorA = s.colorA;
+  CFG.colorB = s.colorB;
+  CFG.colorC = s.colorC;
+  CFG.scale = s.scale;
+  CFG.contrast = s.contrast;
+  CFG.warp = s.warp;
+
+  const u = material.uniforms;
+  u.uColorA.value.set(CFG.colorA);
+  u.uColorB.value.set(CFG.colorB);
+  u.uColorC.value.set(CFG.colorC);
+  u.uScale.value = CFG.scale;
+  u.uContrast.value = CFG.contrast;
+  u.uWarp.value = CFG.warp;
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  startTime = performance.now();
+  pointer.targetX = 0.5;
+  pointer.targetY = 0.5;
+});
+
+document.getElementById('btn-change').addEventListener('click', () => {
+  schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+  applyScheme(SCHEMES[schemeIdx]);
+  mEl.textContent = SCHEMES[schemeIdx].name;
+});
+
+// ---------- 启动 ----------
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+applyScheme(SCHEMES[0]);
+mEl.textContent = SCHEMES[0].name;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D物理沙盒 - 坐标微调+快捷键</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+    body {
+      background: #111;
+      min-height: 100vh;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    }
+    canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    /* 基础面板 */
+    .panel {
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+      border-radius: 16px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: white;
+      font-size: 13px;
+      font-weight: 500;
+      pointer-events: auto;
+    }
+    #hud {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #f0f0f0;
+      z-index: 10;
+      pointer-events: none;
+    }
+    /* 右侧光影面板扩展坐标区域 */
+    #lightPanel {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(12px);
+      padding: 12px 16px;
+      border-radius: 20px;
+      color: #fff;
+      font-family: system-ui;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 260px;
+      border: 1px solid rgba(255,255,200,0.2);
+      z-index: 20;
+      pointer-events: auto;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+    }
+    .ctrl {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+    .ctrl input {
+      width: 100%;
+      background: #2a2a2e;
+      border: 1px solid #ffaa4455;
+      color: white;
+      border-radius: 20px;
+      padding: 5px 8px;
+    }
+    hr {
+      margin: 4px 0;
+      border-color: rgba(255,255,255,0.15);
+    }
+    .coord-section {
+      margin-top: 4px;
+      background: rgba(0,0,0,0.4);
+      border-radius: 16px;
+      padding: 8px 10px;
+    }
+    .coord-title {
+      font-size: 12px;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #ffaa66;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .selected-info {
+      background: #000000aa;
+      padding: 4px 8px;
+      border-radius: 24px;
+      font-family: monospace;
+      font-size: 11px;
+    }
+    .step-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      justify-content: space-between;
+    }
+    .step-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1e1e2e;
+      padding: 4px 12px;
+      border-radius: 32px;
+    }
+    .step-control label {
+      font-size: 11px;
+      color: #ccc;
+    }
+    .step-control input {
+      width: 65px;
+      background: #0f0f14;
+      border: 1px solid #ffaa66;
+      color: #ffdd99;
+      border-radius: 20px;
+      text-align: center;
+      padding: 4px;
+      font-weight: bold;
+    }
+    .axis-buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
+    .axis-group {
+      display: flex;
+      gap: 5px;
+      background: #252530;
+      padding: 4px 8px;
+      border-radius: 40px;
+      align-items: center;
+    }
+    .axis-label {
+      font-weight: bold;
+      width: 24px;
+      color: #ffaa66;
+    }
+    .adj-btn {
+      background: #3a3a44;
+      border: none;
+      color: white;
+      border-radius: 30px;
+      width: 34px;
+      height: 32px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.08s linear;
+      font-size: 15px;
+    }
+    .adj-btn:hover {
+      background: #ffaa44;
+      color: #1e1e2a;
+      transform: scale(1.03);
+    }
+    .shortcut-hint {
+      font-size: 10px;
+      color: #bbb;
+      text-align: center;
+      margin-top: 8px;
+      border-top: 1px solid rgba(255,255,200,0.2);
+      padding-top: 6px;
+    }
+    #ui {
+      position: absolute;
+      bottom: 18px;
+      left: 16px;
+      right: 16px;
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      z-index: 15;
+      pointer-events: none;
+    }
+    .palette {
+      display: flex;
+      gap: 10px;
+      padding: 10px 14px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(8px);
+      border-radius: 48px;
+      pointer-events: auto;
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    .palette button {
+      width: 40px;
+      height: 40px;
+      border-radius: 30px;
+      cursor: pointer;
+      transition: 0.15s;
+      font-size: 1.3rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .palette button:hover { transform: scale(1.08); }
+    .palette button.active {
+      outline: 3px solid #ffaa44;
+      outline-offset: 2px;
+    }
+    #shapes button {
+      background: #222;
+      color: white;
+      border: none;
+    }
+    #colors button {
+      border: 1px solid rgba(255,255,240,0.5);
+    }
+    #lockBtn, #timeBtn {
+      background: #1e1e2aee;
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255,255,200,0.3);
+      color: white;
+      padding: 8px 18px;
+      border-radius: 40px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    #lockBtn:hover, #timeBtn:hover {
+      background: #ffaa44;
+      color: #1e1e2a;
+    }
+  </style>
+</head>
+<body>
+<div id="hud">
+  🧩 对象: <span id="obj-count">0</span> &nbsp;|&nbsp; 🟢 选中: <span id="selected-name">无</span>
+</div>
+<div id="ui">
+  <div id="shapes" class="palette">
+    <button data-shape="cube">■</button>
+    <button data-shape="sphere">●</button>
+    <button data-shape="cylinder">▨</button>
+    <button data-shape="cone">▲</button>
+  </div>
+  <div id="colors" class="palette">
+    <button data-color="#e63946"></button>
+    <button data-color="#f4a261"></button>
+    <button data-color="#e9c46a"></button>
+    <button data-color="#2a9d8f"></button>
+    <button data-color="#264653"></button>
+    <button data-color="#ffffff"></button>
+  </div>
+</div>
+<button id="lockBtn">锁定视角</button>
+<button id="timeBtn">时间暂停</button>
+
+<!-- 右侧面板扩展坐标功能 -->
+<div id="lightPanel">
+  <div class="ctrl"><span>🌓 环境光</span><input type="range" id="ambient" min="0" max="1" step="0.01" value="0.4"></div>
+  <div class="ctrl"><span>☀️ 主光强度</span><input type="range" id="lightPower" min="0" max="2" step="0.01" value="1.2"></div>
+  <div class="ctrl"><span>🌫️ 阴影模糊</span><input type="range" id="shadowSoft" min="0" max="4" step="0.1" value="1.5"></div>
+  <hr>
+  <div class="coord-section">
+    <div class="coord-title">
+      📍 坐标微调 
+      <span class="selected-info" id="coordDisplay">X:0.00 Y:0.00 Z:0.00</span>
+    </div>
+    <div class="step-row">
+      <div class="step-control">
+        <label>步长</label>
+        <input type="number" id="stepValue" value="10" step="1" min="0.1">
+      </div>
+      <div class="step-control" style="background:#2a2a30;">
+        <span style="font-size:11px;">⚡快捷键</span>
+        <span style="font-size:10px;">Alt+轴(+)/Alt+Shift+轴(-)</span>
+      </div>
+    </div>
+    <div class="axis-buttons">
+      <div class="axis-group">
+        <span class="axis-label">X</span>
+        <button class="adj-btn" data-axis="x" data-dir="1">+</button>
+        <button class="adj-btn" data-axis="x" data-dir="-1">-</button>
+      </div>
+      <div class="axis-group">
+        <span class="axis-label">Y</span>
+        <button class="adj-btn" data-axis="y" data-dir="1">+</button>
+        <button class="adj-btn" data-axis="y" data-dir="-1">-</button>
+      </div>
+      <div class="axis-group">
+        <span class="axis-label">Z</span>
+        <button class="adj-btn" data-axis="z" data-dir="1">+</button>
+        <button class="adj-btn" data-axis="z" data-dir="-1">-</button>
+      </div>
+    </div>
+    <div class="shortcut-hint">
+      💡 点击物体选中 | 快捷键: <kbd>Alt+X/Y/Z</kbd> +步长 &nbsp; <kbd>Alt+Shift+X/Y/Z</kbd> 减少
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+</script>
+
+<script>
+  // 简化物理引擎 (与原风格类似)
+  class OptimizedPhysics {
+    constructor(){this.bodies=[];this.gravity=9.8}
+    createBody(x,y,z,m,d=0.5){const b={x,y,z,vx:0,vy:0,vz:0,mass:m,radius:d,static:m<=0,quat:[0,0,0,1],angVel:[0,0,0]};this.bodies.push(b);return b}
+    step(dt){this.bodies.forEach(b=>{if(b.static)return;b.vy-=this.gravity*dt;b.x+=b.vx*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;if(b.y<-50){b.y=10;b.vx=0;b.vy=0;b.vz=0}})}
+  }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const game = {
+  physics: new OptimizedPhysics(),
+  scene: new THREE.Scene(),
+  camera: new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 0.1, 200),
+  renderer: new THREE.WebGLRenderer({antialias:true}),
+  raycaster: new THREE.Raycaster(),
+  mouse: new THREE.Vector2(),
+  clock: new THREE.Clock(),
+  isLocked: false,      // 锁定视角后可以放置/选中
+  timeFreeze: false,
+  currentShape: 'cube',
+  currentColor: '#e63946',
+  selectedObject: null,   // 当前选中的物体 { mesh, body }
+  stepSize: 10,           // 默认步长10
+  ui: {
+    loadingOverlay: document.getElementById('loading') || null,
+    lockBtn: document.getElementById('lockBtn'),
+    timeBtn: document.getElementById('timeBtn'),
+    objCountSpan: document.getElementById('obj-count'),
+    selectedNameSpan: document.getElementById('selected-name'),
+    coordDisplaySpan: document.getElementById('coordDisplay'),
+    stepInput: document.getElementById('stepValue')
+  },
+  cache: {
+    geometries: {},
+    placedShapes: [],     // {mesh, body}
+    allPlaceables: [],    // 用于射线地面和物体
+    previewMesh: null
+  }
+};
+
+const {scene, camera, renderer, physics} = game;
+let dirLight, ambientLight;
+
+// ========== 渲染器与场景 ==========
+function initRenderer() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.physicallyCorrectLights = true;
+  renderer.setClearColor('#87CEEB');
+  document.body.appendChild(renderer.domElement);
+}
+
+function initScene() {
+  scene.background = new THREE.Color('#87CEEB');
+  camera.position.set(0, 2, 9);
+  
+  ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+  scene.add(ambientLight);
+  
+  dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  dirLight.position.set(25, 35, 20);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.width = 2048;
+  dirLight.shadow.mapSize.height = 2048;
+  dirLight.shadow.camera.near = 1;
+  dirLight.shadow.camera.far = 150;
+  dirLight.shadow.camera.left = -70;
+  dirLight.shadow.camera.right = 70;
+  dirLight.shadow.camera.top = 70;
+  dirLight.shadow.camera.bottom = -70;
+  dirLight.shadow.bias = -0.001;
+  dirLight.shadow.radius = 1.5;
+  scene.add(dirLight);
+
+  // 地面
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(200,200),
+    new THREE.MeshStandardMaterial({color:'#d5c4a1', roughness:0.8, metalness:0.1})
+  );
+  ground.rotation.x = -Math.PI/2;
+  ground.position.y = -0.2;
+  ground.receiveShadow = true;
+  ground.userData = { isGround: true };
+  scene.add(ground);
+  game.cache.allPlaceables.push(ground);
+}
+
+function initGeometries() {
+  const g = game.cache.geometries;
+  g.cube = new THREE.BoxGeometry(1,1,1);
+  g.sphere = new THREE.SphereGeometry(0.6, 24,16);
+  g.cylinder = new THREE.CylinderGeometry(0.5,0.5,1.2,18);
+  g.cone = new THREE.ConeGeometry(0.7,1.4,18);
+
+  const previewMat = new THREE.MeshStandardMaterial({
+    color:'#fff', transparent:true, opacity:0.5, roughness:0.5
+  });
+  game.cache.previewMesh = new THREE.Mesh(g.cube, previewMat);
+  game.cache.previewMesh.castShadow = true;
+  scene.add(game.cache.previewMesh);
+}
+
+// 创建物体并同步物理体
+function createShape(type, color, pos) {
+  const geo = game.cache.geometries[type];
+  const mat = new THREE.MeshStandardMaterial({ color, roughness:0.6, metalness:0.1 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  
+  const body = physics.createBody(pos.x, pos.y, pos.z, 1, 0.5);
+  mesh.userData.body = body;
+  body.userData = { mesh };
+  
+  scene.add(mesh);
+  const record = { mesh, body };
+  game.cache.placedShapes.push(record);
+  game.cache.allPlaceables.push(mesh);
+  game.ui.objCountSpan.textContent = game.cache.placedShapes.length;
+  
+  // 新物体自动选中
+  setSelectedObject(record);
+  return record;
+}
+
+// 选中物体相关逻辑
+function setSelectedObject(record) {
+  // 移除旧高亮
+  if (game.selectedObject && game.selectedObject.mesh) {
+    const oldMat = game.selectedObject.mesh.material;
+    if (oldMat && !oldMat.userData) {
+      // 恢复原有 emissive 强度记录
+      const oldEmissive = oldMat.userData?.oldEmissive || 0;
+      oldMat.emissiveIntensity = oldEmissive;
+      oldMat.userData = oldMat.userData || {};
+      oldMat.userData.oldEmissive = oldEmissive;
+    } else if(oldMat) {
+      oldMat.emissiveIntensity = 0;
+    }
+  }
+  
+  game.selectedObject = record;
+  if (record && record.mesh) {
+    const mat = record.mesh.material;
+    if (mat) {
+      if (!mat.userData) mat.userData = {};
+      mat.userData.oldEmissive = mat.emissiveIntensity || 0;
+      mat.emissiveIntensity = 0.45;
+      mat.emissive = new THREE.Color(0xffaa66);
+    }
+    updateCoordDisplayFromSelected();
+  } else {
+    game.ui.selectedNameSpan.textContent = '无';
+    game.ui.coordDisplaySpan.textContent = 'X:0.00 Y:0.00 Z:0.00';
+  }
+}
+
+function updateCoordDisplayFromSelected() {
+  if (game.selectedObject && game.selectedObject.mesh) {
+    const pos = game.selectedObject.mesh.position;
+    game.ui.coordDisplaySpan.textContent = `X:${pos.x.toFixed(2)} Y:${pos.y.toFixed(2)} Z:${pos.z.toFixed(2)}`;
+    game.ui.selectedNameSpan.textContent = `${game.currentShape}`;
+  } else {
+    game.ui.coordDisplaySpan.textContent = `X:-- Y:-- Z:--`;
+    game.ui.selectedNameSpan.textContent = '无';
+  }
+}
+
+// 坐标调整核心函数
+function adjustSelected(axis, delta) {
+  if (!game.selectedObject) return;
+  const mesh = game.selectedObject.mesh;
+  const body = game.selectedObject.body;
+  if (!mesh || !body) return;
+  let newX = mesh.position.x, newY = mesh.position.y, newZ = mesh.position.z;
+  const step = game.stepSize;
+  const move = delta * step;
+  if (axis === 'x') newX += move;
+  if (axis === 'y') newY += move;
+  if (axis === 'z') newZ += move;
+  
+  mesh.position.set(newX, newY, newZ);
+  body.x = newX;
+  body.y = newY;
+  body.z = newZ;
+  // 速度归零避免漂移
+  body.vx = 0; body.vy = 0; body.vz = 0;
+  updateCoordDisplayFromSelected();
+}
+
+// 射线选取物体 (可点击)
+function handleObjectPick(event) {
+  if (!game.isLocked) return false;  // 未锁定视角不能点击选中(但为了符合锁定逻辑，仅在锁定下可编辑)
+  game.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  game.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  game.raycaster.setFromCamera(game.mouse, camera);
+  // 过滤地面和预览物体
+  const selectable = game.cache.placedShapes.map(item => item.mesh);
+  const intersects = game.raycaster.intersectObjects(selectable);
+  if (intersects.length > 0) {
+    const hitMesh = intersects[0].object;
+    const record = game.cache.placedShapes.find(r => r.mesh === hitMesh);
+    if (record) {
+      setSelectedObject(record);
+      return true;
+    }
+  } else {
+    // 点空白处取消选中
+    if (game.selectedObject) {
+      setSelectedObject(null);
+    }
+  }
+  return false;
+}
+
+// 放置物体 (点击放置)
+function tryPlaceObject(event) {
+  if (!game.isLocked) return;
+  // 在锁定视角模式下，点击时如果没点到物体则放置 (与原有逻辑类似，但为了不干扰选中: 如果点到物体就不放置)
+  const prevMouse = { x: game.mouse.x, y: game.mouse.y };
+  game.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  game.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  game.raycaster.setFromCamera(game.mouse, camera);
+  const selectable = game.cache.placedShapes.map(item => item.mesh);
+  const hitObj = game.raycaster.intersectObjects(selectable).length > 0;
+  // 还原鼠标位置 (因为后面预览位置会重新计算，但不影响)
+  game.mouse.copy(prevMouse);
+  
+  if (!hitObj) {
+    const place = getPlacement();
+    if (place.valid) {
+      createShape(game.currentShape, game.currentColor, place.pos);
+    }
+  }
+}
+
+// 获取地面放置预览点
+function getPlacement() {
+  game.raycaster.setFromCamera(game.mouse, camera);
+  const list = game.cache.allPlaceables;
+  const hits = game.raycaster.intersectObjects(list);
+  if (hits.length === 0) return { pos: null, valid: false };
+  const p = hits[0].point.clone();
+  p.y += 0.6;
+  return { pos: p, valid: true };
+}
+
+// 动画与预览更新
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(game.clock.getDelta(), 0.016);
+  if (!game.timeFreeze) physics.step(dt);
+  
+  game.cache.placedShapes.forEach(({mesh, body})=>{
+    mesh.position.set(body.x, body.y, body.z);
+  });
+  
+  // 预览效果 (锁定视角且未选中任何物体时显示预览)
+  const place = getPlacement();
+  const pm = game.cache.previewMesh;
+  if (game.isLocked && place.valid && !game.selectedObject) {
+    pm.position.copy(place.pos);
+    pm.visible = true;
+    // 更新预览形状
+    if (pm.geometry !== game.cache.geometries[game.currentShape]) {
+      pm.geometry = game.cache.geometries[game.currentShape];
+    }
+  } else {
+    pm.visible = false;
+  }
+  
+  // 更新坐标显示(实时跟随选中物体位置)
+  if (game.selectedObject && game.selectedObject.mesh) {
+    const pos = game.selectedObject.mesh.position;
+    game.ui.coordDisplaySpan.textContent = `X:${pos.x.toFixed(2)} Y:${pos.y.toFixed(2)} Z:${pos.z.toFixed(2)}`;
+  }
+  
+  renderer.render(scene, camera);
+}
+
+// UI事件绑定
+function bindUI() {
+  // 形状按钮
+  document.querySelectorAll('#shapes button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('#shapes button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      game.currentShape = b.dataset.shape;
+      if (game.cache.previewMesh) game.cache.previewMesh.geometry = game.cache.geometries[game.currentShape];
+    });
+  });
+  document.querySelectorAll('#colors button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('#colors button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      game.currentColor = b.dataset.color;
+    });
+  });
+  document.getElementById('shapes').children[0].click();
+  document.getElementById('colors').children[0].click();
+  
+  // 锁定时才可放置物体和选中
+  game.ui.lockBtn.onclick = () => {
+    game.isLocked = !game.isLocked;
+    game.ui.lockBtn.textContent = game.isLocked ? '🔓 解锁视角' : '🔒 锁定视角';
+    if (!game.isLocked && game.selectedObject) setSelectedObject(null);
+  };
+  game.ui.timeBtn.onclick = () => {
+    game.timeFreeze = !game.timeFreeze;
+    game.ui.timeBtn.textContent = game.timeFreeze ? '▶️ 时间运行' : '⏸️ 时间暂停';
+  };
+  
+  // 坐标按钮事件
+  document.querySelectorAll('.adj-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const axis = btn.dataset.axis;
+      const dir = parseInt(btn.dataset.dir);
+      adjustSelected(axis, dir);
+    });
+  });
+  // 步长输入
+  const stepInput = game.ui.stepInput;
+  stepInput.addEventListener('change', () => {
+    let val = parseFloat(stepInput.value);
+    if (isNaN(val)) val = 10;
+    game.stepSize = Math.max(0.1, val);
+    stepInput.value = game.stepSize;
+  });
+  game.stepSize = parseFloat(stepInput.value);
+  
+  // 光影控制
+  document.getElementById('ambient').addEventListener('input', e=> ambientLight.intensity = parseFloat(e.target.value));
+  document.getElementById('lightPower').addEventListener('input', e=> dirLight.intensity = parseFloat(e.target.value));
+  document.getElementById('shadowSoft').addEventListener('input', e=> dirLight.shadow.radius = parseFloat(e.target.value));
+}
+
+// 快捷键: Alt + X/Y/Z 增加步长, Alt+Shift+X/Y/Z 减少步长
+function handleKeyboard(e) {
+  if (!game.isLocked) return; // 只有锁定视角模式下才能调整物体坐标
+  const step = game.stepSize;
+  const alt = e.altKey;
+  const shift = e.shiftKey;
+  if (!alt) return;
+  const key = e.key.toLowerCase();
+  let axis = null;
+  if (key === 'x') axis = 'x';
+  else if (key === 'y') axis = 'y';
+  else if (key === 'z') axis = 'z';
+  if (axis && game.selectedObject) {
+    e.preventDefault();
+    const delta = shift ? -1 : 1;
+    adjustSelected(axis, delta);
+  }
+}
+
+function init() {
+  initRenderer();
+  initScene();
+  initGeometries();
+  bindUI();
+  // 交互事件
+  window.addEventListener('pointermove', (e) => {
+    game.mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    game.mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  });
+  window.addEventListener('pointerdown', (e) => {
+    if (!game.isLocked) return;
+    // 先尝试拾取物体，如果点到物体就不放置
+    const picked = handleObjectPick(e);
+    if (!picked) {
+      tryPlaceObject(e);
+    }
+  });
+  window.addEventListener('keydown', handleKeyboard);
+  
+  animate();
+  if (game.ui.loadingOverlay) game.ui.loadingOverlay.style.display = 'none';
+  // 添加一个简单地面初始物体演示
+  createShape('cube', '#e63946', new THREE.Vector3(0, 1, 0));
+  createShape('sphere', '#2a9d8f', new THREE.Vector3(1.5, 1, 1.2));
+  setSelectedObject(game.cache.placedShapes[0]);
+}
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>

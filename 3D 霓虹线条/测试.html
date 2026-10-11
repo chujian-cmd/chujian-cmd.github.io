@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#12121f">
+<title>摇一摇 · 广告</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: radial-gradient(circle at 50% 0%, #2b2b55 0%, #12121f 60%, #0a0a12 100%);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ============ 广告卡片 ============ */
+  .ad {
+    width: min(92vw, 380px);
+    padding: 28px 22px 22px;
+    border-radius: 22px;
+    background: linear-gradient(160deg, rgba(255,255,255,.10), rgba(255,255,255,.03));
+    border: 1px solid rgba(255,255,255,.12);
+    box-shadow: 0 20px 60px rgba(0,0,0,.55);
+    text-align: center;
+    position: relative;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .ad.shaking { animation: shake .3s ease-in-out; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0) rotate(0); }
+    20% { transform: translateX(-9px) rotate(-2deg); }
+    40% { transform: translateX(9px) rotate(2deg); }
+    60% { transform: translateX(-6px) rotate(-1.5deg); }
+    80% { transform: translateX(6px) rotate(1.5deg); }
+  }
+
+  .badge {
+    position: absolute; top: 10px; right: 12px;
+    font-size: 11px; color: rgba(255,255,255,.45);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 4px; padding: 1px 5px;
+  }
+
+  .phone-icon {
+    font-size: 64px; line-height: 1;
+    display: inline-block;
+    animation: tilt 1.6s ease-in-out infinite;
+    filter: drop-shadow(0 0 18px rgba(120,180,255,.55));
+  }
+  @keyframes tilt {
+    0%,100% { transform: rotate(-12deg); }
+    50%     { transform: rotate(12deg); }
+  }
+
+  h1 { font-size: 20px; margin: 18px 0 8px; letter-spacing: .5px; }
+  .sub {
+    font-size: 13px; color: rgba(255,255,255,.55);
+    margin: 0 0 20px; line-height: 1.6;
+  }
+
+  .progress {
+    height: 6px; border-radius: 99px;
+    background: rgba(255,255,255,.12);
+    overflow: hidden; margin: 0 0 16px;
+  }
+  .progress i {
+    display: block; height: 100%; width: 0;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #4facfe, #00f2fe);
+    transition: width .18s ease;
+  }
+
+  button.start {
+    display: none;
+    width: 100%;
+    padding: 13px 0;
+    font-size: 16px; font-weight: 600;
+    color: #06121f;
+    border: 0; border-radius: 99px;
+    background: linear-gradient(90deg, #4facfe, #00f2fe);
+    box-shadow: 0 8px 24px rgba(79,172,254,.35);
+    cursor: pointer;
+    margin-bottom: 12px;
+  }
+  button.start:active { transform: scale(.97); }
+
+  .status {
+    font-size: 12px;
+    color: rgba(255,255,255,.5);
+    min-height: 18px;
+    margin-bottom: 14px;
+  }
+
+  .mock {
+    font-size: 11px;
+    color: rgba(255,255,255,.28);
+    text-decoration: underline;
+    cursor: pointer;
+    padding: 6px;
+  }
+
+  /* ============ 跳转遮罩 ============ */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(8,8,16,.92);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s ease;
+    z-index: 99;
+  }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  .overlay p { font-size: 14px; color: rgba(255,255,255,.75); margin: 0; }
+  .spinner {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.15);
+    border-top-color: #4facfe;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+  <div class="ad" id="ad">
+    <span class="badge">广告</span>
+    <div class="phone-icon">📱</div>
+    <h1>摇一摇，领取好礼</h1>
+    <p class="sub">晃动手机<br>立即跳转活动页面</p>
+
+    <div class="progress"><i id="progressBar"></i></div>
+
+    <button class="start" id="startBtn">开启摇一摇</button>
+
+    <div class="status" id="status">正在监听重力传感器…</div>
+
+    <div class="mock" id="mockBtn">没有传感器？点这里模拟摇一次</div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="spinner"></div>
+    <p>正在跳转…</p>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ================= 可配置项 ================= */
+  const TARGET_URL           = 'https://www.baidu.com'; // ← 改成你要跳转的页面
+  const SHAKE_DELTA_THRESHOLD = 10;   // 重力数值变化阈值，越小越灵敏（推荐 15~35）
+  const REQUIRED_SHAKES       = 50;    // 需要连续检测到几次晃动才跳转（1 = 摇一次就跳）
+  const SHAKE_COOLDOWN        = 0;  // 两次判定之间的最小间隔(ms)，防抖动误触发
+  const JUMP_DELAY            = 300;  // 跳转前的过渡动画时间(ms)，设 0 为立即跳转
+  /* =========================================== */
+
+  const adEl       = document.getElementById('ad');
+  const startBtn   = document.getElementById('startBtn');
+  const statusEl   = document.getElementById('status');
+  const progressEl = document.getElementById('progressBar');
+  const overlayEl  = document.getElementById('overlay');
+  const mockBtn    = document.getElementById('mockBtn');
+
+  let lastAcc      = null;   // 上一次的重力加速度
+  let lastShakeAt  = 0;      // 上次判定为晃动的时间
+  let shakeCount   = 0;      // 已检测到的晃动次数
+  let triggered    = false;  // 是否已触发跳转
+  let listening    = false;  // 是否已挂载监听
+
+  /* ---------------- 跳转 ---------------- */
+  function jump() {
+    if (triggered) return;
+    triggered = true;
+
+    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+
+    overlayEl.classList.add('show');
+    statusEl.textContent = '检测到摇动，正在跳转…';
+
+    setTimeout(function () {
+      window.location.href = TARGET_URL;
+      // 如需保留当前页（比如在新窗口打开），改用：
+      // window.open(TARGET_URL, '_blank');
+    }, JUMP_DELAY);
+  }
+
+  /* ---------------- 核心：重力传感器回调 ---------------- */
+  function handleMotion(event) {
+    if (triggered) return;
+
+    // 优先使用包含重力的加速度（兼容性最好）
+    const acc = event.accelerationIncludingGravity || event.acceleration;
+    if (!acc || acc.x === null || acc.x === undefined) return;
+
+    const cur = { x: acc.x, y: acc.y, z: acc.z };
+
+    // 第一次先记录基准值
+    if (!lastAcc) { lastAcc = cur; return; }
+
+    // 三轴变化量之和 —— 即“重力数值变了多少”
+    const delta =
+      Math.abs(cur.x - lastAcc.x) +
+      Math.abs(cur.y - lastAcc.y) +
+      Math.abs(cur.z - lastAcc.z);
+
+    lastAcc = cur;
+
+    if (delta < SHAKE_DELTA_THRESHOLD) return;
+
+    // 防抖：短时间内只算一次
+    const now = Date.now();
+    if (now - lastShakeAt < SHAKE_COOLDOWN) return;
+    lastShakeAt = now;
+
+    shakeCount++;
+
+    // 视觉反馈
+    adEl.classList.remove('shaking');
+    void adEl.offsetWidth;          // 强制重排，让动画可重复播放
+    adEl.classList.add('shaking');
+    if (navigator.vibrate) { try { navigator.vibrate(30); } catch (e) {} }
+
+    progressEl.style.width = Math.min(100, (shakeCount / REQUIRED_SHAKES) * 100) + '%';
+    statusEl.textContent = '检测到摇动 ' + shakeCount + '/' + REQUIRED_SHAKES;
+
+    if (shakeCount >= REQUIRED_SHAKES) jump();
+  }
+
+  /* ---------------- 挂载监听 ---------------- */
+  function startListening() {
+    if (listening) return;
+    listening = true;
+    window.addEventListener('devicemotion', handleMotion, { passive: true });
+  }
+
+  /* ---------------- 初始化（含 iOS 13+ 权限） ---------------- */
+  function init() {
+    if (typeof DeviceMotionEvent === 'undefined') {
+      statusEl.textContent = '当前设备不支持重力传感器';
+      return;
+    }
+
+    // iOS 13+ 必须在用户手势中申请权限
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+      startBtn.style.display = 'block';
+      statusEl.textContent = '点击下方按钮开启摇一摇';
+
+      startBtn.addEventListener('click', function () {
+        DeviceMotionEvent.requestPermission().then(function (state) {
+          if (state === 'granted') {
+            startBtn.style.display = 'none';
+            startListening();
+            statusEl.textContent = '已开启，晃动手机试试～';
+          } else {
+            statusEl.textContent = '未授权「运动与方向」权限，无法检测摇动';
+          }
+        }).catch(function (err) {
+          statusEl.textContent = '授权失败：' + err.message;
+        });
+      });
+      return;
+    }
+
+    // Android / 其他浏览器：直接监听
+    startListening();
+    statusEl.textContent = '晃动手机试试～';
+  }
+
+  /* ---------------- 桌面端模拟测试 ---------------- */
+  mockBtn.addEventListener('click', function () {
+    if (triggered) return;
+    startListening();
+    handleMotion({ accelerationIncludingGravity: { x: 0, y: 0, z: 9.8 } });
+    setTimeout(function () {
+      handleMotion({ accelerationIncludingGravity: { x: 22, y: 18, z: 9.8 } });
+    }, 30);
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>

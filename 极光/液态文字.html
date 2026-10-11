@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>液态融字 · 液金</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060b; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ---------- 可调参数 ----------
+const CFG = {
+  text: '液金\nLIQUID',    // 支持多行
+  font: '"PingFang SC","Microsoft YaHei","Heiti SC","Noto Sans CJK SC",sans-serif',
+  weight: 900,             // 字重越大越粗，效果越好
+
+  merge: 0.5,              // 融合度：0=生硬，1=完全融合成球
+  thresh: 0.4,             // 阈值：团块胖瘦
+  chroma: 0.9,             // 虹彩强度
+
+  flow: 0.02,              // 流动强度
+  speed: 1.0,              // 流速
+
+  metalA: '#eaf0ff',       // 金属色 A（高光/亮面）
+  metalB: '#5a6a92',       // 金属色 B（暗面）
+  background: '#05060b',
+
+  zoom: 1
+};
+
+const TEX_W = 1024;
+const TEX_H = 512;
+
+// ---------- 文字栅格化 ----------
+const raster = {
+  canvas: document.createElement('canvas'),
+  ctx: null,
+  init() {
+    this.canvas.width = TEX_W;
+    this.canvas.height = TEX_H;
+    this.ctx = this.canvas.getContext('2d');
+  },
+  update(text, weight, font) {
+    const c = this.ctx;
+    c.clearRect(0, 0, TEX_W, TEX_H);
+    c.fillStyle = '#fff';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+
+    const lines = (text || '液金').split('\n').filter(l => l.length > 0);
+    if (!lines.length) return;
+
+    const maxW = TEX_W * 0.92;
+    const maxH = TEX_H * 0.88;
+    let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+    const setFont = s => { c.font = `${weight} ${s}px ${font}`; };
+    setFont(size);
+
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, c.measureText(l).width);
+    if (widest > maxW) {
+      size = Math.max(4, Math.floor(size * maxW / widest));
+      setFont(size);
+    }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(4, Math.floor(size * maxH / totalH));
+      setFont(size);
+    }
+
+    const lineH = size * 1.15;
+    const startY = TEX_H / 2 - (lines.length - 1) * lineH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      c.fillText(lines[i], TEX_W / 2, startY + i * lineH);
+    }
+  }
+};
+raster.init();
+
+// ---------- three.js 场景 ----------
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// 用一张 canvas 存模糊后的平滑场（用于距离场近似）
+const field = document.createElement('canvas');
+field.width = TEX_W;
+field.height = TEX_H;
+const fieldCtx = field.getContext('2d');
+
+const fieldTex = new THREE.CanvasTexture(field);
+fieldTex.minFilter = THREE.LinearFilter;
+fieldTex.magFilter = THREE.LinearFilter;
+
+// ---------- Shader ----------
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const frag = /* glsl */`
+  precision highp float;
+
+  uniform sampler2D uTex;      // 已模糊的平滑场（.a 通道）
+  uniform vec2 uTexel;
+  uniform float uTime, uZoom, uThresh, uEdge, uFlow, uSpeed, uChroma, uBump;
+  uniform vec3 uMetalA, uMetalB, uBg;
+  varying vec2 vUv;
+
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+
+  float vnoise(vec2 p){
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f*f*(3.0-2.0*f);
+    float a = hash(i);
+    float b = hash(i+vec2(1.0,0.0));
+    float c = hash(i+vec2(0.0,1.0));
+    float d = hash(i+vec2(1.0,1.0));
+    return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+  }
+
+  float field(vec2 uv){ return texture2D(uTex, clamp(uv, 0.0, 1.0)).a; }
+
+  void main() {
+    vec2 uv = (vUv - 0.5) / uZoom + 0.5;
+    float t = uTime * uSpeed;
+
+    // 液态蠕动 + 向下滴落
+    uv += vec2(
+      vnoise(uv*4.0 + vec2(0.0, t)) - 0.5,
+      vnoise(uv*4.0 + vec2(5.2, t*1.3 + 0.7)) - 0.5
+    ) * uFlow;
+    uv.y -= (vnoise(uv*2.5 + vec2(9.0, t*0.6)) - 0.5) * uFlow * 0.5;
+
+    // 用中央差分近似梯度 → 伪法线
+    vec2 ex = vec2(uTexel.x * 2.0, 0.0);
+    vec2 ey = vec2(0.0, uTexel.y * 2.0);
+    float f  = field(uv);
+    float fx = field(uv + ex);
+    float fy = field(uv + ey);
+
+    float shape = smoothstep(uThresh - uEdge, uThresh + uEdge, f);
+    if (shape < 0.001) { gl_FragColor = vec4(uBg, 1.0); return; }
+
+    // 场梯度当法线：中心隆起、边缘外倾
+    vec3 n = normalize(vec3((f - fx) * uBump, (f - fy) * uBump, 1.0));
+
+    vec3 L = normalize(vec3(0.35, 0.7, 0.85));    // 光方向
+    vec3 V = vec3(0.0, 0.0, 1.0);                 // 视线方向
+    vec3 H = normalize(L + V);
+
+    float diff = max(dot(n, L), 0.0);
+    float spec = pow(max(dot(n, H), 0.0), 80.0);  // 高光
+    float fres = pow(1.0 - max(n.z, 0.0), 3.0);   // 菲涅尔边缘
+
+    // 金属色 = 亮暗两色按漫反射插值
+    vec3 metal = mix(uMetalA, uMetalB, clamp(diff, 0.0, 1.0));
+
+    // 虹彩：随菲涅尔 + 场值 变化的彩虹
+    vec3 irid = 0.5 + 0.5 * cos(6.2831853 * (vec3(0.0, 0.33, 0.67) + fres * 1.6 + f * 0.5));
+
+    vec3 col = metal * (0.25 + diff * 0.9) + spec * 1.5 + irid * fres * uChroma;
+
+    // 边缘亮描边，增强液面张力
+    col += vec3(1.0) * smoothstep(0.0, 0.5, shape) * (1.0 - smoothstep(0.5, 1.0, shape)) * 0.15;
+
+    vec3 outc = mix(uBg, col, shape);
+    gl_FragColor = vec4(outc, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uTex:    { value: fieldTex },
+    uTexel:  { value: new THREE.Vector2(1 / TEX_W, 1 / TEX_H) },
+    uTime:   { value: 0 },
+    uZoom:   { value: CFG.zoom },
+    uThresh: { value: CFG.thresh },
+    uEdge:   { value: 0.06 },
+    uFlow:   { value: CFG.flow },
+    uSpeed:  { value: CFG.speed },
+    uChroma: { value: CFG.chroma },
+    uBump:   { value: 60 },
+    uMetalA: { value: new THREE.Color(CFG.metalA) },
+    uMetalB: { value: new THREE.Color(CFG.metalB) },
+    uBg:     { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+// ---------- 重建平滑场 ----------
+// 思路：把文字画到临时 canvas，再用 CSS filter blur 模糊后，作为距离场近似
+let lastSig = '';
+
+function rebuildField() {
+  const sig = `${CFG.text}|${CFG.weight}|${CFG.font}|${CFG.merge.toFixed(2)}`;
+  if (sig === lastSig) return;
+  lastSig = sig;
+
+  // 1. 画文字（先清晰）
+  raster.update(CFG.text, CFG.weight, CFG.font);
+
+  // 2. 模糊半径：融合度越高，模糊越大 → 相邻笔画融合越厉害
+  const blurPx = 4 + CFG.merge * 22;
+
+  fieldCtx.clearRect(0, 0, TEX_W, TEX_H);
+  fieldCtx.filter = `blur(${blurPx}px)`;
+  fieldCtx.drawImage(raster.canvas, 0, 0);
+  fieldCtx.filter = 'none';
+
+  fieldTex.needsUpdate = true;
+}
+
+// ---------- 滚轮缩放 ----------
+let zoom = CFG.zoom;
+addEventListener('wheel', e => {
+  e.preventDefault();
+  zoom = Math.max(0.4, Math.min(4, zoom * Math.exp(-e.deltaY * 0.0012)));
+}, { passive: false });
+
+// 触摸双指缩放
+let pinchStart = 0, pinchZoom0 = 1;
+addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    pinchStart = Math.hypot(dx, dy);
+    pinchZoom0 = zoom;
+  }
+}, { passive: true });
+addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && pinchStart > 0) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const d = Math.hypot(dx, dy);
+    zoom = Math.max(0.4, Math.min(4, pinchZoom0 * d / pinchStart));
+  }
+}, { passive: true });
+addEventListener('touchend', () => { pinchStart = 0; });
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+  rebuildField();
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uZoom.value = zoom;
+  u.uThresh.value = CFG.thresh;
+  u.uFlow.value = CFG.flow;
+  u.uSpeed.value = CFG.speed;
+  u.uChroma.value = CFG.chroma;
+  u.uMetalA.value.set(CFG.metalA);
+  u.uMetalB.value.set(CFG.metalB);
+  u.uBg.value.set(CFG.background);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+});
+
+// 等字体加载完再启动
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => setTimeout(() => requestAnimationFrame(loop), 80));
+} else {
+  setTimeout(() => requestAnimationFrame(loop), 300);
+}
+</script>
+</body>
+</html>

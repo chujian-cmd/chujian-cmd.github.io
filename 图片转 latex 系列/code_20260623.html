@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+  <title>像素 · LaTeX 拼图生成器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0d0f;
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+      color: #f0f0f5;
+    }
+    .glass-panel {
+      max-width: 480px;
+      width: 100%;
+      background: #18181b;
+      border-radius: 36px;
+      padding: 24px 20px 28px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .header-icon {
+      font-size: 24px;
+      background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    h1 {
+      font-size: 1.5rem; font-weight: 600;
+      background: linear-gradient(to right, #ffffff, #d4d4d8);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 0.85rem; color: #a1a1aa; margin-bottom: 18px;
+      border-left: 2px solid #4f46e5; padding-left: 12px;
+    }
+    /* 文件选择 */
+    .file-area {
+      background: #1f1f23; border-radius: 20px; padding: 10px 14px;
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px; border: 1px solid #2e2e36;
+    }
+    .file-btn {
+      background: #2e2e36; border: none; color: #e4e4e7; font-weight: 500;
+      font-size: 0.85rem; padding: 8px 14px; border-radius: 30px; cursor: pointer;
+      display: flex; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .file-btn:hover { background: #3f3f48; }
+    .file-name { color: #c0c0cc; font-size: 0.85rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #file-input { display: none; }
+    /* 控制行 */
+    .control-row { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; }
+    .pixel-box {
+      background: #1f1f23; border-radius: 20px; padding: 8px 12px;
+      display: flex; align-items: center; gap: 6px; flex: 1; border: 1px solid #2e2e36;
+    }
+    .pixel-box input {
+      background: transparent; border: none; color: #fff; font-size: 1rem;
+      width: 44px; text-align: center; outline: none;
+    }
+    .pixel-box span { color: #8e8e93; font-size: 0.85rem; }
+    .mode-box {
+      background: #1f1f23; border-radius: 20px; padding: 8px 10px;
+      flex: 1.4; border: 1px solid #2e2e36; display: flex; align-items: center;
+    }
+    .mode-box select {
+      background: transparent; border: none; color: #f0f0f5; width: 100%;
+      font-size: 0.85rem; outline: none; cursor: pointer; appearance: none;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%23a1a1aa" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>');
+      background-repeat: no-repeat; background-position: right 2px center; background-size: 14px;
+    }
+    /* 预览区 */
+    .preview-section {
+      background: #0f0f12; border-radius: 24px; padding: 10px;
+      margin-bottom: 12px; border: 1px solid #2a2a30;
+      box-shadow: inset 0 0 12px rgba(0,0,0,0.6);
+    }
+    .preview-container {
+      width: 100%; aspect-ratio: 1/1;
+      display: flex; justify-content: center; align-items: center;
+      background: #0b0b0e; border-radius: 16px; overflow: hidden;
+    }
+    #render-canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+    .preview-info {
+      text-align: center; font-size: 0.7rem; color: #6b6b78;
+      margin-top: 6px; display: flex; justify-content: center; gap: 12px;
+    }
+    /* 代码区 */
+    .code-box {
+      background: #0f0f12; border-radius: 20px; margin-bottom: 14px;
+      border: 1px solid #2e2e36; display: none; flex-direction: column; overflow: hidden;
+    }
+    .code-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 12px; background: #1c1c20; border-bottom: 1px solid #2e2e36;
+    }
+    .code-header span { font-size: 0.75rem; color: #a0a0b0; }
+    .btn-sm {
+      background: #4f46e5; border: none; color: white; font-size: 0.7rem;
+      font-weight: 600; padding: 5px 10px; border-radius: 16px; cursor: pointer;
+    }
+    .btn-sm:active { transform: scale(0.95); }
+    #latex-code-area {
+      padding: 10px; margin: 0; font-family: 'Courier New', monospace;
+      font-size: 0.6rem; line-height: 1.4; color: #cfcfe0;
+      max-height: 160px; overflow-y: auto; white-space: pre-wrap;
+      word-break: break-all; background: #0a0a0d;
+    }
+    /* 按钮 */
+    .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+    .action-btn {
+      background: #22222b; border: 1px solid #31313a; border-radius: 24px;
+      padding: 12px 0; color: #e4e4e7; font-weight: 600; font-size: 0.9rem; cursor: pointer;
+    }
+    .action-btn.primary { background: #4f46e5; border-color: #6366f1; color: white; }
+    .action-btn:active { transform: translateY(1px); }
+    .status-badge {
+      text-align: center; margin-top: 12px; font-size: 0.75rem; color: #7f7f8c;
+      background: #1a1a1f; padding: 6px 12px; border-radius: 24px;
+      width: fit-content; margin-left: auto; margin-right: auto;
+    }
+  </style>
+</head>
+<body>
+<div class="glass-panel">
+  <div class="header">
+    <span class="header-icon">◈</span>
+    <h1>像素 · LaTeX拼图</h1>
+  </div>
+  <div class="subtitle">图片 → 像素渲染 + LaTeX代码</div>
+  <!-- 文件选择 -->
+  <div class="file-area">
+    <button class="file-btn" id="trigger-file-btn"><span>文件</span> 选择图片</button>
+    <span class="file-name" id="file-name-display">未选择</span>
+    <input type="file" id="file-input" accept="image/*">
+  </div>
+  <!-- 像素+模式 -->
+  <div class="control-row">
+    <div class="pixel-box">
+      <input type="number" id="pixel-size" value="24" min="4" max="64" step="1">
+      <span>像素</span>
+    </div>
+    <div class="mode-box">
+      <select id="output-mode">
+        <option value="tikz_rgb">TikZ RGB</option>
+        <option value="latex_color">LaTeX 颜色</option>
+      </select>
+    </div>
+  </div>
+  <!-- 像素渲染预览 -->
+  <div class="preview-section">
+    <div class="preview-container">
+      <canvas id="render-canvas"></canvas>
+    </div>
+    <div class="preview-info">
+      <span id="pixel-count-text">24×24 = 576 像素</span>
+      <span id="color-count-text"></span>
+    </div>
+  </div>
+  <!-- LaTeX代码区 -->
+  <div class="code-box" id="code-preview-box">
+    <div class="code-header">
+      <span>LaTeX 源码</span>
+      <button class="btn-sm" id="copy-code-btn">复制</button>
+    </div>
+    <pre id="latex-code-area"></pre>
+  </div>
+  <!-- 操作按钮 -->
+  <div class="action-grid">
+    <button class="action-btn primary" id="generate-btn">生成代码</button>
+    <button class="action-btn" id="download-btn">下载 .tex</button>
+  </div>
+  <div class="status-badge" id="status-text">选择图片自动预览</div>
+</div>
+<script>
+  // ===== DOM元素 =====
+  const fileInput = document.getElementById('file-input');
+  const fileNameDisplay = document.getElementById('file-name-display');
+  const renderCanvas = document.getElementById('render-canvas');
+  const rctx = renderCanvas.getContext('2d');
+  const statusText = document.getElementById('status-text');
+  const pixelSizeInput = document.getElementById('pixel-size');
+  const modeSelect = document.getElementById('output-mode');
+  const codePreviewBox = document.getElementById('code-preview-box');
+  const latexCodeArea = document.getElementById('latex-code-area');
+  const pixelCountText = document.getElementById('pixel-count-text');
+  const colorCountText = document.getElementById('color-count-text');
+  let currentImage = null;
+  let currentPixelData = null; // 存储提取的像素颜色数组
+  let latexCodeCache = null;
+  // ===== 工具函数 =====
+  function getSafeGridSize() {
+    let val = parseInt(pixelSizeInput.value, 10);
+    if (isNaN(val) || val < 4) val = 4;
+    if (val > 64) val = 64;
+    pixelSizeInput.value = val;
+    return val;
+  }
+  function setStatus(msg, isGood = true) {
+    statusText.textContent = msg;
+    statusText.style.color = isGood ? '#a0a0b8' : '#f87171';
+  }
+  // ===== 核心：提取像素数据 =====
+  function extractPixelData() {
+    if (!currentImage) return null;
+    
+    const gridSize = getSafeGridSize();
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = gridSize;
+    offCanvas.height = gridSize;
+    const offCtx = offCanvas.getContext('2d');
+    offCtx.drawImage(currentImage, 0, 0, gridSize, gridSize);
+    const imageData = offCtx.getImageData(0, 0, gridSize, gridSize);
+    const data = imageData.data;
+    
+    // 存储为二维数组 [y][x] = {r, g, b}
+    const pixels = [];
+    for (let y = 0; y < gridSize; y++) {
+      pixels[y] = [];
+      for (let x = 0; x < gridSize; x++) {
+        const idx = (y * gridSize + x) * 4;
+        pixels[y][x] = {
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2]
+        };
+      }
+    }
+    return { pixels, gridSize };
+  }
+  // ===== 渲染像素到Canvas =====
+  function renderPixelsToCanvas(pixelData) {
+    if (!pixelData) {
+      renderCanvas.width = 240;
+      renderCanvas.height = 240;
+      rctx.fillStyle = '#1a1a1e';
+      rctx.fillRect(0, 0, 240, 240);
+      rctx.fillStyle = '#3a3a40';
+      rctx.font = '14px system-ui';
+      rctx.textAlign = 'center';
+      rctx.fillText('无图片', 120, 120);
+      return;
+    }
+    const { pixels, gridSize } = pixelData;
+    const scale = Math.max(1, Math.floor(400 / gridSize));
+    const canvasSize = gridSize * scale;
+    
+    renderCanvas.width = canvasSize;
+    renderCanvas.height = canvasSize;
+    rctx.imageSmoothingEnabled = false;
+    
+    const colorSet = new Set();
+    
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        const { r, g, b } = pixels[y][x];
+        rctx.fillStyle = `rgb(${r},${g},${b})`;
+        rctx.fillRect(x * scale, y * scale, scale, scale);
+        colorSet.add(`${r},${g},${b}`);
+      }
+    }
+    
+    pixelCountText.textContent = `${gridSize}×${gridSize} = ${gridSize * gridSize} 像素`;
+    colorCountText.textContent = `${colorSet.size} 种颜色`;
+  }
+  // ===== 预览更新（提取+渲染） =====
+  function updatePreview() {
+    if (!currentImage) {
+      renderPixelsToCanvas(null);
+      pixelCountText.textContent = '无图片';
+      colorCountText.textContent = '';
+      return;
+    }
+    const pixelData = extractPixelData();
+    currentPixelData = pixelData;
+    renderPixelsToCanvas(pixelData);
+    latexCodeCache = null;
+    codePreviewBox.style.display = 'none';
+  }
+  // ===== 文件选择 =====
+  document.getElementById('trigger-file-btn').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    fileNameDisplay.textContent = file.name.length > 16 ? file.name.substring(0, 14) + '…' : file.name;
+    
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      const img = new Image();
+      img.onload = function() {
+        currentImage = img;
+        updatePreview();
+        setStatus('自动预览 · 点击生成代码');
+      };
+      img.onerror = function() {
+        setStatus('图片加载失败', false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+    fileInput.value = '';
+  });
+  // ===== 像素变化 =====
+  pixelSizeInput.addEventListener('input', function() {
+    updatePreview();
+    if (currentImage) setStatus('像素已更新');
+  });
+  // ===== 构建LaTeX代码 =====
+  function buildLatexCode() {
+    if (!currentPixelData) return null;
+    
+    const { pixels, gridSize } = currentPixelData;
+    const mode = modeSelect.value;
+    let lines = [];
+    
+    if (mode === 'tikz_rgb') {
+      lines.push('\\documentclass[tikz,border=10pt]{standalone}');
+      lines.push('\\begin{document}');
+      lines.push('\\begin{tikzpicture}[scale=0.5]');
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const { r, g, b } = pixels[y][x];
+          const rf = (r / 255).toFixed(3);
+          const gf = (g / 255).toFixed(3);
+          const bf = (b / 255).toFixed(3);
+          lines.push(`  \\fill[rgb={${rf},${gf},${bf}}] (${x}, ${gridSize - 1 - y}) rectangle ++(1,1);`);
+        }
+      }
+      lines.push('\\end{tikzpicture}');
+      lines.push('\\end{document}');
+    } else {
+      const colorMap = new Map();
+      const colorDefs = [];
+      const fillCommands = [];
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const { r, g, b } = pixels[y][x];
+          const key = `${r}_${g}_${b}`;
+          if (!colorMap.has(key)) {
+            colorMap.set(key, `col_${key}`);
+            colorDefs.push(`\\definecolor{col_${key}}{RGB}{${r},${g},${b}}`);
+          }
+          fillCommands.push(`  \\fill[col_${key}] (${x}, ${gridSize - 1 - y}) rectangle ++(1,1);`);
+        }
+      }
+      lines.push('\\documentclass[tikz,border=10pt]{standalone}');
+      lines.push('\\usepackage{xcolor}');
+      lines.push('\\begin{document}');
+      lines.push('\\begin{tikzpicture}[scale=0.5]');
+      lines.push(...colorDefs);
+      lines.push(...fillCommands);
+      lines.push('\\end{tikzpicture}');
+      lines.push('\\end{document}');
+    }
+    
+    return lines.join('\n');
+  }
+  // ===== 生成代码并显示 =====
+  function generateAndShow() {
+    if (!currentImage) {
+      setStatus('请先选择一张图片', false);
+      return;
+    }
+    
+    const code = buildLatexCode();
+    if (!code) {
+      setStatus('生成失败', false);
+      return;
+    }
+    
+    latexCodeCache = code;
+    latexCodeArea.textContent = code;
+    codePreviewBox.style.display = 'flex';
+    const gs = getSafeGridSize();
+    setStatus('已生成 ' + gs + '×' + gs + ' LaTeX代码');
+  }
+  // ===== 复制代码（自动套\[ \]） =====
+  function copyCode() {
+    if (!latexCodeCache) {
+      generateAndShow();
+      if (!latexCodeCache) return;
+    }
+    const wrapCode = `\[
+${latexCodeCache}
+\]`;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(wrapCode).then(() => setStatus('已复制'));
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = wrapCode;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setStatus('已复制');
+    }
+  }
+  // ===== 下载文件（原生无包裹代码） =====
+  function downloadLatex() {
+    if (!latexCodeCache) {
+      if (!currentImage) {
+        setStatus('请先选择图片', false);
+        return;
+      }
+      generateAndShow();
+      if (!latexCodeCache) return;
+    }
+    
+    const gs = getSafeGridSize();
+    const blob = new Blob([latexCodeCache], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pixel_art_${gs}x${gs}.tex`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    setStatus('下载完成');
+  }
+  // ===== 事件绑定 =====
+  document.getElementById('generate-btn').addEventListener('click', generateAndShow);
+  document.getElementById('copy-code-btn').addEventListener('click', copyCode);
+  document.getElementById('download-btn').addEventListener('click', downloadLatex);
+  // ===== 初始化 =====
+  renderPixelsToCanvas(null);
+</script>
+</body>
+</html>

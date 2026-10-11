@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>绿色 01 代码 · 3D 星空</title>
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.140.0/build/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  if (!window.THREE) return;
+
+  /* ========== 参数 ========== */
+  const PARTICLE_COUNT = 1800;   // 粒子数量
+  const SPREAD         = 80;     // 分布半径（世界单位）
+  const MIN_SIZE       = 0.6;    // 粒子最小尺寸
+  const MAX_SIZE       = 1.6;    // 粒子最大尺寸
+  const CAM_SMOOTH     = 0.12;   // 相机平滑跟随
+
+  /* ========== Three.js 基础 ========== */
+  const canvas = document.getElementById('c');
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: true,
+      powerPreference: 'high-performance'
+    });
+  } catch (err) {
+    return;
+  }
+
+  let pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(pixelRatio);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x000000, 0.012);
+
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 500);
+  camera.position.set(0, 0, 0);
+
+  function onResize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  addEventListener('resize', onResize);
+  addEventListener('orientationchange', function () { setTimeout(onResize, 260); });
+
+  /* ================================================================
+   * 生成 '0' 和 '1' 的数字纹理
+   * ================================================================ */
+  function createDigitTexture(digit) {
+    const off = document.createElement('canvas');
+    off.width = 64;
+    off.height = 64;
+    const ctx = off.getContext('2d');
+
+    ctx.clearRect(0, 0, 64, 64);
+    ctx.font = 'bold 52px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#00ff00';
+    ctx.shadowColor = '#00ff00';
+    ctx.shadowBlur = 16;
+    ctx.fillText(digit, 32, 32);
+    ctx.shadowBlur = 26;
+    ctx.fillText(digit, 32, 32);
+
+    const tex = new THREE.CanvasTexture(off);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    return tex;
+  }
+
+  const tex0 = createDigitTexture('0');
+  const tex1 = createDigitTexture('1');
+
+  /* ================================================================
+   * 生成粒子位置和颜色
+   * 为了让 '0' 和 '1' 分别使用不同纹理，创建两个 Points 系统
+   * ================================================================ */
+  const count0 = Math.floor(PARTICLE_COUNT * 0.55);
+  const count1 = PARTICLE_COUNT - count0;
+
+  function buildParticles(count) {
+    const positions = new Float32Array(count * 3);
+    const colors    = new Float32Array(count * 3);
+
+    for (let i = 0; i < count; i++) {
+      // 球壳均匀分布，半径从近到远
+      const radius = SPREAD * (0.15 + 0.85 * Math.cbrt(Math.random()));
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+
+      positions[i * 3]     = radius * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = radius * Math.cos(phi);
+
+      // 绿色调，略带亮度变化
+      const g = 0.75 + Math.random() * 0.45;
+      colors[i * 3]     = 0.0 + Math.random() * 0.1;
+      colors[i * 3 + 1] = g;
+      colors[i * 3 + 2] = 0.0 + Math.random() * 0.1;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }
+
+  function buildMaterial(tex) {
+    return new THREE.PointsMaterial({
+      size: MAX_SIZE,
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+      sizeAttenuation: true
+    });
+  }
+
+  const points0 = new THREE.Points(buildParticles(count0), buildMaterial(tex0));
+  const points1 = new THREE.Points(buildParticles(count1), buildMaterial(tex1));
+  scene.add(points0);
+  scene.add(points1);
+
+  /* ================================================================
+   * 相机朝向 —— 使用手机姿态（陀螺仪）
+   * ================================================================ */
+  const targetQuat = new THREE.Quaternion();
+  const _euler = new THREE.Euler();
+  const _q1 = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
+  const _qz = new THREE.Quaternion();
+  const Z_AXIS = new THREE.Vector3(0, 0, 1);
+  let orientReady = false;
+
+  function screenAngle() {
+    if (screen.orientation && typeof screen.orientation.angle === 'number')
+      return screen.orientation.angle;
+    return window.orientation || 0;
+  }
+
+  function onOrientation(e) {
+    if (e.alpha == null && e.beta == null && e.gamma == null) return;
+
+    const a = THREE.MathUtils.degToRad(e.alpha || 0);
+    const b = THREE.MathUtils.degToRad(e.beta  || 0);
+    const g = THREE.MathUtils.degToRad(e.gamma || 0);
+    const s = THREE.MathUtils.degToRad(screenAngle());
+
+    _euler.set(b, a, -g, 'YXZ');
+    targetQuat.setFromEuler(_euler);
+    targetQuat.multiply(_q1);
+    targetQuat.multiply(_qz.setFromAxisAngle(Z_AXIS, -s));
+
+    if (!orientReady) {
+      camera.quaternion.copy(targetQuat);
+      orientReady = true;
+    }
+  }
+
+  /* ========== 权限 & 监听器绑定 ========== */
+  let sensorsBound = false;
+  let requesting = false;
+  let permissionState = 'unknown';
+
+  function needsPermission() {
+    return typeof DeviceOrientationEvent !== 'undefined' &&
+           typeof DeviceOrientationEvent.requestPermission === 'function';
+  }
+
+  function bindSensors() {
+    if (sensorsBound) return;
+    sensorsBound = true;
+    window.addEventListener('deviceorientation', onOrientation, { passive: true });
+  }
+
+  function requestAndBind() {
+    if (sensorsBound || requesting) return;
+    if (!needsPermission()) { bindSensors(); return; }
+    if (permissionState === 'denied') return;
+
+    requesting = true;
+    DeviceOrientationEvent.requestPermission()
+      .then(function (res) {
+        requesting = false;
+        if (res === 'granted') { permissionState = 'granted'; bindSensors(); }
+        else { permissionState = 'denied'; }
+      })
+      .catch(function () {
+        requesting = false;
+        permissionState = 'denied';
+      });
+  }
+
+  if (!needsPermission()) bindSensors();
+
+  // 用户点击/触摸时请求权限（iOS 必须由手势触发）
+  canvas.addEventListener('pointerdown', function () {
+    requestAndBind();
+  }, { passive: true });
+
+  /* ================================================================
+   * 主循环
+   * ================================================================ */
+  const clock = new THREE.Clock();
+
+  function loop() {
+    requestAnimationFrame(loop);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    if (orientReady) {
+      const k = 1 - Math.pow(0.5, dt / CAM_SMOOTH);
+      camera.quaternion.slerp(targetQuat, k);
+    }
+
+    // 粒子系统缓慢自转，增加空间感
+    const t = performance.now() * 0.0002;
+    points0.rotation.y = Math.sin(t) * 0.05;
+    points1.rotation.y = Math.sin(t + 1.5) * 0.05;
+
+    renderer.render(scene, camera);
+  }
+  loop();
+
+})();
+</script>
+</body>
+</html>

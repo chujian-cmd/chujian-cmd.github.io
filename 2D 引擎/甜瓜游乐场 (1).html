@@ -1,0 +1,1953 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1319">
+<title>物理沙盒 · Physics Sandbox</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#0f1319;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+    overscroll-behavior:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    position:fixed;inset:0;
+  }
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+
+  #hud{
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 8px);
+    left:calc(env(safe-area-inset-left,0px) + 10px);
+    color:#7f8ea3;font-size:12px;line-height:1.5;
+    pointer-events:none;font-variant-numeric:tabular-nums;
+    text-shadow:0 1px 3px #000;
+  }
+  #hud b{color:#c9d6e8;font-weight:600;}
+
+  #topbar{
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 8px);
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    display:flex;gap:6px;z-index:20;
+    max-width:calc(100vw - 100px);
+    flex-wrap:wrap;justify-content:flex-end;
+  }
+
+  #bottombar{
+    position:fixed;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 8px);
+    left:calc(env(safe-area-inset-left,0px) + 8px);
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    display:flex;gap:6px;z-index:20;
+    overflow-x:auto;overflow-y:hidden;
+    padding:6px;border-radius:16px;
+    background:rgba(18,22,30,.72);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.07);
+    box-shadow:0 6px 24px rgba(0,0,0,.45);
+    scrollbar-width:none;
+    justify-content:center;
+    flex-wrap:nowrap;
+  }
+  #bottombar::-webkit-scrollbar{display:none;}
+
+  .btn{
+    flex:0 0 auto;
+    min-width:46px;height:46px;
+    border:none;border-radius:12px;
+    background:rgba(255,255,255,.07);
+    color:#d4deec;font-size:20px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:background .12s,transform .08s,box-shadow .12s;
+    -webkit-user-select:none;user-select:none;
+    touch-action:manipulation;
+    position:relative;
+    padding:0 8px;
+  }
+  .btn:active{transform:scale(.92);}
+  .btn.active{
+    background:linear-gradient(180deg,#3d8bfd,#2563eb);
+    color:#fff;
+    box-shadow:0 0 0 2px rgba(96,165,250,.35),0 4px 14px rgba(37,99,235,.45);
+  }
+  .btn.warn.active{background:linear-gradient(180deg,#f87171,#dc2626);box-shadow:0 0 0 2px rgba(248,113,113,.35);}
+
+  .matdot{
+    position:absolute;bottom:4px;right:5px;
+    width:11px;height:11px;border-radius:50%;
+    border:1.5px solid rgba(0,0,0,.5);
+  }
+
+  #quickmenu{
+    position:fixed;z-index:40;
+    display:none;
+    padding:8px;border-radius:16px;
+    background:rgba(20,26,36,.94);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 10px 40px rgba(0,0,0,.6);
+    grid-template-columns:repeat(3,1fr);gap:6px;
+    transform:translate(-50%,-50%);
+  }
+  #quickmenu.show{display:grid;}
+  #quickmenu .btn{min-width:56px;height:56px;font-size:22px;flex-direction:column;gap:2px;}
+  #quickmenu .lbl{font-size:9px;opacity:.7;}
+
+  #toast{
+    position:fixed;left:50%;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 74px);
+    transform:translateX(-50%);
+    background:rgba(0,0,0,.78);color:#e6edf7;
+    padding:8px 16px;border-radius:20px;font-size:13px;
+    pointer-events:none;opacity:0;transition:opacity .25s;
+    z-index:50;white-space:nowrap;
+  }
+  #toast.show{opacity:1;}
+
+  @media (max-width:420px){
+    .btn{min-width:44px;height:44px;font-size:18px;}
+    #topbar{gap:4px;}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="hud">
+  <div id="stats">FPS -- · 物体 0 · 缩放 100%</div>
+  <div id="hint" style="opacity:.7;font-size:11px"></div>
+</div>
+
+<div id="topbar">
+  <button class="btn" data-act="mat" id="btnMat" title="材质">🪵<span class="matdot" id="matDot"></span></button>
+  <button class="btn" data-act="pause" title="暂停">⏸</button>
+  <button class="btn" data-act="slow" title="慢动作">🐢</button>
+  <button class="btn" data-act="debug" title="调试">🐞</button>
+  <button class="btn" data-act="full" title="全屏">⛶</button>
+  <button class="btn" data-act="reset" title="重置">🔄</button>
+  <button class="btn warn" data-act="clear" title="清空">🗑</button>
+</div>
+
+<div id="bottombar">
+  <button class="btn tool active" data-tool="hand" title="拖拽/投掷">🖐</button>
+  <button class="btn tool" data-tool="box" title="方块">⬛</button>
+  <button class="btn tool" data-tool="ball" title="圆球">⚪</button>
+  <button class="btn tool" data-tool="tri" title="三角">🔺</button>
+  <button class="btn tool" data-tool="hex" title="六边形">⬡</button>
+  <button class="btn tool" data-tool="ragdoll" title="布娃娃">🧍</button>
+  <button class="btn tool" data-tool="tnt" title="TNT">🧨</button>
+  <button class="btn tool" data-tool="gun" title="手枪">🔫</button>
+  <button class="btn tool" data-tool="blade" title="飞刀">🗡</button>
+  <button class="btn tool" data-tool="bomb" title="炸弹">💣</button>
+  <button class="btn tool warn" data-tool="delete" title="删除">❌</button>
+</div>
+
+<div id="quickmenu"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* =========================================================================
+   0. 环境与工具
+   ========================================================================= */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent)
+              || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const rand  = (a, b) => a + Math.random() * (b - a);
+
+const V = {
+  dot: (a, b) => a.x * b.x + a.y * b.y,
+  rotInv: (a, ang) => { const c = Math.cos(-ang), s = Math.sin(-ang); return { x: a.x * c - a.y * s, y: a.x * s + a.y * c }; },
+};
+
+/* =========================================================================
+   1. 几何工具
+   ========================================================================= */
+function polyArea(verts) {
+  let a = 0;
+  for (let i = 0, n = verts.length; i < n; i++) {
+    const p = verts[i], q = verts[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a * 0.5;
+}
+
+function polyCentroid(verts) {
+  let cx = 0, cy = 0, a = 0;
+  for (let i = 0, n = verts.length; i < n; i++) {
+    const p = verts[i], q = verts[(i + 1) % n];
+    const cr = p.x * q.y - q.x * p.y;
+    a += cr; cx += (p.x + q.x) * cr; cy += (p.y + q.y) * cr;
+  }
+  if (Math.abs(a) < 1e-9) return { x: 0, y: 0 };
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+function polyInertia(verts, mass) {
+  let crSum = 0, num = 0;
+  for (let i = 0, n = verts.length; i < n; i++) {
+    const p = verts[i], q = verts[(i + 1) % n];
+    const cr = p.x * q.y - q.x * p.y;
+    crSum += cr;
+    num += cr * (p.x * p.x + p.x * q.x + q.x * q.x + p.y * p.y + p.y * q.y + q.y * q.y);
+  }
+  if (Math.abs(crSum) < 1e-9) return mass;
+  return (mass / (6 * crSum)) * num;
+}
+
+function ensureCCW(verts) {
+  if (polyArea(verts) < 0) verts.reverse();
+  return verts;
+}
+
+function boxVerts(w, h) {
+  return ensureCCW([
+    { x: -w / 2, y: -h / 2 }, { x: w / 2, y: -h / 2 },
+    { x: w / 2, y: h / 2 }, { x: -w / 2, y: h / 2 },
+  ]);
+}
+
+function ngonVerts(r, sides, phase = 0) {
+  const out = [];
+  for (let i = 0; i < sides; i++) {
+    const a = phase + (i / sides) * TAU;
+    out.push({ x: Math.cos(a) * r, y: Math.sin(a) * r });
+  }
+  return ensureCCW(out);
+}
+
+function pointInPoly(p, verts) {
+  let sign = 0;
+  const n = verts.length;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    const c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (c > 1e-9) { if (sign < 0) return false; sign = 1; }
+    else if (c < -1e-9) { if (sign > 0) return false; sign = -1; }
+  }
+  return true;
+}
+
+/** 沿无限直线切分凸多边形，返回 [左侧, 右侧] 顶点数组 */
+function splitPoly(verts, p1, p2) {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const n = verts.length;
+  const side = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = verts[i];
+    side[i] = dx * (v.y - p1.y) - dy * (v.x - p1.x);
+  }
+  const L = [], R = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const si = side[i], sj = side[j];
+    if (si >= -1e-9) L.push(verts[i]);
+    if (si <= 1e-9) R.push(verts[i]);
+    if ((si > 0 && sj < 0) || (si < 0 && sj > 0)) {
+      const t = si / (si - sj);
+      const ip = {
+        x: verts[i].x + (verts[j].x - verts[i].x) * t,
+        y: verts[i].y + (verts[j].y - verts[i].y) * t
+      };
+      L.push(ip); R.push(ip);
+    }
+  }
+  return [L, R];
+}
+
+/* =========================================================================
+   2. 材质表
+   ========================================================================= */
+const MATERIALS = {
+  wood:   { name: '木头', density: 0.70, restitution: 0.25, friction: 0.62, color: '#b5793a', color2: '#7e4d1e', icon: '🪵', hp: 100 },
+  metal:  { name: '金属', density: 2.40, restitution: 0.14, friction: 0.45, color: '#9aa7b8', color2: '#5f6c7e', icon: '⚙️', hp: 320 },
+  ice:    { name: '冰块', density: 0.90, restitution: 0.10, friction: 0.05, color: '#a9e7ff', color2: '#5fb6e0', icon: '❄️', hp: 60 },
+  rubber: { name: '橡胶', density: 1.00, restitution: 0.88, friction: 0.92, color: '#50536a', color2: '#2f3140', icon: '🔴', hp: 220 },
+  stone:  { name: '石头', density: 2.00, restitution: 0.09, friction: 0.72, color: '#8d8d95', color2: '#5c5c66', icon: '🪨', hp: 280 },
+  tnt:    { name: 'TNT',  density: 1.20, restitution: 0.20, friction: 0.55, color: '#e34b3b', color2: '#8f2418', icon: '🧨', hp: 20 },
+  flesh:  { name: '肉体', density: 0.95, restitution: 0.18, friction: 0.70, color: '#e8b98f', color2: '#c08a5c', icon: '🩸', hp: 80 },
+  bullet: { name: '子弹', density: 6.00, restitution: 0.20, friction: 0.30, color: '#ffe08a', color2: '#c9a13a', icon: '•', hp: 9999 },
+};
+const MAT_KEYS = ['wood', 'metal', 'ice', 'rubber', 'stone'];
+
+/* =========================================================================
+   3. 刚体
+   ========================================================================= */
+let _bodyId = 0;
+
+class Body {
+  constructor(o = {}) {
+    this.id = _bodyId++;
+    this.shape = o.shape || 'poly';
+    this.pos = { x: o.x || 0, y: o.y || 0 };
+    this.vel = { x: o.vx || 0, y: o.vy || 0 };
+    this.angle = o.angle || 0;
+    this.angVel = o.angVel || 0;
+    this.isStatic = !!o.isStatic;
+    this.restitution = o.restitution ?? 0.2;
+    this.friction = o.friction ?? 0.45;
+    this.density = o.density ?? 1;
+    this.color = o.color || '#8b93a5';
+    this.color2 = o.color2 || null;
+    this.tag = o.tag || 'body';
+    this.material = o.material || 'stone';
+    this.hp = o.hp ?? Infinity;
+    this.maxHp = this.hp;
+    this.dead = false;
+    this.selected = false;
+    this.fuse = -1;
+    this.noShatter = !!o.noShatter;
+    this.flash = 0;
+
+    if (this.shape === 'circle') {
+      this.radius = o.radius || 20;
+      this.localVerts = null;
+      this.worldVerts = null;
+      this.area = Math.PI * this.radius * this.radius;
+      this.boundRadius = this.radius;
+    } else {
+      this.localVerts = ensureCCW(o.verts);
+      this.area = Math.abs(polyArea(this.localVerts));
+      this.worldVerts = this.localVerts.map(() => ({ x: 0, y: 0 }));
+      let br = 0;
+      for (const v of this.localVerts) br = Math.max(br, Math.hypot(v.x, v.y));
+      this.boundRadius = br;
+    }
+
+    const MASS_SCALE = 0.0012;
+    if (this.isStatic) {
+      this.mass = 0; this.invMass = 0;
+      this.inertia = 0; this.invInertia = 0;
+    } else {
+      this.mass = Math.max(this.density * this.area * MASS_SCALE, 1e-4);
+      this.invMass = 1 / this.mass;
+      if (this.shape === 'circle') {
+        this.inertia = 0.5 * this.mass * this.radius * this.radius;
+      } else {
+        this.inertia = Math.max(polyInertia(this.localVerts, this.mass), 1e-6);
+      }
+      this.invInertia = 1 / this.inertia;
+    }
+
+    this.updateWorldVerts();
+  }
+
+  updateWorldVerts() {
+    if (this.shape !== 'poly') return;
+    const lv = this.localVerts, n = lv.length;
+    const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    const px = this.pos.x, py = this.pos.y;
+    for (let i = 0; i < n; i++) {
+      const v = lv[i];
+      this.worldVerts[i].x = px + v.x * c - v.y * s;
+      this.worldVerts[i].y = py + v.x * s + v.y * c;
+    }
+  }
+
+  worldPoint(local) {
+    const c = Math.cos(this.angle), s = Math.sin(this.angle);
+    return {
+      x: this.pos.x + local.x * c - local.y * s,
+      y: this.pos.y + local.x * s + local.y * c
+    };
+  }
+
+  containsPoint(px, py) {
+    if (this.shape === 'circle') {
+      const dx = px - this.pos.x, dy = py - this.pos.y;
+      return dx * dx + dy * dy <= this.radius * this.radius;
+    }
+    return pointInPoly({ x: px, y: py }, this.worldVerts);
+  }
+}
+
+/* =========================================================================
+   4. 碰撞检测
+   ========================================================================= */
+
+/** 裁剪线段 [a,b]：保留满足 nx·p + ny·p >= off 的部分 */
+function clipSeg(a, b, nx, ny, off) {
+  const da = nx * a.x + ny * a.y - off;
+  const db = nx * b.x + ny * b.y - off;
+  const out = [];
+  if (da >= 0) out.push({ x: a.x, y: a.y });
+  if (db >= 0) out.push({ x: b.x, y: b.y });
+  if (da * db < 0) {
+    const t = da / (da - db);
+    out.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  }
+  return out;
+}
+
+/** 以 va 的每条边为参考，求 vb 相对于该边的最小间距 */
+function leastPenetration(va, vb) {
+  let bestSep = -Infinity, bestIdx = 0;
+  const n = va.length;
+  for (let i = 0; i < n; i++) {
+    const a = va[i], b = va[(i + 1) % n];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const l = Math.hypot(ex, ey) || 1;
+    const nx = ey / l, ny = -ex / l;   // 外向法线（CCW 绕序）
+    let minD = Infinity;
+    for (let j = 0; j < vb.length; j++) {
+      const d = nx * (vb[j].x - a.x) + ny * (vb[j].y - a.y);
+      if (d < minD) minD = d;
+    }
+    if (minD > bestSep) { bestSep = minD; bestIdx = i; }
+  }
+  return { sep: bestSep, idx: bestIdx };
+}
+
+function circleCircle(A, B) {
+  const dx = B.pos.x - A.pos.x, dy = B.pos.y - A.pos.y;
+  const r = A.radius + B.radius;
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= r * r) return null;
+  const d = Math.sqrt(d2);
+  let nx, ny;
+  if (d < 1e-6) { nx = 0; ny = -1; }
+  else { nx = dx / d; ny = dy / d; }
+  const pen = r - d;
+  const px = A.pos.x + nx * (A.radius - pen * 0.5);
+  const py = A.pos.y + ny * (A.radius - pen * 0.5);
+  return { normal: { x: nx, y: ny }, points: [{ x: px, y: py, pen }] };
+}
+
+function circlePoly(C, P) {
+  const verts = P.worldVerts;
+  const n = verts.length;
+  let bestD2 = Infinity, bestPt = null, bestIdx = 0;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    const abx = b.x - a.x, aby = b.y - a.y;
+    const apx = C.pos.x - a.x, apy = C.pos.y - a.y;
+    const ab2 = abx * abx + aby * aby;
+    let t = ab2 > 1e-12 ? (apx * abx + apy * aby) / ab2 : 0;
+    t = clamp(t, 0, 1);
+    const cx = a.x + abx * t, cy = a.y + aby * t;
+    const dx = C.pos.x - cx, dy = C.pos.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; bestPt = { x: cx, y: cy }; bestIdx = i; }
+  }
+  const dist = Math.sqrt(bestD2);
+  const inside = pointInPoly(C.pos, verts);
+  if (!inside && dist > C.radius) return null;
+
+  let nx, ny, pen;
+  if (inside) {
+    const a = verts[bestIdx], b = verts[(bestIdx + 1) % n];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const l = Math.hypot(ex, ey) || 1;
+    let onx = ey / l, ony = -ex / l;
+    let cx = 0, cy = 0;
+    for (const v of verts) { cx += v.x; cy += v.y; }
+    cx /= n; cy /= n;
+    if (onx * (cx - a.x) + ony * (cy - a.y) > 0) { onx = -onx; ony = -ony; }
+    nx = -onx; ny = -ony;
+    pen = C.radius + dist;
+  } else {
+    const dx = bestPt.x - C.pos.x, dy = bestPt.y - C.pos.y;
+    const d = Math.hypot(dx, dy) || 1;
+    nx = dx / d; ny = dy / d;
+    pen = C.radius - dist;
+  }
+  return { normal: { x: nx, y: ny }, points: [{ x: bestPt.x, y: bestPt.y, pen }] };
+}
+
+function polyPoly(A, B) {
+  const va = A.worldVerts, vb = B.worldVerts;
+  const r1 = leastPenetration(va, vb);
+  if (r1.sep > 0) return null;
+  const r2 = leastPenetration(vb, va);
+  if (r2.sep > 0) return null;
+
+  let refVerts, incVerts, refIdx, flipped;
+  if (r1.sep > r2.sep) {
+    refVerts = va; incVerts = vb; refIdx = r1.idx; flipped = false;
+  } else {
+    refVerts = vb; incVerts = va; refIdx = r2.idx; flipped = true;
+  }
+
+  const n = refVerts.length;
+  const ra = refVerts[refIdx], rb = refVerts[(refIdx + 1) % n];
+  const ex = rb.x - ra.x, ey = rb.y - ra.y;
+  const el = Math.hypot(ex, ey) || 1;
+  const refDir = { x: ex / el, y: ey / el };
+  const refN = { x: ey / el, y: -ex / el };
+
+  // 找入射面（法线与参考面法线最反向）
+  let minDot = Infinity, incIdx = 0;
+  const m = incVerts.length;
+  for (let i = 0; i < m; i++) {
+    const a = incVerts[i], b = incVerts[(i + 1) % m];
+    const ax = b.x - a.x, ay = b.y - a.y;
+    const l = Math.hypot(ax, ay) || 1;
+    const d = (ay / l) * refN.x + (-ax / l) * refN.y;
+    if (d < minDot) { minDot = d; incIdx = i; }
+  }
+  const ia = incVerts[incIdx], ib = incVerts[(incIdx + 1) % m];
+
+  // ✅ 正确裁剪：先保留 refDir·p >= o1，再保留 refDir·p <= o2
+  const o1 = refDir.x * ra.x + refDir.y * ra.y;
+  const c1 = clipSeg(ia, ib, refDir.x, refDir.y, o1);
+  if (c1.length < 2) return null;
+
+  const o2 = refDir.x * rb.x + refDir.y * rb.y;
+  const c2 = clipSeg(c1[0], c1[1], -refDir.x, -refDir.y, -o2);
+  if (c2.length < 2) return null;
+
+  const refOff = refN.x * ra.x + refN.y * ra.y;
+  const pts = [];
+  for (const p of c2) {
+    const sep = (refN.x * p.x + refN.y * p.y) - refOff;
+    if (sep <= 0.01) pts.push({ x: p.x, y: p.y, pen: -sep });
+  }
+  if (pts.length === 0) return null;
+
+  const normal = flipped ? { x: -refN.x, y: -refN.y } : refN;
+  return { normal, points: pts };
+}
+
+function collideBodies(A, B) {
+  if (A.shape === 'circle') {
+    if (B.shape === 'circle') return circleCircle(A, B);
+    return circlePoly(A, B);
+  } else {
+    if (B.shape === 'circle') {
+      const m = circlePoly(B, A);
+      if (m) { m.normal.x = -m.normal.x; m.normal.y = -m.normal.y; }
+      return m;
+    }
+    return polyPoly(A, B);
+  }
+}
+
+/* =========================================================================
+   5. 接触约束
+   ========================================================================= */
+class Manifold {
+  constructor(A, B, normal, points) {
+    this.A = A; this.B = B;
+    this.normal = normal;
+    this.points = points;
+    this.e = Math.min(A.restitution, B.restitution);
+    this.mu = Math.sqrt(A.friction * B.friction);
+    this.tangent = { x: -normal.y, y: normal.x };
+    this.prepare();
+  }
+
+  prepare() {
+    const A = this.A, B = this.B, n = this.normal, t = this.tangent;
+    for (const p of this.points) {
+      p.rA = { x: p.x - A.pos.x, y: p.y - A.pos.y };
+      p.rB = { x: p.x - B.pos.x, y: p.y - B.pos.y };
+      p.localA = V.rotInv(p.rA, A.angle);
+      p.localB = V.rotInv(p.rB, B.angle);
+
+      const rnA = p.rA.x * n.y - p.rA.y * n.x;
+      const rnB = p.rB.x * n.y - p.rB.y * n.x;
+      p.massNormal = 1 / (A.invMass + B.invMass +
+        A.invInertia * rnA * rnA + B.invInertia * rnB * rnB + 1e-12);
+
+      const rtA = p.rA.x * t.y - p.rA.y * t.x;
+      const rtB = p.rB.x * t.y - p.rB.y * t.x;
+      p.massTangent = 1 / (A.invMass + B.invMass +
+        A.invInertia * rtA * rtA + B.invInertia * rtB * rtB + 1e-12);
+
+      p.nImpulse = 0;
+      p.tImpulse = 0;
+
+      const rvx = (B.vel.x - B.angVel * p.rB.y) - (A.vel.x - A.angVel * p.rA.y);
+      const rvy = (B.vel.y + B.angVel * p.rB.x) - (A.vel.y + A.angVel * p.rA.x);
+      const vn = rvx * n.x + rvy * n.y;
+      p.vBias = vn < -130 ? -this.e * vn : 0;
+    }
+  }
+
+  solveVelocity() {
+    const A = this.A, B = this.B;
+    const n = this.normal, t = this.tangent, mu = this.mu;
+
+    for (const p of this.points) {
+      // --- 法向 ---
+      let rvx = (B.vel.x - B.angVel * p.rB.y) - (A.vel.x - A.angVel * p.rA.y);
+      let rvy = (B.vel.y + B.angVel * p.rB.x) - (A.vel.y + A.angVel * p.rA.x);
+      const vn = rvx * n.x + rvy * n.y;
+
+      let lambda = -(vn - p.vBias) * p.massNormal;
+      const oldN = p.nImpulse;
+      p.nImpulse = Math.max(oldN + lambda, 0);
+      lambda = p.nImpulse - oldN;
+
+      const jx = n.x * lambda, jy = n.y * lambda;
+      A.vel.x -= jx * A.invMass; A.vel.y -= jy * A.invMass;
+      A.angVel -= (p.rA.x * jy - p.rA.y * jx) * A.invInertia;
+      B.vel.x += jx * B.invMass; B.vel.y += jy * B.invMass;
+      B.angVel += (p.rB.x * jy - p.rB.y * jx) * B.invInertia;
+
+      // --- 切向（摩擦）---
+      rvx = (B.vel.x - B.angVel * p.rB.y) - (A.vel.x - A.angVel * p.rA.y);
+      rvy = (B.vel.y + B.angVel * p.rB.x) - (A.vel.y + A.angVel * p.rA.x);
+      const vt = rvx * t.x + rvy * t.y;
+
+      let lt = -vt * p.massTangent;
+      const maxF = mu * p.nImpulse;
+      const oldT = p.tImpulse;
+      p.tImpulse = clamp(oldT + lt, -maxF, maxF);
+      lt = p.tImpulse - oldT;
+
+      const tx = t.x * lt, ty = t.y * lt;
+      A.vel.x -= tx * A.invMass; A.vel.y -= ty * A.invMass;
+      A.angVel -= (p.rA.x * ty - p.rA.y * tx) * A.invInertia;
+      B.vel.x += tx * B.invMass; B.vel.y += ty * B.invMass;
+      B.angVel += (p.rB.x * ty - p.rB.y * tx) * B.invInertia;
+    }
+  }
+
+  solvePosition() {
+    const A = this.A, B = this.B, n = this.normal;
+    const totalInv = A.invMass + B.invMass;
+    if (totalInv <= 0) return;
+    const SLOP = 0.4, PERCENT = 0.55;   // ✅ 提高修正力度
+
+    const ca = Math.cos(A.angle), sa = Math.sin(A.angle);
+    const cb = Math.cos(B.angle), sb = Math.sin(B.angle);
+
+    for (const p of this.points) {
+      const pax = A.pos.x + p.localA.x * ca - p.localA.y * sa;
+      const pay = A.pos.y + p.localA.x * sa + p.localA.y * ca;
+      const pbx = B.pos.x + p.localB.x * cb - p.localB.y * sb;
+      const pby = B.pos.y + p.localB.x * sb + p.localB.y * cb;
+      const sep = (pbx - pax) * n.x + (pby - pay) * n.y;
+      const pen = -sep;
+      if (pen <= SLOP) continue;
+
+      const corr = (pen - SLOP) * PERCENT / totalInv;
+      A.pos.x -= n.x * corr * A.invMass;
+      A.pos.y -= n.y * corr * A.invMass;
+      B.pos.x += n.x * corr * B.invMass;
+      B.pos.y += n.y * corr * B.invMass;
+    }
+  }
+}
+
+/* =========================================================================
+   6. 约束（距离 / 绳索 / 铰链）
+   ========================================================================= */
+class DistanceConstraint {
+  constructor(a, b, opts = {}) {
+    this.a = a; this.b = b;
+    this.localA = opts.localA ? { ...opts.localA } : { x: 0, y: 0 };
+    this.localB = opts.localB ? { ...opts.localB } : { x: 0, y: 0 };
+    const pa = a.worldPoint(this.localA);
+    const pb = b.worldPoint(this.localB);
+    this.length = opts.length ?? Math.hypot(pb.x - pa.x, pb.y - pa.y);
+    this.stiffness = opts.stiffness ?? 0.9;
+    this.isRope = opts.isRope !== false;
+    this.maxStretch = opts.maxStretch ?? Infinity;
+    this.broken = false;
+    this.color = opts.color || 'rgba(220,220,220,.5)';
+  }
+
+  solve() {
+    if (this.broken) return;
+    const A = this.a, B = this.b;
+    const pa = A.worldPoint(this.localA);
+    const pb = B.worldPoint(this.localB);
+    let dx = pb.x - pa.x, dy = pb.y - pa.y;
+    let d = Math.hypot(dx, dy);
+    if (d < 1e-6) { dx = 0; dy = 1; d = 1e-6; }
+
+    if (d > this.maxStretch) { this.broken = true; return; }
+    if (this.isRope && d <= this.length) return;
+
+    const wA = A.invMass, wB = B.invMass;
+    const wSum = wA + wB;
+    if (wSum === 0) return;
+
+    const diff = (d - this.length) / d * this.stiffness;
+    const cx = dx * diff, cy = dy * diff;
+
+    A.pos.x += cx * (wA / wSum);
+    A.pos.y += cy * (wA / wSum);
+    B.pos.x -= cx * (wB / wSum);
+    B.pos.y -= cy * (wB / wSum);
+  }
+}
+
+/* =========================================================================
+   7. 世界
+   ========================================================================= */
+class World {
+  constructor() {
+    this.bodies = [];
+    this.constraints = [];
+    this.gravity = { x: 0, y: 1500 };
+    this.velIter = IS_MOBILE ? 6 : 8;
+    this.posIter = 4;                    // ✅ 提高位置迭代次数
+    this.onImpact = null;
+    this.impactThreshold = 140;
+  }
+
+  add(b) { this.bodies.push(b); return b; }
+  clear() { this.bodies.length = 0; this.constraints.length = 0; }
+
+  step(dt) {
+    const bodies = this.bodies;
+
+    /* --- 1. 重力 / 阻尼 / 速度钳制 --- */
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (b.isStatic) continue;
+      b.vel.x += this.gravity.x * dt;
+      b.vel.y += this.gravity.y * dt;
+      b.vel.x *= 0.9994; b.vel.y *= 0.9994;
+      b.angVel *= 0.9985;
+
+      // ✅ 速度钳制，防止高速隧穿
+      const maxV = (b.tag === 'bullet' || b.tag === 'blade') ? 3000 : 2200;
+      const sp2 = b.vel.x * b.vel.x + b.vel.y * b.vel.y;
+      if (sp2 > maxV * maxV) {
+        const s = maxV / Math.sqrt(sp2);
+        b.vel.x *= s; b.vel.y *= s;
+      }
+      // 角速度钳制
+      const maxW = 45;
+      if (b.angVel > maxW) b.angVel = maxW;
+      else if (b.angVel < -maxW) b.angVel = -maxW;
+    }
+    for (let i = 0; i < bodies.length; i++) bodies[i].updateWorldVerts();
+
+    /* --- 2. 宽相 + 窄相 --- */
+    const manifolds = [];
+    for (let i = 0; i < bodies.length; i++) {
+      const A = bodies[i];
+      for (let j = i + 1; j < bodies.length; j++) {
+        const B = bodies[j];
+        if (A.isStatic && B.isStatic) continue;
+        const rr = A.boundRadius + B.boundRadius;
+        if (Math.abs(A.pos.x - B.pos.x) > rr) continue;
+        if (Math.abs(A.pos.y - B.pos.y) > rr) continue;
+        const m = collideBodies(A, B);
+        if (m) manifolds.push(new Manifold(A, B, m.normal, m.points));
+      }
+    }
+
+    /* --- 3. 碰撞事件 --- */
+    if (this.onImpact) {
+      for (const m of manifolds) {
+        const A = m.A, B = m.B;
+        const dx = A.vel.x - B.vel.x, dy = A.vel.y - B.vel.y;
+        const sp = Math.hypot(dx, dy);
+        if (sp > this.impactThreshold) this.onImpact(A, B, sp);
+      }
+    }
+
+    /* --- 4. 速度迭代 --- */
+    for (let it = 0; it < this.velIter; it++)
+      for (const m of manifolds) m.solveVelocity();
+
+    /* --- 5. 位置积分 --- */
+    for (const b of bodies) {
+      if (b.isStatic) continue;
+      b.pos.x += b.vel.x * dt;
+      b.pos.y += b.vel.y * dt;
+      b.angle += b.angVel * dt;
+      b.updateWorldVerts();
+    }
+
+    /* --- 6. 位置修正 + 约束 --- */
+    for (let it = 0; it < 4; it++) {
+      if (it < this.posIter)
+        for (const m of manifolds) m.solvePosition();
+      for (const c of this.constraints) c.solve();
+    }
+
+    /* --- 7. 清理 --- */
+    let w = 0;
+    for (let i = 0; i < bodies.length; i++)
+      if (!bodies[i].dead) bodies[w++] = bodies[i];
+    bodies.length = w;
+
+    let wc = 0;
+    for (let i = 0; i < this.constraints.length; i++) {
+      const c = this.constraints[i];
+      if (!c.broken && !c.a.dead && !c.b.dead) this.constraints[wc++] = c;
+    }
+    this.constraints.length = wc;
+  }
+}
+
+/* =========================================================================
+   8. 渲染器
+   ========================================================================= */
+class Renderer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.dpr = 1;
+    this.w = 0; this.h = 0;
+    this.resize();
+  }
+
+  resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.dpr = dpr;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    this.w = w; this.h = h;
+    this.canvas.width = Math.max(1, Math.floor(w * dpr));
+    this.canvas.height = Math.max(1, Math.floor(h * dpr));
+    this.canvas.style.width = w + 'px';
+    this.canvas.style.height = h + 'px';
+  }
+
+  render(app, world) {
+    const ctx = this.ctx;
+    const dpr = this.dpr;
+    const W = this.w, H = this.h;
+    const cam = app.camera;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#131a26');
+    bg.addColorStop(1, '#0b0e13');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(cam.zoom, cam.zoom);
+    ctx.translate(-cam.x, -cam.y);
+
+    const halfW = W / 2 / cam.zoom, halfH = H / 2 / cam.zoom;
+    const viewL = cam.x - halfW, viewR = cam.x + halfW;
+    const viewT = cam.y - halfH, viewB = cam.y + halfH;
+
+    this.drawGrid(ctx, viewL, viewR, viewT, viewB, cam.zoom);
+
+    ctx.lineCap = 'round';
+    for (const c of world.constraints) {
+      if (c.broken) continue;
+      const pa = c.a.worldPoint(c.localA);
+      const pb = c.b.worldPoint(c.localB);
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = Math.max(1.5, 3 / cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    }
+
+    const bodies = world.bodies;
+    for (let i = 0; i < bodies.length; i++) {
+      this.drawBody(ctx, bodies[i], cam.zoom);
+    }
+
+    if (app.selected && !app.selected.dead) {
+      this.drawHighlight(ctx, app.selected, cam.zoom);
+    }
+
+    if (app.drag) {
+      const b = app.drag.body;
+      if (!b.dead) {
+        const gp = b.worldPoint(app.drag.localAnchor);
+        ctx.strokeStyle = 'rgba(120,200,255,.85)';
+        ctx.lineWidth = 2 / cam.zoom;
+        ctx.setLineDash([6 / cam.zoom, 5 / cam.zoom]);
+        ctx.beginPath();
+        ctx.moveTo(gp.x, gp.y);
+        ctx.lineTo(app.drag.target.x, app.drag.target.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(gp.x, gp.y, 5 / cam.zoom, 0, TAU);
+        ctx.fillStyle = 'rgba(120,200,255,.9)';
+        ctx.fill();
+      }
+    }
+
+    this.drawParticles(ctx, app.particles);
+
+    if (app.debug) this.drawDebug(ctx, world, app, cam.zoom);
+
+    for (const s of app.shockwaves) {
+      const t = s.life / s.maxLife;
+      ctx.strokeStyle = `rgba(255,190,110,${t * 0.8})`;
+      ctx.lineWidth = (2 + 8 * t) / cam.zoom;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * (1 - t) + 8, 0, TAU);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  drawGrid(ctx, L, R, T, B, zoom) {
+    let step = 100;
+    while (step * zoom < 40) step *= 2;
+    while (step * zoom > 220) step /= 2;
+
+    ctx.lineWidth = 1 / zoom;
+    ctx.strokeStyle = 'rgba(255,255,255,.035)';
+    ctx.beginPath();
+    const x0 = Math.floor(L / step) * step;
+    const y0 = Math.floor(T / step) * step;
+    for (let x = x0; x <= R; x += step) { ctx.moveTo(x, T); ctx.lineTo(x, B); }
+    for (let y = y0; y <= B; y += step) { ctx.moveTo(L, y); ctx.lineTo(R, y); }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(90,140,200,.13)';
+    ctx.lineWidth = 2 / zoom;
+    ctx.beginPath();
+    ctx.moveTo(L, 0); ctx.lineTo(R, 0);
+    ctx.moveTo(0, T); ctx.lineTo(0, B);
+    ctx.stroke();
+  }
+
+  drawBody(ctx, b, zoom) {
+    if (b.dead) return;
+    const lw = Math.max(1, 2 / zoom);
+    let fill = b.color;
+    let stroke = b.color2 || 'rgba(0,0,0,.55)';
+
+    if (b.flash > 0) {
+      fill = '#ffffff';
+      stroke = '#ffd27f';
+    }
+
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = stroke;
+
+    if (b.shape === 'circle') {
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, b.radius, 0, TAU);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, b.radius * 0.62, Math.PI * 0.9, Math.PI * 1.6);
+      ctx.strokeStyle = 'rgba(255,255,255,.18)';
+      ctx.lineWidth = Math.max(1, b.radius * 0.22);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(b.pos.x, b.pos.y);
+      ctx.lineTo(
+        b.pos.x + Math.cos(b.angle) * b.radius * 0.85,
+        b.pos.y + Math.sin(b.angle) * b.radius * 0.85
+      );
+      ctx.strokeStyle = 'rgba(0,0,0,.25)';
+      ctx.lineWidth = Math.max(1, lw * 0.9);
+      ctx.stroke();
+    } else {
+      const vs = b.worldVerts;
+      if (!vs || vs.length < 3) return;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(255,255,255,.10)';
+      ctx.lineWidth = lw * 0.6;
+      ctx.stroke();
+    }
+
+    if (b.fuse > 0) {
+      const blink = Math.sin(performance.now() * 0.03) > 0;
+      ctx.globalAlpha = blink ? 0.75 : 0.2;
+      ctx.fillStyle = '#fff2a0';
+      if (b.shape === 'circle') {
+        ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, b.radius, 0, TAU); ctx.fill();
+      } else {
+        const vs = b.worldVerts;
+        ctx.beginPath();
+        ctx.moveTo(vs[0].x, vs[0].y);
+        for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  drawHighlight(ctx, b, zoom) {
+    ctx.strokeStyle = '#66d9ff';
+    ctx.lineWidth = 3 / zoom;
+    ctx.shadowColor = '#66d9ff';
+    ctx.shadowBlur = 12;
+    if (b.shape === 'circle') {
+      ctx.beginPath();
+      ctx.arc(b.pos.x, b.pos.y, b.radius + 3 / zoom, 0, TAU);
+      ctx.stroke();
+    } else {
+      const vs = b.worldVerts;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  drawParticles(ctx, particles) {
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const a = 1 - p.life / p.maxLife;
+      if (a <= 0) continue;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawDebug(ctx, world, app, zoom) {
+    ctx.lineWidth = 1 / zoom;
+
+    ctx.strokeStyle = 'rgba(0,255,160,.45)';
+    for (const b of world.bodies) {
+      if (b.shape === 'circle') {
+        ctx.beginPath();
+        ctx.arc(b.pos.x, b.pos.y, b.radius, 0, TAU);
+        ctx.stroke();
+      } else {
+        const vs = b.worldVerts;
+        ctx.beginPath();
+        ctx.moveTo(vs[0].x, vs[0].y);
+        for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+
+    ctx.strokeStyle = 'rgba(255,120,80,.9)';
+    ctx.lineWidth = 2 / zoom;
+    ctx.beginPath();
+    for (const b of world.bodies) {
+      if (b.isStatic) continue;
+      const s = 0.12;
+      ctx.moveTo(b.pos.x, b.pos.y);
+      ctx.lineTo(b.pos.x + b.vel.x * s, b.pos.y + b.vel.y * s);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(255,255,0,.18)';
+    ctx.lineWidth = 1 / zoom;
+    ctx.beginPath();
+    for (const b of world.bodies) {
+      ctx.moveTo(b.pos.x + b.boundRadius, b.pos.y);
+      ctx.arc(b.pos.x, b.pos.y, b.boundRadius, 0, TAU);
+    }
+    ctx.stroke();
+  }
+}
+
+/* =========================================================================
+   9. 应用状态
+   ========================================================================= */
+const App = {
+  world: new World(),
+  renderer: null,
+  camera: { x: 0, y: 180, zoom: 1 },
+  particles: [],
+  shockwaves: [],
+  tool: 'hand',
+  material: 'wood',
+  paused: false,
+  timeScale: 1,
+  debug: false,
+  selected: null,
+  drag: null,
+  groundY: 520,
+  fps: 60,
+  bodyCount: 0,
+};
+
+const MAX_BODIES = IS_MOBILE ? 130 : 320;
+
+/* ---------- 粒子 ---------- */
+function spawnParticles(x, y, count, o = {}) {
+  const cap = IS_MOBILE ? 180 : 600;
+  const colors = o.colors || ['#ffb347', '#ff7a45', '#ffd93d', '#ffffff'];
+  for (let i = 0; i < count; i++) {
+    if (App.particles.length >= cap) break;
+    const a = o.dir !== undefined ? o.dir + rand(-0.9, 0.9) : rand(0, TAU);
+    const sp = rand(o.spdMin ?? 80, o.spdMax ?? 420);
+    App.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0,
+      maxLife: rand(o.lifeMin ?? 0.3, o.lifeMax ?? 1.1),
+      size: rand(o.sizeMin ?? 1.5, o.sizeMax ?? 5),
+      color: colors[Math.floor(Math.random() * colors.length)],
+      gravity: o.gravity ?? 900,
+      drag: o.drag ?? 0.985,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  const ps = App.particles;
+  for (let i = ps.length - 1; i >= 0; i--) {
+    const p = ps[i];
+    p.life += dt;
+    if (p.life >= p.maxLife) { ps.splice(i, 1); continue; }
+    p.vy += p.gravity * dt;
+    p.vx *= p.drag; p.vy *= p.drag;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+  for (let i = App.shockwaves.length - 1; i >= 0; i--) {
+    const s = App.shockwaves[i];
+    s.life += dt;
+    if (s.life >= s.maxLife) App.shockwaves.splice(i, 1);
+  }
+}
+
+/* ---------- 工厂 ---------- */
+function addBox(x, y, w, h, matKey = 'wood', isStatic = false, angle = 0, tag = 'body') {
+  const m = MATERIALS[matKey] || MATERIALS.stone;
+  const b = new Body({
+    shape: 'poly', x, y, angle,
+    verts: boxVerts(w, h),
+    isStatic, tag,
+    density: m.density, restitution: m.restitution, friction: m.friction,
+    color: m.color, color2: m.color2, material: matKey, hp: m.hp,
+  });
+  App.world.add(b);
+  return b;
+}
+
+function addCircle(x, y, r, matKey = 'wood', isStatic = false, tag = 'body') {
+  const m = MATERIALS[matKey] || MATERIALS.stone;
+  const b = new Body({
+    shape: 'circle', x, y, radius: r,
+    isStatic, tag,
+    density: m.density, restitution: m.restitution, friction: m.friction,
+    color: m.color, color2: m.color2, material: matKey, hp: m.hp,
+  });
+  App.world.add(b);
+  return b;
+}
+
+function addNgon(x, y, r, sides, matKey = 'wood', tag = 'body') {
+  const m = MATERIALS[matKey] || MATERIALS.stone;
+  const b = new Body({
+    shape: 'poly', x, y,
+    verts: ngonVerts(r, sides, -Math.PI / 2),
+    tag,
+    density: m.density, restitution: m.restitution, friction: m.friction,
+    color: m.color, color2: m.color2, material: matKey, hp: m.hp,
+  });
+  App.world.add(b);
+  return b;
+}
+
+/* ---------- 布娃娃 ---------- */
+function makeRagdoll(cx, cy) {
+  const world = App.world;
+  const flesh = MATERIALS.flesh;
+  const mk = (opts) => {
+    const b = new Body(Object.assign({
+      density: flesh.density, restitution: flesh.restitution,
+      friction: flesh.friction, color: flesh.color, color2: flesh.color2,
+      material: 'flesh', hp: flesh.hp, tag: 'ragdoll',
+    }, opts));
+    world.add(b);
+    return b;
+  };
+
+  const head  = mk({ shape: 'circle', x: cx, y: cy - 62, radius: 13 });
+  const torso = mk({ shape: 'poly', x: cx, y: cy - 22, verts: boxVerts(30, 46) });
+  const armL  = mk({ shape: 'poly', x: cx - 22, y: cy - 26, verts: boxVerts(9, 36) });
+  const armR  = mk({ shape: 'poly', x: cx + 22, y: cy - 26, verts: boxVerts(9, 36) });
+  const legL  = mk({ shape: 'poly', x: cx - 9,  y: cy + 30, verts: boxVerts(11, 40) });
+  const legR  = mk({ shape: 'poly', x: cx + 9,  y: cy + 30, verts: boxVerts(11, 40) });
+
+  const hinge = (a, la, b, lb, stiff = 0.9) => {
+    const c = new DistanceConstraint(a, b, {
+      localA: la, localB: lb, length: 0, stiffness: stiff, isRope: false,
+      color: 'rgba(255,255,255,.18)',
+    });
+    world.constraints.push(c);
+    return c;
+  };
+
+  hinge(head,  { x: 0, y: 13 },  torso, { x: 0, y: -23 });
+  hinge(armL,  { x: 0, y: -18 }, torso, { x: -15, y: -18 });
+  hinge(armR,  { x: 0, y: -18 }, torso, { x: 15, y: -18 });
+  hinge(legL,  { x: 0, y: -20 }, torso, { x: -8, y: 23 });
+  hinge(legR,  { x: 0, y: -20 }, torso, { x: 8, y: 23 });
+
+  return [head, torso, armL, armR, legL, legR];
+}
+
+/* ---------- 破碎 ---------- */
+function shatterBody(body) {
+  if (!body || body.dead || body.isStatic || body.noShatter) return;
+  if (body.tag === 'bullet' || body.tag === 'blade') { body.dead = true; return; }
+  if (body.tag === 'tnt') { triggerTNT(body); return; }
+
+  let baseVerts;
+  if (body.shape === 'circle') {
+    baseVerts = ngonVerts(body.radius, 10, 0);
+  } else {
+    baseVerts = body.localVerts.map(v => ({ x: v.x, y: v.y }));
+  }
+
+  const maxPieces = IS_MOBILE ? 4 : 6;
+  const parts = [baseVerts];
+  let guard = 0;
+  while (parts.length < maxPieces && guard++ < 24) {
+    let bi = 0, ba = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const a = Math.abs(polyArea(parts[i]));
+      if (a > ba) { ba = a; bi = i; }
+    }
+    if (ba < 250) break;
+
+    const part = parts[bi];
+    const c = polyCentroid(part);
+    const ang = rand(0, Math.PI);
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    const L = 2000;
+    const [l, r] = splitPoly(part,
+      { x: c.x - dx * L, y: c.y - dy * L },
+      { x: c.x + dx * L, y: c.y + dy * L });
+    if (l.length >= 3 && r.length >= 3 && Math.abs(polyArea(l)) > 40 && Math.abs(polyArea(r)) > 40) {
+      parts.splice(bi, 1, l, r);
+    } else break;
+  }
+
+  const cosA = Math.cos(body.angle), sinA = Math.sin(body.angle);
+  const world = App.world;
+
+  for (const part of parts) {
+    if (part.length < 3) continue;
+    const area = Math.abs(polyArea(part));
+    if (area < 20) continue;
+
+    const c = polyCentroid(part);
+    const local = part.map(v => ({ x: v.x - c.x, y: v.y - c.y }));
+    if (polyArea(local) < 0) local.reverse();
+
+    const wx = body.pos.x + c.x * cosA - c.y * sinA;
+    const wy = body.pos.y + c.x * sinA + c.y * cosA;
+
+    const piece = new Body({
+      shape: 'poly', x: wx, y: wy, angle: body.angle,
+      verts: local,
+      density: body.density,
+      restitution: body.restitution,
+      friction: body.friction,
+      color: body.color,
+      color2: body.color2,
+      material: body.material,
+      hp: Math.max(5, body.hp * 0.5),
+    });
+
+    const dx = wx - body.pos.x, dy = wy - body.pos.y;
+    const dl = Math.hypot(dx, dy) || 1;
+    const kick = rand(80, 220);
+    piece.vel.x = body.vel.x + (dx / dl) * kick;
+    piece.vel.y = body.vel.y + (dy / dl) * kick - rand(0, 100);
+    piece.angVel = body.angVel + rand(-7, 7);
+
+    world.add(piece);
+  }
+
+  spawnParticles(body.pos.x, body.pos.y, IS_MOBILE ? 8 : 16, {
+    colors: [body.color, body.color2 || '#333', '#ffffff'],
+    spdMin: 60, spdMax: 320, lifeMin: 0.25, lifeMax: 0.8,
+    sizeMin: 1.5, sizeMax: 4.5,
+  });
+
+  body.dead = true;
+  if (App.selected === body) App.selected = null;
+  if (App.drag && App.drag.body === body) App.drag = null;
+}
+
+/* ---------- 爆炸 ---------- */
+function explode(x, y, radius = 220, power = 1500) {
+  App.shockwaves.push({ x, y, r: radius, life: 0, maxLife: 0.45 });
+
+  const world = App.world;
+
+  for (const b of world.bodies) {
+    if (b.dead || b.isStatic) continue;
+    const dx = b.pos.x - x, dy = b.pos.y - y;
+    const d = Math.hypot(dx, dy);
+    if (d > radius) continue;
+
+    const falloff = 1 - d / radius;
+    const nx = dx / (d || 1), ny = dy / (d || 1);
+    const dv = falloff * power * (0.5 + 0.5 * Math.random());
+
+    b.vel.x += nx * dv;
+    b.vel.y += ny * dv;
+    b.angVel += rand(-9, 9) * falloff;
+
+    // ✅ 爆炸当帧也做速度钳制
+    const maxV = 2200;
+    const sp2 = b.vel.x * b.vel.x + b.vel.y * b.vel.y;
+    if (sp2 > maxV * maxV) {
+      const s = maxV / Math.sqrt(sp2);
+      b.vel.x *= s; b.vel.y *= s;
+    }
+
+    if (b.tag === 'tnt' && b.fuse < 0) {
+      b.fuse = rand(0.08, 0.25);
+    } else if (falloff > 0.55 && Math.random() < 0.6) {
+      shatterBody(b);
+    }
+  }
+
+  spawnParticles(x, y, IS_MOBILE ? 22 : 46, {
+    colors: ['#ffd93d', '#ff8c42', '#ff4d2e', '#ffffff', '#ffb347'],
+    spdMin: 180, spdMax: 900, lifeMin: 0.25, lifeMax: 0.9,
+    sizeMin: 2, sizeMax: 7, gravity: 400,
+  });
+  spawnParticles(x, y, IS_MOBILE ? 10 : 20, {
+    colors: ['#6b6b6b', '#3a3a3a', '#9a9a9a'],
+    spdMin: 40, spdMax: 260, lifeMin: 0.5, lifeMax: 1.6,
+    sizeMin: 3, sizeMax: 10, gravity: -60, drag: 0.97,
+  });
+}
+
+function triggerTNT(b) {
+  if (b.dead) return;
+  b.dead = true;
+  if (App.selected === b) App.selected = null;
+  explode(b.pos.x, b.pos.y, 240, 1600);
+}
+
+/* ---------- 场景 ---------- */
+function buildScene() {
+  const world = App.world;
+  world.clear();
+  App.particles.length = 0;
+  App.shockwaves.length = 0;
+  App.selected = null;
+  App.drag = null;
+
+  const GY = App.groundY;
+
+  // 地面
+  const ground = addBox(0, GY + 200, 7000, 400, 'stone', true);
+  ground.color = '#2b3444';
+  ground.color2 = '#1b2230';
+
+  // ✅ 加厚左右边界墙（80 → 160），减少高速穿透
+  const wl = addBox(-1700, GY - 600, 160, 3000, 'stone', true);
+  const wr = addBox( 1700, GY - 600, 160, 3000, 'stone', true);
+  wl.color = wr.color = '#2b3444';
+  wl.color2 = wr.color2 = '#1b2230';
+
+  // 平台
+  const p1 = addBox(-520, GY - 240, 320, 30, 'stone', true);
+  const p2 = addBox(520, GY - 380, 320, 30, 'stone', true);
+  const p3 = addBox(0, GY - 560, 260, 30, 'stone', true);
+  for (const p of [p1, p2, p3]) { p.color = '#33405a'; p.color2 = '#20293a'; }
+
+  // 斜坡
+  const ramp = addBox(-900, GY - 60, 420, 26, 'stone', true, -0.28);
+  ramp.color = '#33405a'; ramp.color2 = '#20293a';
+
+  // 初始物体
+  addBox(-200, GY - 60, 46, 46, 'wood');
+  addBox(-160, GY - 120, 46, 46, 'wood');
+  addBox(-120, GY - 180, 46, 46, 'wood');
+  addCircle(120, GY - 60, 24, 'rubber');
+  addCircle(180, GY - 120, 24, 'rubber');
+  addNgon(320, GY - 60, 32, 3, 'metal');
+  addBox(400, GY - 120, 60, 60, 'ice');
+  addBox(700, GY - 60, 50, 50, 'tnt', false, 0, 'tnt');
+  addBox(760, GY - 60, 50, 50, 'tnt', false, 0, 'tnt');
+
+  App.camera.x = 0;
+  App.camera.y = GY - 300;
+  App.camera.zoom = 1;
+}
+
+/* =========================================================================
+   10. 输入系统
+   ========================================================================= */
+const canvas = document.getElementById('cv');
+
+const pointers = new Map();
+let pinchPrev = null;
+let longPressTimer = null;
+let didLongPress = false;
+
+function screenToWorld(sx, sy) {
+  const cam = App.camera;
+  return {
+    x: (sx - window.innerWidth / 2) / cam.zoom + cam.x,
+    y: (sy - window.innerHeight / 2) / cam.zoom + cam.y,
+  };
+}
+
+function pickBody(wx, wy) {
+  const bodies = App.world.bodies;
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const b = bodies[i];
+    if (b.dead || b.isStatic) continue;
+    if (b.containsPoint(wx, wy)) return b;
+  }
+  return null;
+}
+
+/* ---------- 生成 ---------- */
+function spawnAt(wx, wy) {
+  const tool = App.tool;
+  const mat = App.material;
+
+  switch (tool) {
+    case 'box':   addBox(wx, wy, 52, 52, mat); break;
+    case 'ball':  addCircle(wx, wy, 26, mat); break;
+    case 'tri':   addNgon(wx, wy, 36, 3, mat); break;
+    case 'hex':   addNgon(wx, wy, 32, 6, mat); break;
+    case 'ragdoll': makeRagdoll(wx, wy); break;
+    case 'tnt':   addBox(wx, wy, 46, 46, 'tnt', false, 0, 'tnt'); break;
+    case 'gun':   fireBullet(wx, wy); break;
+    case 'blade': fireBlade(wx, wy); break;
+    case 'bomb': {
+      const b = addCircle(wx, wy, 20, 'metal');
+      b.color = '#3a3f4d'; b.color2 = '#1e222c';
+      b.tag = 'tnt'; b.fuse = 1.2; b.noShatter = true;
+      break;
+    }
+    case 'delete': {
+      const hit = pickBody(wx, wy);
+      if (hit) { hit.dead = true; if (App.selected === hit) App.selected = null; }
+      break;
+    }
+  }
+  enforceBodyLimit();
+}
+
+function enforceBodyLimit() {
+  const bodies = App.world.bodies;
+  let dynCount = 0;
+  for (const b of bodies) if (!b.isStatic) dynCount++;
+  if (dynCount <= MAX_BODIES) return;
+
+  let removeCount = dynCount - MAX_BODIES;
+  for (let i = 0; i < bodies.length && removeCount > 0; i++) {
+    const b = bodies[i];
+    if (!b.isStatic && b !== App.selected && b !== (App.drag && App.drag.body)) {
+      b.dead = true;
+      removeCount--;
+    }
+  }
+}
+
+function fireBullet(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+
+  const b = new Body({
+    shape: 'circle', x: wx, y: wy, radius: 5,
+    density: MATERIALS.bullet.density,
+    restitution: 0.2, friction: 0.3,
+    color: '#ffe08a', color2: '#b8860b',
+    tag: 'bullet', noShatter: true, hp: 99999,
+  });
+  b.vel.x = dx * 2000;
+  b.vel.y = dy * 2000;
+  App.world.add(b);
+}
+
+function fireBlade(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+
+  const b = new Body({
+    shape: 'poly', x: wx, y: wy,
+    verts: ensureCCW([
+      { x: -20, y: -3 }, { x: 20, y: -3 }, { x: 26, y: 0 },
+      { x: 20, y: 3 }, { x: -20, y: 3 }, { x: -26, y: 0 },
+    ]),
+    angle: Math.atan2(dy, dx),
+    density: 3, restitution: 0.2, friction: 0.4,
+    color: '#d8e2f0', color2: '#7d8da3',
+    tag: 'blade', noShatter: true, hp: 99999,
+  });
+  b.vel.x = dx * 1500;
+  b.vel.y = dy * 1500;
+  b.angVel = 22;
+  App.world.add(b);
+}
+
+/* ---------- 指针事件 ---------- */
+function onPointerDown(e) {
+  canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+  const p = {
+    x: e.clientX, y: e.clientY,
+    sx: e.clientX, sy: e.clientY,
+    down: true, moved: false,
+    t0: performance.now(),
+  };
+  pointers.set(e.pointerId, p);
+  didLongPress = false;
+
+  if (pointers.size === 1) {
+    handleSingleDown(p);
+    clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(() => {
+      if (!p.moved && pointers.size === 1 && !App.drag) {
+        didLongPress = true;
+        showQuickMenu(p.x, p.y);
+      }
+    }, 520);
+  } else if (pointers.size >= 2) {
+    clearTimeout(longPressTimer);
+    App.drag = null;
+    pinchPrev = null;
+    hideQuickMenu();
+  }
+}
+
+function handleSingleDown(p) {
+  const w = screenToWorld(p.x, p.y);
+  const hit = pickBody(w.x, w.y);
+
+  if (hit && App.tool !== 'delete') {
+    App.selected = hit;
+    const local = V.rotInv({ x: w.x - hit.pos.x, y: w.y - hit.pos.y }, hit.angle);
+    App.drag = { body: hit, localAnchor: local, target: { x: w.x, y: w.y } };
+    return;
+  }
+  App.drag = null;
+}
+
+function onPointerMove(e) {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 8) p.moved = true;
+
+  if (p.moved) {
+    clearTimeout(longPressTimer);
+    hideQuickMenu();
+  }
+
+  if (pointers.size >= 2) {
+    updatePinch();
+    return;
+  }
+
+  if (App.drag) {
+    App.drag.target = screenToWorld(e.clientX, e.clientY);
+  } else {
+    if (p.moved) {
+      const cam = App.camera;
+      cam.x -= dx / cam.zoom;
+      cam.y -= dy / cam.zoom;
+    }
+  }
+}
+
+function onPointerUp(e) {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  clearTimeout(longPressTimer);
+  if (!p) return;
+
+  if (pointers.size === 0) {
+    const dt = performance.now() - p.t0;
+    const isTap = !p.moved && dt < 320;
+    if (isTap && !didLongPress) handleTap(p.sx, p.sy);
+    App.drag = null;
+    pinchPrev = null;
+    hideQuickMenu();
+  } else if (pointers.size === 1) {
+    pinchPrev = null;
+  }
+}
+
+function handleTap(sx, sy) {
+  const w = screenToWorld(sx, sy);
+  const hit = pickBody(w.x, w.y);
+
+  if (hit) {
+    App.selected = hit;
+    if (hit.tag === 'tnt' && hit.fuse < 0 && hit.material === 'tnt') {
+      hit.fuse = 0.35;
+    }
+    return;
+  }
+
+  App.selected = null;
+  if (App.tool === 'hand') return;
+  spawnAt(w.x, w.y);
+}
+
+function updatePinch() {
+  const pts = [];
+  for (const p of pointers.values()) pts.push(p);
+  if (pts.length < 2) return;
+  const [a, b] = pts;
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+
+  if (!pinchPrev) { pinchPrev = { dist, cx, cy }; return; }
+
+  const cam = App.camera;
+  const W = window.innerWidth, H = window.innerHeight;
+
+  const wxp = (cx - W / 2) / cam.zoom + cam.x;
+  const wyp = (cy - H / 2) / cam.zoom + cam.y;
+
+  const scale = dist / (pinchPrev.dist || dist);
+  cam.zoom = clamp(cam.zoom * scale, 0.15, 5);
+
+  cam.x = wxp - (cx - W / 2) / cam.zoom;
+  cam.y = wyp - (cy - H / 2) / cam.zoom;
+
+  cam.x -= (cx - pinchPrev.cx) / cam.zoom;
+  cam.y -= (cy - pinchPrev.cy) / cam.zoom;
+
+  pinchPrev = { dist, cx, cy };
+}
+
+/* ---------- 滚轮缩放 ---------- */
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const cam = App.camera;
+  const W = window.innerWidth, H = window.innerHeight;
+  const wxp = (e.clientX - W / 2) / cam.zoom + cam.x;
+  const wyp = (e.clientY - H / 2) / cam.zoom + cam.y;
+  const factor = Math.exp(-e.deltaY * 0.0014);
+  cam.zoom = clamp(cam.zoom * factor, 0.15, 5);
+  cam.x = wxp - (e.clientX - W / 2) / cam.zoom;
+  cam.y = wyp - (e.clientY - H / 2) / cam.zoom;
+}, { passive: false });
+
+canvas.addEventListener('pointerdown', onPointerDown);
+canvas.addEventListener('pointermove', onPointerMove);
+canvas.addEventListener('pointerup', onPointerUp);
+canvas.addEventListener('pointercancel', onPointerUp);
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('gesturechange', e => e.preventDefault());
+document.addEventListener('gestureend', e => e.preventDefault());
+document.addEventListener('touchmove', e => {
+  if (e.target === canvas) e.preventDefault();
+}, { passive: false });
+document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+
+/* =========================================================================
+   11. 长按快捷菜单
+   ========================================================================= */
+const quickmenu = document.getElementById('quickmenu');
+
+const QUICK_ITEMS = [
+  { tool: 'box', icon: '⬛', label: '方块' },
+  { tool: 'ball', icon: '⚪', label: '圆球' },
+  { tool: 'tri', icon: '🔺', label: '三角' },
+  { tool: 'hex', icon: '⬡', label: '六边' },
+  { tool: 'ragdoll', icon: '🧍', label: '布娃娃' },
+  { tool: 'tnt', icon: '🧨', label: 'TNT' },
+  { tool: 'gun', icon: '🔫', label: '手枪' },
+  { tool: 'blade', icon: '🗡', label: '飞刀' },
+  { tool: 'bomb', icon: '💣', label: '炸弹' },
+  { tool: 'delete', icon: '❌', label: '删除' },
+];
+
+let quickMenuWorldPos = null;
+
+function showQuickMenu(sx, sy) {
+  quickmenu.innerHTML = '';
+  quickMenuWorldPos = screenToWorld(sx, sy);
+
+  for (const item of QUICK_ITEMS) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.innerHTML = `<span>${item.icon}</span><span class="lbl">${item.label}</span>`;
+    btn.addEventListener('pointerdown', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      App.tool = item.tool;
+      updateToolUI();
+      hideQuickMenu();
+      if (quickMenuWorldPos) {
+        spawnAt(quickMenuWorldPos.x, quickMenuWorldPos.y);
+        quickMenuWorldPos = null;
+      }
+    }, { passive: false });
+    quickmenu.appendChild(btn);
+  }
+
+  const w = 210, h = 210;
+  const left = clamp(sx, w / 2 + 10, window.innerWidth - w / 2 - 10);
+  const top = clamp(sy, h / 2 + 10, window.innerHeight - h / 2 - 10);
+  quickmenu.style.left = left + 'px';
+  quickmenu.style.top = top + 'px';
+  quickmenu.classList.add('show');
+  if (navigator.vibrate) navigator.vibrate(12);
+}
+
+function hideQuickMenu() {
+  quickmenu.classList.remove('show');
+}
+
+/* =========================================================================
+   12. UI 绑定
+   ========================================================================= */
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1200);
+}
+
+function updateToolUI() {
+  document.querySelectorAll('#bottombar .tool').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tool === App.tool);
+  });
+}
+
+document.querySelectorAll('#bottombar .tool').forEach(btn => {
+  btn.addEventListener('click', () => {
+    App.tool = btn.dataset.tool;
+    updateToolUI();
+    hideQuickMenu();
+  });
+});
+
+document.querySelectorAll('#topbar .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    switch (act) {
+      case 'mat': {
+        const i = MAT_KEYS.indexOf(App.material);
+        App.material = MAT_KEYS[(i + 1) % MAT_KEYS.length];
+        updateMatUI();
+        toast('材质：' + MATERIALS[App.material].name);
+        break;
+      }
+      case 'pause':
+        App.paused = !App.paused;
+        btn.classList.toggle('active', App.paused);
+        btn.textContent = App.paused ? '▶' : '⏸';
+        toast(App.paused ? '已暂停' : '继续');
+        break;
+      case 'slow': {
+        const scales = [1, 0.4, 0.15];
+        const idx = scales.indexOf(App.timeScale);
+        App.timeScale = scales[(idx + 1) % scales.length];
+        btn.classList.toggle('active', App.timeScale !== 1);
+        toast('时间流速 ' + Math.round(App.timeScale * 100) + '%');
+        break;
+      }
+      case 'debug':
+        App.debug = !App.debug;
+        btn.classList.toggle('active', App.debug);
+        toast(App.debug ? '调试模式开' : '调试模式关');
+        break;
+      case 'full': toggleFullscreen(); break;
+      case 'reset':
+        buildScene();
+        toast('场景已重置');
+        break;
+      case 'clear':
+        App.world.bodies.length = 0;
+        App.world.constraints.length = 0;
+        App.particles.length = 0;
+        App.selected = null;
+        App.drag = null;
+        toast('已清空');
+        break;
+    }
+  });
+});
+
+function updateMatUI() {
+  const dot = document.getElementById('matDot');
+  const m = MATERIALS[App.material];
+  dot.style.background = m.color;
+  document.getElementById('btnMat').firstChild.nodeValue = m.icon;
+}
+
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el).catch(() => {});
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+  }
+}
+
+/* =========================================================================
+   13. 碰撞回调
+   ========================================================================= */
+App.world.onImpact = (A, B, speed) => {
+  const pairs = [[A, B], [B, A]];
+  for (const [a, b] of pairs) {
+    if (a.tag === 'bullet' && b.tag !== 'bullet' && b.tag !== 'blade') {
+      if (!b.isStatic) {
+        shatterBody(b);
+        spawnParticles(a.pos.x, a.pos.y, 8, {
+          colors: ['#ffe08a', '#ff9a3c', '#fff'],
+          spdMin: 80, spdMax: 400, lifeMin: 0.15, lifeMax: 0.45, sizeMin: 1, sizeMax: 3,
+        });
+      }
+      a.dead = true;
+      return;
+    }
+    if (a.tag === 'blade' && b.tag !== 'bullet' && b.tag !== 'blade') {
+      if (!b.isStatic) {
+        shatterBody(b);
+        spawnParticles(a.pos.x, a.pos.y, 6, {
+          colors: ['#d8e2f0', '#ffffff', '#8fa8c4'],
+          spdMin: 60, spdMax: 320, lifeMin: 0.15, lifeMax: 0.5, sizeMin: 1, sizeMax: 3,
+        });
+      }
+      return;
+    }
+  }
+};
+
+/* =========================================================================
+   14. 主循环
+   ========================================================================= */
+const FIXED_DT = 1 / 60;
+let accumulator = 0;
+let lastTime = performance.now();
+let fpsAcc = 0, fpsFrames = 0;
+
+function updateDrag() {
+  if (!App.drag) return;
+  const b = App.drag.body;
+  if (b.dead) { App.drag = null; return; }
+
+  const gp = b.worldPoint(App.drag.localAnchor);
+  const dx = App.drag.target.x - gp.x;
+  const dy = App.drag.target.y - gp.y;
+
+  const K = 22;
+  b.vel.x = dx * K;
+  b.vel.y = dy * K;
+
+  const sp = Math.hypot(b.vel.x, b.vel.y);
+  const MAX = 2200;                 // ✅ 与全局钳制保持一致
+  if (sp > MAX) { b.vel.x *= MAX / sp; b.vel.y *= MAX / sp; }
+
+  b.angVel *= 0.92;
+}
+
+function updateFuses(dt) {
+  const bodies = App.world.bodies;
+  for (const b of bodies) {
+    if (b.fuse > 0) {
+      b.fuse -= dt;
+      if (b.fuse <= 0) {
+        b.fuse = -1;
+        triggerTNT(b);
+      }
+    }
+    if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 6);
+  }
+}
+
+function loop(now) {
+  requestAnimationFrame(loop);
+
+  const rawDt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  fpsAcc += rawDt; fpsFrames++;
+  if (fpsAcc >= 0.4) {
+    App.fps = Math.round(fpsFrames / fpsAcc);
+    fpsAcc = 0; fpsFrames = 0;
+  }
+
+  if (!App.paused) {
+    updateDrag();
+
+    const scaled = rawDt * App.timeScale;
+    accumulator += scaled;
+
+    let steps = 0;
+    const maxSteps = App.timeScale < 0.5 ? 6 : 4;
+    while (accumulator >= FIXED_DT && steps < maxSteps) {
+      App.world.step(FIXED_DT);
+      updateFuses(FIXED_DT);
+      accumulator -= FIXED_DT;
+      steps++;
+    }
+    if (steps >= maxSteps) accumulator = 0;
+
+    updateParticles(scaled);
+    enforceBodyLimit();
+  }
+
+  App.bodyCount = App.world.bodies.length;
+  document.getElementById('stats').innerHTML =
+    `FPS <b>${App.fps}</b> · 物体 <b>${App.bodyCount}</b> · 缩放 <b>${Math.round(App.camera.zoom * 100)}%</b>`;
+
+  App.renderer.render(App, App.world);
+}
+
+/* =========================================================================
+   15. 启动
+   ========================================================================= */
+function init() {
+  App.renderer = new Renderer(canvas);
+  buildScene();
+  updateMatUI();
+  updateToolUI();
+
+  const onResize = () => App.renderer.resize();
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(onResize, 120);
+    setTimeout(onResize, 400);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+  }
+
+  document.getElementById('hint').textContent = IS_MOBILE
+    ? '单指拖拽物体 · 双指缩放/平移 · 长按呼出菜单'
+    : '左键拖拽物体 · 空白拖拽平移 · 滚轮缩放 · 点按空白生成';
+
+  requestAnimationFrame(loop);
+}
+
+init();
+</script>
+</body>
+</html>

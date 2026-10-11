@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>打字机 Typewriter</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#050d07;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(5,13,7,.85),rgba(5,13,7,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(59,255,115,.24);border-color:rgba(59,255,115,.6);color:#d8ffe2}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#5c7a65;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(59,255,115,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(59,255,115,.6);
+    background:rgba(59,255,115,.3);color:#062a12;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(59,255,115,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">打字机 <b id="m">终端绿</b></div>
+  <button class="btn" id="btn-theme">换主题</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">逐字敲出 · 光标闪烁 · 偶尔打错字</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>要敲出的文字（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="Dear Aurora,&#10;正在输入…"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'Dear Aurora,\n正在输入…',
+    speed: 8,
+    jitter: 0.4,
+    cursorStyle: 'line',
+    theme: 'terminal',
+    typoProb: 0.06,
+    endPause: 2.2,
+    clearMode: 'instant',
+    weight: 500,
+    font: '"SF Mono",ui-monospace,Menlo,Consolas,monospace'
+  };
+
+  var THEMES = {
+    terminal: { bg: '#050d07', fg: '#3bff73', glow: 0.55, scan: true,  label: '终端绿' },
+    paper:    { bg: '#f1ead9', fg: '#2c2620', glow: 0,    scan: false, label: '纸白' },
+    amber:    { bg: '#0e0802', fg: '#ffb320', glow: 0.5,  scan: true,  label: 'CRT 琥珀' }
+  };
+  var THEME_LIST = [
+    { key: 'terminal', label: '终端绿' },
+    { key: 'paper',    label: '纸白' },
+    { key: 'amber',    label: 'CRT 琥珀' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    layoutKey = '';
+    return true;
+  }
+
+  // ---------- 布局 ----------
+  var slots = [];
+  var fontSize = 28;
+  var layoutKey = '';
+
+  function buildLayout() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight;
+    if (key === layoutKey && slots.length) return;
+    layoutKey = key;
+    slots = [];
+
+    var lines = CFG.text.split('\n');
+    if (!lines.length) return;
+
+    var fontStr = function (s) { return CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    ctx.font = fontStr(60);
+
+    // 初始字号估算
+    var size = Math.floor(Math.min(H * 0.6 / Math.max(1, lines.length), H * 0.14));
+    ctx.font = fontStr(size);
+
+    // 找出最宽的行，决定最终字号
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var w = ctx.measureText(lines[i]).width;
+      if (w > widest) widest = w;
+    }
+    var maxW = W * 0.86;
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      ctx.font = fontStr(size);
+    }
+    // 竖直方向整体也要放得下
+    var totalH = size * 1.55 * lines.length;
+    var maxH = H * 0.82;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      ctx.font = fontStr(size);
+    }
+    fontSize = size;
+
+    var lh = fontSize * 1.55;
+    var startY = H / 2 - (lines.length - 1) * lh / 2;
+
+    // ★ 逐行居中：每行按自己的实际宽度算 ox
+    for (var y = 0; y < lines.length; y++) {
+      var line = lines[y];
+      var lineW = ctx.measureText(line).width;
+      var lx = W / 2 - lineW / 2;
+      var by = startY + y * lh;
+      for (var k = 0; k < line.length; k++) {
+        var ch = line.charAt(k);
+        var cw = ctx.measureText(ch).width;
+        slots.push({ ch: ch, x: lx, y: by, w: cw, nl: false });
+        lx += cw;
+      }
+      if (y < lines.length - 1) {
+        slots.push({ ch: '\n', x: lx, y: by, w: 0, nl: true });
+      }
+    }
+  }
+
+  // ---------- 打字状态机 ----------
+  var mode = 'type';
+  var n = 0;
+  var wrong = null;
+  var justFixed = false;
+  var timer = 0.45;
+  var cycle = 0;
+  var rng = mulberry(1234);
+  var KEYS = 'qwertasdfgzxcvbheiounm';
+
+  function mulberry(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function reset() {
+    mode = 'type';
+    n = 0;
+    wrong = null;
+    justFixed = false;
+    timer = 0.45;
+    rng = mulberry(1234 + cycle * 7919);
+  }
+
+  function act() {
+    var spd = Math.max(0.5, CFG.speed);
+    var jit = CFG.jitter;
+    var base = 1 / spd;
+
+    switch (mode) {
+      case 'type': {
+        if (n >= slots.length) { mode = 'done'; return CFG.endPause; }
+        var sl = slots[n];
+        if (!sl.nl && sl.ch.trim().length > 0 && !justFixed && rng() < CFG.typoProb) {
+          var k = KEYS[Math.floor(rng() * KEYS.length)];
+          if (sl.ch !== sl.ch.toLowerCase()) k = k.toUpperCase();
+          wrong = k;
+          mode = 'typoHold';
+          return 0.3 + rng() * 0.25;
+        }
+        n++;
+        justFixed = false;
+        var mul = 1 + jit * (rng() * 2 - 1) * 0.85;
+        if (sl.nl) mul *= 2.2;
+        else if ('，。,.!？?…；;：:'.indexOf(sl.ch) >= 0) mul *= 2.4;
+        return base * Math.max(0.25, mul);
+      }
+      case 'typoHold':
+        mode = 'typoDel';
+        return 0.22 + rng() * 0.12;
+      case 'typoDel':
+        wrong = null;
+        justFixed = true;
+        mode = 'type';
+        return 0.16;
+      case 'done':
+        if (CFG.clearMode === 'backspace') { mode = 'clear'; return 0.06; }
+        cycle++;
+        reset();
+        return 0.6;
+      case 'clear':
+        if (n > 0) { n--; return 1 / (spd * 3); }
+        cycle++;
+        reset();
+        return 0.5;
+    }
+    return 0.3;
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildLayout();
+
+    var th = THEMES[CFG.theme] || THEMES.terminal;
+
+    timer -= Math.min(dt, 0.1);
+    var safety = 0;
+    while (timer <= 0 && safety++ < 64) {
+      timer += act();
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = th.bg;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.font = CFG.weight + ' ' + fontSize + 'px ' + CFG.font;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+
+    if (th.glow > 0) {
+      ctx.shadowColor = th.fg;
+      ctx.shadowBlur = th.glow * 12;
+    } else {
+      ctx.shadowBlur = 0;
+    }
+    ctx.fillStyle = th.fg;
+
+    var drawN = Math.min(n, slots.length);
+    for (var i = 0; i < drawN; i++) {
+      var sl = slots[i];
+      if (!sl.nl && sl.ch !== ' ') ctx.fillText(sl.ch, sl.x, sl.y);
+    }
+
+    var cur = n < slots.length ? slots[n] : null;
+    if (wrong && cur) ctx.fillText(wrong, cur.x, cur.y);
+
+    if (mode !== 'done' || (time % 1.1) < 0.62) {
+      var cx, cy;
+      if (cur) {
+        cx = cur.x + (wrong ? ctx.measureText(wrong).width : 0);
+        cy = cur.y;
+      } else if (slots.length) {
+        var last = slots[slots.length - 1];
+        cx = last.x + last.w;
+        cy = last.y;
+      } else {
+        cx = W / 2; cy = H / 2;
+      }
+      var sz = fontSize;
+      if (th.glow > 0) ctx.shadowBlur = th.glow * 16;
+
+      if (CFG.cursorStyle === 'block') {
+        ctx.globalAlpha = 0.8;
+        ctx.fillRect(cx + sz * 0.06, cy - sz * 0.52, sz * 0.58, sz * 1.04);
+      } else if (CFG.cursorStyle === 'underline') {
+        ctx.fillRect(cx + sz * 0.06, cy + sz * 0.42, sz * 0.58, Math.max(2, sz * 0.08));
+      } else {
+        ctx.fillRect(cx + sz * 0.05, cy - sz * 0.52, Math.max(1.5, sz * 0.07), sz * 1.04);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.shadowBlur = 0;
+
+    if (th.scan) {
+      ctx.globalAlpha = 0.07;
+      ctx.fillStyle = '#000000';
+      for (var b = 0; b < H; b += 3) ctx.fillRect(0, b, W, 1);
+
+      var gy = (time * 26) % (H + 160) - 80;
+      var g = ctx.createLinearGradient(0, gy - 60, 0, gy + 60);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = g;
+      ctx.fillRect(0, gy - 60, W, 120);
+    }
+
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(render);
+  }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'Dear Aurora,\n正在输入…', theme: 'terminal', cursorStyle: 'block', speed: 8,  typoProb: 0.06 },
+    { text: 'Hello World.\n_', theme: 'terminal', cursorStyle: 'line',  speed: 14, typoProb: 0.04 },
+    { text: '致 Aurora：\n见字如晤。', theme: 'paper',    cursorStyle: 'line',  speed: 4.5, typoProb: 0.1 },
+    { text: 'Amber Terminal\nrunning...', theme: 'amber', cursorStyle: 'underline', speed: 10, typoProb: 0.05 }
+  ];
+  var presetIdx = 0;
+
+  function applyText(t, theme, cursorStyle, speed, typoProb) {
+    CFG.text = t;
+    if (theme) CFG.theme = theme;
+    if (cursorStyle) CFG.cursorStyle = cursorStyle;
+    if (typeof speed === 'number') CFG.speed = speed;
+    if (typeof typoProb === 'number') CFG.typoProb = typoProb;
+    layoutKey = '';
+    cycle++;
+    reset();
+
+    var m = THEMES[CFG.theme];
+    if (m) mLabel.textContent = m.label;
+    var tl = THEME_LIST.findIndex(function (x) { return x.key === CFG.theme; });
+    if (tl >= 0) themeIdx = tl;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    applyText(p.text, p.theme, p.cursorStyle, p.speed, p.typoProb);
+  });
+
+  // ---------- 换主题 ----------
+  var themeIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-theme').addEventListener('click', function () {
+    themeIdx = (themeIdx + 1) % THEME_LIST.length;
+    CFG.theme = THEME_LIST[themeIdx].key;
+    mLabel.textContent = THEME_LIST[themeIdx].label;
+    cycle++;
+    reset();
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'Hello.';
+    applyText(v);
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

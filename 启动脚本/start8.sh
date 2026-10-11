@@ -1,0 +1,156 @@
+#!/bin/bash
+# ============================================================
+# 静默模式 - 隐藏常见错误
+# ============================================================
+exec 2>/dev/null
+
+# ============================================================
+# 配置区 - 新增项目只需在这里添加
+# ============================================================
+declare -A PROJECTS=(
+    ["1"]="Holistic (人体识别):/storage/emulated/0/holistic_demo:8080"
+    ["2"]="晃动工坊 (图片晃动):/storage/emulated/0/html存放地/晃动工坊:8081"
+    ["3"]="Turbowarp (Scratch编辑器):/storage/emulated/0/html存放地/turbowarp.org:8082"
+    ["4"]="2048 (经典小游戏):/storage/emulated/0/html存放地/2048:8083"
+    ["5"]="3D Viewer (3D模型查看):/storage/emulated/0/html存放地/3dviewer:8084"
+    ["6"]="copy.sh (个人主页+生命游戏):/storage/emulated/0/html存放地/copy.sh:8085"
+    ["7"]="draw.io (绘图工具):/storage/emulated/0/html存放地/drawio:8086"
+    ["8"]="xtype (射击游戏):/storage/emulated/0/html存放地/xtype:8087"
+    ["9"]="Chihuahua Spin (魔性转狗):/storage/emulated/0/html存放地/chihuahuaspin:8088"
+    ["10"]="That's The Finger (手指追鼠标):/storage/emulated/0/html存放地/thatsthefinger:8089"
+    ["11"]="PetPetGenerator (摸摸头GIF):/storage/emulated/0/html存放地/petpetgenerator:8090"
+    ["12"]="WeaveSilk (对称画图):/storage/emulated/0/html存放地/weavesilk:8091"
+    ["13"]="Poetry Cloud (诗歌生成):/storage/emulated/0/html存放地/poetrycloud:8092"
+    ["14"]="Canvas Painter (画板):/storage/emulated/0/html存放地/canvas-painter:8093"
+    ["15"]="Markdown Previewer (Markdown预览):/storage/emulated/0/html存放地/markdown-previewer:8094"
+    ["16"]="Minesweeper (扫雷):/storage/emulated/0/html存放地/minesweeper:8095"
+    ["17"]="KoalasToTheMax (分形考拉):/storage/emulated/0/html存放地/KoalasToTheMax-master:8096"
+    ["18"]="Long Doge Challenge (无限滚动柴犬):/storage/emulated/0/html存放地/longdoge:8097"
+    ["19"]="Learn UI Name (UI视觉词典):/storage/emulated/0/html存放地/learn-ui/learnui.qiaomu.ai:8098"
+    ["20"]="htmlgames-master (html游戏源码):/storage/emulated/0/html存放地/htmlgames-master:8099"
+    ["21"]="maze-toys (迷宫):/storage/emulated/0/html存放地/maze-toys:8100"
+    ["22"]="toms-toys (玩具合集):/storage/emulated/0/html存放地/toms-toys:8101"
+    ["23"]="puginarug (整活):/storage/emulated/0/html存放地/puginarug:8102"
+    ["24"]="cruel-toys-maze (迷宫):/storage/emulated/0/html存放地/cruel-toys-maze:8103"
+    ["25"]="memory-toys (记忆配对):/storage/emulated/0/html存放地/memory-toys:8104"
+    ["26"]="onesquareminesweeper (扫雷变体):/storage/emulated/0/html存放地/onesquareminesweeper:8105"
+    ["27"]="cursoreffects (光标特效):/storage/emulated/0/html存放地/cursoreffects:8106"
+    ["28"]="paint-toys (绘画工具):/storage/emulated/0/html存放地/paint-toys:8107"
+    ["29"]="heeeeeeeey (整活):/storage/emulated/0/html存放地/heeeeeeeey:8108"
+    ["30"]="paint-toys-sand (沙画):/storage/emulated/0/html存放地/paint-toys-sand:8109"
+    ["31"]="sliding-toys (华容道):/storage/emulated/0/html存放地/sliding-toys:8110"
+    ["32"]="ant-toys (蚂蚁模拟):/storage/emulated/0/html存放地/ant-toys:8111"
+    ["33"]="patience-toys (呼吸灯):/storage/emulated/0/html存放地/patience-toys:8112"
+    ["34"]="cant-not-tweet (整活):/storage/emulated/0/html存放地/cant-not-tweet:8113"
+    ["35"]="smashthewalls (解压游戏):/storage/emulated/0/html存放地/smashthewalls:8114"
+    ["36"]="burymewithmymoney (整活):/storage/emulated/0/html存放地/burymewithmymoney:8115"
+    ["37"]="Breakout (打砖块):/storage/emulated/0/html存放地/breakout:8116"
+    ["38"]="Tetris (俄罗斯方块):/storage/emulated/0/html存放地/tetris:8117"
+    ["39"]="Snake (贪吃蛇):/storage/emulated/0/html存放地/snake:8118"
+    ["40"]="Gesto Engine (手势识别引擎):/storage/emulated/0/html存放地/gesto-engine-main:8119"
+    ["41"]="GooseHyperGlass (液态玻璃UI):/storage/emulated/0/html存放地/GooseHyperGlass-main:8120"
+    ["42"]="Glass CDN (液态玻璃演示站):/storage/emulated/0/html存放地/glass.goose.cc.cd:8121"
+    ["43"]="Hand Landmarker (手势识别本地版):/storage/emulated/0/html存放地/models:8123"
+)
+
+# ============================================================
+# 函数定义
+# ============================================================
+
+# 停止所有服务器
+stop_servers() {
+    pkill -f "python -m http.server" 2>/dev/null
+    echo -e "\033[32m✅ 所有服务器已停止\033[0m"
+}
+
+# 显示菜单
+show_menu() {
+    clear
+    echo -e "\033[36m================================\033[0m"
+    echo -e "\033[1;33m  本地项目启动器 v3.0\033[0m"
+    echo -e "\033[1;33m  离线收藏家专用\033[0m"
+    echo -e "\033[36m================================\033[0m"
+
+    for key in $(echo "${!PROJECTS[@]}" | tr ' ' '\n' | sort -n); do
+        IFS=':' read -r name path port <<< "${PROJECTS[$key]}"
+        printf "  \033[32m%2s\033[0m. %-30s \033[90m%s\033[0m\n" "$key" "$name" "$port"
+    done
+
+    echo -e "\033[36m================================\033[0m"
+    echo -e "  \033[31m0\033[0m. 退出"
+    echo -e "\033[36m================================\033[0m"
+    echo -e "\033[90m💡 提示：按 Ctrl+C 可停止当前运行的项目\033[0m"
+    echo -e "\033[36m================================\033[0m"
+}
+
+# 启动项目
+start_project() {
+    local choice=$1
+    local entry="${PROJECTS[$choice]}"
+
+    if [[ -z "$entry" ]]; then
+        echo -e "\033[31m❌ 无效输入，请输入 0-42 之间的数字\033[0m"
+        return 1
+    fi
+
+    IFS=':' read -r name path port <<< "$entry"
+
+    if [[ ! -d "$path" ]]; then
+        echo -e "\033[31m❌ 错误：目录不存在 - $path\033[0m"
+        return 1
+    fi
+
+    echo -e "\033[33m🚀 启动 $name...\033[0m"
+
+    if lsof -i ":$port" >/dev/null 2>&1; then
+        echo -e "\033[33m⚠️  端口 $port 已被占用，尝试停止旧进程...\033[0m"
+        pkill -f "python -m http.server $port" 2>/dev/null
+        sleep 1
+    fi
+
+    cd "$path" && python -m http.server "$port" &
+    local pid=$!
+    sleep 2
+
+    if kill -0 $pid 2>/dev/null; then
+        echo -e "\033[32m✅ $name 已启动 (PID: $pid)\033[0m"
+        echo -e "\033[36m🌐 访问: http://127.0.0.1:$port\033[0m"
+
+        if command -v am &>/dev/null; then
+            am start -a android.intent.action.VIEW -d "http://127.0.0.1:$port" 2>/dev/null
+        fi
+    else
+        echo -e "\033[31m❌ 启动失败，请检查目录和Python环境\033[0m"
+        return 1
+    fi
+}
+
+# 清理退出
+cleanup() {
+    echo -e "\n\033[33m🔄 正在清理...\033[0m"
+    stop_servers
+    echo -e "\033[32m 再见！\033[0m"
+    exit 0
+}
+
+# ============================================================
+# 主程序
+# ============================================================
+
+trap cleanup SIGINT SIGTERM
+
+stop_servers
+
+while true; do
+    show_menu
+    read -p "请输入数字 [0-42]: " choice
+
+    if [[ "$choice" == "0" ]]; then
+        cleanup
+    fi
+
+    start_project "$choice"
+
+    echo -e "\n\033[90m按 Enter 键返回菜单...\033[0m"
+    read
+done

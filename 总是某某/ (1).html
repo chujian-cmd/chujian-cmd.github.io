@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>画线 · 平滑变星形</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1e2b;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, sans-serif;
+        }
+        .card {
+            background: #0e121c;
+            padding: 24px 24px 32px;
+            border-radius: 42px;
+            box-shadow: 0 25px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 24px;
+            background: #212638;
+            box-shadow: inset 0 5px 12px rgba(0, 0, 0, 0.5), 0 10px 20px rgba(0, 0, 0, 0.4);
+            width: 600px;
+            height: 400px;
+            cursor: crosshair;
+            touch-action: none;
+        }
+        .info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 18px;
+            padding: 0 8px;
+            color: #b9c7e7;
+            font-size: 0.95rem;
+            letter-spacing: 0.3px;
+        }
+        .status {
+            background: #2c3349;
+            padding: 8px 18px;
+            border-radius: 60px;
+            font-weight: 500;
+            color: #d0e0ff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        button {
+            background: #3f4b6b;
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 6px 0 #1e2332, 0 6px 12px black;
+            font-size: 0.9rem;
+            letter-spacing: 0.3px;
+        }
+        button:hover {
+            background: #55648f;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 0 #1e2332, 0 10px 18px black;
+        }
+        button:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 #1e2332, 0 8px 12px black;
+        }
+        .hint {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #7f8bb3;
+        }
+        .hint span {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #5f7fff;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #5f7fff;
+        }
+    </style>
+</head>
+<body>
+<div class="card">
+    <canvas id="mainCanvas" width="600" height="400"></canvas>
+    <div class="info">
+        <div class="status" id="statusText">✏️ 画一条线</div>
+        <div class="hint">
+            <span></span> 按住拖拽画线
+        </div>
+        <button id="resetBtn">↺ 重绘</button>
+    </div>
+</div>
+
+<script>
+    (function() {
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('statusText');
+
+        const CW = 600;
+        const CH = 400;
+
+        // 目标星形顶点（10个点，闭合星形）
+        const targetVertices = [
+            { x: 300, y: 60 },
+            { x: 350, y: 160 },
+            { x: 460, y: 170 },
+            { x: 380, y: 240 },
+            { x: 400, y: 350 },
+            { x: 300, y: 290 },
+            { x: 200, y: 350 },
+            { x: 220, y: 240 },
+            { x: 140, y: 170 },
+            { x: 250, y: 160 }
+        ];
+
+        // 状态
+        let phase = 'drawing';       // 'drawing' | 'morphing'
+        let drawnPoints = [];
+        let isDrawing = false;
+        let animationId = null;
+
+        // 变形参数
+        let startVertices = [];
+        let morphProgress = 0;
+        const MORPH_SPEED = 0.04;
+
+        // ---------- 工具函数 ----------
+
+        // 计算折线总长度
+        function computeTotalLength(points) {
+            let len = 0;
+            for (let i = 1; i < points.length; i++) {
+                len += Math.hypot(points[i].x - points[i-1].x, points[i].y - points[i-1].y);
+            }
+            return len;
+        }
+
+        // 将折线重采样为 targetCount 个等距点
+        function resamplePointsToLength(points, targetCount) {
+            if (points.length === 0) return [];
+            if (points.length === 1) {
+                return Array(targetCount).fill().map(() => ({ ...points[0] }));
+            }
+
+            const totalLength = computeTotalLength(points);
+            if (totalLength === 0) {
+                return Array(targetCount).fill().map(() => ({ ...points[0] }));
+            }
+
+            const step = totalLength / (targetCount - 1);
+            const resampled = [{ x: points[0].x, y: points[0].y }];
+
+            let segIdx = 0;
+            let segStart = points[0];
+            let segEnd = points[1];
+            let segLength = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+            let segConsumed = 0;
+
+            for (let i = 1; i < targetCount; i++) {
+                const targetDist = i * step;
+                let found = false;
+
+                while (segIdx < points.length - 1) {
+                    if (segConsumed + segLength >= targetDist) {
+                        const remaining = targetDist - segConsumed;
+                        const t = segLength === 0 ? 0 : remaining / segLength;
+                        resampled.push({
+                            x: segStart.x + (segEnd.x - segStart.x) * t,
+                            y: segStart.y + (segEnd.y - segStart.y) * t
+                        });
+                        found = true;
+                        break;
+                    } else {
+                        segConsumed += segLength;
+                        segIdx++;
+                        if (segIdx >= points.length - 1) break;
+                        segStart = points[segIdx];
+                        segEnd = points[segIdx + 1];
+                        segLength = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+                    }
+                }
+
+                if (!found) {
+                    const lastPt = points[points.length - 1];
+                    resampled.push({ x: lastPt.x, y: lastPt.y });
+                }
+            }
+
+            while (resampled.length < targetCount) {
+                const lastPt = points[points.length - 1];
+                resampled.push({ x: lastPt.x, y: lastPt.y });
+            }
+            return resampled.slice(0, targetCount);
+        }
+
+        // 顶点数组 → Path2D（闭合）
+        function verticesToPath(vertices) {
+            const path = new Path2D();
+            if (vertices.length === 0) return path;
+            path.moveTo(vertices[0].x, vertices[0].y);
+            for (let i = 1; i < vertices.length; i++) {
+                path.lineTo(vertices[i].x, vertices[i].y);
+            }
+            path.closePath();
+            return path;
+        }
+
+        // ---------- 渲染 ----------
+
+        function render() {
+            ctx.clearRect(0, 0, CW, CH);
+
+            // 背景网格
+            ctx.save();
+            ctx.strokeStyle = "#2a3146";
+            ctx.lineWidth = 1;
+            for (let i = 0; i < CW; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, CH);
+                ctx.stroke();
+            }
+            for (let i = 0; i < CH; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(CW, i);
+                ctx.stroke();
+            }
+            ctx.restore();
+
+            if (phase === 'drawing') {
+                if (drawnPoints.length > 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(drawnPoints[0].x, drawnPoints[0].y);
+                    for (let i = 1; i < drawnPoints.length; i++) {
+                        ctx.lineTo(drawnPoints[i].x, drawnPoints[i].y);
+                    }
+                    ctx.strokeStyle = '#5f7fff';
+                    ctx.lineWidth = 5;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.shadowColor = '#3f5fcf';
+                    ctx.shadowBlur = 16;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+
+                    // 起点
+                    ctx.beginPath();
+                    ctx.arc(drawnPoints[0].x, drawnPoints[0].y, 5, 0, Math.PI * 2);
+                    ctx.fillStyle = '#b0c2ff';
+                    ctx.shadowBlur = 14;
+                    ctx.shadowColor = '#6f8fff';
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                } else if (drawnPoints.length === 1) {
+                    ctx.beginPath();
+                    ctx.arc(drawnPoints[0].x, drawnPoints[0].y, 5, 0, Math.PI * 2);
+                    ctx.fillStyle = '#b0c2ff';
+                    ctx.shadowBlur = 14;
+                    ctx.shadowColor = '#6f8fff';
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                } else {
+                    // 空状态提示
+                    ctx.save();
+                    ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillStyle = '#4e5b7c';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('按住并拖拽画线', CW/2, CH/2 - 18);
+                    ctx.font = '15px system-ui';
+                    ctx.fillStyle = '#3e4a6a';
+                    ctx.fillText('松开后自动变形为星形', CW/2, CH/2 + 24);
+                    ctx.restore();
+                }
+            } else if (phase === 'morphing') {
+                if (startVertices.length !== targetVertices.length) return;
+
+                const currentVerts = startVertices.map((s, i) => {
+                    const e = targetVertices[i];
+                    return {
+                        x: s.x + (e.x - s.x) * morphProgress,
+                        y: s.y + (e.y - s.y) * morphProgress
+                    };
+                });
+
+                const path = verticesToPath(currentVerts);
+
+                ctx.save();
+                const gradient = ctx.createLinearGradient(180, 80, 420, 320);
+                gradient.addColorStop(0, '#aaccff');
+                gradient.addColorStop(0.5, '#7f9fff');
+                gradient.addColorStop(1, '#5f7fff');
+                ctx.fillStyle = gradient;
+                ctx.shadowColor = '#5f7fff';
+                ctx.shadowBlur = 24;
+                ctx.fill(path);
+
+                ctx.shadowBlur = 30;
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 2.5;
+                ctx.stroke(path);
+                ctx.restore();
+
+                // 顶点小点
+                ctx.save();
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = '#8ab2ff';
+                currentVerts.forEach(v => {
+                    ctx.beginPath();
+                    ctx.arc(v.x, v.y, 3.5, 0, Math.PI * 2);
+                    ctx.fillStyle = '#d0e4ff';
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
+        }
+
+        // ---------- 动画 ----------
+
+        function morphAnimation() {
+            if (phase !== 'morphing') return;
+
+            morphProgress += MORPH_SPEED;
+            if (morphProgress >= 1) {
+                morphProgress = 1;
+                render();
+                phase = 'done';   // 单独状态，保持最终图形
+                animationId = null;
+                statusEl.textContent = '✨ 星形已呈现 · 点击画布重置';
+                return;
+            }
+
+            render();
+            animationId = requestAnimationFrame(morphAnimation);
+        }
+
+        // ---------- 状态切换 ----------
+
+        function resetToDrawing() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            phase = 'drawing';
+            drawnPoints = [];
+            isDrawing = false;
+            morphProgress = 0;
+            startVertices = [];
+            statusEl.textContent = '✏️ 画一条线';
+            render();
+        }
+
+        function startMorph() {
+            if (drawnPoints.length < 2) {
+                resetToDrawing();
+                return;
+            }
+
+            const targetCount = targetVertices.length;
+            let sampled = resamplePointsToLength(drawnPoints, targetCount);
+
+            // 保证顶点数正确
+            while (sampled.length < targetCount) {
+                sampled.push({ ...sampled[sampled.length - 1] });
+            }
+            sampled = sampled.slice(0, targetCount);
+
+            startVertices = sampled;
+            morphProgress = 0;
+            phase = 'morphing';
+            statusEl.textContent = '🌀 变形中...';
+
+            if (animationId) cancelAnimationFrame(animationId);
+            animationId = requestAnimationFrame(morphAnimation);
+        }
+
+        // ---------- 事件 ----------
+
+        function getCanvasMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            return {
+                x: Math.min(Math.max((e.clientX - rect.left) * scaleX, 0), CW),
+                y: Math.min(Math.max((e.clientY - rect.top) * scaleY, 0), CH)
+            };
+        }
+
+        function onMouseDown(e) {
+            e.preventDefault();
+            // 如果当前不是绘制状态，先重置再开始新绘制
+            if (phase !== 'drawing') {
+                resetToDrawing();
+            }
+            isDrawing = true;
+            const pos = getCanvasMousePos(e);
+            drawnPoints = [pos];
+            statusEl.textContent = '✏️ 绘制中...';
+            render();
+        }
+
+        function onMouseMove(e) {
+            if (!isDrawing || phase !== 'drawing') return;
+            e.preventDefault();
+            const pos = getCanvasMousePos(e);
+            const last = drawnPoints[drawnPoints.length - 1];
+            if (Math.hypot(pos.x - last.x, pos.y - last.y) < 2.5) return;
+            drawnPoints.push(pos);
+            render();
+        }
+
+        function onMouseUp(e) {
+            if (!isDrawing) return;
+            e.preventDefault();
+            isDrawing = false;
+
+            if (phase !== 'drawing') return;
+
+            if (drawnPoints.length >= 2) {
+                startMorph();
+            } else {
+                resetToDrawing();
+            }
+        }
+
+        function onMouseLeave(e) {
+            if (isDrawing && phase === 'drawing') {
+                isDrawing = false;
+                if (drawnPoints.length >= 2) {
+                    startMorph();
+                } else {
+                    resetToDrawing();
+                }
+            }
+        }
+
+        // 触摸事件支持
+        function onTouchStart(e) {
+            e.preventDefault();
+            if (phase !== 'drawing') resetToDrawing();
+            isDrawing = true;
+            const touch = e.touches[0];
+            const pos = getCanvasMousePos(touch);
+            drawnPoints = [pos];
+            statusEl.textContent = '✏️ 绘制中...';
+            render();
+        }
+
+        function onTouchMove(e) {
+            if (!isDrawing || phase !== 'drawing') return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            const pos = getCanvasMousePos(touch);
+            const last = drawnPoints[drawnPoints.length - 1];
+            if (Math.hypot(pos.x - last.x, pos.y - last.y) < 2.5) return;
+            drawnPoints.push(pos);
+            render();
+        }
+
+        function onTouchEnd(e) {
+            if (!isDrawing) return;
+            e.preventDefault();
+            isDrawing = false;
+            if (phase !== 'drawing') return;
+            if (drawnPoints.length >= 2) {
+                startMorph();
+            } else {
+                resetToDrawing();
+            }
+        }
+
+        // 重置按钮
+        document.getElementById('resetBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            resetToDrawing();
+        });
+
+        // 注册事件
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mouseup', onMouseUp);
+        canvas.addEventListener('mouseleave', onMouseLeave);
+
+        canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+        canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+        canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+
+        // 初始化
+        resetToDrawing();
+    })();
+</script>
+</body>
+</html>

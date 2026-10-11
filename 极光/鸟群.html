@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>鸟群 Boids</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #05070a;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(5,7,10,0.8), rgba(5,7,10,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">鸟群 <b id="m">惊飞</b></div>
+  <button class="btn" id="btn-reset">重新散布</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 惊扰源 · 鸟群会集体躲开</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    count: isMobile ? 550 : 900,     // 个体数：越多越壮观但越吃性能
+    maxSpeed: 3.2,                    // 最大速度（像素/帧 @60fps）
+    size: 6.5,                        // 尾迹长度
+    perception: 56,                   // 感知半径
+    separation: 1.6,                  // 分离权重
+    alignment: 1.1,                   // 对齐权重
+    cohesion: 0.95,                   // 聚合权重
+    trail: 0.16,                      // 拖尾（0~1，越小尾巴越长）
+    mouseMode: 'flee',                // flee | seek | none
+    mouseForce: 1.8,
+
+    colors: [
+      { name: '暮鸦', a: '#e8caa4', b: '#ff9d6b', bg: '#08070c' },
+      { name: '珊瑚', a: '#82b3ae', b: '#ffe4a0', bg: '#05101a' },
+      { name: '椋鸟', a: '#8ea2ff', b: '#b8d2ff', bg: '#05060f' },
+      { name: '萤火', a: '#ffd86b', b: '#ff8a3c', bg: '#0a0603' },
+      { name: '深海', a: '#5be0ff', b: '#7c86ff', bg: '#030810' }
+    ],
+    scheme: 0
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // ---------- Boids ----------
+  const N = CFG.count;
+  const bx = new Float32Array(N);
+  const by = new Float32Array(N);
+  const bvx = new Float32Array(N);
+  const bvy = new Float32Array(N);
+
+  function seed() {
+    for (let i = 0; i < N; i++) {
+      bx[i] = Math.random() * W;
+      by[i] = Math.random() * H;
+      const a = Math.random() * Math.PI * 2;
+      const s = 1.5 + Math.random() * 1.5;
+      bvx[i] = Math.cos(a) * s;
+      bvy[i] = Math.sin(a) * s;
+    }
+  }
+
+  // ---------- 空间网格（加速近邻查询） ----------
+  const GRID_CELL = 60;
+  let gridCols = 0, gridRows = 0;
+  let grid = [];   // 每个格子存 idx 数组
+
+  function buildGrid() {
+    gridCols = Math.ceil(W / GRID_CELL);
+    gridRows = Math.ceil(H / GRID_CELL);
+    grid = new Array(gridCols * gridRows);
+    for (let i = 0; i < grid.length; i++) grid[i] = [];
+  }
+
+  function gridIdx(x, y) {
+    const cx = clamp((x / GRID_CELL) | 0, 0, gridCols - 1);
+    const cy = clamp((y / GRID_CELL) | 0, 0, gridRows - 1);
+    return cy * gridCols + cx;
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    pointer.down = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.down = false; pointer.inside = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 配色 ----------
+  let colA = [0,0,0], colB = [0,0,0], bgRGB = [0,0,0];
+  function buildColors() {
+    const s = CFG.colors[CFG.scheme];
+    colA = hex2rgb(s.a);
+    colB = hex2rgb(s.b);
+    bgRGB = hex2rgb(s.bg);
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    // ---- 背景（带拖尾） ----
+    const [br, bgc, bb] = bgRGB;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(${br},${bgc},${bb},${CFG.trail})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // ---- 建网格 ----
+    for (let i = 0; i < grid.length; i++) if (grid[i].length) grid[i].length = 0;
+    for (let i = 0; i < N; i++) {
+      grid[gridIdx(bx[i], by[i])].push(i);
+    }
+
+    const per = CFG.perception;
+    const per2 = per * per;
+    const sep = CFG.separation;
+    const ali = CFG.alignment;
+    const coh = CFG.cohesion;
+    const maxS = CFG.maxSpeed;
+    const minS = 0.5;
+    const z = clamp(dt * 60, 0, 2.5);
+
+    const useMouse = CFG.mouseMode !== 'none' && pointer.inside && pointer.down;
+    const mfx = pointer.x, mfy = pointer.y;
+    const mMode = CFG.mouseMode;
+    const mForce = CFG.mouseForce;
+
+    // ---- 更新每个 boid ----
+    for (let i = 0; i < N; i++) {
+      const x = bx[i], y = by[i];
+
+      let sx = 0, sy = 0;    // 分离
+      let ax_ = 0, ay_ = 0;  // 对齐
+      let cx_ = 0, cy_ = 0;  // 聚合
+      let nSep = 0, nAli = 0, nCoh = 0;
+
+      // 查 3x3 邻格
+      const gcx = clamp((x / GRID_CELL) | 0, 0, gridCols - 1);
+      const gcy = clamp((y / GRID_CELL) | 0, 0, gridRows - 1);
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = gcx + dx, ny = gcy + dy;
+          if (nx < 0 || ny < 0 || nx >= gridCols || ny >= gridRows) continue;
+          const bucket = grid[ny * gridCols + nx];
+
+          for (let k = 0; k < bucket.length; k++) {
+            const j = bucket[k];
+            if (j === i) continue;
+            const ddx = x - bx[j];
+            const ddy = y - by[j];
+            const d2 = ddx * ddx + ddy * ddy;
+            if (d2 > per2 || d2 === 0) continue;
+
+            // 分离：越近越用力
+            sx += ddx / d2;
+            sy += ddy / d2;
+            nSep++;
+
+            // 对齐
+            ax_ += bvx[j];
+            ay_ += bvy[j];
+            nAli++;
+
+            // 聚合
+            cx_ += bx[j];
+            cy_ += by[j];
+            nCoh++;
+          }
+        }
+      }
+
+      let axTotal = 0, ayTotal = 0;
+
+      if (nSep > 0) {
+        axTotal += sx * sep * 0.9;
+        ayTotal += sy * sep * 0.9;
+      }
+      if (nAli > 0) {
+        axTotal += (ax_ / nAli - bvx[i]) * ali * 0.05;
+        ayTotal += (ay_ / nAli - bvy[i]) * ali * 0.05;
+      }
+      if (nCoh > 0) {
+        axTotal += (cx_ / nCoh - x) * coh * 0.0008;
+        ayTotal += (cy_ / nCoh - y) * coh * 0.0008;
+      }
+
+      // 指针力
+      if (useMouse) {
+        const dx = mfx - x, dy = mfy - y;
+        const d = Math.hypot(dx, dy) + 0.001;
+        const f = clamp(1 - d / 260, 0, 1) * mForce;
+        if (mMode === 'seek') {
+          axTotal += dx / d * f * 0.15;
+          ayTotal += dy / d * f * 0.15;
+        } else {
+          axTotal -= dx / d * f * 0.15;
+          ayTotal -= dy / d * f * 0.15;
+        }
+      }
+
+      // 边界：靠近边缘时温和推回
+      const margin = 80;
+      if (x < margin) axTotal += (margin - x) * 0.02;
+      if (x > W - margin) axTotal -= (x - (W - margin)) * 0.02;
+      if (y < margin) ayTotal += (margin - y) * 0.02;
+      if (y > H - margin) ayTotal -= (y - (H - margin)) * 0.02;
+
+      // 速度更新
+      let nvx = bvx[i] + axTotal * z;
+      let nvy = bvy[i] + ayTotal * z;
+      const sp = Math.hypot(nvx, nvy);
+      if (sp > maxS) { nvx = nvx / sp * maxS; nvy = nvy / sp * maxS; }
+      else if (sp < minS) { nvx = nvx / (sp || 1) * minS; nvy = nvy / (sp || 1) * minS; }
+      bvx[i] = nvx;
+      bvy[i] = nvy;
+
+      bx[i] = x + nvx * z;
+      by[i] = y + nvy * z;
+    }
+
+    // ---- 绘制（用 lighter 让密集处更亮） ----
+    ctx.globalCompositeOperation = 'lighter';
+
+    const [ar, ag, ab] = colA;
+    const [cr, cg, cb] = colB;
+
+    for (let i = 0; i < N; i++) {
+      const x = bx[i], y = by[i];
+      const vX = bvx[i], vY = bvy[i];
+      const sp = Math.hypot(vX, vY) || 1;
+      const tail = CFG.size / sp;
+
+      // 头部 + 尾部，用一条短线模拟速度感
+      const hx = x, hy = y;
+      const tx = x - vX * tail, ty = y - vY * tail;
+
+      // 速度越快 → 越接近色 B
+      const t = clamp(sp / CFG.maxSpeed, 0, 1);
+      const R_ = ar + (cr - ar) * t;
+      const G_ = ag + (cg - ag) * t;
+      const B_ = ab + (cb - ab) * t;
+
+      ctx.strokeStyle = `rgba(${R_|0},${G_|0},${B_|0},0.85)`;
+      ctx.lineWidth = 1.3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(hx, hy);
+      ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', seed);
+  document.getElementById('btn-change').addEventListener('click', () => {
+    CFG.scheme = (CFG.scheme + 1) % CFG.colors.length;
+    buildColors();
+    mEl.textContent = CFG.colors[CFG.scheme].name;
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); buildGrid(); seed(); });
+  window.addEventListener('orientationchange', () => setTimeout(() => { resize(); buildGrid(); seed(); }, 200));
+
+  buildColors();
+  buildGrid();
+  seed();
+  mEl.textContent = CFG.colors[CFG.scheme].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

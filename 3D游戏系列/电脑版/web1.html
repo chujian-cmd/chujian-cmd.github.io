@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 创意沙盒 - WASD移动 & 创建形状</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --text: #e0e0e0;
+            --accent: #ff6b6b;
+            --accent2: #4ecdc4;
+            --accent3: #ffe66d;
+            --panel-bg: rgba(20, 20, 40, 0.85);
+            --border: rgba(255, 255, 255, 0.12);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+            overflow: hidden;
+            background: #000;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            cursor: default;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* 覆盖层 */
+        #overlay {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* 锁定提示 */
+        #lock-prompt {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 28px 40px;
+            text-align: center;
+            color: #fff;
+            z-index: 100;
+            pointer-events: auto;
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            transition: opacity 0.4s ease, transform 0.4s ease;
+            animation: floatPrompt 3s ease-in-out infinite;
+        }
+        @keyframes floatPrompt {
+            0%,
+            100% {
+                transform: translate(-50%, -50%) translateY(0);
+            }
+            50% {
+                transform: translate(-50%, -50%) translateY(-8px);
+            }
+        }
+        #lock-prompt.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translate(-50%, -50%) scale(0.9);
+        }
+        #lock-prompt .icon {
+            font-size: 56px;
+            display: block;
+            margin-bottom: 12px;
+        }
+        #lock-prompt h2 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+            letter-spacing: 0.02em;
+        }
+        #lock-prompt p {
+            font-size: 0.9rem;
+            color: #aaa;
+            letter-spacing: 0.03em;
+        }
+
+        /* HUD面板 */
+        .hud-panel {
+            position: fixed;
+            z-index: 20;
+            pointer-events: none;
+            color: #fff;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+        }
+        #hud-top {
+            top: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 30px;
+            padding: 10px 22px;
+            font-size: 0.85rem;
+            color: #ccc;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            transition: opacity 0.3s;
+            opacity: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        #hud-top.visible {
+            opacity: 1;
+        }
+        #hud-top .shape-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #hud-top .shape-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+            display: inline-block;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            transition: all 0.25s;
+        }
+        #hud-top .shape-dot.cube {
+            border-radius: 3px;
+        }
+        #hud-top .shape-dot.sphere {
+            border-radius: 50%;
+        }
+        #hud-top .shape-dot.cylinder {
+            border-radius: 50%;
+        }
+        #hud-bottom {
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--panel-bg);
+            border: 1px solid var(--border);
+            border-radius: 30px;
+            padding: 10px 20px;
+            font-size: 0.78rem;
+            color: #bbb;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            transition: opacity 0.3s;
+            opacity: 0;
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        #hud-bottom.visible {
+            opacity: 1;
+        }
+        #hud-bottom span {
+            white-space: nowrap;
+        }
+        #hud-bottom .key {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.13);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 5px;
+            padding: 2px 7px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            margin: 0 1px;
+            color: #fff;
+        }
+        #color-dot {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            vertical-align: middle;
+            transition: background-color 0.3s;
+            box-shadow: 0 0 10px currentColor;
+        }
+
+        /* 响应式 */
+        @media (max-width: 600px) {
+            #lock-prompt {
+                padding: 20px 24px;
+                border-radius: 16px;
+            }
+            #lock-prompt .icon {
+                font-size: 40px;
+            }
+            #lock-prompt h2 {
+                font-size: 1.1rem;
+            }
+            #lock-prompt p {
+                font-size: 0.75rem;
+            }
+            #hud-bottom {
+                font-size: 0.68rem;
+                padding: 8px 14px;
+                gap: 8px;
+                border-radius: 22px;
+            }
+            #hud-top {
+                font-size: 0.75rem;
+                padding: 8px 16px;
+                border-radius: 22px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 锁定提示 -->
+    <div id="lock-prompt">
+        <span class="icon">🖱️</span>
+        <h2>点击屏幕开始</h2>
+        <p>WASD 移动 · 鼠标旋转视角</p>
+    </div>
+
+    <!-- 顶部HUD: 形状类型 -->
+    <div id="hud-top">
+        <span>当前形状:</span>
+        <span class="shape-indicator">
+            <span id="shape-dot" class="shape-dot cube" style="background:#ff6b6b;"></span>
+            <span id="shape-name">立方体</span>
+        </span>
+        <span>|</span>
+        <span>颜色: <span id="color-dot" style="background:#ff6b6b;"></span></span>
+    </div>
+
+    <!-- 底部HUD: 操作提示 -->
+    <div id="hud-bottom">
+        <span><span class="key">1</span><span class="key">2</span><span class="key">3</span> 切换形状</span>
+        <span><span class="key">R</span> 切换颜色</span>
+        <span><span class="key">左键</span> 放置</span>
+        <span><span class="key">右键</span> 删除</span>
+        <span><span class="key">ESC</span> 释放鼠标</span>
+    </div>
+
+    <!-- Three.js Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // ==================== DOM元素 ====================
+        const lockPrompt = document.getElementById('lock-prompt');
+        const hudTop = document.getElementById('hud-top');
+        const hudBottom = document.getElementById('hud-bottom');
+        const shapeDot = document.getElementById('shape-dot');
+        const shapeNameEl = document.getElementById('shape-name');
+        const colorDot = document.getElementById('color-dot');
+
+        // ==================== 场景初始化 ====================
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#87CEEB');
+        scene.fog = new THREE.Fog('#87CEEB', 40, 120);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(0, 1.6, 8);
+        camera.lookAt(0, 0, -2);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.1;
+        document.body.appendChild(renderer.domElement);
+
+        // ==================== 光照 ====================
+        // 环境光
+        const ambientLight = new THREE.AmbientLight('#bcd4f0', 0.7);
+        scene.add(ambientLight);
+
+        // 半球光 - 模拟天空/地面
+        const hemiLight = new THREE.HemisphereLight('#87CEEB', '#8B7355', 0.5);
+        scene.add(hemiLight);
+
+        // 主方向光（带阴影）
+        const sunLight = new THREE.DirectionalLight('#fff8e7', 4.5);
+        sunLight.position.set(20, 30, 10);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 100;
+        sunLight.shadow.camera.left = -30;
+        sunLight.shadow.camera.right = 30;
+        sunLight.shadow.camera.top = 30;
+        sunLight.shadow.camera.bottom = -30;
+        sunLight.shadow.bias = -0.0003;
+        sunLight.shadow.normalBias = 0.02;
+        scene.add(sunLight);
+
+        // ==================== 地面 ====================
+        const groundGeom = new THREE.BoxGeometry(36, 0.4, 36);
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: '#d5c4a1',
+            roughness: 0.75,
+            metalness: 0.02,
+        });
+        const ground = new THREE.Mesh(groundGeom, groundMat);
+        ground.position.y = -0.2;
+        ground.receiveShadow = true;
+        ground.castShadow = false;
+        ground.name = 'ground';
+        scene.add(ground);
+
+        // 网格辅助线
+        const gridHelper = new THREE.GridHelper(36, 36, '#c4b99a', '#e0d5c0');
+        gridHelper.position.y = 0.005;
+        scene.add(gridHelper);
+
+        // 地面边框装饰
+        const borderGeom = new THREE.TorusGeometry(18, 0.15, 8, 4);
+        const borderMat = new THREE.MeshStandardMaterial({
+            color: '#b8a88a',
+            roughness: 0.5,
+            metalness: 0.3,
+        });
+        const border = new THREE.Mesh(borderGeom, borderMat);
+        border.rotation.x = -Math.PI / 2;
+        border.position.y = 0.01;
+        border.receiveShadow = true;
+        scene.add(border);
+
+        // ==================== 初始装饰形状 ====================
+        const initialShapes = [
+            { type: 'cube', pos: [3, 0.5, -2], color: '#ff6b6b' },
+            { type: 'cube', pos: [3, 1.5, -2], color: '#ff9f43' },
+            { type: 'sphere', pos: [-3, 0.5, 1], color: '#4ecdc4' },
+            { type: 'cylinder', pos: [0, 0.5, -4], color: '#ffe66d' },
+            { type: 'cube', pos: [-1, 0.5, -3], color: '#a29bfe' },
+            { type: 'cube', pos: [-1, 1.5, -3], color: '#fd79a8' },
+            { type: 'sphere', pos: [5, 0.5, 3], color: '#55efc4' },
+            { type: 'cylinder', pos: [-4, 0.5, -2], color: '#ff6b6b' },
+        ];
+
+        const placedShapes = [];
+        const allPlaceableMeshes = [ground]; // 用于raycaster检测
+
+        function createShapeMesh(type, colorHex) {
+            let geometry;
+            const color = new THREE.Color(colorHex);
+            switch (type) {
+                case 'cube':
+                    geometry = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+                    break;
+                case 'sphere':
+                    geometry = new THREE.SphereGeometry(0.48, 40, 40);
+                    break;
+                case 'cylinder':
+                    geometry = new THREE.CylinderGeometry(0.48, 0.48, 0.95, 40);
+                    break;
+                default:
+                    geometry = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+            }
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                roughness: 0.35,
+                metalness: 0.05,
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.name = 'placed-shape';
+            return mesh;
+        }
+
+        // 放置初始形状
+        initialShapes.forEach((info) => {
+            const mesh = createShapeMesh(info.type, info.color);
+            mesh.position.set(...info.pos);
+            scene.add(mesh);
+            placedShapes.push(mesh);
+            allPlaceableMeshes.push(mesh);
+        });
+
+        // ==================== 指针锁定控制器 ====================
+        const controls = new PointerLockControls(camera, document.body);
+        let isLocked = false;
+
+        controls.addEventListener('lock', () => {
+            isLocked = true;
+            lockPrompt.classList.add('hidden');
+            hudTop.classList.add('visible');
+            hudBottom.classList.add('visible');
+            if (previewMesh) previewMesh.visible = true;
+        });
+
+        controls.addEventListener('unlock', () => {
+            isLocked = false;
+            lockPrompt.classList.remove('hidden');
+            hudTop.classList.remove('visible');
+            hudBottom.classList.remove('visible');
+            if (previewMesh) previewMesh.visible = false;
+        });
+
+        // 点击锁定提示也可以触发锁定
+        lockPrompt.addEventListener('click', () => {
+            if (!isLocked) {
+                controls.lock();
+            }
+        });
+
+        // ==================== 形状类型与颜色 ====================
+        const shapeTypes = ['cube', 'sphere', 'cylinder'];
+        const shapeTypeNames = { cube: '立方体', sphere: '球体', cylinder: '圆柱体' };
+        const shapeTypeDotClasses = { cube: 'cube', sphere: 'sphere', cylinder: 'cylinder' };
+        let currentShapeTypeIndex = 0; // 0=cube, 1=sphere, 2=cylinder
+
+        const colorPalette = [
+            '#ff6b6b', '#ff9f43', '#feca57', '#54a0ff', '#5f27cd',
+            '#00d2d3', '#55efc4', '#fd79a8', '#ffffff', '#e056a0',
+            '#0abde3', '#10ac84', '#ee5a24', '#6c5ce7', '#f8c291',
+        ];
+        let currentColorIndex = 0;
+
+        function getCurrentShapeType() {
+            return shapeTypes[currentShapeTypeIndex];
+        }
+        function getCurrentColor() {
+            return colorPalette[currentColorIndex];
+        }
+
+        function updateHUD() {
+            const type = getCurrentShapeType();
+            const color = getCurrentColor();
+            shapeDot.className = 'shape-dot ' + (shapeTypeDotClasses[type] || 'cube');
+            shapeDot.style.background = color;
+            shapeNameEl.textContent = shapeTypeNames[type] || type;
+            colorDot.style.background = color;
+            colorDot.style.boxShadow = `0 0 14px ${color}`;
+        }
+        updateHUD();
+
+        // ==================== 预览形状 ====================
+        const previewMaterial = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(getCurrentColor()),
+            roughness: 0.3,
+            metalness: 0.05,
+            transparent: true,
+            opacity: 0.45,
+            depthWrite: false,
+        });
+        let previewGeometry = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+        let previewMesh = new THREE.Mesh(previewGeometry, previewMaterial);
+        previewMesh.visible = false;
+        previewMesh.renderOrder = 999;
+        previewMesh.material.depthTest = true;
+        previewMesh.material.depthWrite = false;
+        previewMesh.name = 'preview';
+        scene.add(previewMesh);
+
+        function updatePreviewGeometry() {
+            const type = getCurrentShapeType();
+            let newGeom;
+            switch (type) {
+                case 'cube':
+                    newGeom = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+                    break;
+                case 'sphere':
+                    newGeom = new THREE.SphereGeometry(0.48, 40, 40);
+                    break;
+                case 'cylinder':
+                    newGeom = new THREE.CylinderGeometry(0.48, 0.48, 0.95, 40);
+                    break;
+                default:
+                    newGeom = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+            }
+            if (previewMesh.geometry) previewMesh.geometry.dispose();
+            previewMesh.geometry = newGeom;
+            previewMaterial.color.set(getCurrentColor());
+        }
+
+        // ==================== Raycaster ====================
+        const raycaster = new THREE.Raycaster();
+        raycaster.far = 15;
+        raycaster.near = 0.1;
+
+        function getPlacementInfo() {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(allPlaceableMeshes, false);
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                const point = hit.point.clone();
+                const normal = hit.face.normal.clone();
+                // 将法线转换到世界空间
+                normal.transformDirection(hit.object.matrixWorld);
+                // 放置位置 = 交点 + 法线 * 0.475（略小于0.5避免重叠闪烁）
+                const placementPos = point.add(normal.multiplyScalar(0.475));
+                // 限制在地面范围内
+                placementPos.x = THREE.MathUtils.clamp(placementPos.x, -17.5, 17.5);
+                placementPos.z = THREE.MathUtils.clamp(placementPos.z, -17.5, 17.5);
+                placementPos.y = Math.max(placementPos.y, 0.05);
+                return {
+                    position: placementPos,
+                    hitObject: hit.object,
+                    valid: true,
+                };
+            }
+            return { position: null, hitObject: null, valid: false };
+        }
+
+        // ==================== 输入处理 ====================
+        const keys = {};
+        window.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+
+            // 形状类型切换
+            if (e.code === 'Digit1') {
+                currentShapeTypeIndex = 0;
+                updateHUD();
+                updatePreviewGeometry();
+            }
+            if (e.code === 'Digit2') {
+                currentShapeTypeIndex = 1;
+                updateHUD();
+                updatePreviewGeometry();
+            }
+            if (e.code === 'Digit3') {
+                currentShapeTypeIndex = 2;
+                updateHUD();
+                updatePreviewGeometry();
+            }
+            // 颜色切换
+            if (e.code === 'KeyR') {
+                currentColorIndex = (currentColorIndex + 1) % colorPalette.length;
+                updateHUD();
+                updatePreviewGeometry();
+                previewMaterial.color.set(getCurrentColor());
+            }
+            // Backspace删除
+            if (e.code === 'Backspace' && isLocked) {
+                e.preventDefault();
+                deleteLookedShape();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+
+        // 鼠标点击 - 放置形状
+        window.addEventListener('click', (e) => {
+            if (!isLocked) return;
+            if (e.button === 0) {
+                // 左键放置
+                placeShape();
+            }
+        });
+
+        // 右键 - 删除形状
+        window.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (!isLocked) return;
+            deleteLookedShape();
+        });
+
+        // 防止中键粘贴等
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 1) e.preventDefault();
+        });
+
+        function placeShape() {
+            const info = getPlacementInfo();
+            if (!info.valid || !info.position) return;
+
+            // 检查放置位置是否与相机太近（防止放到自己身上）
+            const distToCamera = info.position.distanceTo(camera.position);
+            if (distToCamera < 0.6) return;
+
+            const mesh = createShapeMesh(getCurrentShapeType(), getCurrentColor());
+            mesh.position.copy(info.position);
+            scene.add(mesh);
+            placedShapes.push(mesh);
+            allPlaceableMeshes.push(mesh);
+
+            // 放置动画微小的弹跳效果
+            mesh.scale.set(0.01, 0.01, 0.01);
+            const targetScale = { x: 1, y: 1, z: 1 };
+            const startTime = performance.now();
+            const duration = 180;
+
+            function animatePlacement(time) {
+                const elapsed = time - startTime;
+                const t = Math.min(elapsed / duration, 1.0);
+                // 弹性缓出
+                const val = 1 - Math.pow(1 - t, 3);
+                const overshoot = 1 + Math.sin(t * Math.PI) * 0.15 * (1 - t);
+                const s = val * overshoot;
+                mesh.scale.setScalar(Math.max(0.01, s));
+                if (t < 1) {
+                    requestAnimationFrame(animatePlacement);
+                } else {
+                    mesh.scale.setScalar(1);
+                }
+            }
+            requestAnimationFrame(animatePlacement);
+        }
+
+        function deleteLookedShape() {
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(allPlaceableMeshes, false);
+            if (intersects.length > 0) {
+                const hitObject = intersects[0].object;
+                // 不能删除地面
+                if (hitObject === ground) return;
+                if (hitObject.name === 'placed-shape') {
+                    // 从场景移除
+                    scene.remove(hitObject);
+                    // 从数组移除
+                    const idx = placedShapes.indexOf(hitObject);
+                    if (idx !== -1) placedShapes.splice(idx, 1);
+                    const idxAll = allPlaceableMeshes.indexOf(hitObject);
+                    if (idxAll !== -1) allPlaceableMeshes.splice(idxAll, 1);
+                    // 清理
+                    if (hitObject.geometry) hitObject.geometry.dispose();
+                    if (hitObject.material) hitObject.material.dispose();
+                }
+            }
+        }
+
+        // ==================== 移动系统 ====================
+        const clock = new THREE.Clock();
+        const moveSpeed = 6.5; // 单位/秒
+        const forwardVec = new THREE.Vector3();
+        const rightVec = new THREE.Vector3();
+        const worldUp = new THREE.Vector3(0, 1, 0);
+
+        function handleMovement(deltaTime) {
+            if (!isLocked) return;
+
+            const dt = Math.min(deltaTime, 0.15); // 防止大帧跳跃
+            let moveX = 0;
+            let moveZ = 0;
+
+            if (keys['KeyW']) moveZ += 1;
+            if (keys['KeyS']) moveZ -= 1;
+            if (keys['KeyA']) moveX -= 1;
+            if (keys['KeyD']) moveX += 1;
+
+            if (moveX === 0 && moveZ === 0) return;
+
+            // 获取相机前方和右方（仅水平分量）
+            camera.getWorldDirection(forwardVec);
+            forwardVec.y = 0;
+            const len = forwardVec.length();
+            if (len < 0.001) return;
+            forwardVec.normalize();
+            rightVec.crossVectors(forwardVec, worldUp).normalize();
+
+            // 计算移动
+            const speed = moveSpeed * dt;
+            const movement = new THREE.Vector3();
+            movement.addScaledVector(forwardVec, moveZ * speed);
+            movement.addScaledVector(rightVec, moveX * speed);
+
+            // 如果同时按下两个方向，归一化
+            if (moveX !== 0 && moveZ !== 0) {
+                movement.multiplyScalar(1 / Math.SQRT2);
+            }
+
+            const newPos = camera.position.clone().add(movement);
+
+            // 边界限制
+            newPos.x = THREE.MathUtils.clamp(newPos.x, -17, 17);
+            newPos.z = THREE.MathUtils.clamp(newPos.z, -17, 17);
+            newPos.y = 1.6; // 固定眼睛高度
+
+            camera.position.copy(newPos);
+        }
+
+        // ==================== 动画循环 ====================
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+
+            const deltaTime = clock.getDelta();
+            handleMovement(deltaTime);
+
+            // 更新预览形状
+            if (isLocked && previewMesh) {
+                const info = getPlacementInfo();
+                if (info.valid && info.position) {
+                    const distToCamera = info.position.distanceTo(camera.position);
+                    if (distToCamera >= 0.6) {
+                        previewMesh.position.copy(info.position);
+                        previewMesh.visible = true;
+                        previewMaterial.color.set(getCurrentColor());
+                    } else {
+                        previewMesh.visible = false;
+                    }
+                } else {
+                    previewMesh.visible = false;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // ==================== 窗口调整 ====================
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ==================== 启动 ====================
+        updatePreviewGeometry();
+        previewMaterial.color.set(getCurrentColor());
+        updateHUD();
+        requestAnimationFrame(animate);
+
+        // ==================== 键盘提示：ESC释放 ====================
+        window.addEventListener('keydown', function onEsc(e) {
+            if (e.code === 'Escape' && isLocked) {
+                // PointerLockControls自动处理ESC释放
+                // 这里不需要额外操作
+            }
+        });
+
+        console.log('🌟 3D创意沙盒已就绪！');
+        console.log('  🖱️ 点击屏幕锁定鼠标');
+        console.log('  ⌨️ WASD - 移动');
+        console.log('  🔢 1/2/3 - 切换形状（立方体/球体/圆柱体）');
+        console.log('  🎨 R - 切换颜色');
+        console.log('  🖱️ 左键点击 - 放置形状');
+        console.log('  🖱️ 右键点击 - 删除形状');
+        console.log('  🔙 Backspace - 删除形状');
+        console.log('  🛑 ESC - 释放鼠标');
+        console.log('  地面上的彩色形状是初始示例，试试在它们上面堆叠吧！');
+    </script>
+</body>
+</html>

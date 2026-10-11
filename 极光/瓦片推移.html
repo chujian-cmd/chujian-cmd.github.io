@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>瓦片推移 Tiles</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#07080d;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(7,8,13,.85),rgba(7,8,13,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(79,214,255,.24);border-color:rgba(79,214,255,.6);color:#dbf6ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);transform:translateY(100%);
+    transition:transform .28s cubic-bezier(.32,.72,0,1);font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff}
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none}
+  #panel .ok{height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(79,214,255,.6);
+    background:rgba(79,214,255,.3);color:#04202a;font:600 14px -apple-system,"PingFang SC",sans-serif;cursor:pointer}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">瓦片推移 <b id="m">魔方推移</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+<div id="hint">切瓦片错位推移 · 2D 魔方循环推格 / 版画竖条错位 / 催眠交错编织</div>
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA', weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    mode: 'shift-grid', density: 12, amount: 0.6, speed: 0.8,
+    gap: 0.04, wrapDir: 'both', driver: 'sine',
+    colorA: '#eaf2ff', colorB: '#4fd6ff',
+    gapColor: '#10141c',
+    background: '#07080d'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', mode: 'shift-grid',   density: 10, amount: 0.7,  speed: 0.9, gap: 0.05, wrapDir: 'both', driver: 'sine',   colorA: '#eaf2ff', colorB: '#4fd6ff', gapColor: '#10141c', background: '#07080d' },
+    { text: '竖条',   mode: 'column-break', density: 28, amount: 0.45, speed: 0,   gap: 0.12, wrapDir: 'v',    driver: 'lum',    colorA: '#cfe6ff', colorB: '#4fd6ff', gapColor: '#0e0b08', background: '#0e0b08' },
+    { text: '编织',   mode: 'weave',        density: 18, amount: 0.8,  speed: 0.7, gap: 0.03, wrapDir: 'h',    driver: 'sine',   colorA: '#c9d4ff', colorB: '#7c4bff', gapColor: '#05060a', background: '#05060a' },
+    { text: '推格',   mode: 'shift-grid',   density: 14, amount: 0.6,  speed: 0,   gap: 0.04, wrapDir: 'both', driver: 'sine',   colorA: '#eaf2ff', colorB: '#4fd6ff', gapColor: '#0b0e14', background: '#07080d' }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true, sig = '';
+  var time = 0, lastT = performance.now();
+
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null, maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) { size = Math.max(6, Math.floor(size * maxW / widest)); setF(size); }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) { size = Math.max(6, Math.floor(size * maxH / totalH)); setF(size); }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+  function rgb(c) { return 'rgb(' + (c[0]|0) + ',' + (c[1]|0) + ',' + (c[2]|0) + ')'; }
+  function lerpRGB(a, b, t) {
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  }
+  function hash2(x, y, s) {
+    var t = Math.sin(x * 127.1 + y * 311.7 + (s||0) * 74.7) * 43758.5453;
+    return t - Math.floor(t);
+  }
+
+  // ---------- 核心 ----------
+  // 把文字 mask 转成带颜色（按横/纵位置在两个色之间渐变）的图
+  var tint = document.createElement('canvas');
+  var tctx = tint.getContext('2d');
+  var tintKey = '';
+
+  function buildTint() {
+    buildMask();
+    var key = maskKey + '|' + CFG.colorA + '|' + CFG.colorB;
+    if (key === tintKey) return;
+    tintKey = key;
+    tint.width = W; tint.height = H;
+    tctx.setTransform(1, 0, 0, 1, 0, 0);
+    tctx.clearRect(0, 0, W, H);
+    tctx.drawImage(maskCanvas, 0, 0);
+    tctx.globalCompositeOperation = 'source-in';
+    var g = tctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, CFG.colorA);
+    g.addColorStop(1, CFG.colorB);
+    tctx.fillStyle = g;
+    tctx.fillRect(0, 0, W, H);
+    tctx.globalCompositeOperation = 'source-over';
+  }
+
+  function drawFrame() {
+    buildTint();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var cols = Math.max(4, Math.round(CFG.density));
+    var aspect = W / H;
+    var rows = Math.max(3, Math.round(cols / aspect));
+    var cw = W / cols;
+    var ch = H / rows;
+    var gapPx = CFG.gap * Math.min(cw, ch);
+    var amount = CFG.amount;
+    var speed = CFG.speed;
+    var mode = CFG.mode;
+    var gap = CFG.gapColor;
+    var b = hex2rgb(CFG.background);
+    var gc = hex2rgb(CFG.gapColor);
+
+    ctx.save();
+
+    // 缝隙底色：整块填一次，后面瓦片覆盖，形成"缝隙"效果
+    if (gapPx > 0.4) {
+      ctx.fillStyle = rgb(gc);
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var dx = 0, dy = 0;
+
+        if (mode === 'column-break') {
+          // 竖条错位：按列
+          var n = hash2(c, 0, 0);
+          if (CFG.driver === 'lum') {
+            // 用每列的平均亮度当作错位深度
+            var avg = 0;
+            for (var s = 0; s < 5; s++) avg += alphaAt((c + 0.5) * cw, (r + 0.5) * ch + (s - 2) * ch / 6);
+            avg /= 5;
+            n = avg;
+          } else if (CFG.driver === 'random') {
+            n = hash2(c, r, 1.3);
+          } else {
+            // sine
+            n = 0.5 + 0.5 * Math.sin(c * 0.6 + time * speed * 3);
+          }
+          var amt = amount * ch * (n - 0.5) * 2;
+          if (CFG.wrapDir === 'h') {
+            dx = amt; // 横条用行错位
+          } else {
+            dy = amt;
+          }
+        } else if (mode === 'weave') {
+          // 交错编织：奇偶行反向流动
+          var dir = (r % 2 === 0) ? 1 : -1;
+          var flow = time * speed * 60 * dir;
+          var amp = amount * cw * 0.4;
+          if (CFG.wrapDir === 'v') {
+            dy = Math.sin(c * 0.5 + flow * 0.02) * amp;
+          } else {
+            dx = Math.sin(r * 0.5 + flow * 0.02) * amp;
+          }
+        } else {
+          // shift-grid：整行整列随机推格
+          // 用 hash(r, seedT) 生成"行推格量"，hash(c, seedT) 生成"列推格量"
+          var period = Math.max(0.3, 1.6 - speed);
+          var tStep = Math.floor(time / period);
+          var rHash = hash2(r, 0, tStep);
+          var cHash = hash2(c, 0, tStep + 77);
+          var rAmt = (rHash < 0.4) ? Math.floor((rHash * 6) - 2) : 0;
+          var cAmt = (cHash < 0.4) ? Math.floor((cHash * 6) - 2) : 0;
+          if (CFG.wrapDir === 'h' || CFG.wrapDir === 'both') dx = rAmt * cw;
+          if (CFG.wrapDir === 'v' || CFG.wrapDir === 'both') dy = cAmt * ch;
+        }
+
+        // 源坐标（wrap）
+        var sx = ((c + 0.5) * cw + dx) % W;
+        if (sx < 0) sx += W;
+        var sy = ((r + 0.5) * ch + dy) % H;
+        if (sy < 0) sy += H;
+
+        // 目标
+        var tx = c * cw + gapPx * 0.5;
+        var ty = r * ch + gapPx * 0.5;
+        var tw = cw - gapPx;
+        var th = ch - gapPx;
+        if (tw <= 0 || th <= 0) continue;
+
+        // 从 tint 上取一块（wrap 采样：需要 4 段拼接以覆盖跨边界的情况）
+        // 简化：用 getImageData 直接读源像素块 → 绘制
+        // 但这里为了速度，我们用 drawImage 从 tint 上取样（跨边界时拆 2~4 块）
+        drawWrapped(tx, ty, tw, th, sx - cw / 2, sy - ch / 2, cw, ch);
+      }
+    }
+    ctx.restore();
+  }
+
+  // 从 tint 上取一块（源中心在 cx,cy，尺寸 sw,sh），跨边界时拆多块画到 (tx,ty,tw,th)
+  function drawWrapped(tx, ty, tw, th, cx, cy, sw, sh) {
+    // 归一化源矩形
+    var sx0 = cx, sy0 = cy;
+    var sx1 = cx + sw, sy1 = cy + sh;
+    var kx = tw / sw, ky = th / sh;
+
+    // 拆 x
+    var xs = splitRange(sx0, sx1, W);
+    var ys = splitRange(sy0, sy1, H);
+    for (var i = 0; i < xs.length; i++) {
+      for (var j = 0; j < ys.length; j++) {
+        var ax = xs[i], ay = ys[j];
+        // 目标
+        var ddx = (ax.s0 - sx0) / sw * tw;
+        var ddy = (ay.s0 - sy0) / sh * th;
+        var dw = (ax.s1 - ax.s0) / sw * tw;
+        var dh = (ay.s1 - ay.s0) / sh * th;
+        ctx.drawImage(tint, ax.w0, ay.w0, ax.len, ay.len, tx + ddx, ty + ddy, dw, dh);
+      }
+    }
+  }
+  // 把 [a,b] 段拆成不跨 [0,N) 边界的若干段，返回每段 {s0,s1,w0,len}
+  function splitRange(a, b, N) {
+    var segs = [];
+    var cur = a;
+    var guard = 0;
+    while (cur < b - 0.01 && guard++ < 8) {
+      var w = ((cur % N) + N) % N;
+      var remain = b - cur;
+      var avail = N - w;
+      var len = Math.min(remain, avail);
+      segs.push({ s0: cur, s1: cur + len, w0: w, len: len });
+      cur += len;
+    }
+    return segs;
+  }
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now; time += dt;
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.mode + '|' + CFG.density + '|' + CFG.amount + '|' + CFG.speed + '|' +
+              CFG.gap + '|' + CFG.wrapDir + '|' + CFG.driver + '|' +
+              CFG.colorA + '|' + CFG.colorB + '|' + CFG.gapColor + '|' + CFG.background;
+    if (dirty || key !== sig || CFG.speed > 0.001) {
+      drawFrame();
+      sig = key; dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  // ---------- UI ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    maskData = null; maskKey = ''; tintKey = ''; dirty = true;
+  });
+
+  var CONTENTS = ['AURORA', '瓦片', 'TILES', '推', '格', '⚡'];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    maskData = null; maskKey = ''; tintKey = ''; dirty = true;
+  });
+
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  document.getElementById('btn-custom').addEventListener('click', function () {
+    inp.value = CFG.text;
+    panel.classList.add('open'); backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  });
+
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    panel.classList.remove('open'); backdrop.classList.remove('open'); inp.blur();
+    maskData = null; maskKey = ''; tintKey = ''; dirty = true;
+  });
+
+  backdrop.addEventListener('click', function () {
+    panel.classList.remove('open'); backdrop.classList.remove('open'); inp.blur();
+  });
+
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('btn-ok').click();
+    }
+  });
+
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>玻璃 · 桌面微件</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    :root {
+      --primary: #4facfe;
+      --accent: #00f2fe;
+      --glass-border: rgba(255, 255, 255, 0.14);
+      --text: #eaf6ff;
+      --subtext: #91a4b8;
+      --widget-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, 'Segoe UI', 'Cascadia Code', monospace;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 10%, rgba(79, 172, 254, 0.45), transparent 28%),
+        radial-gradient(circle at 90% 20%, rgba(0, 242, 254, 0.35), transparent 32%),
+        linear-gradient(135deg, #050a18 0%, #081229 45%, #050c22 100%);
+      background-attachment: fixed;
+      touch-action: none;
+    }
+
+    /* 桌面容器 — 固定比例，类似 16:9 或 16:10，居中 */
+    .desktop {
+      position: relative;
+      width: min(100vw, 100vh * 1.6);
+      height: min(100vh, 100vw / 1.6);
+      max-width: 100vw;
+      max-height: 100vh;
+      margin: 0 auto;
+      overflow: hidden;
+      background: rgba(0, 4, 12, 0.15);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+    }
+
+    /* 微件容器 — 绝对定位，自由拖动 */
+    .widget-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .widget-item {
+      position: absolute;
+      padding: 10px 12px;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      box-shadow: var(--widget-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      cursor: grab;
+      pointer-events: auto;
+      transition: box-shadow 0.2s, border-color 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      overflow: hidden;
+      will-change: transform, left, top;
+      touch-action: none;
+      min-width: 90px;
+      min-height: 60px;
+    }
+
+    /* 手机端微件尺寸更小 */
+    @media (max-width: 640px) {
+      .widget-item {
+        padding: 8px 10px;
+        border-radius: 14px;
+        min-width: 80px;
+        min-height: 55px;
+        gap: 3px;
+      }
+      .widget-motto {
+        min-width: 120px;
+      }
+    }
+
+    .widget-item:active {
+      cursor: grabbing;
+    }
+
+    .widget-item.dragging {
+      opacity: 0.85;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+      border-color: rgba(79, 172, 254, 0.5);
+      z-index: 999;
+      transform: scale(1.02);
+      transition: none;
+    }
+
+    .widget-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--subtext);
+      letter-spacing: 0.2px;
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 640px) {
+      .widget-header {
+        font-size: 10px;
+      }
+    }
+
+    .widget-header .widget-title {
+      color: var(--text);
+      font-weight: 500;
+      font-size: 12px;
+      background: linear-gradient(135deg, #d6eaff, #a8d8ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    @media (max-width: 640px) {
+      .widget-header .widget-title {
+        font-size: 10px;
+      }
+    }
+
+    .widget-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .widget-actions button {
+      background: transparent;
+      border: none;
+      color: var(--subtext);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0 2px;
+      transition: 0.2s;
+      line-height: 1;
+      pointer-events: auto;
+    }
+
+    @media (max-width: 640px) {
+      .widget-actions button {
+        font-size: 11px;
+        padding: 0 1px;
+      }
+    }
+
+    .widget-actions button:hover {
+      color: #ff7b7b;
+      transform: scale(1.1);
+    }
+
+    .widget-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      font-size: 13px;
+      line-height: 1.4;
+      color: #d6eaff;
+      min-height: 30px;
+    }
+
+    @media (max-width: 640px) {
+      .widget-content {
+        font-size: 11px;
+        min-height: 24px;
+      }
+    }
+
+    .motto-text {
+      font-style: italic;
+      font-size: 15px;
+      background: linear-gradient(135deg, #d6eaff, #a8d8ff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 400;
+      letter-spacing: 0.2px;
+    }
+
+    @media (max-width: 640px) {
+      .motto-text {
+        font-size: 13px;
+      }
+    }
+
+    .clock-display {
+      font-size: 24px;
+      font-weight: 300;
+      letter-spacing: 1.5px;
+      font-feature-settings: "tnum";
+      line-height: 1.2;
+    }
+
+    @media (max-width: 640px) {
+      .clock-display {
+        font-size: 20px;
+        letter-spacing: 1px;
+      }
+    }
+
+    .date-display {
+      font-size: 12px;
+      color: var(--subtext);
+    }
+
+    @media (max-width: 640px) {
+      .date-display {
+        font-size: 10px;
+      }
+    }
+
+    .weather-temp {
+      font-size: 20px;
+      font-weight: 400;
+    }
+
+    @media (max-width: 640px) {
+      .weather-temp {
+        font-size: 17px;
+      }
+    }
+
+    .todo-list {
+      list-style: none;
+      padding: 0;
+      margin: 2px 0 0;
+      font-size: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .todo-list {
+        font-size: 10px;
+      }
+    }
+
+    .todo-list li {
+      padding: 1px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .todo-list li:last-child {
+      border-bottom: none;
+    }
+
+    .widget-motto {
+      min-width: 160px;
+    }
+
+    @media (max-width: 640px) {
+      .widget-motto {
+        min-width: 120px;
+      }
+    }
+
+    /* 任务栏 */
+    .taskbar {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: auto;
+      max-width: 92%;
+      background: rgba(0, 4, 12, 0.55);
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+      border: 1px solid var(--glass-border);
+      border-radius: 30px;
+      padding: 6px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      pointer-events: auto;
+      z-index: 1000;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+    }
+
+    @media (max-width: 640px) {
+      .taskbar {
+        padding: 4px 10px;
+        gap: 5px;
+        bottom: 6px;
+        border-radius: 24px;
+        max-width: 96%;
+      }
+    }
+
+    .taskbar select, .taskbar button {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 30px;
+      color: #eaf6ff;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-family: inherit;
+      backdrop-filter: blur(4px);
+      cursor: pointer;
+      transition: 0.2s;
+      height: 28px;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+      .taskbar select, .taskbar button {
+        font-size: 10px;
+        padding: 2px 8px;
+        height: 24px;
+      }
+    }
+
+    .taskbar select:hover, .taskbar button:hover {
+      background: rgba(79, 172, 254, 0.18);
+      border-color: rgba(79, 172, 254, 0.3);
+    }
+
+    .taskbar .btn-danger {
+      color: #ff7b7b;
+      border-color: rgba(255, 107, 107, 0.2);
+    }
+
+    .taskbar .btn-danger:hover {
+      background: rgba(255, 107, 107, 0.15);
+      border-color: #ff7b7b;
+    }
+
+    .taskbar .sep {
+      width: 1px;
+      height: 18px;
+      background: var(--glass-border);
+    }
+
+    @media (max-width: 640px) {
+      .taskbar .sep {
+        height: 14px;
+      }
+    }
+
+    .empty-hint {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--subtext);
+      opacity: 0.3;
+      font-size: 16px;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 640px) {
+      .empty-hint {
+        font-size: 13px;
+      }
+    }
+
+    /* 适配不同屏幕比例 */
+    @media (max-aspect-ratio: 16/9) {
+      .desktop {
+        width: 100vw;
+        height: calc(100vw / 1.6);
+        max-height: 100vh;
+      }
+    }
+
+    @media (max-aspect-ratio: 4/3) {
+      .desktop {
+        width: 100vw;
+        height: calc(100vw / 1.6);
+        max-height: 100vh;
+      }
+    }
+
+    /* 针对小屏手机进一步优化 */
+    @media (max-width: 480px) {
+      .widget-item {
+        padding: 6px 8px;
+        border-radius: 12px;
+        min-width: 70px;
+        min-height: 48px;
+        gap: 2px;
+      }
+      .widget-motto {
+        min-width: 100px;
+      }
+      .widget-header .widget-title {
+        font-size: 9px;
+      }
+      .widget-content {
+        font-size: 10px;
+        min-height: 20px;
+      }
+      .motto-text {
+        font-size: 11px;
+      }
+      .clock-display {
+        font-size: 17px;
+      }
+      .date-display {
+        font-size: 9px;
+      }
+      .weather-temp {
+        font-size: 15px;
+      }
+      .todo-list {
+        font-size: 9px;
+      }
+      .taskbar {
+        padding: 3px 8px;
+        gap: 4px;
+        bottom: 4px;
+        border-radius: 20px;
+      }
+      .taskbar select, .taskbar button {
+        font-size: 9px;
+        padding: 1px 6px;
+        height: 20px;
+      }
+      .taskbar .sep {
+        height: 12px;
+      }
+    }
+
+    @media (pointer: coarse) {
+      .widget-item {
+        cursor: default;
+      }
+      .widget-actions button {
+        padding: 2px 4px;
+        font-size: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="desktop" id="desktop">
+  <div class="widget-container" id="widgetContainer">
+    <div class="empty-hint" id="emptyHint">✦ 点击下方添加微件</div>
+  </div>
+
+  <div class="taskbar">
+    <select id="widgetSelector">
+      <option value="motto">📖 座右铭</option>
+      <option value="clock">🕒 时钟</option>
+      <option value="weather">🌤️ 天气</option>
+      <option value="calendar">📅 日历</option>
+      <option value="todo">📋 待办</option>
+    </select>
+    <button id="addWidgetBtn">＋ 添加</button>
+    <span class="sep"></span>
+    <button id="resetWidgetsBtn" class="btn-danger">⟲ 重置</button>
+    <span class="sep"></span>
+    <button id="clearWidgetsBtn" class="btn-danger" style="font-size:11px;">✕ 清除</button>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const MOTTO_API = 'https://api.btstu.cn/yan/api.php?charset=utf-8&encode=json';
+    const FALLBACK_MOTTOS = [
+      '生活明朗，万物可爱',
+      '凡心所向，素履以往',
+      '行而不辍，未来可期',
+      '心中有丘壑，眉目作山河',
+      '既见君子，云胡不喜'
+    ];
+
+    let widgets = [];
+    let nextId = 1;
+    let currentMotto = '加载中……';
+
+    const container = document.getElementById('widgetContainer');
+    const emptyHint = document.getElementById('emptyHint');
+    const widgetSelector = document.getElementById('widgetSelector');
+    const addBtn = document.getElementById('addWidgetBtn');
+    const resetBtn = document.getElementById('resetWidgetsBtn');
+    const clearBtn = document.getElementById('clearWidgetsBtn');
+
+    let desktopRect = { width: 0, height: 0 };
+
+    function updateDesktopRect() {
+      const desktop = document.getElementById('desktop');
+      const rect = desktop.getBoundingClientRect();
+      desktopRect.width = rect.width;
+      desktopRect.height = rect.height;
+    }
+
+    function generateId() { return nextId++; }
+
+    function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+
+    function getRandomPosition(type) {
+      const w = desktopRect.width || window.innerWidth;
+      const h = desktopRect.height || window.innerHeight;
+      let baseW = 130, baseH = 80;
+      if (type === 'motto') { baseW = 170; baseH = 70; }
+      else if (type === 'clock') { baseW = 140; baseH = 90; }
+      else if (type === 'weather') { baseW = 130; baseH = 80; }
+      else if (type === 'calendar') { baseW = 130; baseH = 80; }
+      else if (type === 'todo') { baseW = 150; baseH = 100; }
+
+      // 手机端更小
+      if (window.innerWidth < 640) {
+        baseW *= 0.8;
+        baseH *= 0.8;
+      }
+      if (window.innerWidth < 480) {
+        baseW *= 0.7;
+        baseH *= 0.7;
+      }
+
+      const pad = 15;
+      const maxX = Math.max(w - baseW - pad, pad);
+      const maxY = Math.max(h - baseH - pad, pad);
+      let x = pad + Math.random() * (maxX - pad);
+      let y = pad + Math.random() * (maxY - pad);
+      x = clamp(x, pad, w - baseW - pad);
+      y = clamp(y, pad, h - baseH - pad);
+      return { x, y };
+    }
+
+    async function fetchMotto() {
+      try {
+        const resp = await fetch(MOTTO_API);
+        if (!resp.ok) throw new Error('API error');
+        const data = await resp.json();
+        if (data && data.text) {
+          currentMotto = data.text;
+          return data.text;
+        } else throw new Error('invalid');
+      } catch (e) {
+        const fallback = FALLBACK_MOTTOS[Math.floor(Math.random() * FALLBACK_MOTTOS.length)];
+        currentMotto = fallback;
+        return fallback;
+      }
+    }
+
+    function renderWidget(widget) {
+      const div = document.createElement('div');
+      div.className = 'widget-item';
+      div.dataset.id = widget.id;
+      div.style.left = widget.x + 'px';
+      div.style.top = widget.y + 'px';
+      if (widget.type === 'motto') div.classList.add('widget-motto');
+
+      let contentHtml = '';
+      const type = widget.type;
+
+      if (type === 'motto') {
+        contentHtml = `<div class="motto-text">“ ${currentMotto} ”</div>`;
+      } else if (type === 'clock') {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
+        const dateStr = now.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+        contentHtml = `
+          <div class="clock-display">${timeStr}</div>
+          <div class="date-display">${dateStr}</div>
+        `;
+      } else if (type === 'weather') {
+        const temp = Math.round(18 + Math.random() * 10);
+        const condition = ['晴', '多云', '小雨', '阴'][Math.floor(Math.random() * 4)];
+        contentHtml = `
+          <div><span class="weather-temp">${temp}°C</span> · ${condition}</div>
+          <div style="font-size:10px; color:var(--subtext);">🌆 实时</div>
+        `;
+      } else if (type === 'calendar') {
+        const now = new Date();
+        const month = now.getMonth() + 1;
+        const day = now.getDate();
+        const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+        const wd = weekdays[now.getDay()];
+        contentHtml = `
+          <div style="font-size:18px; font-weight:300;">${month}月${day}日</div>
+          <div style="font-size:11px; color:var(--subtext);">星期${wd}</div>
+        `;
+      } else if (type === 'todo') {
+        const tasks = ['📌 项目报告', '📌 阅读', '📌 笔记'];
+        const listHtml = tasks.map(t => `<li>${t}</li>`).join('');
+        contentHtml = `
+          <ul class="todo-list">${listHtml}</ul>
+        `;
+      } else {
+        contentHtml = `<div>未知</div>`;
+      }
+
+      div.innerHTML = `
+        <div class="widget-header">
+          <span class="widget-title">${getWidgetLabel(type)}</span>
+          <div class="widget-actions">
+            <button class="remove-widget" data-id="${widget.id}" title="移除">✕</button>
+          </div>
+        </div>
+        <div class="widget-content">${contentHtml}</div>
+      `;
+
+      const removeBtn = div.querySelector('.remove-widget');
+      removeBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const id = parseInt(this.dataset.id);
+        removeWidget(id);
+      });
+
+      let isDragging = false;
+      let startX, startY, origX, origY;
+
+      function onPointerDown(e) {
+        e.preventDefault();
+        const touch = e.touches ? e.touches[0] : e;
+        isDragging = true;
+        div.classList.add('dragging');
+        const rect = div.getBoundingClientRect();
+        const desktop = document.getElementById('desktop');
+        const dRect = desktop.getBoundingClientRect();
+        startX = touch.clientX - dRect.left;
+        startY = touch.clientY - dRect.top;
+        origX = widget.x;
+        origY = widget.y;
+        if (e.pointerId !== undefined) div.setPointerCapture(e.pointerId);
+        div.style.zIndex = 999;
+      }
+
+      function onPointerMove(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const touch = e.touches ? e.touches[0] : e;
+        const desktop = document.getElementById('desktop');
+        const dRect = desktop.getBoundingClientRect();
+        const dx = (touch.clientX - dRect.left) - startX;
+        const dy = (touch.clientY - dRect.top) - startY;
+        let newX = origX + dx;
+        let newY = origY + dy;
+        const w = div.offsetWidth || 130;
+        const h = div.offsetHeight || 80;
+        const maxX = Math.max(desktopRect.width - w, 0);
+        const maxY = Math.max(desktopRect.height - h, 0);
+        newX = clamp(newX, 0, maxX);
+        newY = clamp(newY, 0, maxY);
+        div.style.left = newX + 'px';
+        div.style.top = newY + 'px';
+        widget.x = newX;
+        widget.y = newY;
+      }
+
+      function onPointerUp(e) {
+        if (isDragging) {
+          isDragging = false;
+          div.classList.remove('dragging');
+          div.style.zIndex = '';
+          if (e.pointerId !== undefined) div.releasePointerCapture(e.pointerId);
+        }
+      }
+
+      div.addEventListener('mousedown', onPointerDown);
+      document.addEventListener('mousemove', onPointerMove);
+      document.addEventListener('mouseup', onPointerUp);
+      div.addEventListener('touchstart', onPointerDown, { passive: false });
+      document.addEventListener('touchmove', onPointerMove, { passive: false });
+      document.addEventListener('touchend', onPointerUp, { passive: false });
+
+      div._cleanup = function() {
+        document.removeEventListener('mousemove', onPointerMove);
+        document.removeEventListener('mouseup', onPointerUp);
+        document.removeEventListener('touchmove', onPointerMove);
+        document.removeEventListener('touchend', onPointerUp);
+      };
+
+      return div;
+    }
+
+    function getWidgetLabel(type) {
+      const map = { motto: '📖 座右铭', clock: '🕒 时钟', weather: '🌤️ 天气', calendar: '📅 日历', todo: '📋 待办' };
+      return map[type] || type;
+    }
+
+    function renderAll() {
+      updateDesktopRect();
+      const children = container.children;
+      for (let i = children.length - 1; i >= 0; i--) {
+        if (children[i].id !== 'emptyHint') {
+          if (children[i]._cleanup) children[i]._cleanup();
+          children[i].remove();
+        }
+      }
+      if (widgets.length === 0) {
+        emptyHint.style.display = 'block';
+      } else {
+        emptyHint.style.display = 'none';
+        widgets.forEach(w => {
+          const el = renderWidget(w);
+          container.appendChild(el);
+        });
+      }
+    }
+
+    function addWidget(type) {
+      const pos = getRandomPosition(type);
+      const newWidget = { id: generateId(), type: type, x: pos.x, y: pos.y };
+      widgets.push(newWidget);
+      renderAll();
+    }
+
+    function removeWidget(id) {
+      const idx = widgets.findIndex(w => w.id === id);
+      if (idx !== -1) {
+        const children = container.children;
+        for (let i = 0; i < children.length; i++) {
+          if (children[i].dataset && parseInt(children[i].dataset.id) === id) {
+            if (children[i]._cleanup) children[i]._cleanup();
+            children[i].remove();
+            break;
+          }
+        }
+        widgets.splice(idx, 1);
+        renderAll();
+      }
+    }
+
+    function resetWidgets() {
+      widgets = [];
+      const types = ['motto', 'clock', 'weather', 'calendar'];
+      types.forEach(t => {
+        const pos = getRandomPosition(t);
+        widgets.push({ id: generateId(), type: t, x: pos.x, y: pos.y });
+      });
+      const pos = getRandomPosition('todo');
+      widgets.push({ id: generateId(), type: 'todo', x: pos.x, y: pos.y });
+      renderAll();
+      fetchMotto().then(m => {
+        currentMotto = m;
+        renderAll();
+      });
+    }
+
+    function clearAll() {
+      widgets = [];
+      renderAll();
+    }
+
+    setInterval(() => {
+      const hasClock = widgets.some(w => w.type === 'clock');
+      if (hasClock) renderAll();
+    }, 10000);
+
+    setInterval(async () => {
+      const motto = await fetchMotto();
+      currentMotto = motto;
+      const hasMotto = widgets.some(w => w.type === 'motto');
+      if (hasMotto) renderAll();
+    }, 120000);
+
+    async function init() {
+      updateDesktopRect();
+      await fetchMotto();
+      resetWidgets();
+
+      addBtn.addEventListener('click', function() {
+        const type = widgetSelector.value;
+        addWidget(type);
+      });
+
+      resetBtn.addEventListener('click', function() {
+        resetWidgets();
+      });
+
+      clearBtn.addEventListener('click', function() {
+        clearAll();
+      });
+
+      window.addEventListener('resize', () => {
+        updateDesktopRect();
+        widgets.forEach(w => {
+          const wEl = document.querySelector(`.widget-item[data-id="${w.id}"]`);
+          const ww = wEl ? wEl.offsetWidth : 130;
+          const wh = wEl ? wEl.offsetHeight : 80;
+          const maxX = Math.max(desktopRect.width - ww, 0);
+          const maxY = Math.max(desktopRect.height - wh, 0);
+          w.x = clamp(w.x, 0, maxX);
+          w.y = clamp(w.y, 0, maxY);
+        });
+        renderAll();
+      });
+    }
+
+    init();
+  })();
+</script>
+</body>
+</html>

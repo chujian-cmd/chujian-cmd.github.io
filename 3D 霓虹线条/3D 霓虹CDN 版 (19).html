@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>霓虹光绘 · VR 视差</title>
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; touch-action: none; }
+  #hint {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 34px);
+    transform: translateX(-50%);
+    color: rgba(120,255,255,.75);
+    font: 12px/1.6 -apple-system, "PingFang SC", sans-serif;
+    text-shadow: 0 0 12px rgba(0,255,255,.9);
+    pointer-events: none; z-index: 10;
+    letter-spacing: .1em; white-space: nowrap;
+    animation: hb 2.6s ease-in-out infinite;
+    transition: opacity .6s;
+    text-align: center;
+  }
+  @keyframes hb { 0%,100%{opacity:.35} 50%{opacity:1} }
+
+  #hud {
+    position: fixed; left: 8px; top: calc(env(safe-area-inset-top, 0px) + 8px);
+    z-index: 20;
+    color: #7fffd4;
+    font: 11px/1.45 ui-monospace, Menlo, Consolas, monospace;
+    text-shadow: 0 0 6px rgba(0,255,180,.8);
+    background: rgba(0,20,15,.55);
+    border: 1px solid rgba(0,255,180,.25);
+    border-radius: 6px;
+    padding: 6px 8px;
+    pointer-events: none;
+    white-space: pre;
+    max-width: 70vw;
+    max-height: 70vh;
+    overflow: hidden;
+  }
+  #hud .ok   { color: #80ff80; }
+  #hud .warn { color: #ff8080; }
+  #hud .dim  { color: #4a8a7a; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">滑动屏幕 · 或甩动手机 · 前后移动看视差</div>
+<div id="hud">初始化…</div>
+
+<script>
+window.__hudLog = [];
+window.addEventListener('error', function (ev) {
+  var msg = ev.message || String(ev.error || 'unknown error');
+  var src = ev.filename ? ('\n  @ ' + ev.filename + ':' + ev.lineno) : '';
+  window.__hudLog.push('❌ ' + msg + src);
+  var hud = document.getElementById('hud');
+  if (hud) hud.textContent = window.__hudLog.join('\n');
+});
+window.addEventListener('unhandledrejection', function (ev) {
+  window.__hudLog.push('❌ Promise: ' + (ev.reason && ev.reason.message ? ev.reason.message : String(ev.reason)));
+  var hud = document.getElementById('hud');
+  if (hud) hud.textContent = window.__hudLog.join('\n');
+});
+function hudSet(text) {
+  var hud = document.getElementById('hud');
+  if (hud) hud.textContent = text;
+}
+</script>
+
+<script src="./three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const hintEl = document.getElementById('hint');
+  const hudEl  = document.getElementById('hud');
+
+  function hideHint() {
+    if (!hintEl || hintEl.style.opacity === '0') return;
+    hintEl.style.animation = 'none';
+    hintEl.style.opacity = '0';
+  }
+
+  if (!window.THREE) {
+    hudSet('❌ THREE 未加载\n请把 three.min.js 放到同目录。');
+    if (hintEl) hintEl.textContent = 'three.min.js 未找到';
+    return;
+  }
+
+/* ========== 参数 ========== */
+
+const MAX_POINTS = 900;
+const POINT_LIFE = 8.0;
+const HOLD_RATIO = 0.5;
+const MIN_SEG    = 0.05;
+
+const VEL_DAMP   = 0.28;
+const MAX_SPEED  = 22;
+const BOUND_MIN  = 3.0;
+const BOUND_MAX  = 11.0;
+
+const CAM_SMOOTH = 0.10;
+
+const GLOW_W = 0.10;
+const CORE_W = 0.030;
+
+const WARP_MIN_DIST = 0.08;
+const WARP_BASE     = 0.18;
+const WARP_PER_UNIT = 0.045;
+const WARP_MAX      = 0.65;
+
+const MOTION_DEAD  = 1.6;
+const MOTION_GAIN  = 5.5;
+const GRAV_TAU     = 0.35;
+const MOTION_MAXDT = 0.05;
+
+// ── VR 视差参数（大幅加强） ──
+const VR_GAIN        = 2.5;
+const VR_VEL_DAMP    = 0.90;
+const VR_RETURN      = 0.4;
+const VR_MAX_OFFSET  = 6.0;
+const VR_DEADZONE    = 0.03;
+const VR_SMOOTH      = 0.10;
+
+  /* ========== 时钟 ========== */
+  const clock = new THREE.Clock();
+
+  /* ========== Three.js ========== */
+  const canvas = document.getElementById('c');
+
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: true,
+      powerPreference: 'high-performance'
+    });
+  } catch (err) {
+    hudSet('❌ WebGL 初始化失败\n' + err.message);
+    if (hintEl) hintEl.textContent = '当前设备不支持 WebGL';
+    return;
+  }
+
+  let pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setPixelRatio(pixelRatio);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x000000, 0.018);
+
+  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 300);
+  camera.position.set(0, 0, 0);
+
+  // VR 视差状态
+  let vrOffset = 0;
+  let vrVelocity = 0;
+  let vrOffsetSmooth = 0;
+
+  function onResize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  addEventListener('resize', onResize);
+  addEventListener('orientationchange', function () { setTimeout(onResize, 260); });
+
+  /* ========== 轨迹几何体 ========== */
+  const MAX_SEGS = MAX_POINTS - 1;
+  const VERTS_PER_SEG = 12;
+  const posArr = new Float32Array(MAX_SEGS * VERTS_PER_SEG * 3);
+  const colArr = new Float32Array(MAX_SEGS * VERTS_PER_SEG * 3);
+
+  const trailGeo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(posArr, 3);
+  const colAttr = new THREE.BufferAttribute(colArr, 3);
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  colAttr.setUsage(THREE.DynamicDrawUsage);
+  trailGeo.setAttribute('position', posAttr);
+  trailGeo.setAttribute('color', colAttr);
+  trailGeo.setDrawRange(0, 0);
+
+  const trailMesh = new THREE.Mesh(trailGeo, new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    fog: true
+  }));
+  trailMesh.frustumCulled = false;
+  trailMesh.renderOrder = 0;
+  scene.add(trailMesh);
+
+  /* ========== 光笔光标 ========== */
+  const glowCv = document.createElement('canvas');
+  glowCv.width = glowCv.height = 128;
+  {
+    const ctx = glowCv.getContext('2d');
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.25, 'rgba(255,255,255,.55)');
+    g.addColorStop(0.6, 'rgba(255,255,255,.12)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+  }
+  const penSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(glowCv),
+    blending: THREE.AdditiveBlending,
+    transparent: true, depthTest: false, depthWrite: false,
+    color: 0x66ffff
+  }));
+  penSprite.scale.set(1.2, 1.2, 1);
+  penSprite.renderOrder = 1;
+  scene.add(penSprite);
+
+  /* ========== 光笔状态 ========== */
+  const penPos  = new THREE.Vector3(0, 0, -6);
+  const penPrev = new THREE.Vector3(0, 0, -6);
+  const penVel  = new THREE.Vector3();
+  let hueCursor = 0.52;
+  const points = [];
+
+  /* ========== 落笔飞行 ========== */
+  let warpActive = false;
+  let warpTime = 0;
+  let warpDuration = 0.3;
+  const warpFrom = new THREE.Vector3();
+
+  /* ========== 相机朝向 ========== */
+  const targetQuat = new THREE.Quaternion();
+  const _euler = new THREE.Euler();
+  const _q1 = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
+  const _qz = new THREE.Quaternion();
+  const Z_AXIS = new THREE.Vector3(0, 0, 1);
+  let orientReady = false;
+
+  function screenAngle() {
+    if (screen.orientation && typeof screen.orientation.angle === 'number')
+      return screen.orientation.angle;
+    return window.orientation || 0;
+  }
+
+  function onOrientation(e) {
+    if (e.alpha == null && e.beta == null && e.gamma == null) return;
+
+    const a = THREE.MathUtils.degToRad(e.alpha || 0);
+    const b = THREE.MathUtils.degToRad(e.beta  || 0);
+    const g = THREE.MathUtils.degToRad(e.gamma || 0);
+    const s = THREE.MathUtils.degToRad(screenAngle());
+
+    _euler.set(b, a, -g, 'YXZ');
+    targetQuat.setFromEuler(_euler);
+    targetQuat.multiply(_q1);
+    targetQuat.multiply(_qz.setFromAxisAngle(Z_AXIS, -s));
+
+    if (!orientReady) {
+      camera.quaternion.copy(targetQuat);
+      orientReady = true;
+    }
+
+    hudState.alpha = e.alpha;
+    hudState.beta  = e.beta;
+    hudState.gamma = e.gamma;
+    hudState.orientCount++;
+  }
+
+  /* ========== 运动处理 ========== */
+  const gravity = { x: 0, y: 0, z: 0 };
+  let gravityReady = false;
+  let lastMotionTime = 0;
+  const _tmp = new THREE.Vector3();
+  const _linAcc = new THREE.Vector3();
+
+  const hudState = {
+    alpha: null, beta: null, gamma: null,
+    orientCount: 0,
+    motionCount: 0,
+    agx: 0, agy: 0, agz: 0,
+    lx: 0, ly: 0, lz: 0,
+    linCamZ: 0,
+    frontBackAcc: 0,
+    mag: 0,
+    sensorPerm: 'n/a',
+    sensorsBound: false,
+    motionActive: false
+  };
+  let lastMotionEventTime = 0;
+
+  function resetMotion() {
+    gravityReady = false;
+    lastMotionTime = 0;
+    vrVelocity = 0;
+  }
+
+  function onMotion(e) {
+    const ag = e.accelerationIncludingGravity;
+    if (!ag || ag.x == null || ag.y == null || ag.z == null) return;
+
+    hudState.motionCount++;
+    hudState.motionActive = true;
+    lastMotionEventTime = performance.now();
+
+    const now = performance.now();
+    let dt = lastMotionTime ? (now - lastMotionTime) / 1000 : 1 / 60;
+    lastMotionTime = now;
+    if (!(dt > 0.0005)) dt = 1 / 60;
+    if (dt > MOTION_MAXDT) dt = MOTION_MAXDT;
+
+    hudState.agx = ag.x; hudState.agy = ag.y; hudState.agz = ag.z;
+
+    if (!gravityReady) {
+      gravity.x = ag.x; gravity.y = ag.y; gravity.z = ag.z;
+      gravityReady = true;
+      return;
+    }
+
+    const a = 1 - Math.exp(-dt / GRAV_TAU);
+    gravity.x += (ag.x - gravity.x) * a;
+    gravity.y += (ag.y - gravity.y) * a;
+    gravity.z += (ag.z - gravity.z) * a;
+
+    const lx = ag.x - gravity.x;
+    const ly = ag.y - gravity.y;
+    const lz = ag.z - gravity.z;
+
+    hudState.lx = lx; hudState.ly = ly; hudState.lz = lz;
+
+    const mag = Math.sqrt(lx * lx + ly * ly + lz * lz);
+    hudState.mag = mag;
+
+    // 光笔摇动
+    if (mag > MOTION_DEAD) {
+      _tmp.set(lx, ly, -lz).applyQuaternion(camera.quaternion);
+      const k = ((mag - MOTION_DEAD) / mag) * MOTION_GAIN * dt;
+      penVel.addScaledVector(_tmp, k);
+      if (penVel.length() > MAX_SPEED * 1.6) penVel.setLength(MAX_SPEED * 1.6);
+      hideHint();
+    }
+
+    // VR 视差：设备坐标系下前后方向 ≈ z 轴
+    // 用加速度计的原始 z（去重力后）作为前后方向信号，避免坐标系变换引入误差
+    // 用户把手机往后拉 → 设备沿自身 z 轴负方向加速（屏幕朝前时）
+    // 我们直接用 lz 作为前后信号（不需要旋转到相机坐标系）
+    let frontBackAcc = lz;
+    hudState.linCamZ = lz;
+
+    if (Math.abs(frontBackAcc) > VR_DEADZONE) {
+      const sign = frontBackAcc > 0 ? 1 : -1;
+      frontBackAcc = sign * (Math.abs(frontBackAcc) - VR_DEADZONE);
+      hudState.frontBackAcc = frontBackAcc;
+
+      vrVelocity += frontBackAcc * VR_GAIN * dt;
+      if (vrVelocity > 8) vrVelocity = 8;
+      if (vrVelocity < -8) vrVelocity = -8;
+      hideHint();
+    } else {
+      hudState.frontBackAcc = 0;
+    }
+  }
+
+  /* ========== 权限 & 监听器绑定 ========== */
+  let sensorsBound = false;
+  let requesting = false;
+  let permissionState = 'unknown';
+
+  function needsPermission() {
+    const doNeed = typeof DeviceOrientationEvent !== 'undefined' &&
+                   typeof DeviceOrientationEvent.requestPermission === 'function';
+    const dmNeed = typeof DeviceMotionEvent !== 'undefined' &&
+                   typeof DeviceMotionEvent.requestPermission === 'function';
+    return doNeed || dmNeed;
+  }
+
+  function bindSensors() {
+    if (sensorsBound) return;
+    sensorsBound = true;
+    hudState.sensorsBound = true;
+    window.addEventListener('deviceorientation', onOrientation, { passive: true });
+    window.addEventListener('devicemotion', onMotion, { passive: true });
+  }
+
+  function requestAndBind() {
+    if (sensorsBound || requesting) return;
+    if (!needsPermission()) { bindSensors(); return; }
+    if (permissionState === 'denied') return;
+
+    requesting = true;
+    hudState.sensorPerm = '请求中…';
+
+    const steps = [];
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      steps.push(function () {
+        return DeviceOrientationEvent.requestPermission().catch(function () { return 'denied'; });
+      });
+    }
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      steps.push(function () {
+        return DeviceMotionEvent.requestPermission().catch(function () { return 'denied'; });
+      });
+    }
+
+    let granted = false;
+    let chain = Promise.resolve();
+    steps.forEach(function (step) {
+      chain = chain.then(function () {
+        return step().then(function (res) { if (res === 'granted') granted = true; });
+      });
+    });
+
+    chain.then(function () {
+      requesting = false;
+      if (granted) {
+        permissionState = 'granted';
+        hudState.sensorPerm = 'granted';
+        bindSensors();
+      } else {
+        permissionState = 'denied';
+        hudState.sensorPerm = 'denied';
+      }
+    }, function () {
+      requesting = false;
+      permissionState = 'denied';
+      hudState.sensorPerm = 'denied';
+    });
+  }
+
+  if (!needsPermission()) {
+    hudState.sensorPerm = '无需授权';
+    bindSensors();
+  } else {
+    hudState.sensorPerm = '需点击授权';
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    resetMotion();
+    clock.getDelta();
+  });
+
+  /* ========== 指针绘制 ========== */
+  let activePointerId = null;
+  let touching = false;
+  let hasTouchTarget = false;
+  let touchNX = 0, touchNY = 0;
+  const touchTarget = new THREE.Vector3(0, 0, -7);
+  const TOUCH_DIST = 7;
+
+  function refreshTouchTarget() {
+    if (!hasTouchTarget) return;
+    const halfH = TOUCH_DIST * Math.tan((camera.fov * Math.PI / 180) / 2);
+    const halfW = halfH * camera.aspect;
+    touchTarget.set(touchNX * halfW, touchNY * halfH, -TOUCH_DIST)
+               .applyQuaternion(camera.quaternion)
+               .add(camera.position);
+  }
+
+  canvas.addEventListener('pointerdown', function (e) {
+    requestAndBind();
+    hideHint();
+
+    if (activePointerId !== null) return;
+
+    activePointerId = e.pointerId;
+    touching = true;
+    hasTouchTarget = true;
+
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+
+    touchNX = (e.clientX / innerWidth)  * 2 - 1;
+    touchNY = -(e.clientY / innerHeight) * 2 + 1;
+    refreshTouchTarget();
+
+    const dx = touchTarget.x - penPos.x;
+    const dy = touchTarget.y - penPos.y;
+    const dz = touchTarget.z - penPos.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    if (dist > WARP_MIN_DIST) {
+      warpFrom.copy(penPos);
+      warpTime = 0;
+      warpDuration = Math.min(WARP_MAX, WARP_BASE + dist * WARP_PER_UNIT);
+      warpActive = true;
+    } else {
+      warpActive = false;
+    }
+
+    penVel.set(0, 0, 0);
+    e.preventDefault();
+  }, { passive: false });
+
+  canvas.addEventListener('pointermove', function (e) {
+    if (e.pointerId !== activePointerId) return;
+    touchNX = (e.clientX / innerWidth)  * 2 - 1;
+    touchNY = -(e.clientY / innerHeight) * 2 + 1;
+    hasTouchTarget = true;
+    e.preventDefault();
+  }, { passive: false });
+
+  function endPointer(e) {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    touching = false;
+    warpActive = false;
+    hasTouchTarget = false;
+    penVel.set(0, 0, 0);
+    try { canvas.releasePointerCapture(e.pointerId); } catch (err) {}
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('lostpointercapture', endPointer);
+
+  /* ========== 光笔物理 ========== */
+  function updatePen(dt) {
+    if (touching) refreshTouchTarget();
+
+    if (warpActive) {
+      penPrev.copy(penPos);
+      warpTime += dt;
+      const u = Math.min(warpTime / warpDuration, 1);
+      const e = 1 - Math.pow(1 - u, 3);
+      penPos.lerpVectors(warpFrom, touchTarget, e);
+
+      penVel.subVectors(penPos, penPrev).divideScalar(Math.max(dt, 1e-4));
+      const sp = penVel.length();
+      if (sp > MAX_SPEED) penVel.setLength(MAX_SPEED);
+
+      if (u >= 1) warpActive = false;
+      return;
+    }
+
+    if (touching) {
+      penPrev.copy(penPos);
+      const k = 1 - Math.exp(-dt * 45);
+      penPos.lerp(touchTarget, k);
+      penVel.subVectors(penPos, penPrev).divideScalar(Math.max(dt, 1e-4));
+      const sp = penVel.length();
+      if (sp > MAX_SPEED) penVel.setLength(MAX_SPEED);
+      return;
+    }
+
+    penVel.multiplyScalar(Math.pow(VEL_DAMP, dt));
+    const sp = penVel.length();
+    if (sp > MAX_SPEED) penVel.setLength(MAX_SPEED);
+
+    penPos.addScaledVector(penVel, dt);
+
+    const r = penPos.length();
+    if (r < 1e-4) return;
+    if (r > BOUND_MAX) {
+      const pull = (r - BOUND_MAX) * dt * 2.0;
+      penPos.multiplyScalar(1 - Math.min(pull / r, 0.5));
+    } else if (r < BOUND_MIN) {
+      const push = (BOUND_MIN - r) * dt * 2.0;
+      penPos.multiplyScalar(1 + Math.min(push / r, 0.5));
+    }
+  }
+
+  /* ========== 轨迹采样 ========== */
+  function updateTrail(dt) {
+    for (let i = 0; i < points.length; i++) points[i].age += dt;
+
+    let drop = 0;
+    while (drop < points.length && points[drop].age >= POINT_LIFE) drop++;
+    if (drop) points.splice(0, drop);
+
+    let add = false;
+    const last = points.length ? points[points.length - 1] : null;
+
+    if (!last) {
+      add = true;
+    } else {
+      const dx = penPos.x - last.x;
+      const dy = penPos.y - last.y;
+      const dz = penPos.z - last.z;
+      if (dx * dx + dy * dy + dz * dz > MIN_SEG * MIN_SEG) add = true;
+    }
+
+    if (add) {
+      hueCursor = (hueCursor + 0.008) % 1;
+      points.push({
+        x: penPos.x, y: penPos.y, z: penPos.z,
+        age: 0,
+        hue: hueCursor
+      });
+    }
+
+    if (points.length > MAX_POINTS) {
+      points.splice(0, points.length - MAX_POINTS);
+    }
+  }
+
+  /* ========== 淡出曲线 ========== */
+  function fadeAt(age) {
+    const u = age / POINT_LIFE;
+    if (u >= 1) return 0;
+    if (u <= HOLD_RATIO) return 1;
+    const t = (u - HOLD_RATIO) / (1 - HOLD_RATIO);
+    const s = 1 - t;
+    return s * s * (3 - 2 * s);
+  }
+
+  /* ========== 构建轨迹网格 ========== */
+  let vi = 0;
+  const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+  const _mid = new THREE.Vector3();
+  const _dir = new THREE.Vector3();
+  const _viewDir = new THREE.Vector3();
+  const _side = new THREE.Vector3();
+  const _ref = new THREE.Vector3();
+  const _cA = new THREE.Color(), _cB = new THREE.Color();
+
+  const GLOW_GAIN = 0.42;
+  const CORE_MIX  = 0.55;
+
+  function pushVert(px, py, pz, r, g, b) {
+    const o = vi * 3;
+    posArr[o] = px; posArr[o + 1] = py; posArr[o + 2] = pz;
+    colArr[o] = r;  colArr[o + 1] = g;  colArr[o + 2] = b;
+    vi++;
+  }
+
+  function pushQuad(x1, y1, z1, x2, y2, z2,
+                    sx, sy, sz,
+                    ar, ag, ab, br, bg, bb) {
+    pushVert(x1 - sx, y1 - sy, z1 - sz, ar, ag, ab);
+    pushVert(x2 - sx, y2 - sy, z2 - sz, br, bg, bb);
+    pushVert(x2 + sx, y2 + sy, z2 + sz, br, bg, bb);
+
+    pushVert(x1 - sx, y1 - sy, z1 - sz, ar, ag, ab);
+    pushVert(x2 + sx, y2 + sy, z2 + sz, br, bg, bb);
+    pushVert(x1 + sx, y1 + sy, z1 + sz, ar, ag, ab);
+  }
+
+  function buildTrail() {
+    vi = 0;
+    const n = points.length;
+    if (n < 2) {
+      trailGeo.setDrawRange(0, 0);
+      return;
+    }
+
+    for (let i = 0; i < n - 1; i++) {
+      const a = points[i], b = points[i + 1];
+
+      const fa = fadeAt(a.age);
+      const fb = fadeAt(b.age);
+      if (fa < 0.004 && fb < 0.004) continue;
+
+      _v1.set(a.x, a.y, a.z);
+      _v2.set(b.x, b.y, b.z);
+      _dir.subVectors(_v2, _v1);
+      const len = _dir.length();
+      if (len < 1e-6) continue;
+      _dir.multiplyScalar(1 / len);
+
+      _mid.addVectors(_v1, _v2).multiplyScalar(0.5);
+      _viewDir.copy(_mid).sub(camera.position);
+      const mLen = _viewDir.length();
+      if (mLen < 1e-6) _viewDir.set(0, 0, 1);
+      else _viewDir.multiplyScalar(1 / mLen);
+
+      _side.crossVectors(_dir, _viewDir);
+      if (_side.lengthSq() < 1e-6) {
+        if (Math.abs(_dir.y) < 0.9) _ref.set(0, 1, 0);
+        else _ref.set(1, 0, 0);
+        _side.crossVectors(_ref, _dir);
+      }
+      _side.normalize();
+
+      _cA.setHSL(a.hue, 1.0, 0.5);
+      _cB.setHSL(b.hue, 1.0, 0.5);
+
+      const x1 = _v1.x, y1 = _v1.y, z1 = _v1.z;
+      const x2 = _v2.x, y2 = _v2.y, z2 = _v2.z;
+
+      const gsx = _side.x * GLOW_W, gsy = _side.y * GLOW_W, gsz = _side.z * GLOW_W;
+      const csx = _side.x * CORE_W, csy = _side.y * CORE_W, csz = _side.z * CORE_W;
+
+      const ar = _cA.r * GLOW_GAIN * fa;
+      const ag = _cA.g * GLOW_GAIN * fa;
+      const ab = _cA.b * GLOW_GAIN * fa;
+      const br = _cB.r * GLOW_GAIN * fb;
+      const bg = _cB.g * GLOW_GAIN * fb;
+      const bb = _cB.b * GLOW_GAIN * fb;
+
+      pushQuad(x1, y1, z1, x2, y2, z2, gsx, gsy, gsz, ar, ag, ab, br, bg, bb);
+
+      const cr = (_cA.r * CORE_MIX + (1 - CORE_MIX)) * fa;
+      const cg = (_cA.g * CORE_MIX + (1 - CORE_MIX)) * fa;
+      const cb = (_cA.b * CORE_MIX + (1 - CORE_MIX)) * fa;
+      const dr = (_cB.r * CORE_MIX + (1 - CORE_MIX)) * fb;
+      const dg = (_cB.g * CORE_MIX + (1 - CORE_MIX)) * fb;
+      const db = (_cB.b * CORE_MIX + (1 - CORE_MIX)) * fb;
+
+      pushQuad(x1, y1, z1, x2, y2, z2, csx, csy, csz, cr, cg, cb, dr, dg, db);
+    }
+
+    trailGeo.setDrawRange(0, vi);
+    if (vi > 0) {
+      posAttr.updateRange.offset = 0;
+      posAttr.updateRange.count = vi * 3;
+      colAttr.updateRange.offset = 0;
+      colAttr.updateRange.count = vi * 3;
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+    }
+  }
+
+  /* ========== 主循环 ========== */
+  let frameAccum = 0, frameCount = 0, qualityLocked = false;
+
+  function adaptQuality(dt) {
+    if (qualityLocked || pixelRatio <= 1) return;
+    frameAccum += dt;
+    frameCount++;
+    if (frameCount < 90) return;
+
+    const avg = frameAccum / frameCount;
+    frameAccum = 0;
+    frameCount = 0;
+
+    if (avg > 0.023) {
+      pixelRatio = Math.max(1, pixelRatio * 0.75);
+      renderer.setPixelRatio(pixelRatio);
+      renderer.setSize(innerWidth, innerHeight);
+      if (pixelRatio <= 1.001) qualityLocked = true;
+    }
+  }
+
+  let hudLastUpdate = 0;
+  let fpsFrames = 0, fpsTime = 0, fpsVal = 0;
+
+  function updateHUD(dt) {
+    fpsFrames++;
+    fpsTime += dt;
+    if (fpsTime >= 0.5) {
+      fpsVal = (fpsFrames / fpsTime).toFixed(0);
+      fpsFrames = 0;
+      fpsTime = 0;
+    }
+
+    hudLastUpdate += dt;
+    if (hudLastUpdate < 0.1) return;
+    hudLastUpdate = 0;
+
+    const now = performance.now();
+    const motAgo = lastMotionEventTime
+      ? ((now - lastMotionEventTime) / 1000).toFixed(1) + 's'
+      : '无';
+
+    const permClass = hudState.sensorsBound ? 'ok'
+                    : (hudState.sensorPerm === 'denied' ? 'warn' : '');
+    const orientClass = hudState.orientCount > 0 ? 'ok' : 'warn';
+    const motionClass = hudState.motionCount > 0 ? 'ok' : 'warn';
+
+    const html =
+      '<span class="dim">FPS</span>       ' + fpsVal + '\n' +
+      '<span class="dim">── 权限 ──</span>\n' +
+      '<span class="dim">sensor</span>    <span class="' + permClass + '">' + hudState.sensorPerm + '</span>\n' +
+      '<span class="dim">bound</span>     ' + (hudState.sensorsBound ? 'yes' : 'no') + '\n' +
+      '<span class="dim">── 朝向 ──</span>\n' +
+      '<span class="dim">α β γ</span>     ' +
+        (hudState.alpha != null ? hudState.alpha.toFixed(0) : '--') + ' / ' +
+        (hudState.beta  != null ? hudState.beta.toFixed(0)  : '--') + ' / ' +
+        (hudState.gamma != null ? hudState.gamma.toFixed(0) : '--') + '\n' +
+      '<span class="dim">count</span>     <span class="' + orientClass + '">' + hudState.orientCount + '</span>\n' +
+      '<span class="dim">── 运动 ──</span>\n' +
+      '<span class="dim">count</span>     <span class="' + motionClass + '">' + hudState.motionCount + '</span>  (最近 ' + motAgo + ')\n' +
+      '<span class="dim">acc</span>       ' + hudState.agx.toFixed(1) + ' / ' + hudState.agy.toFixed(1) + ' / ' + hudState.agz.toFixed(1) + '\n' +
+      '<span class="dim">lin |a|</span>   ' + hudState.mag.toFixed(2) + '\n' +
+      '<span class="dim">lz</span>        ' + hudState.linCamZ.toFixed(3) + '  ← 前后信号\n' +
+      '<span class="dim">fbAcc</span>     ' + hudState.frontBackAcc.toFixed(3) + '\n' +
+      '<span class="dim">── 视差 ──</span>\n' +
+      '<span class="dim">vrVel</span>     ' + vrVelocity.toFixed(3) + '\n' +
+      '<span class="dim">vrOffset</span>  ' + vrOffset.toFixed(3) + '\n' +
+      '<span class="dim">smooth</span>    ' + vrOffsetSmooth.toFixed(3) + '\n' +
+      '<span class="dim">camZ</span>      ' + camera.position.z.toFixed(3);
+
+    hudEl.innerHTML = html;
+  }
+
+  function loop() {
+    requestAnimationFrame(loop);
+
+    const dt = Math.min(clock.getDelta(), 0.05);
+
+    if (orientReady) {
+      const k = 1 - Math.pow(0.5, dt / CAM_SMOOTH);
+      camera.quaternion.slerp(targetQuat, k);
+    }
+
+    // VR 视差更新
+    vrVelocity *= Math.pow(VR_VEL_DAMP, dt);
+    vrOffset += vrVelocity * dt;
+    vrOffset -= vrOffset * Math.min(VR_RETURN * dt, 1);
+    if (vrOffset > VR_MAX_OFFSET)  vrOffset = VR_MAX_OFFSET;
+    if (vrOffset < -VR_MAX_OFFSET) vrOffset = -VR_MAX_OFFSET;
+
+    const smoothK = 1 - Math.exp(-dt / VR_SMOOTH);
+    vrOffsetSmooth += (vrOffset - vrOffsetSmooth) * smoothK;
+
+    // ★ 关键：视差直接作用于相机的世界 Z 轴位置
+    //   不用相机局部方向，避免相机旋转时方向歪掉
+    //   这样前后移动始终是"画面纵深"方向，视差最明显
+    camera.position.set(0, 0, vrOffsetSmooth);
+
+    updatePen(dt);
+    updateTrail(dt);
+    buildTrail();
+
+    penSprite.position.copy(penPos);
+    const sp = penVel.length();
+    const sz = 1.0 + Math.min(sp * 0.1, 1.0);
+    penSprite.scale.set(sz, sz, 1);
+    penSprite.material.color.setHSL(hueCursor, 1, 0.65);
+
+    renderer.render(scene, camera);
+    adaptQuality(dt);
+    updateHUD(dt);
+  }
+
+  hudSet('✓ 已初始化，等待传感器…');
+  loop();
+
+})();
+</script>
+</body>
+</html>

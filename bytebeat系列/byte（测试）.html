@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>bytebeat 测试</title></head>
+<body>
+  <textarea id="code" rows="3" cols="40">t*(((t>>12)|(t>>8))&(63&(t>>4)))</textarea>
+  <button id="play">▶ 播放</button>
+  <button id="stop">⏹ 停止</button>
+  <script>
+    let ctx, src, buf;
+    const playBtn = document.getElementById('play');
+    const stopBtn = document.getElementById('stop');
+    const codeEl = document.getElementById('code');
+
+    function compile(code) {
+      return new Function('t', `"use strict"; return (${code}) | 0;`);
+    }
+
+    playBtn.onclick = async () => {
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      await ctx.resume();
+
+      const fn = compile(codeEl.value);
+      const len = ctx.sampleRate * 4;  // 4秒
+      const samples = new Int8Array(len);
+      for (let i = 0; i < len; i++) samples[i] = fn(i);
+
+      buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      buf.copyToChannel(new Float32Array(samples.map(v => v / 128)), 0);
+
+      if (src) src.stop();
+      src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start();
+      playBtn.textContent = '⏸ 播放中';
+      src.onended = () => playBtn.textContent = '▶ 播放';
+    };
+
+    stopBtn.onclick = () => {
+      if (src) { src.stop(); src = null; }
+      playBtn.textContent = '▶ 播放';
+    };
+  </script>
+</body>
+</html>

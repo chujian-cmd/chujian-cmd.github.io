@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>AR双手滤镜</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;user-select:none}
+body{background:#0b0b0b;overflow:hidden;font-family:system-ui,sans-serif;height:100vh;width:100vw;position:relative}
+#video-container{position:absolute;top:0;left:0;width:100%;height:100%;background:#1a1a1a;overflow:hidden}
+video{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);min-width:100%;min-height:100%;object-fit:cover;background:#222}
+#output-canvas{position:absolute;top:0;left:0;width:100%;height:100%;display:block;pointer-events:none;z-index:10}
+#controls{position:absolute;bottom:32px;left:0;width:100%;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:12px 20px;padding:12px 20px;background:rgba(10,10,10,0.55);backdrop-filter:blur(4px);border-top:1px solid rgba(255,255,255,0.08);z-index:30;transition:opacity .5s ease,transform .5s ease;pointer-events:auto}
+#controls.hidden{opacity:0;transform:translateY(20px);pointer-events:none}
+#controls button{background:rgba(30,30,30,0.7);border:1px solid rgba(255,255,255,0.15);color:#f0f0f0;padding:8px 18px;border-radius:30px;font-size:.9rem;cursor:pointer;transition:all .2s ease;min-width:70px;font-family:inherit}
+#controls button:hover{background:rgba(70,70,70,0.8);border-color:rgba(255,255,255,0.4);transform:scale(1.02)}
+#controls label{color:#ccc;font-size:.85rem;display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.3);padding:4px 12px 4px 16px;border-radius:40px}
+#controls input[type=range]{width:90px;height:4px;-webkit-appearance:none;background:#555;border-radius:10px;outline:none}
+#controls input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#e0e0e0;cursor:pointer}
+#status-tip{position:absolute;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);backdrop-filter:blur(8px);padding:12px 28px;border-radius:60px;color:#eee;font-size:.95rem;z-index:40;border:1px solid rgba(255,255,255,0.08);pointer-events:none;display:flex;align-items:center;gap:14px;transition:opacity .4s ease}
+#status-tip.hidden{opacity:0}
+#progress-bar-container{width:120px;height:4px;background:#2a2a2a;border-radius:4px;overflow:hidden;display:inline-block}
+#progress-fill{height:100%;width:0%;background:linear-gradient(90deg,#6a8cff,#b388ff);border-radius:4px;transition:width .2s ease}
+#progress-text{font-size:.8rem;color:#aaa;min-width:36px;text-align:right}
+#error-detail{position:absolute;bottom:100px;left:50%;transform:translateX(-50%);background:rgba(200,40,40,0.85);backdrop-filter:blur(6px);padding:12px 24px;border-radius:40px;color:#fff;font-size:.9rem;z-index:50;display:none;text-align:center;max-width:80%}
+@media(max-width:600px){#controls button{font-size:.75rem;padding:6px 12px;min-width:60px}#controls label{font-size:.7rem;padding:2px 8px}#status-tip{font-size:.8rem;padding:8px 16px;gap:8px}#progress-bar-container{width:80px}}
+</style>
+</head>
+<body>
+<div id="video-container"><video id="video" playsinline></video></div>
+<canvas id="output-canvas"></canvas>
+<div id="status-tip"><span id="status-message">加载模型中...</span><div id="progress-bar-container"><div id="progress-fill" style="width:0%"></div></div><span id="progress-text">0%</span></div>
+<div id="error-detail"></div>
+<div id="controls">
+<button id="btn-start">启动摄像头</button>
+<button id="btn-demo">演示模式</button>
+<button id="btn-reset">重置</button>
+<label>跟手平滑度 <input type="range" id="smoothness" min="0.1" max="0.9" step="0.05" value="0.6"></label>
+</div>
+<script type="importmap">
+{"imports":{"@mediapipe/tasks-vision":"./node_modules/@mediapipe/tasks-vision/wasm/vision_bundle.js"}}
+</script>
+<script type="module">
+import{HandLandmarker,ImageSegmenter,FilesetResolver}from"@mediapipe/tasks-vision";
+const video=document.getElementById("video");
+const canvas=document.getElementById("output-canvas");
+const ctx=canvas.getContext("2d");
+const statusTip=document.getElementById("status-tip");
+const statusMsg=document.getElementById("status-message");
+const progressFill=document.getElementById("progress-fill");
+const progressText=document.getElementById("progress-text");
+const errorDetail=document.getElementById("error-detail");
+const controls=document.getElementById("controls");
+const btnStart=document.getElementById("btn-start");
+const btnDemo=document.getElementById("btn-demo");
+const btnReset=document.getElementById("btn-reset");
+const smoothnessInput=document.getElementById("smoothness");
+let handLandmarker=null,imageSegmenter=null,isRunning=false,isDemoMode=false,lastVideoTime=-1,results=null,animationId=null;
+let smoothedLandmarks={left:null,right:null};
+const TIP={THUMB:4,INDEX:8,MIDDLE:12,PINKY:20};
+function showError(m){errorDetail.textContent="错误: "+m;errorDetail.style.display="block";setTimeout(()=>{errorDetail.style.display="none"},8e3)}
+function updateProgress(p,m){const c=Math.min(100,Math.max(0,p));progressFill.style.width=c+"%";progressText.textContent=Math.round(c)+"%";if(m)statusMsg.textContent=m}
+function hideStatus(){statusTip.classList.add("hidden")}
+function showStatus(m){statusTip.classList.remove("hidden");statusMsg.textContent=m}
+function smoothPoints(p,c,f){if(!p)return c.map(p=>({x:p.x,y:p.y,z:p.z||0}));return c.map((p,i)=>{if(!p[i])return{x:p.x,y:p.y,z:p.z||0};return{x:p[i].x+f*(p.x-p[i].x),y:p[i].y+f*(p.y-p[i].y),z:(p[i].z||0)+f*((p.z||0)-(p[i].z||0))}})}
+function sortHandsByPosition(h){if(!h||h.length<2)return h;return[...h].sort((a,b)=>{const ax=a.landmarks.reduce((s,p)=>s+p.x,0)/a.landmarks.length;const bx=b.landmarks.reduce((s,p)=>s+p.x,0)/b.landmarks.length;return ax-bx})}
+function drawFilterQuad(ctx,pts,color){if(pts.length!==4)return;const w=canvas.width,h=canvas.height;ctx.save();ctx.beginPath();ctx.moveTo(pts[0].x*w,pts[0].y*h);for(let i=1;i<4;i++)ctx.lineTo(pts[i].x*w,pts[i].y*h);ctx.closePath();ctx.clip();ctx.fillStyle=color;ctx.fillRect(0,0,w,h);const sp=15;for(let y=0;y<h;y+=sp){for(let x=0;x<w;x+=sp){const b=0.3+0.7*Math.sin(x*0.04+y*0.03+Date.now()*0.0005);const r=1+b*2.5;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle="rgba(255,255,255,"+(0.1+b*0.15)+")";ctx.fill()}}ctx.restore();ctx.save();ctx.beginPath();ctx.moveTo(pts[0].x*w,pts[0].y*h);for(let i=1;i<4;i++)ctx.lineTo(pts[i].x*w,pts[i].y*h);ctx.closePath();ctx.strokeStyle="rgba(255,255,255,0.2)";ctx.lineWidth=2;ctx.stroke();ctx.restore()}
+function renderFilters(h){if(!h||h.length<2)return;const l=h[0],r=h[1];const g=(h,i)=>h.landmarks[i]||h.landmarks[0];drawFilterQuad(ctx,[g(l,TIP.THUMB),g(l,TIP.INDEX),g(r,TIP.INDEX),g(r,TIP.THUMB)],"rgba(200,50,50,0.5)");drawFilterQuad(ctx,[g(l,TIP.INDEX),g(l,TIP.MIDDLE),g(r,TIP.MIDDLE),g(r,TIP.INDEX)],"rgba(40,90,180,0.5)");drawFilterQuad(ctx,[g(l,TIP.MIDDLE),g(l,TIP.PINKY),g(r,TIP.PINKY),g(r,TIP.MIDDLE)],"rgba(50,140,70,0.5)")}
+function drawFrame(){if(!isRunning)return;ctx.clearRect(0,0,canvas.width,canvas.height);if(video.readyState>=2&&!isDemoMode)ctx.drawImage(video,0,0,canvas.width,canvas.height);if(results&&results.landmarks&&results.landmarks.length>=2&&!isDemoMode){const s=sortHandsByPosition(results);const f=parseFloat(smoothnessInput.value)||0.6;if(!smoothedLandmarks.left||!smoothedLandmarks.right){smoothedLandmarks.left=s[0].landmarks.map(p=>({x:p.x,y:p.y,z:p.z||0}));smoothedLandmarks.right=s[1].landmarks.map(p=>({x:p.x,y:p.y,z:p.z||0}))}else{smoothedLandmarks.left=smoothPoints(smoothedLandmarks.left,s[0].landmarks,f);smoothedLandmarks.right=smoothPoints(smoothedLandmarks.right,s[1].landmarks,f)}renderFilters([{landmarks:smoothedLandmarks.left},{landmarks:smoothedLandmarks.right}])}else if(isDemoMode){const w=canvas.width,h=canvas.height,cx=w/2,cy=h/2,sz=130;drawFilterQuad(ctx,[{x:(cx-sz)/w,y:(cy-sz)/h},{x:cx/w,y:(cy-sz)/h},{x:cx/w,y:cy/h},{x:(cx-sz)/w,y:cy/h}],"rgba(200,60,60,0.6)");drawFilterQuad(ctx,[{x:cx/w,y:(cy-sz)/h},{x:(cx+sz)/w,y:(cy-sz)/h},{x:(cx+sz)/w,y:cy/h},{x:cx/w,y:cy/h}],"rgba(40,100,200,0.6)");drawFilterQuad(ctx,[{x:(cx-sz)/w,y:cy/h},{x:cx/w,y:cy/h},{x:cx/w,y:(cy+sz)/h},{x:(cx-sz)/w,y:(cy+sz)/h}],"rgba(60,160,80,0.6)")}animationId=requestAnimationFrame(drawFrame)}
+async function predictLoop(){if(!isRunning||!handLandmarker)return;try{if(video.readyState>=2&&video.currentTime!==lastVideoTime){lastVideoTime=video.currentTime;results=handLandmarker.detectForVideo(video,performance.now())}}catch(e){console.warn(e)}if(isRunning)requestAnimationFrame(predictLoop)}
+async function startCamera(){try{showStatus("正在启动摄像头...");const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:640},height:{ideal:480}}});video.srcObject=s;await video.play();canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||480;controls.classList.add("hidden");hideStatus();isRunning=true;isDemoMode=false;predictLoop();drawFrame()}catch(e){if(e.name==="NotAllowedError")showError("摄像头权限被拒绝");else if(e.name==="NotFoundError")showError("没有找到摄像头");else if(e.name==="NotReadableError")showError("摄像头被其他软件占用");else showError("摄像头启动失败: "+e.message)}}
+function startDemo(){if(video.srcObject){video.srcObject.getTracks().forEach(t=>t.stop());video.srcObject=null}canvas.width=window.innerWidth;canvas.height=window.innerHeight;isRunning=true;isDemoMode=true;controls.classList.add("hidden");hideStatus();drawFrame();showStatus("演示模式");setTimeout(hideStatus,2e3)}
+function resetAll(){isRunning=false;isDemoMode=false;if(animationId){cancelAnimationFrame(animationId);animationId=null}if(video.srcObject){video.srcObject.getTracks().forEach(t=>t.stop());video.srcObject=null}results=null;smoothedLandmarks={left:null,right:null};controls.classList.remove("hidden");showStatus("已重置");setTimeout(hideStatus,1500);ctx.clearRect(0,0,canvas.width,canvas.height)}
+async function init(){try{showStatus("加载手部模型...");updateProgress(10,"初始化 WASM...");const v=await FilesetResolver.forVisionTasks("/node_modules/@mediapipe/tasks-vision/wasm");updateProgress(30,"创建手部检测器...");handLandmarker=await HandLandmarker.createFromOptions(v,{baseOptions:{modelAssetPath:"/models/hand_landmarker.task",delegate:"CPU"},numHands:2,runningMode:"VIDEO",minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5});updateProgress(60,"手部模型加载完成");try{updateProgress(70,"加载分割模型...");imageSegmenter=await ImageSegmenter.createFromOptions(v,{baseOptions:{modelAssetPath:"/models/selfie_segmenter.task",delegate:"CPU"},runningMode:"VIDEO",outputType:"CATEGORY_MASK"});updateProgress(90,"分割模型加载完成")}catch(e){console.warn("分割模型加载失败:",e)}updateProgress(100,"模型加载完成");setTimeout(hideStatus,1e3);canvas.width=window.innerWidth;canvas.height=window.innerHeight;btnStart.addEventListener("click",startCamera);btnDemo.addEventListener("click",startDemo);btnReset.addEventListener("click",resetAll);window.addEventListener("resize",()=>{if(!isRunning){canvas.width=window.innerWidth;canvas.height=window.innerHeight}})}catch(e){console.error("初始化失败:",e);showError("初始化失败: "+e.message);updateProgress(100,"加载失败")}}
+init();
+</script>
+</body>
+</html>

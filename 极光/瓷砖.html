@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Truchet 瓷砖</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #0a0b12;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(10,11,18,0.8), rgba(10,11,18,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">Truchet <b id="m">霓虹管</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换风格</button>
+</div>
+
+<div id="hint">拖动屏幕 = 扰动格子翻转</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+              || (navigator.maxTouchPoints > 1);
+
+// ---------- 参数 ----------
+const CFG = {
+  scale: 10,          // 格密度
+  lineWidth: 0.14,    // 线宽
+  animSpeed: 0.3,     // 动画速度（格子翻转）
+  hueFlow: 0.15,      // 色相流动
+  colorA: '#5be0ff',
+  colorB: '#ff6bd6',
+  background: '#0a0b12'
+};
+
+const PIXEL_RATIO = isMobile ? 0.6 : 0.9;
+
+// ---------- three.js ----------
+const canvasEl = document.getElementById('cv');
+
+const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: false });
+renderer.setPixelRatio(PIXEL_RATIO);
+renderer.setSize(innerWidth, innerHeight, false);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+const frag = /* glsl */`
+  precision highp float;
+  varying vec2 vUv;
+
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+  uniform float uTime;
+  uniform float uScale;
+  uniform float uLineWidth;
+  uniform float uAnimSpeed;
+  uniform float uHueFlow;
+  uniform vec3  uColorA;
+  uniform vec3  uColorB;
+  uniform vec3  uBackground;
+
+  #define TAU 6.28318530718
+  #define PI 3.14159265359
+
+  // 伪随机
+  float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+  }
+
+  // arc 图元：两条 1/4 圆弧的有向距离
+  float sdArcTile(vec2 f, bool flip) {
+    vec2 c1 = vec2(-0.5, -0.5);
+    vec2 c2 = vec2(0.5, 0.5);
+    if (flip) {
+      c1 = vec2(-0.5, 0.5);
+      c2 = vec2(0.5, -0.5);
+    }
+    return min(
+      abs(length(f - c1) - 0.5),
+      abs(length(f - c2) - 0.5)
+    );
+  }
+
+  // diagonal 图元：过格心对角线
+  float sdDiagTile(vec2 f, bool flip) {
+    float s = flip ? -1.0 : 1.0;
+    return abs(s * f.x - f.y) * 0.70710678;
+  }
+
+  // 调色板（用 cos 生成彩虹）
+  vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+  }
+
+  void main() {
+    vec2 uv = (vUv - 0.5) * 2.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    // 指针扰动：让格子在鼠标周围"跳一下"
+    vec2 mouseNdc = (uMouse - 0.5) * 2.0;
+    mouseNdc.x *= uResolution.x / uResolution.y;
+    float mouseDist = length(uv - mouseNdc);
+    float mouseInfluence = smoothstep(1.0, 0.0, mouseDist) * 1.2;
+
+    vec2 p = uv * uScale;
+    vec2 cell = floor(p);
+    vec2 f = fract(p) - 0.5;
+
+    float baseSeed = hash21(cell);
+    float hueSeed = hash21(cell + 91.7);
+
+    // 每格错开的动画时间
+    float animT = uTime * uAnimSpeed + baseSeed * 6.28318 + mouseInfluence * 3.0;
+    float cyc = floor(animT);
+    float w = smoothstep(0.15, 0.85, fract(animT));
+    float seedCur = hash21(cell + vec2(cyc * 7.0, cyc * 13.0));
+    float seedNext = hash21(cell + vec2((cyc + 1.0) * 7.0, (cyc + 1.0) * 13.0));
+    bool flipCur = seedCur > 0.5;
+    bool flipNext = seedNext > 0.5;
+
+    // 每格独立选择图元类型（arc 为主）
+    float styleHash = hash21(cell * 2.7 + 11.0);
+    bool isDiag = styleHash >= 0.50 && styleHash < 0.78;
+    bool isTri = styleHash >= 0.78;
+
+    float dist = 0.0;
+    float triMix = 0.0;
+
+    if (isTri) {
+      float sCur = flipCur ? -1.0 : 1.0;
+      float sNext = flipNext ? -1.0 : 1.0;
+      triMix = mix(sCur * f.x - f.y, sNext * f.x - f.y, w);
+      dist = abs(triMix) * 0.70710678;
+    } else if (isDiag) {
+      dist = mix(sdDiagTile(f, flipCur), sdDiagTile(f, flipNext), w);
+    } else {
+      dist = mix(sdArcTile(f, flipCur), sdArcTile(f, flipNext), w);
+    }
+
+    // 沿弧线叠加色相流动
+    float hueT = hueSeed * 3.0 + uTime * uHueFlow;
+    if (!isDiag && !isTri) {
+      vec2 c1 = vec2(-0.5, -0.5);
+      vec2 c2 = vec2(0.5, 0.5);
+      if (flipCur) {
+        c1 = vec2(-0.5, 0.5);
+        c2 = vec2(0.5, -0.5);
+      }
+      float ang;
+      if (length(f - c1) < length(f - c2)) {
+        ang = atan(f.y - c1.y, f.x - c1.x);
+      } else {
+        ang = atan(f.y - c2.y, f.x - c2.x);
+      }
+      hueT += ang / TAU * 0.6;
+    }
+
+    vec3 baseA = mix(uColorA, uColorB, 0.5) * 0.55 + 0.15;
+    vec3 amp   = abs(uColorA - uColorB) * 0.55 + 0.30;
+    vec3 freqV = vec3(1.0, 0.85, 1.15);
+    vec3 phaseV = vec3(0.0, 0.13, 0.29);
+    vec3 lineCol = palette(hueT, baseA, amp, freqV, phaseV);
+
+    vec3 col = uBackground;
+    if (isTri) {
+      float fillMask = smoothstep(-0.03, 0.03, triMix);
+      vec3 fillCol = mix(uColorA, uColorB, fillMask);
+      col = mix(uBackground, fillCol, 0.82);
+      float edge = smoothstep(uLineWidth, 0.0, dist);
+      col += lineCol * edge * 1.2;
+    } else {
+      float line = smoothstep(uLineWidth, 0.0, dist);
+      col = mix(uBackground, lineCol, line);
+      float glow = smoothstep(uLineWidth * 3.0, 0.0, dist) * 0.30;
+      col += lineCol * glow;
+    }
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    uTime: { value: 0 },
+    uScale: { value: CFG.scale },
+    uLineWidth: { value: CFG.lineWidth },
+    uAnimSpeed: { value: CFG.animSpeed },
+    uHueFlow: { value: CFG.hueFlow },
+    uColorA: { value: new THREE.Color(CFG.colorA) },
+    uColorB: { value: new THREE.Color(CFG.colorB) },
+    uBackground: { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+// ---------- 尺寸 ----------
+function resize() {
+  const W = innerWidth;
+  const H = innerHeight;
+  renderer.setPixelRatio(PIXEL_RATIO);
+  renderer.setSize(W, H, false);
+  material.uniforms.uResolution.value.set(W * PIXEL_RATIO, H * PIXEL_RATIO);
+}
+resize();
+
+// ---------- 指针 ----------
+const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5, down: false };
+
+const rect = () => canvasEl.getBoundingClientRect();
+
+const onDown = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  pointer.down = true;
+  if (e.touches) e.preventDefault();
+};
+const onMove = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onUp = () => { pointer.down = false; };
+
+canvasEl.addEventListener('touchstart', onDown, { passive: false });
+canvasEl.addEventListener('touchmove', onMove, { passive: false });
+canvasEl.addEventListener('touchend', onUp);
+canvasEl.addEventListener('touchcancel', onUp);
+canvasEl.addEventListener('mousedown', onDown);
+canvasEl.addEventListener('mousemove', onMove);
+canvasEl.addEventListener('mouseup', onUp);
+canvasEl.addEventListener('mouseleave', onUp);
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+
+  pointer.x += (pointer.targetX - pointer.x) * 0.08;
+  pointer.y += (pointer.targetY - pointer.y) * 0.08;
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uMouse.value.set(pointer.x, pointer.y);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+// ---------- 按钮 ----------
+const mEl = document.getElementById('m');
+
+const STYLES = [
+  { name: '霓虹管',   scale: 6,  lineWidth: 0.22, animSpeed: 0.5,  hueFlow: 0.6,
+    colorA: '#5be0ff', colorB: '#ff2fd0', background: '#05030a' },
+  { name: '电路',     scale: 16, lineWidth: 0.08, animSpeed: 0.15, hueFlow: 0.05,
+    colorA: '#39ff88', colorB: '#00c2ff', background: '#050a08' },
+  { name: '迷宫',     scale: 8,  lineWidth: 0.20, animSpeed: 0.25, hueFlow: 0.08,
+    colorA: '#eae6da', colorB: '#8f8a7a', background: '#141311' },
+  { name: '织物',     scale: 24, lineWidth: 0.05, animSpeed: 0.10, hueFlow: 0.12,
+    colorA: '#ffd9c2', colorB: '#f2a6c8', background: '#241a1e' },
+  { name: '深海',     scale: 12, lineWidth: 0.12, animSpeed: 0.2,  hueFlow: 0.3,
+    colorA: '#4ecb8d', colorB: '#7c4bff', background: '#03080c' }
+];
+let styleIdx = 0;
+
+function applyStyle(s) {
+  CFG.scale = s.scale;
+  CFG.lineWidth = s.lineWidth;
+  CFG.animSpeed = s.animSpeed;
+  CFG.hueFlow = s.hueFlow;
+  CFG.colorA = s.colorA;
+  CFG.colorB = s.colorB;
+  CFG.background = s.background;
+
+  const u = material.uniforms;
+  u.uScale.value = CFG.scale;
+  u.uLineWidth.value = CFG.lineWidth;
+  u.uAnimSpeed.value = CFG.animSpeed;
+  u.uHueFlow.value = CFG.hueFlow;
+  u.uColorA.value.set(CFG.colorA);
+  u.uColorB.value.set(CFG.colorB);
+  u.uBackground.value.set(CFG.background);
+}
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  material.uniforms.uTime.value = 0;
+  startTime = performance.now();
+});
+
+document.getElementById('btn-change').addEventListener('click', () => {
+  styleIdx = (styleIdx + 1) % STYLES.length;
+  applyStyle(STYLES[styleIdx]);
+  mEl.textContent = STYLES[styleIdx].name;
+});
+
+// ---------- 启动 ----------
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+applyStyle(STYLES[0]);
+mEl.textContent = STYLES[0].name;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

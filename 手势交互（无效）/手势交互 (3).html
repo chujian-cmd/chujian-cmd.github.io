@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>双手AR滤镜 · 动态面片</title>
+  <style>
+    /* src/styles.css */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #000;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* 全屏摄像头画布层 */
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    #video-canvas {
+      z-index: 1;
+    }
+
+    #filter-canvas {
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* 控制面板 - 简洁浮动 */
+    .controls {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(20, 20, 30, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 12px 20px;
+      border-radius: 50px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.15);
+      transition: opacity 0.4s ease, visibility 0.4s ease;
+    }
+
+    .controls.hidden-controls {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    button {
+      background: rgba(45, 45, 55, 0.8);
+      border: 1px solid rgba(255,255,255,0.25);
+      color: white;
+      padding: 10px 22px;
+      border-radius: 40px;
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(30,30,40,0.7);
+    }
+
+    button:hover {
+      background: rgba(60,60,75,0.8);
+      border-color: rgba(255,255,255,0.45);
+      box-shadow: 0 0 15px rgba(255,255,255,0.2);
+    }
+
+    button:active {
+      transform: scale(0.96);
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #ddd;
+      font-size: 14px;
+      padding: 0 5px;
+    }
+
+    input[type="range"] {
+      width: 90px;
+      background: rgba(60,60,70,0.8);
+      height: 5px;
+      border-radius: 5px;
+      accent-color: #ffffff;
+      cursor: pointer;
+    }
+
+    /* 状态提示 */
+    .status-toast {
+      position: absolute;
+      top: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: #eee;
+      padding: 10px 25px;
+      border-radius: 30px;
+      font-size: 14px;
+      z-index: 30;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.25);
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+
+    .error-toast {
+      background: rgba(180, 40, 40, 0.9);
+      border-color: rgba(255,100,100,0.6);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="canvas-container">
+      <canvas id="video-canvas"></canvas>
+      <canvas id="filter-canvas"></canvas>
+    </div>
+
+    <div id="status-message" class="status-toast" style="display: none;"></div>
+
+    <div class="controls" id="control-panel">
+      <button id="start-camera-btn">📷 启动摄像头</button>
+      <button id="demo-mode-btn">🎭 演示模式</button>
+      <button id="reset-btn">↺ 重置</button>
+      <div class="slider-container">
+        <span>✨ 平滑度</span>
+        <input type="range" id="smooth-slider" min="0.2" max="0.9" step="0.05" value="0.7">
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    // src/app.js
+    import { Hands } from 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js';
+    import { SelfieSegmentation } from 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747/selfie_segmentation.js';
+    
+    // ---------- DOM元素 ----------
+    const videoCanvas = document.getElementById('video-canvas');
+    const filterCanvas = document.getElementById('filter-canvas');
+    const ctxVideo = videoCanvas.getContext('2d');
+    const ctxFilter = filterCanvas.getContext('2d');
+    const statusDiv = document.getElementById('status-message');
+    const controlPanel = document.getElementById('control-panel');
+    const startBtn = document.getElementById('start-camera-btn');
+    const demoBtn = document.getElementById('demo-mode-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const smoothSlider = document.getElementById('smooth-slider');
+
+    // ---------- 全局变量 ----------
+    let stream = null;
+    let videoElement = document.createElement('video');
+    videoElement.setAttribute('playsinline', '');
+    videoElement.setAttribute('autoplay', '');
+    
+    let handsInstance = null;
+    let segmentationInstance = null;
+    
+    // 模型状态
+    let handsLoaded = false;
+    let segmentationLoaded = false;
+    let cameraActive = false;
+    let demoMode = false;
+    
+    // 手部关键点数据 (平滑后)
+    let leftHandLandmarks = null;   // {4,8,12,20}
+    let rightHandLandmarks = null;
+    
+    // 平滑历史
+    let smoothLeftHistory = null;
+    let smoothRightHistory = null;
+    const SMOOTH_FACTOR = 0.7; // 默认
+    
+    // 分割遮罩
+    let segmentationMask = null;
+    
+    // 画布尺寸
+    let canvasWidth = 640;
+    let canvasHeight = 480;
+    
+    // 动画循环
+    let animationFrameId = null;
+    
+    // 演示模式虚拟点
+    let demoPoints = null;
+
+    // ---------- 工具函数：显示状态 ----------
+    function showStatus(text, isError = false) {
+      if (!statusDiv) return;
+      statusDiv.style.display = 'block';
+      statusDiv.textContent = text;
+      statusDiv.className = 'status-toast' + (isError ? ' error-toast' : '');
+      if (!isError) {
+        setTimeout(() => {
+          if (statusDiv.textContent === text) {
+            statusDiv.style.display = 'none';
+          }
+        }, 3000);
+      }
+    }
+
+    function hideStatus() {
+      if (statusDiv) statusDiv.style.display = 'none';
+    }
+
+    // 弱化控制界面
+    function dimControls(shouldDim) {
+      if (shouldDim) {
+        controlPanel.classList.add('hidden-controls');
+      } else {
+        controlPanel.classList.remove('hidden-controls');
+      }
+    }
+
+    // ---------- 指数平滑处理 ----------
+    function smoothLandmarks(newPoints, history, factor) {
+      if (!history || history.length === 0) return newPoints;
+      return newPoints.map((p, i) => ({
+        x: history[i].x * factor + p.x * (1 - factor),
+        y: history[i].y * factor + p.y * (1 - factor),
+      }));
+    }
+
+    // ---------- 根据位置排序左右手 ----------
+    function sortHandsByPosition(landmarksArray) {
+      if (!landmarksArray || landmarksArray.length === 0) return { left: null, right: null };
+      if (landmarksArray.length === 1) {
+        const wristX = landmarksArray[0][0]?.x || 0;
+        return wristX < 0.5 ? { left: landmarksArray[0], right: null } : { right: landmarksArray[0], left: null };
+      }
+      const avgX0 = landmarksArray[0].reduce((s, p) => s + p.x, 0) / landmarksArray[0].length;
+      const avgX1 = landmarksArray[1].reduce((s, p) => s + p.x, 0) / landmarksArray[1].length;
+      if (avgX0 < avgX1) {
+        return { left: landmarksArray[0], right: landmarksArray[1] };
+      } else {
+        return { left: landmarksArray[1], right: landmarksArray[0] };
+      }
+    }
+
+    function extractFingertips(landmarks) {
+      if (!landmarks || landmarks.length < 21) return null;
+      return {
+        4: landmarks[4],
+        8: landmarks[8],
+        12: landmarks[12],
+        20: landmarks[20]
+      };
+    }
+
+    // ---------- 绘制滤镜面片 ----------
+    function drawFilterPatches(leftFingertips, rightFingertips) {
+      if (!leftFingertips || !rightFingertips) return;
+      
+      const w = canvasWidth;
+      const h = canvasHeight;
+      
+      // 获取原始视频帧数据用于滤镜处理
+      const videoImageData = ctxVideo.getImageData(0, 0, w, h);
+      const maskData = segmentationMask; // ImageData 或 null
+      
+      // 创建离屏canvas用于合成滤镜
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = w;
+      offCanvas.height = h;
+      const offCtx = offCanvas.getContext('2d');
+      
+      // 绘制原始视频作为背景
+      offCtx.putImageData(videoImageData, 0, 0);
+      
+      // 定义三块面片：红(拇指-食指) / 蓝(食指-中指) / 绿(中指-小指)
+      const patches = [
+        { leftIdxA: 4, leftIdxB: 8, rightIdxA: 4, rightIdxB: 8, color: 'red', name: 'red' },
+        { leftIdxA: 8, leftIdxB: 12, rightIdxA: 8, rightIdxB: 12, color: 'blue', name: 'blue' },
+        { leftIdxA: 12, leftIdxB: 20, rightIdxA: 12, rightIdxB: 20, color: 'green', name: 'green' }
+      ];
+      
+      patches.forEach(patch => {
+        const p1 = leftFingertips[patch.leftIdxA];
+        const p2 = leftFingertips[patch.leftIdxB];
+        const p3 = rightFingertips[patch.rightIdxB];
+        const p4 = rightFingertips[patch.rightIdxA];
+        
+        if (!p1 || !p2 || !p3 || !p4) return;
+        
+        // 转换为像素坐标 (镜像处理已在视频绘制时完成，这里直接使用)
+        const toPixel = (pt) => ({ x: pt.x * w, y: pt.y * h });
+        const A = toPixel(p1);
+        const B = toPixel(p2);
+        const C = toPixel(p3);
+        const D = toPixel(p4);
+        
+        // 创建四边形路径
+        offCtx.save();
+        offCtx.beginPath();
+        offCtx.moveTo(A.x, A.y);
+        offCtx.lineTo(B.x, B.y);
+        offCtx.lineTo(C.x, C.y);
+        offCtx.lineTo(D.x, D.y);
+        offCtx.closePath();
+        
+        // 根据颜色应用不同滤镜风格
+        if (patch.color === 'red') {
+          applyRedHalftoneFilter(offCtx, videoImageData, maskData, A, B, C, D);
+        } else if (patch.color === 'blue') {
+          applyBlueVintageFilter(offCtx, videoImageData, maskData, A, B, C, D);
+        } else if (patch.color === 'green') {
+          applyGreenRetroFilter(offCtx, videoImageData, maskData, A, B, C, D);
+        }
+        
+        offCtx.restore();
+      });
+      
+      // 最终绘制到filter canvas
+      ctxFilter.clearRect(0, 0, w, h);
+      ctxFilter.drawImage(offCanvas, 0, 0);
+    }
+
+    // 红色复古半调滤镜
+    function applyRedHalftoneFilter(ctx, videoData, maskData, A, B, C, D) {
+      const w = canvasWidth;
+      const h = canvasHeight;
+      const region = new Path2D();
+      region.moveTo(A.x, A.y);
+      region.lineTo(B.x, B.y);
+      region.lineTo(C.x, C.y);
+      region.lineTo(D.x, D.y);
+      ctx.save();
+      ctx.clip(region);
+      
+      // 绘制基础视频区域
+      ctx.putImageData(videoData, 0, 0);
+      
+      // 获取区域图像数据用于半调处理
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data;
+      
+      // 半调效果：基于亮度生成网点
+      for (let y = 0; y < h; y += 4) {
+        for (let x = 0; x < w; x += 4) {
+          const idx = (y * w + x) * 4;
+          const r = data[idx];
+          const g = data[idx+1];
+          const b = data[idx+2];
+          const brightness = (r + g + b) / 3;
+          
+          // 网点大小基于亮度
+          const dotSize = (255 - brightness) / 255 * 3.5;
+          if (dotSize > 0.2) {
+            ctx.fillStyle = brightness > 140 ? '#c42b2b' : '#1a1a1a';
+            ctx.beginPath();
+            ctx.arc(x, y, dotSize, 0, Math.PI*2);
+            ctx.fill();
+            
+            // 添加米白颗粒
+            if (brightness > 160 && Math.random() > 0.7) {
+              ctx.fillStyle = '#f5e6d3';
+              ctx.beginPath();
+              ctx.arc(x+1, y+1, 0.8, 0, Math.PI*2);
+              ctx.fill();
+            }
+          }
+        }
+      }
+      ctx.restore();
+    }
+
+    // 蓝色冷色调滤镜
+    function applyBlueVintageFilter(ctx, videoData, maskData, A, B, C, D) {
+      ctx.save();
+      const region = new Path2D();
+      region.moveTo(A.x, A.y);
+      region.lineTo(B.x, B.y);
+      region.lineTo(C.x, C.y);
+      region.lineTo(D.x, D.y);
+      ctx.clip(region);
+      
+      ctx.putImageData(videoData, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+      const data = imageData.data;
+      
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i+1];
+        const b = data[i+2];
+        // 低饱和冷色调转换
+        data[i] = r * 0.3 + g * 0.2 + b * 0.5;
+        data[i+1] = r * 0.25 + g * 0.4 + b * 0.45;
+        data[i+2] = r * 0.2 + g * 0.3 + b * 0.7 + 30;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      
+      // 添加轻微扫描线/旧电视效果
+      ctx.fillStyle = 'rgba(20, 40, 80, 0.15)';
+      for (let y = 0; y < canvasHeight; y += 3) {
+        ctx.fillRect(0, y, canvasWidth, 1);
+      }
+      ctx.restore();
+    }
+
+    // 绿色复古伪彩滤镜
+    function applyGreenRetroFilter(ctx, videoData, maskData, A, B, C, D) {
+      ctx.save();
+      const region = new Path2D();
+      region.moveTo(A.x, A.y);
+      region.lineTo(B.x, B.y);
+      region.lineTo(C.x, C.y);
+      region.lineTo(D.x, D.y);
+      ctx.clip(region);
+      
+      ctx.putImageData(videoData, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvasWidth, canvasHeight);
+      const data = imageData.data;
+      
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+        data[i] = Math.min(255, gray * 0.5 + 40);
+        data[i+1] = Math.min(255, gray * 0.8 + 30);
+        data[i+2] = Math.min(255, gray * 0.4 + 20);
+      }
+      ctx.putImageData(imageData, 0, 0);
+      
+      // 纸张颗粒和柔化边缘
+      ctx.fillStyle = 'rgba(210, 200, 170, 0.1)';
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+      ctx.restore();
+    }
+
+    // ---------- 处理手部结果 ----------
+    function onHandsResults(results) {
+      if (demoMode || !cameraActive) return;
+      
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        leftHandLandmarks = null;
+        rightHandLandmarks = null;
+        return;
+      }
+      
+      const sorted = sortHandsByPosition(results.multiHandLandmarks);
+      const leftRaw = sorted.left ? extractFingertips(sorted.left) : null;
+      const rightRaw = sorted.right ? extractFingertips(sorted.right) : null;
+      
+      const factor = parseFloat(smoothSlider.value);
+      
+      if (leftRaw) {
+        const points = [leftRaw[4], leftRaw[8], leftRaw[12], leftRaw[20]];
+        if (smoothLeftHistory) {
+          const smoothed = smoothLandmarks(points, smoothLeftHistory, factor);
+          leftHandLandmarks = { 4: smoothed[0], 8: smoothed[1], 12: smoothed[2], 20: smoothed[3] };
+        } else {
+          leftHandLandmarks = leftRaw;
+        }
+        smoothLeftHistory = [leftRaw[4], leftRaw[8], leftRaw[12], leftRaw[20]];
+      } else {
+        leftHandLandmarks = null;
+        smoothLeftHistory = null;
+      }
+      
+      if (rightRaw) {
+        const points = [rightRaw[4], rightRaw[8], rightRaw[12], rightRaw[20]];
+        if (smoothRightHistory) {
+          const smoothed = smoothLandmarks(points, smoothRightHistory, factor);
+          rightHandLandmarks = { 4: smoothed[0], 8: smoothed[1], 12: smoothed[2], 20: smoothed[3] };
+        } else {
+          rightHandLandmarks = rightRaw;
+        }
+        smoothRightHistory = [rightRaw[4], rightRaw[8], rightRaw[12], rightRaw[20]];
+      } else {
+        rightHandLandmarks = null;
+        smoothRightHistory = null;
+      }
+    }
+
+    // ---------- 分割结果处理 ----------
+    function onSegmentationResults(results) {
+      if (demoMode) {
+        segmentationMask = null;
+        return;
+      }
+      if (results.segmentationMask) {
+        segmentationMask = results.segmentationMask;
+      }
+    }
+
+    // ---------- 动画循环 ----------
+    function renderLoop() {
+      if (!videoElement.readyState || videoElement.readyState < 2) {
+        animationFrameId = requestAnimationFrame(renderLoop);
+        return;
+      }
+      
+      // 设置画布尺寸匹配视频
+      if (videoElement.videoWidth) {
+        canvasWidth = videoElement.videoWidth;
+        canvasHeight = videoElement.videoHeight;
+        videoCanvas.width = canvasWidth;
+        videoCanvas.height = canvasHeight;
+        filterCanvas.width = canvasWidth;
+        filterCanvas.height = canvasHeight;
+      }
+      
+      // 绘制镜像视频
+      ctxVideo.save();
+      ctxVideo.clearRect(0, 0, canvasWidth, canvasHeight);
+      ctxVideo.translate(canvasWidth, 0);
+      ctxVideo.scale(-1, 1);
+      ctxVideo.drawImage(videoElement, 0, 0, canvasWidth, canvasHeight);
+      ctxVideo.restore();
+      
+      // 处理滤镜绘制
+      if (cameraActive || demoMode) {
+        if (demoMode) {
+          drawDemoPatches();
+        } else if (leftHandLandmarks && rightHandLandmarks) {
+          drawFilterPatches(leftHandLandmarks, rightHandLandmarks);
+        } else {
+          ctxFilter.clearRect(0, 0, canvasWidth, canvasHeight);
+        }
+      }
+      
+      animationFrameId = requestAnimationFrame(renderLoop);
+    }
+
+    function drawDemoPatches() {
+      if (!demoPoints) {
+        const w = canvasWidth || 640;
+        const h = canvasHeight || 480;
+        demoPoints = {
+          left: { 4: {x:0.25,y:0.35}, 8:{x:0.3,y:0.45}, 12:{x:0.28,y:0.55}, 20:{x:0.22,y:0.65} },
+          right: { 4: {x:0.75,y:0.35}, 8:{x:0.7,y:0.45}, 12:{x:0.72,y:0.55}, 20:{x:0.78,y:0.65} }
+        };
+      }
+      drawFilterPatches(demoPoints.left, demoPoints.right);
+    }
+
+    // ---------- 模型加载与初始化 ----------
+    async function loadMediaPipeModels() {
+      showStatus('加载视觉模型...');
+      try {
+        // 初始化Hands
+        handsInstance = new Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`
+        });
+        handsInstance.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.7,
+          minTrackingConfidence: 0.5
+        });
+        handsInstance.onResults(onHandsResults);
+        
+        // 初始化Selfie Segmentation
+        segmentationInstance = new SelfieSegmentation({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747/${file}`
+        });
+        segmentationInstance.setOptions({
+          modelSelection: 1,
+        });
+        segmentationInstance.onResults(onSegmentationResults);
+        
+        await Promise.all([
+          handsInstance.initialize(),
+          segmentationInstance.initialize()
+        ]);
+        
+        handsLoaded = true;
+        segmentationLoaded = true;
+        hideStatus();
+        return true;
+      } catch (err) {
+        showStatus('模型加载失败: ' + err.message, true);
+        return false;
+      }
+    }
+
+    async function startCamera() {
+      if (stream) {
+        stopCamera();
+      }
+      try {
+        showStatus('请求摄像头权限...');
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } 
+        });
+        videoElement.srcObject = stream;
+        await videoElement.play();
+        
+        cameraActive = true;
+        demoMode = false;
+        dimControls(true);
+        hideStatus();
+        
+        // 开始处理帧
+        const processFrame = async () => {
+          if (!cameraActive || demoMode) return;
+          if (handsLoaded && segmentationLoaded && videoElement.readyState >= 2) {
+            await handsInstance.send({ image: videoElement });
+            await segmentationInstance.send({ image: videoElement });
+          }
+          if (cameraActive) requestAnimationFrame(processFrame);
+        };
+        processFrame();
+        
+      } catch (err) {
+        cameraActive = false;
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          showStatus('摄像头权限被拒绝', true);
+        } else if (err.name === 'NotFoundError') {
+          showStatus('没有找到摄像头', true);
+        } else if (err.name === 'NotReadableError') {
+          showStatus('摄像头被其他软件占用', true);
+        } else {
+          showStatus('摄像头错误: ' + err.message, true);
+        }
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      cameraActive = false;
+      leftHandLandmarks = null;
+      rightHandLandmarks = null;
+    }
+
+    function enableDemoMode() {
+      stopCamera();
+      demoMode = true;
+      cameraActive = false;
+      dimControls(true);
+      showStatus('演示模式：红蓝绿面片');
+      demoPoints = null;
+    }
+
+    function resetApp() {
+      stopCamera();
+      demoMode = false;
+      leftHandLandmarks = null;
+      rightHandLandmarks = null;
+      smoothLeftHistory = null;
+      smoothRightHistory = null;
+      dimControls(false);
+      hideStatus();
+      ctxFilter.clearRect(0, 0, canvasWidth, canvasHeight);
+    }
+
+    // ---------- 事件绑定 ----------
+    startBtn.addEventListener('click', () => {
+      demoMode = false;
+      startCamera();
+    });
+    
+    demoBtn.addEventListener('click', enableDemoMode);
+    
+    resetBtn.addEventListener('click', resetApp);
+    
+    smoothSlider.addEventListener('input', (e) => {
+      // 实时更新平滑因子
+    });
+
+    // 启动加载
+    async function bootstrap() {
+      await loadMediaPipeModels();
+      renderLoop();
+    }
+    
+    bootstrap().catch(err => {
+      showStatus('启动失败: ' + err.message, true);
+    });
+
+    // 清理
+    window.addEventListener('beforeunload', () => {
+      stopCamera();
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    });
+  </script>
+</body>
+</html>

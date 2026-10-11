@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D物理沙盒(稳定版)</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden;background:#000}
+canvas{display:block}
+#loading{position:fixed;inset:0;background:#000;display:grid;place-content:center;color:#4ecdc4;font:14px monospace;z-index:9999}
+#coord-display{position:fixed;bottom:10px;right:10px;background:#000a;color:#4ecdc4;padding:6px 10px;border-radius:8px;font:12px monospace}
+
+/* 坐标控制台 T键 */
+#coord-panel{position:fixed;top:120px;right:20px;width:260px;background:#121a2f;border:1px solid #4ecdc4;border-radius:10px;padding:12px;color:#e0f7ff;font:12px monospace;display:none}
+#coord-panel.show{display:block}
+.coord-line{display:flex;justify-content:space-between;margin:4px 0}
+.coord-line input{width:100px;background:#1e293b;border:1px solid #4a9eff;color:#e0f7ff;border-radius:4px;padding:2px 4px}
+.btn-bar{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:6px 0}
+.btn-bar button{background:#1e293b;border:1px solid #4ecdc4;color:#4ecdc4;border-radius:4px;padding:4px;cursor:pointer}
+.preset-item{display:flex;justify-content:space-between;background:#1e293b;padding:3px 6px;border-radius:4px;margin:2px 0}
+.preset-tp{color:#4ecdc4;cursor:pointer}
+.preset-del{color:#ff6b6b;cursor:pointer}
+
+/* 渲染面板 O键 */
+#render-panel{position:fixed;top:20px;right:20px;width:260px;background:#121a2f;border:1px solid #6fc8ff;border-radius:10px;padding:12px;color:#e0f7ff;font:12px monospace;display:none}
+#render-panel.show{display:block}
+</style>
+</head>
+<body>
+<div id="loading">加载中...</div>
+<div id="coord-display">坐标：--- --- --- | 朝向：--°</div>
+
+<!-- 坐标控制台 -->
+<div id="coord-panel">
+  <div>📍 坐标控制台(T)</div>
+  <div class="coord-line"><span>X</span><input type="number" id="x"></div>
+  <div class="coord-line"><span>Y</span><input type="number" id="y"></div>
+  <div class="coord-line"><span>Z</span><input type="number" id="z"></div>
+  <div class="btn-bar">
+    <button id="get">获取当前</button>
+    <button id="set">瞬移</button>
+    <button id="home">出生点</button>
+    <button id="save">保存点</button>
+    <button id="copy">复制</button>
+    <button id="paste">粘贴</button>
+  </div>
+  <div id="presets"></div>
+</div>
+
+<!-- 渲染面板 -->
+<div id="render-panel">
+  <div>🎨 渲染设置(O)</div>
+  <div class="coord-line"><span>阴影</span><select id="shadow"><option>off</option><option>low</option><option selected>medium</option><option>high</option></select></div>
+  <div class="coord-line"><span>环境光</span><input type="range" id="ambient" min="0" max="2" step="0.05" value="0.5"></div>
+  <div class="coord-line"><span>太阳光</span><input type="range" id="sun" min="0" max="2" step="0.05" value="1.2"></div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js'
+import * as CANNON from 'https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js'
+
+// 基础场景
+const scene = new THREE.Scene()
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 200)
+const renderer = new THREE.WebGLRenderer({antialias:true})
+renderer.setSize(innerWidth, innerHeight)
+document.body.appendChild(renderer.domElement)
+scene.background = new THREE.Color('#87CEEB')
+
+// 灯光
+const ambient = new THREE.AmbientLight('#fff',0.5)
+const sun = new THREE.DirectionalLight('#fff',1.2)
+sun.position.set(20,30,10)
+sun.castShadow = true
+scene.add(ambient,sun)
+
+// 物理世界
+const world = new CANNON.World()
+world.gravity.set(0,-12,0)
+
+// 地面
+const groundBody = new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(18,0.2,18))})
+groundBody.position.y = -0.2
+world.addBody(groundBody)
+const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(36,36),new THREE.MeshStandardMaterial({color:'#d5c4a1',roughness:0.8}))
+groundMesh.rotation.x=-Math.PI/2
+groundMesh.position.y=-0.2
+groundMesh.receiveShadow=true
+scene.add(groundMesh)
+
+// 玩家
+const playerBody = new CANNON.Body({mass:1,shape:new CANNON.Sphere(0.4)})
+playerBody.position.set(0,2,8)
+playerBody.linearDamping=0.9
+world.addBody(playerBody)
+camera.position.y=2.6
+
+// 鼠标控制
+let euler = new THREE.Euler(0,0,0,'YXZ')
+document.addEventListener('mousemove',e=>{
+  if(document.pointerLockElement===renderer.domElement){
+    euler.y -= e.movementX*0.002
+    euler.x -= e.movementY*0.002
+    euler.x=Math.max(-Math.PI/2.2,Math.min(Math.PI/2.2,euler.x))
+    camera.quaternion.setFromEuler(euler)
+  }
+})
+renderer.domElement.addEventListener('click',()=>renderer.domElement.requestPointerLock())
+
+// 坐标与朝向
+function updateCoord(){
+  const p=playerBody.position
+  const yaw=(euler.y*180/Math.PI).toFixed(0)
+  document.getElementById('coord-display').innerText=`X:${p.x.toFixed(1)} Y:${p.y.toFixed(1)} Z:${p.z.toFixed(1)} | 朝向：${yaw}°`
+  document.getElementById('x').value=p.x.toFixed(1)
+  document.getElementById('y').value=p.y.toFixed(1)
+  document.getElementById('z').value=p.z.toFixed(1)
+}
+
+// 预设点
+let presets=JSON.parse(localStorage.getItem('presets')||'[]')
+function savePreset(){
+  const p=playerBody.position
+  const yaw=euler.y
+  const name=prompt('名称','点'+(presets.length+1))
+  if(!name)return
+  presets.push({name,x:p.x,y:p.y,z:p.z,yaw})
+  localStorage.setItem('presets',JSON.stringify(presets))
+  renderPresets()
+}
+function renderPresets(){
+  const el=document.getElementById('presets')
+  el.innerHTML=''
+  presets.forEach((p,i)=>{
+    const div=document.createElement('div')
+    div.className='preset-item'
+    div.innerHTML=`<span>${p.name}</span><span class="preset-tp" data-i="${i}">传送</span><span class="preset-del" data-i="${i}">删除</span>`
+    el.appendChild(div)
+  })
+  document.querySelectorAll('.preset-tp').forEach(b=>{
+    b.onclick=()=>{
+      const p=presets[b.dataset.i]
+      playerBody.position.set(p.x,p.y,p.z)
+      euler.y=p.yaw
+      camera.quaternion.setFromEuler(euler)
+    }
+  })
+  document.querySelectorAll('.preset-del').forEach(b=>{
+    b.onclick=()=>{
+      presets.splice(b.dataset.i,1)
+      localStorage.setItem('presets',JSON.stringify(presets))
+      renderPresets()
+    }
+  })
+}
+
+// 按钮
+document.getElementById('get').onclick=updateCoord
+document.getElementById('set').onclick=()=>{
+  const x=+document.getElementById('x').value||0
+  const y=+document.getElementById('y').value||2
+  const z=+document.getElementById('z').value||0
+  playerBody.position.set(x,y,z)
+}
+document.getElementById('home').onclick=()=>playerBody.position.set(0,2,8)
+document.getElementById('save').onclick=savePreset
+document.getElementById('copy').onclick=()=>{
+  const x=document.getElementById('x').value
+  const y=document.getElementById('y').value
+  const z=document.getElementById('z').value
+  navigator.clipboard.writeText(`${x},${y},${z}`)
+}
+document.getElementById('paste').onclick=async()=>{
+  const txt=await navigator.clipboard.readText()
+  const arr=txt.split(',').map(Number)
+  if(arr.length>=3){
+    document.getElementById('x').value=arr[0]
+    document.getElementById('y').value=arr[1]
+    document.getElementById('z').value=arr[2]
+  }
+}
+
+// 快捷键 T / O
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyT')document.getElementById('coord-panel').classList.toggle('show')
+  if(e.code==='KeyO')document.getElementById('render-panel').classList.toggle('show')
+})
+
+// 渲染设置
+document.getElementById('shadow').onchange=e=>{
+  renderer.shadowMap.enabled=e.target.value!=='off'
+}
+document.getElementById('ambient').oninput=e=>ambient.intensity=e.target.value
+document.getElementById('sun').oninput=e=>sun.intensity=e.target.value
+
+// 循环
+const clock=new THREE.Clock()
+function animate(){
+  requestAnimationFrame(animate)
+  const dt=Math.min(clock.getDelta(),0.03)
+  world.step(1/60,dt,3)
+  camera.position.copy(playerBody.position)
+  camera.position.y+=0.6
+  updateCoord()
+  renderer.render(scene,camera)
+}
+animate()
+
+// 关闭加载
+document.getElementById('loading').remove()
+renderPresets()
+</script>
+</body>
+</html>

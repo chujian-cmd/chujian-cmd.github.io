@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AR双手滤镜 · 交互特效</title>
+  <!-- 引入 MediaPipe 核心库和手部/自拍分割 -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+  <style>
+    /* 全局重置 & 沉浸式全屏 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+    }
+    body {
+      background: #0b0b0b;
+      overflow: hidden;
+      font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      width: 100vw;
+      position: relative;
+    }
+    /* 摄像头视频容器 — 全屏 */
+    #video-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #1a1a1a;
+      overflow: hidden;
+    }
+    video {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      min-width: 100%;
+      min-height: 100%;
+      object-fit: cover;
+      background: #222;
+      filter: brightness(0.95) contrast(1.05);
+    }
+    /* Canvas 层：分割遮罩 + 滤镜绘制 */
+    #output-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      pointer-events: none;  /* 让按钮可以穿透 */
+      z-index: 10;
+    }
+    /* 控制界面 — 极简半透明 */
+    #controls {
+      position: absolute;
+      bottom: 32px;
+      left: 0;
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px 20px;
+      padding: 12px 20px;
+      background: rgba(10, 10, 10, 0.55);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      z-index: 30;
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      pointer-events: auto;
+      box-shadow: 0 -6px 30px rgba(0,0,0,0.7);
+    }
+    #controls.hidden {
+      opacity: 0;
+      transform: translateY(20px);
+      pointer-events: none;
+    }
+    #controls button {
+      background: rgba(30, 30, 30, 0.7);
+      backdrop-filter: blur(2px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #f0f0f0;
+      padding: 8px 18px;
+      border-radius: 30px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      min-width: 70px;
+      font-family: inherit;
+      background: rgba(20, 20, 20, 0.6);
+    }
+    #controls button:hover {
+      background: rgba(70, 70, 70, 0.8);
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: scale(1.02);
+    }
+    #controls button:active {
+      transform: scale(0.96);
+    }
+    #controls label {
+      color: #ccc;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0,0,0,0.3);
+      padding: 4px 12px 4px 16px;
+      border-radius: 40px;
+      backdrop-filter: blur(2px);
+    }
+    #controls input[type="range"] {
+      width: 90px;
+      height: 4px;
+      -webkit-appearance: none;
+      background: #555;
+      border-radius: 10px;
+      outline: none;
+    }
+    #controls input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      cursor: pointer;
+      border: 1px solid #aaa;
+    }
+    #status-tip {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(8px);
+      padding: 12px 28px;
+      border-radius: 60px;
+      color: #eee;
+      font-size: 0.95rem;
+      z-index: 40;
+      border: 1px solid rgba(255,255,255,0.08);
+      pointer-events: none;
+      white-space: nowrap;
+      transition: opacity 0.4s ease;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    #status-tip.hidden {
+      opacity: 0;
+    }
+    #progress-bar-container {
+      width: 120px;
+      height: 4px;
+      background: #2a2a2a;
+      border-radius: 4px;
+      overflow: hidden;
+      display: inline-block;
+    }
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6a8cff, #b388ff);
+      border-radius: 4px;
+      transition: width 0.2s ease;
+    }
+    #progress-text {
+      font-size: 0.8rem;
+      color: #aaa;
+      min-width: 36px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    /* 低像素风格 */
+    @media (max-width: 600px) {
+      #controls button { font-size: 0.75rem; padding: 6px 12px; min-width: 60px; }
+      #controls label { font-size: 0.7rem; padding: 2px 8px; }
+      #status-tip { font-size: 0.8rem; padding: 8px 16px; gap: 8px; }
+      #progress-bar-container { width: 80px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="video-container">
+    <video id="video" playsinline></video>
+  </div>
+  <canvas id="output-canvas"></canvas>
+
+  <div id="status-tip">
+    <span id="status-message">⏳ 加载模型中...</span>
+    <div id="progress-bar-container">
+      <div id="progress-fill" style="width: 0%;"></div>
+    </div>
+    <span id="progress-text">0%</span>
+  </div>
+
+  <div id="controls">
+    <button id="btn-start">📷 启动摄像头</button>
+    <button id="btn-demo">🎮 演示模式</button>
+    <button id="btn-reset">↺ 重置</button>
+    <label>🖐 跟手平滑度 <input type="range" id="smoothness" min="0.1" max="0.9" step="0.05" value="0.6"></label>
+  </div>
+
+  <script src="src/app.js" defer></script>
+  <!-- 说明：所有逻辑在 app.js 中，此文件仅做容器 -->
+</body>
+</html>

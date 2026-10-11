@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>3D 物理沙盒 · 超能增强版 | 作弊脚本</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --text: #e0e0e0;
+      --accent: #ff6b6b;
+      --panel-bg: rgba(18, 18, 32, 0.85);
+      --border: rgba(255, 255, 255, 0.15);
+      --cheat-bg: #0a0f0a;
+      --cheat-border: #0f0;
+      --cheat-text: #0f0;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      overflow: hidden;
+      background: #000;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: default;
+    }
+    canvas {
+      display: block;
+    }
+    #lock-prompt {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 28px 40px;
+      text-align: center;
+      color: #fff;
+      z-index: 100;
+      pointer-events: auto;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      animation: floatPrompt 3.5s ease-in-out infinite;
+    }
+    @keyframes floatPrompt {
+      0%, 100% { transform: translate(-50%, -50%) translateY(0); }
+      50% { transform: translate(-50%, -50%) translateY(-10px); }
+    }
+    #lock-prompt.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -50%) scale(0.92);
+    }
+    #lock-prompt .icon {
+      font-size: 58px;
+      display: block;
+      margin-bottom: 10px;
+    }
+    #lock-prompt h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: 0.02em;
+    }
+    #lock-prompt p {
+      font-size: 0.9rem;
+      color: #aaa;
+      margin: 4px 0;
+    }
+    .hud {
+      position: fixed;
+      z-index: 20;
+      pointer-events: none;
+      color: #f0f0f0;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 30px;
+      padding: 12px 24px;
+      transition: opacity 0.3s;
+      opacity: 0;
+    }
+    .hud.visible {
+      opacity: 1;
+    }
+    #hud-top {
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.85rem;
+    }
+    #hud-bottom {
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.78rem;
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .shape-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      display: inline-block;
+      border: 2px solid rgba(255, 255, 255, 0.55);
+      transition: all 0.2s;
+      box-shadow: 0 0 12px currentColor;
+    }
+    .shape-dot.sphere, .shape-dot.cone, .shape-dot.torus { border-radius: 50%; }
+    .key {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 5px;
+      padding: 2px 7px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #fff;
+      margin: 0 2px;
+    }
+    #color-indicator {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.6);
+      display: inline-block;
+      vertical-align: middle;
+      transition: background-color 0.2s;
+    }
+    #death-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.5s;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    #death-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #death-message {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 32px 48px;
+      text-align: center;
+      color: #fff;
+      backdrop-filter: blur(20px);
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
+    }
+    #death-message h2 {
+      font-size: 2rem;
+      margin-bottom: 12px;
+      color: #ff6b6b;
+    }
+    #death-message p {
+      font-size: 1rem;
+      color: #ccc;
+      margin-bottom: 18px;
+    }
+    #respawn-btn {
+      background: #ff6b6b;
+      border: none;
+      color: white;
+      font-weight: bold;
+      padding: 12px 32px;
+      border-radius: 30px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      letter-spacing: 0.04em;
+    }
+    #respawn-btn:hover { background: #ff8787; }
+
+    /* 作弊面板增强 */
+    #cheat-panel {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 500;
+      width: 280px;
+      background: #0a0a0a;
+      border: 1px solid #0f0;
+      border-radius: 0;
+      box-shadow: 0 0 20px rgba(0, 255, 0, 0.4), inset 0 0 10px rgba(0,255,0,0.1);
+      font-family: 'Courier New', monospace;
+      color: #0f0;
+      padding: 15px;
+      backdrop-filter: none;
+      user-select: none;
+      transition: opacity 0.2s;
+      opacity: 0;
+      pointer-events: none;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    #cheat-panel.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #cheat-panel h3 {
+      font-size: 1.1rem;
+      margin: 0 0 10px 0;
+      text-align: center;
+      color: #0f0;
+      text-shadow: 0 0 10px #0f0;
+      letter-spacing: 2px;
+      border-bottom: 1px dashed #0f0;
+      padding-bottom: 5px;
+    }
+    .cheat-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 0.75rem;
+    }
+    .cheat-row label {
+      cursor: pointer;
+      text-shadow: 0 0 5px #0f0;
+    }
+    .cheat-row input[type="checkbox"] {
+      accent-color: #0f0;
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+    .cheat-row input[type="range"] {
+      width: 100px;
+      background: #111;
+      accent-color: #0f0;
+      cursor: pointer;
+    }
+    .cheat-row input[type="number"] {
+      width: 60px;
+      background: #111;
+      border: 1px solid #0f0;
+      color: #0f0;
+      padding: 2px 4px;
+      font-family: inherit;
+      text-align: center;
+    }
+    .cheat-btn {
+      display: block;
+      width: 100%;
+      margin-top: 10px;
+      background: #0a0a0a;
+      border: 1px solid #0f0;
+      color: #0f0;
+      font-family: inherit;
+      font-weight: bold;
+      padding: 6px 0;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      transition: all 0.2s;
+      text-shadow: 0 0 8px #0f0;
+    }
+    .cheat-btn:hover {
+      background: #0f0;
+      color: #000;
+      box-shadow: 0 0 25px #0f0;
+    }
+    .cheat-divider {
+      border-top: 1px dashed #0f0;
+      margin: 12px 0 8px 0;
+    }
+    #cheat-toggle-hint {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 501;
+      color: #0f0;
+      font-family: 'Courier New', monospace;
+      font-size: 0.7rem;
+      background: #000000aa;
+      padding: 2px 8px;
+      border: 1px solid #0f0;
+      pointer-events: none;
+      opacity: 0.7;
+    }
+    #perf-stats {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      z-index: 30;
+      color: #fff;
+      font-size: 0.7rem;
+      font-family: 'Courier New', monospace;
+      background: rgba(0,0,0,0.5);
+      padding: 6px 12px;
+      border-radius: 16px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #perf-stats.visible { opacity: 1; }
+    @media (max-width: 650px) {
+      #lock-prompt { padding: 20px 22px; border-radius: 18px; }
+      #hud-bottom { font-size: 0.68rem; gap: 8px; padding: 8px 16px; }
+      #hud-top { font-size: 0.75rem; padding: 8px 18px; }
+      #cheat-panel { width: 240px; top: 10px; right: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="lock-prompt">
+    <span class="icon">🖱️</span>
+    <h2>点击屏幕开始</h2>
+    <p>WASD 移动 · 空格跳跃 · 鼠标旋转视角</p>
+    <p style="font-size:0.8rem;">🖱️ 滚轮切换形状 · 左键放置 · 右键删除</p>
+    <p style="font-size:0.75rem; margin-top:4px;">G吸近 · H推远 · B爆炸 · Ctrl+Z撤销</p>
+    <p style="font-size:0.7rem; color:#0f0;">F1 外挂面板 · F2 执行脚本</p>
+  </div>
+
+  <div id="perf-stats">
+    <span>📦 物体: <span id="obj-count">0</span></span>
+    <span style="margin-left: 12px;">⚡ FPS: <span id="fps-val">60</span></span>
+  </div>
+
+  <div id="hud-top" class="hud">
+    <span>形状:</span>
+    <span id="shape-dot" class="shape-dot cube" style="background:#ff6b6b;"></span>
+    <span id="shape-name">立方体</span>
+    <span>| 颜色: <span id="color-indicator" style="background:#ff6b6b;"></span></span>
+  </div>
+
+  <div id="hud-bottom" class="hud">
+    <span><span class="key">1-5</span> 形状</span>
+    <span><span class="key">滚轮</span> 切换</span>
+    <span><span class="key">R</span> 换色</span>
+    <span><span class="key">左键</span> 放置</span>
+    <span><span class="key">右键</span> 删除</span>
+    <span><span class="key">G/H/B</span> 力场</span>
+    <span><span class="key">F1</span> 外挂</span>
+    <span><span class="key">F2</span> 脚本</span>
+  </div>
+
+  <div id="death-overlay">
+    <div id="death-message">
+      <h2>💀 你掉出了世界</h2>
+      <p>按下方按钮或点击画面重生</p>
+      <button id="respawn-btn">🔄 重新开始</button>
+    </div>
+  </div>
+
+  <!-- 作弊面板增加脚本输入区 -->
+  <div id="cheat-panel">
+    <h3>⚡ EXTERNAL TOOL v3.0</h3>
+    <div class="cheat-row">
+      <label>🕊️ 飞行/穿墙</label>
+      <input type="checkbox" id="cheat-fly">
+    </div>
+    <div class="cheat-row">
+      <label>👑 上帝模式</label>
+      <input type="checkbox" id="cheat-god">
+    </div>
+    <div class="cheat-row">
+      <label>🎯 无限放置距离</label>
+      <input type="checkbox" id="cheat-range">
+    </div>
+    <div class="cheat-row">
+      <label>⚡ 自动放置</label>
+      <input type="checkbox" id="cheat-auto">
+    </div>
+    <div class="cheat-divider"></div>
+    <div class="cheat-row">
+      <label>重力</label>
+      <input type="range" id="cheat-gravity" min="-20" max="0" value="-12" step="0.5">
+    </div>
+    <div class="cheat-row">
+      <label>移动速度</label>
+      <input type="range" id="cheat-speed" min="2" max="30" value="7" step="0.5">
+    </div>
+    <div class="cheat-row">
+      <label>跳跃力度</label>
+      <input type="range" id="cheat-jump" min="2" max="20" value="7.5" step="0.5">
+    </div>
+    <div class="cheat-row">
+      <label>冲击力</label>
+      <input type="range" id="cheat-force" min="500" max="5000" value="1500" step="100">
+    </div>
+    <div class="cheat-divider"></div>
+    <div class="cheat-row">
+      <label>批量生成数量</label>
+      <input type="number" id="cheat-batch-count" value="100" min="1" max="9999">
+    </div>
+    <button class="cheat-btn" id="cheat-spawn-batch">💣 生成一堆物体</button>
+    <button class="cheat-btn" id="cheat-clear-world">🗑️ 清空世界</button>
+    <button class="cheat-btn" id="cheat-random-color">🎨 随机颜色</button>
+    
+    <div class="cheat-divider" style="margin-top:15px;"></div>
+    <label style="font-size:0.7rem; color:#0f0; display:block; margin-bottom:4px;">📜 作弊脚本 (JavaScript)</label>
+    <textarea id="cheat-script-input" rows="3" style="width:100%; background:#111; border:1px solid #0f0; color:#0f0; font-family: monospace; padding:4px; resize:vertical;" placeholder="输入 JS 代码...">// 示例: 设置重力为 -2
+// setGravity(-2);
+// 或直接访问: world.gravity.set(0, -5, 0);</textarea>
+    <button class="cheat-btn" id="cheat-execute-script">▶️ 执行脚本 (F2)</button>
+    <p style="font-size:0.6rem; color:#0f0; margin-top:5px;">可用函数: setGravity(v), setSpeed(v), spawnSphere(x,y,z), clearAll()</p>
+  </div>
+  <div id="cheat-toggle-hint">[F1] 外挂面板</div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+        "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.mjs"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+    import * as CANNON from 'cannon-es';
+
+    // ────────────────────────── DOM 引用 ──────────────────────────
+    const lockPrompt = document.getElementById('lock-prompt');
+    const hudTop = document.getElementById('hud-top');
+    const hudBottom = document.getElementById('hud-bottom');
+    const shapeDot = document.getElementById('shape-dot');
+    const shapeNameEl = document.getElementById('shape-name');
+    const colorIndicator = document.getElementById('color-indicator');
+    const deathOverlay = document.getElementById('death-overlay');
+    const respawnBtn = document.getElementById('respawn-btn');
+    const cheatPanel = document.getElementById('cheat-panel');
+    const cheatToggleHint = document.getElementById('cheat-toggle-hint');
+    const perfStats = document.getElementById('perf-stats');
+    const objCountSpan = document.getElementById('obj-count');
+    const fpsSpan = document.getElementById('fps-val');
+
+    // 外挂控件
+    const cheatFlyCheck = document.getElementById('cheat-fly');
+    const cheatGodCheck = document.getElementById('cheat-god');
+    const cheatRangeCheck = document.getElementById('cheat-range');
+    const cheatAutoCheck = document.getElementById('cheat-auto');
+    const cheatGravitySlider = document.getElementById('cheat-gravity');
+    const cheatSpeedSlider = document.getElementById('cheat-speed');
+    const cheatJumpSlider = document.getElementById('cheat-jump');
+    const cheatForceSlider = document.getElementById('cheat-force');
+    const cheatBatchCount = document.getElementById('cheat-batch-count');
+    const cheatSpawnBatchBtn = document.getElementById('cheat-spawn-batch');
+    const cheatClearWorldBtn = document.getElementById('cheat-clear-world');
+    const cheatRandomColorBtn = document.getElementById('cheat-random-color');
+    const cheatScriptInput = document.getElementById('cheat-script-input');
+    const cheatExecuteScriptBtn = document.getElementById('cheat-execute-script');
+
+    // ────────────────────────── 场景 / 渲染器 / 相机 ──────────────────────────
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#87CEEB');
+    scene.fog = new THREE.Fog('#87CEEB', 40, 110);
+
+    const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.set(0, 1.6, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+
+    // ────────────────────────── 光照 ──────────────────────────
+    scene.add(new THREE.AmbientLight('#bcd4f0', 0.75));
+    scene.add(new THREE.HemisphereLight('#87CEEB', '#8B7355', 0.5));
+    const sun = new THREE.DirectionalLight('#fff8e7', 4.2);
+    sun.position.set(20, 30, 10);
+    sun.castShadow = true;
+    sun.shadow.mapSize.width = 1024;
+    sun.shadow.mapSize.height = 1024;
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far = 100;
+    sun.shadow.camera.left = -28;
+    sun.shadow.camera.right = 28;
+    sun.shadow.camera.top = 28;
+    sun.shadow.camera.bottom = -28;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.03;
+    scene.add(sun);
+
+    // ────────────────────────── 共享几何体 ──────────────────────────
+    const sharedGeos = {
+      cube: new THREE.BoxGeometry(0.95, 0.95, 0.95),
+      sphere: new THREE.SphereGeometry(0.48, 24, 24),
+      cylinder: new THREE.CylinderGeometry(0.48, 0.48, 0.95, 24),
+      cone: new THREE.ConeGeometry(0.48, 0.95, 24),
+      torus: new THREE.TorusGeometry(0.4, 0.18, 12, 24),
+    };
+
+    // 地面视觉
+    const groundGeo = new THREE.BoxGeometry(36, 0.4, 36);
+    const groundMat = new THREE.MeshStandardMaterial({ color: '#d5c4a1', roughness: 0.75, metalness: 0.02 });
+    const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+    groundMesh.position.y = -0.2;
+    groundMesh.receiveShadow = true;
+    groundMesh.castShadow = false;
+    groundMesh.name = 'ground';
+    scene.add(groundMesh);
+    const grid = new THREE.GridHelper(36, 36, '#c4b99a', '#e0d5c0');
+    grid.position.y = 0.005;
+    scene.add(grid);
+    const borderGeo = new THREE.TorusGeometry(18, 0.15, 8, 4);
+    const borderMat = new THREE.MeshStandardMaterial({ color: '#b8a88a', roughness: 0.5, metalness: 0.3 });
+    const borderMesh = new THREE.Mesh(borderGeo, borderMat);
+    borderMesh.rotation.x = -Math.PI / 2;
+    borderMesh.position.y = 0.01;
+    borderMesh.receiveShadow = true;
+    scene.add(borderMesh);
+
+    // ────────────────────────── 物理世界 ──────────────────────────
+    const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -12.0, 0) });
+    world.broadphase = new CANNON.SAPBroadphase(world);
+    world.allowSleep = true;
+    world.defaultContactMaterial.restitution = 0.1;
+    world.defaultContactMaterial.friction = 0.5;
+
+    const playerContactMaterial = new CANNON.ContactMaterial(
+      new CANNON.Material('playerMat'),
+      new CANNON.Material('objectMat'),
+      { friction: 0.05, restitution: 0.0 }
+    );
+    world.addContactMaterial(playerContactMaterial);
+    const playerMaterial = playerContactMaterial.materials[0];
+    const objectMaterial = playerContactMaterial.materials[1];
+
+    const groundBody = new CANNON.Body({
+      mass: 0,
+      shape: new CANNON.Box(new CANNON.Vec3(18, 0.2, 18)),
+      material: objectMaterial,
+    });
+    groundBody.position.set(0, -0.2, 0);
+    world.addBody(groundBody);
+
+    const createWall = (halfExtents, position) => {
+      const wall = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Box(new CANNON.Vec3(...halfExtents)),
+        material: objectMaterial,
+      });
+      wall.position.set(...position);
+      world.addBody(wall);
+      return wall;
+    };
+    createWall([18, 1.5, 0.25], [0, 1.5, -18.25]);
+    createWall([18, 1.5, 0.25], [0, 1.5, 18.25]);
+    createWall([0.25, 1.5, 18], [-18.25, 1.5, 0]);
+    createWall([0.25, 1.5, 18], [18.25, 1.5, 0]);
+
+    // ────────────────────────── 形状与颜色状态 ──────────────────────────
+    const shapeTypes = ['cube', 'sphere', 'cylinder', 'cone', 'torus'];
+    const shapeNames = ['立方体', '球体', '圆柱体', '圆锥', '圆环'];
+    const dotClasses = ['cube', 'sphere', 'cylinder', 'cone', 'torus'];
+    let currentShapeIndex = 0;
+
+    const colorPalette = [
+      '#ff6b6b', '#ff9f43', '#feca57', '#54a0ff', '#5f27cd',
+      '#00d2d3', '#55efc4', '#fd79a8', '#ffffff', '#e056a0',
+      '#0abde3', '#10ac84', '#ee5a24', '#6c5ce7', '#f8c291',
+    ];
+    let currentColorIndex = 0;
+
+    const getCurrentType = () => shapeTypes[currentShapeIndex];
+    const getCurrentColor = () => colorPalette[currentColorIndex];
+
+    const updateHUD = () => {
+      const type = getCurrentType();
+      const color = getCurrentColor();
+      shapeDot.className = 'shape-dot ' + (dotClasses[currentShapeIndex] || 'cube');
+      shapeDot.style.background = color;
+      shapeNameEl.textContent = shapeNames[currentShapeIndex];
+      colorIndicator.style.background = color;
+      colorIndicator.style.boxShadow = `0 0 14px ${color}`;
+    };
+    updateHUD();
+
+    // ────────────────────────── 放置物体管理 ──────────────────────────
+    const placedShapes = [];
+    const allPlaceableMeshes = [groundMesh];
+    const undoStack = [];
+
+    const createCannonShape = (type) => {
+      switch (type) {
+        case 'cube': return new CANNON.Box(new CANNON.Vec3(0.475, 0.475, 0.475));
+        case 'sphere': return new CANNON.Sphere(0.48);
+        case 'cylinder': return new CANNON.Cylinder(0.48, 0.48, 0.95, 16);
+        case 'cone': return new CANNON.Cylinder(0.01, 0.48, 0.95, 16);
+        case 'torus': return new CANNON.Sphere(0.42);
+        default: return new CANNON.Box(new CANNON.Vec3(0.475, 0.475, 0.475));
+      }
+    };
+
+    const createShapeMesh = (type, colorHex) => {
+      const geo = sharedGeos[type] || sharedGeos.cube;
+      const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(colorHex),
+        roughness: 0.35,
+        metalness: 0.05,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = 'placed-shape';
+      return mesh;
+    };
+
+    const createPlacedShape = (type, colorHex, position, skipAnimation = false, recordUndo = true) => {
+      const mesh = createShapeMesh(type, colorHex);
+      mesh.position.copy(position);
+
+      const shape = createCannonShape(type);
+      const body = new CANNON.Body({
+        mass: 2,
+        shape: shape,
+        material: objectMaterial,
+        sleepSpeedLimit: 0.15,
+        sleepTimeLimit: 0.8,
+        linearDamping: 0.1,
+        angularDamping: 0.3,
+      });
+      body.position.set(position.x, position.y, position.z);
+      body.sleep();
+
+      mesh.userData.physicsBody = body;
+      body.userData = { mesh };
+
+      scene.add(mesh);
+      world.addBody(body);
+      
+      const entry = { mesh, body };
+      placedShapes.push(entry);
+      allPlaceableMeshes.push(mesh);
+
+      if (!skipAnimation) {
+        mesh.scale.set(0.01, 0.01, 0.01);
+        const startTime = performance.now();
+        const animDuration = 180;
+        const animPlace = (time) => {
+          const t = Math.min((time - startTime) / animDuration, 1.0);
+          const val = 1 - Math.pow(1 - t, 3);
+          const overshoot = 1 + Math.sin(t * Math.PI) * 0.15 * (1 - t);
+          mesh.scale.setScalar(Math.max(0.01, val * overshoot));
+          if (t < 1) {
+            requestAnimationFrame(animPlace);
+          } else {
+            mesh.scale.setScalar(1);
+          }
+        };
+        requestAnimationFrame(animPlace);
+      }
+      
+      return entry;
+    };
+
+    const removeShapeEntry = (entry) => {
+      world.removeBody(entry.body);
+      scene.remove(entry.mesh);
+      const idx = placedShapes.indexOf(entry);
+      if (idx !== -1) placedShapes.splice(idx, 1);
+      const idxAll = allPlaceableMeshes.indexOf(entry.mesh);
+      if (idxAll !== -1) allPlaceableMeshes.splice(idxAll, 1);
+      if (entry.mesh.material) entry.mesh.material.dispose();
+    };
+
+    // 初始场景
+    const initialShapes = [
+      { type: 'cube', pos: [3, 0.5, -2], color: '#ff6b6b' },
+      { type: 'cube', pos: [3, 1.5, -2], color: '#ff9f43' },
+      { type: 'sphere', pos: [-3, 0.5, 1], color: '#4ecdc4' },
+      { type: 'cylinder', pos: [0, 0.5, -4], color: '#ffe66d' },
+      { type: 'cube', pos: [-1, 0.5, -3], color: '#a29bfe' },
+      { type: 'cube', pos: [-1, 1.5, -3], color: '#fd79a8' },
+      { type: 'sphere', pos: [5, 0.5, 3], color: '#55efc4' },
+      { type: 'cylinder', pos: [-4, 0.5, -2], color: '#ff6b6b' },
+    ];
+    initialShapes.forEach((info) => {
+      createPlacedShape(info.type, info.color, new THREE.Vector3(...info.pos));
+    });
+    undoStack.length = 0;
+
+    // ────────────────────────── 预览物体 ──────────────────────────
+    const previewMaterial = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(getCurrentColor()),
+      roughness: 0.3,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+    });
+    let previewMesh = new THREE.Mesh(sharedGeos.cube, previewMaterial);
+    previewMesh.visible = false;
+    previewMesh.renderOrder = 999;
+    previewMesh.name = 'preview';
+    scene.add(previewMesh);
+
+    const refreshPreviewGeometry = () => {
+      const type = getCurrentType();
+      previewMesh.geometry = sharedGeos[type] || sharedGeos.cube;
+      previewMaterial.color.set(getCurrentColor());
+    };
+    refreshPreviewGeometry();
+
+    // ────────────────────────── 射线检测 ──────────────────────────
+    const raycaster = new THREE.Raycaster();
+    raycaster.far = 25;
+    let previewUpdateCounter = 0;
+    const getPreviewInterval = () => {
+      const count = placedShapes.length;
+      if (count > 500) return 8;
+      if (count > 200) return 4;
+      return 2;
+    };
+
+    const getPlacementInfo = () => {
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const intersects = raycaster.intersectObjects(allPlaceableMeshes, false);
+      if (intersects.length > 0) {
+        const hit = intersects[0];
+        const point = hit.point.clone();
+        const normal = hit.face.normal.clone();
+        normal.transformDirection(hit.object.matrixWorld);
+        const placementPos = point.add(normal.multiplyScalar(0.475));
+        placementPos.x = THREE.MathUtils.clamp(placementPos.x, -17.5, 17.5);
+        placementPos.z = THREE.MathUtils.clamp(placementPos.z, -17.5, 17.5);
+        placementPos.y = Math.max(placementPos.y, 0.05);
+        return { position: placementPos, valid: true };
+      }
+      return { position: null, valid: false };
+    };
+
+    // ────────────────────────── 控制器与玩家物理 ──────────────────────────
+    const controls = new PointerLockControls(camera, document.body);
+    let isLocked = false;
+    let isDead = false;
+    let cheatPanelVisible = false;
+
+    let cheatFly = false;
+    let cheatGod = false;
+    let cheatRange = false;
+    let cheatAuto = false;
+    let moveSpeed = 7.0;
+    let jumpForce = 7.5;
+    let gravityValue = -12.0;
+    let forceStrength = 1500;
+
+    controls.addEventListener('lock', () => {
+      if (isDead) {
+        respawn();
+        return;
+      }
+      isLocked = true;
+      lockPrompt.classList.add('hidden');
+      hudTop.classList.add('visible');
+      hudBottom.classList.add('visible');
+      perfStats.classList.add('visible');
+      if (previewMesh) previewMesh.visible = true;
+      if (cheatFly) enableFlyMode();
+    });
+
+    controls.addEventListener('unlock', () => {
+      if (isDead) return;
+      isLocked = false;
+      lockPrompt.classList.remove('hidden');
+      hudTop.classList.remove('visible');
+      hudBottom.classList.remove('visible');
+      perfStats.classList.remove('visible');
+      if (previewMesh) previewMesh.visible = false;
+      if (cheatFly) disableFlyMode();
+    });
+
+    lockPrompt.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!isLocked && !isDead) controls.lock();
+    });
+
+    const playerHeight = 1.6;
+    const playerRadius = 0.35;
+    const playerBoxHalfHeight = playerHeight / 2;
+    const spawnPoint = new THREE.Vector3(0, playerBoxHalfHeight, 8);
+
+    const playerBody = new CANNON.Body({
+      mass: 80,
+      shape: new CANNON.Box(new CANNON.Vec3(playerRadius, playerBoxHalfHeight, playerRadius)),
+      material: playerMaterial,
+      fixedRotation: true,
+      linearDamping: 0.5,
+      angularDamping: 1.0,
+      sleepSpeedLimit: 0.01,
+      sleepTimeLimit: 5,
+    });
+    playerBody.position.set(spawnPoint.x, spawnPoint.y, spawnPoint.z);
+    playerBody.sleep();
+    world.addBody(playerBody);
+
+    let playerGroundContacts = 0;
+    const playerBodyRef = playerBody;
+
+    world.addEventListener('beginContact', (evt) => {
+      if (cheatFly) return;
+      const { bodyA, bodyB } = evt;
+      if (bodyA !== playerBodyRef && bodyB !== playerBodyRef) return;
+      const contact = evt.contact;
+      if (contact?.ni && contact.ni.y > 0.4) playerGroundContacts++;
+    });
+    world.addEventListener('endContact', (evt) => {
+      if (cheatFly) return;
+      const { bodyA, bodyB } = evt;
+      if (bodyA !== playerBodyRef && bodyB !== playerBodyRef) return;
+      const contact = evt.contact;
+      if (contact?.ni && contact.ni.y > 0.4) playerGroundContacts = Math.max(0, playerGroundContacts - 1);
+    });
+
+    const isPlayerOnGround = () => cheatFly ? true : playerGroundContacts > 0;
+
+    const enableFlyMode = () => {
+      if (playerBody.type !== CANNON.Body.KINEMATIC) {
+        playerBody.type = CANNON.Body.KINEMATIC;
+        playerBody.velocity.set(0,0,0);
+        playerBody.angularVelocity.set(0,0,0);
+        playerGroundContacts = 0;
+      }
+    };
+
+    const disableFlyMode = () => {
+      if (playerBody.type !== CANNON.Body.DYNAMIC) {
+        playerBody.type = CANNON.Body.DYNAMIC;
+        playerBody.velocity.set(0,0,0);
+        playerBody.angularVelocity.set(0,0,0);
+        playerGroundContacts = 0;
+      }
+    };
+
+    const resetPlayer = () => {
+      playerBody.position.set(spawnPoint.x, spawnPoint.y, spawnPoint.z);
+      playerBody.velocity.set(0, 0, 0);
+      playerBody.angularVelocity.set(0, 0, 0);
+      if (cheatFly) {
+        playerBody.type = CANNON.Body.KINEMATIC;
+      } else {
+        playerBody.type = CANNON.Body.DYNAMIC;
+      }
+      playerBody.sleep();
+      playerGroundContacts = 0;
+      camera.position.set(spawnPoint.x, spawnPoint.y + playerBoxHalfHeight, spawnPoint.z);
+      controls.getObject().position.copy(camera.position);
+    };
+
+    const triggerDeath = () => {
+      if (isDead || cheatGod) return;
+      isDead = true;
+      isLocked = false;
+      controls.unlock();
+      deathOverlay.classList.add('active');
+      hudTop.classList.remove('visible');
+      hudBottom.classList.remove('visible');
+      perfStats.classList.remove('visible');
+      if (previewMesh) previewMesh.visible = false;
+    };
+
+    const respawn = () => {
+      isDead = false;
+      deathOverlay.classList.remove('active');
+      resetPlayer();
+      controls.lock();
+    };
+
+    respawnBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isDead) respawn();
+    });
+    deathOverlay.addEventListener('click', (e) => {
+      if (e.target === deathOverlay) respawn();
+    });
+
+    // ────────────────────────── 输入处理 ──────────────────────────
+    const keys = {};
+    window.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+
+      if (e.code === 'Digit1') { currentShapeIndex = 0; updateHUD(); refreshPreviewGeometry(); }
+      if (e.code === 'Digit2') { currentShapeIndex = 1; updateHUD(); refreshPreviewGeometry(); }
+      if (e.code === 'Digit3') { currentShapeIndex = 2; updateHUD(); refreshPreviewGeometry(); }
+      if (e.code === 'Digit4') { currentShapeIndex = 3; updateHUD(); refreshPreviewGeometry(); }
+      if (e.code === 'Digit5') { currentShapeIndex = 4; updateHUD(); refreshPreviewGeometry(); }
+      if (e.code === 'KeyR') {
+        currentColorIndex = (currentColorIndex + 1) % colorPalette.length;
+        updateHUD();
+        refreshPreviewGeometry();
+      }
+      if (e.code === 'Space' && isLocked && !isDead && isPlayerOnGround()) {
+        e.preventDefault();
+        if (!cheatFly) {
+          playerBody.velocity.y = jumpForce;
+          playerGroundContacts = 0;
+        }
+      }
+      if (e.code === 'Backspace' && isLocked && !isDead) {
+        e.preventDefault();
+        deleteLookedShape();
+      }
+      if (e.code === 'F1') {
+        e.preventDefault();
+        cheatPanelVisible = !cheatPanelVisible;
+        if (cheatPanelVisible) {
+          cheatPanel.classList.add('visible');
+          cheatToggleHint.style.opacity = '0';
+        } else {
+          cheatPanel.classList.remove('visible');
+          cheatToggleHint.style.opacity = '0.7';
+        }
+      }
+      if (e.code === 'F2' && isLocked && !isDead) {
+        e.preventDefault();
+        executeCheatScript();
+      }
+      if (cheatFly && isLocked && !isDead) {
+        if (e.code === 'KeyQ') keys['KeyQ'] = true;
+        if (e.code === 'KeyE') keys['KeyE'] = true;
+      }
+      if (e.code === 'KeyZ' && (e.ctrlKey || e.metaKey) && isLocked && !isDead) {
+        e.preventDefault();
+        undoLastPlacement();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+      if (e.code === 'KeyQ') keys['KeyQ'] = false;
+      if (e.code === 'KeyE') keys['KeyE'] = false;
+    });
+
+    window.addEventListener('wheel', (e) => {
+      if (!isLocked || isDead) return;
+      e.preventDefault();
+      if (e.deltaY > 0) {
+        currentShapeIndex = (currentShapeIndex + 1) % shapeTypes.length;
+      } else {
+        currentShapeIndex = (currentShapeIndex - 1 + shapeTypes.length) % shapeTypes.length;
+      }
+      updateHUD();
+      refreshPreviewGeometry();
+    }, { passive: false });
+
+    window.addEventListener('click', (e) => {
+      if (!isLocked || isDead || e.button !== 0) return;
+      if (e.target.closest('#lock-prompt, #death-overlay, #respawn-btn, #cheat-panel')) return;
+      placeShape();
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!isLocked || isDead || e.button !== 2) return;
+      e.preventDefault();
+      deleteLookedShape();
+    });
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    const placeShape = () => {
+      const info = getPlacementInfo();
+      if (!info.valid || !info.position) return;
+      if (!cheatRange && info.position.distanceTo(camera.position) < 0.85) return;
+      const entry = createPlacedShape(getCurrentType(), getCurrentColor(), info.position);
+      undoStack.push({ type: 'batch', entries: [entry] });
+    };
+
+    const deleteLookedShape = () => {
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const hits = raycaster.intersectObjects(allPlaceableMeshes, false);
+      if (hits.length > 0) {
+        const obj = hits[0].object;
+        if (obj === groundMesh || obj.name !== 'placed-shape') return;
+        const entry = placedShapes.find(s => s.mesh === obj);
+        if (entry) removeShapeEntry(entry);
+      }
+    };
+
+    const undoLastPlacement = () => {
+      if (undoStack.length === 0) return;
+      const lastOp = undoStack.pop();
+      if (lastOp && lastOp.entries) {
+        lastOp.entries.forEach(entry => removeShapeEntry(entry));
+      }
+    };
+
+    // ────────────────────────── 力场功能 ──────────────────────────
+    const applyForceToNearby = (forceVec, maxDist = 8) => {
+      const playerPos = playerBody.position;
+      placedShapes.forEach(({ body }) => {
+        const dx = body.position.x - playerPos.x;
+        const dy = body.position.y - playerPos.y;
+        const dz = body.position.z - playerPos.z;
+        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        if (dist < maxDist && dist > 0.2) {
+          const strength = (1 - dist / maxDist) * forceStrength;
+          const dir = new CANNON.Vec3(dx, dy, dz).unit();
+          body.applyForce(dir.scale(strength * (forceVec > 0 ? 1 : -1)), body.position);
+          body.wakeUp();
+        }
+      });
+    };
+
+    const applyExplosion = () => {
+      const playerPos = playerBody.position;
+      placedShapes.forEach(({ body }) => {
+        const dx = body.position.x - playerPos.x;
+        const dy = body.position.y - playerPos.y;
+        const dz = body.position.z - playerPos.z;
+        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        if (dist < 10 && dist > 0.3) {
+          const strength = forceStrength * 0.8 * (1 - dist / 10);
+          const dir = new CANNON.Vec3(dx, dy + 0.5, dz).unit();
+          body.applyImpulse(dir.scale(strength), body.position);
+          body.wakeUp();
+        }
+      });
+    };
+
+    // ────────────────────────── 作弊脚本核心 ──────────────────────────
+    const executeCheatScript = () => {
+      if (!cheatPanelVisible) {
+        cheatPanelVisible = true;
+        cheatPanel.classList.add('visible');
+        cheatToggleHint.style.opacity = '0';
+      }
+      const code = cheatScriptInput.value;
+      if (!code.trim()) return;
+      
+      try {
+        // 暴露给脚本的安全函数
+        const scriptContext = {
+          world,
+          scene,
+          camera,
+          playerBody,
+          placedShapes,
+          createPlacedShape,
+          removeShapeEntry,
+          getCurrentColor,
+          getCurrentType,
+          setGravity: (val) => {
+            world.gravity.set(0, val, 0);
+            cheatGravitySlider.value = val;
+            gravityValue = val;
+          },
+          setSpeed: (val) => {
+            moveSpeed = val;
+            cheatSpeedSlider.value = val;
+          },
+          spawnSphere: (x, y, z, color = null) => {
+            const col = color || getCurrentColor();
+            createPlacedShape('sphere', col, new THREE.Vector3(x, y, z));
+          },
+          clearAll: () => {
+            while (placedShapes.length > 0) {
+              removeShapeEntry(placedShapes[0]);
+            }
+            undoStack.length = 0;
+          },
+          log: (msg) => console.log(`[脚本] ${msg}`),
+        };
+        
+        const func = new Function(...Object.keys(scriptContext), code);
+        func(...Object.values(scriptContext));
+        
+        console.log('✅ 作弊脚本执行成功');
+      } catch (err) {
+        console.error('❌ 脚本错误:', err);
+        alert(`脚本执行失败: ${err.message}`);
+      }
+    };
+
+    cheatExecuteScriptBtn.addEventListener('click', executeCheatScript);
+
+    // ────────────────────────── 外挂功能绑定 ──────────────────────────
+    cheatFlyCheck.addEventListener('change', (e) => {
+      cheatFly = e.target.checked;
+      if (cheatFly) { if (isLocked) enableFlyMode(); }
+      else { if (isLocked) disableFlyMode(); }
+    });
+    cheatGodCheck.addEventListener('change', (e) => { cheatGod = e.target.checked; });
+    cheatRangeCheck.addEventListener('change', (e) => { cheatRange = e.target.checked; });
+    cheatAutoCheck.addEventListener('change', (e) => { cheatAuto = e.target.checked; });
+    cheatGravitySlider.addEventListener('input', (e) => {
+      gravityValue = parseFloat(e.target.value);
+      world.gravity.set(0, gravityValue, 0);
+    });
+    cheatSpeedSlider.addEventListener('input', (e) => { moveSpeed = parseFloat(e.target.value); });
+    cheatJumpSlider.addEventListener('input', (e) => { jumpForce = parseFloat(e.target.value); });
+    cheatForceSlider.addEventListener('input', (e) => { forceStrength = parseFloat(e.target.value); });
+
+    cheatSpawnBatchBtn.addEventListener('click', () => {
+      const count = parseInt(cheatBatchCount.value, 10) || 100;
+      const type = getCurrentType();
+      const color = getCurrentColor();
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      const basePos = camera.position.clone().add(camDir.clone().multiplyScalar(2.5));
+      const batchEntries = [];
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+        const radius = 1.5 + Math.random() * 3;
+        const offsetX = Math.cos(angle) * radius;
+        const offsetZ = Math.sin(angle) * radius;
+        const pos = new THREE.Vector3(
+          basePos.x + offsetX,
+          basePos.y + Math.random() * 2,
+          basePos.z + offsetZ
+        );
+        const entry = createPlacedShape(type, color, pos, true, false);
+        batchEntries.push(entry);
+      }
+      undoStack.push({ type: 'batch', entries: batchEntries });
+    });
+
+    cheatClearWorldBtn.addEventListener('click', () => {
+      while (placedShapes.length > 0) {
+        removeShapeEntry(placedShapes[0]);
+      }
+      undoStack.length = 0;
+    });
+
+    cheatRandomColorBtn.addEventListener('click', () => {
+      currentColorIndex = Math.floor(Math.random() * colorPalette.length);
+      updateHUD();
+      refreshPreviewGeometry();
+    });
+
+    // ────────────────────────── 物理同步 ──────────────────────────
+    const syncPhysicsToRender = () => {
+      for (let i = placedShapes.length - 1; i >= 0; i--) {
+        const { mesh, body } = placedShapes[i];
+        mesh.position.set(body.position.x, body.position.y, body.position.z);
+        mesh.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+      }
+      if (!cheatFly) {
+        const px = playerBody.position.x;
+        const py = playerBody.position.y;
+        const pz = playerBody.position.z;
+        camera.position.set(px, py + playerBoxHalfHeight, pz);
+      }
+    };
+
+    // ────────────────────────── 玩家移动 ──────────────────────────
+    const forwardVec = new THREE.Vector3();
+    const rightVec = new THREE.Vector3();
+    const upVec = new THREE.Vector3(0, 1, 0);
+    const DAMPING_RATE = 10.0;
+    let lastAutoPlaceTime = 0;
+
+    const updatePlayerMovement = (dt) => {
+      if (!isLocked || isDead) {
+        if (!cheatFly) {
+          const decay = Math.exp(-DAMPING_RATE * dt);
+          playerBody.velocity.x *= decay;
+          playerBody.velocity.z *= decay;
+          if (Math.abs(playerBody.velocity.x) < 0.02) playerBody.velocity.x = 0;
+          if (Math.abs(playerBody.velocity.z) < 0.02) playerBody.velocity.z = 0;
+        }
+        return;
+      }
+
+      if (keys['KeyG']) applyForceToNearby(1);
+      if (keys['KeyH']) applyForceToNearby(-1);
+      if (keys['KeyB']) applyExplosion();
+
+      if (cheatAuto) {
+        const now = performance.now();
+        if (now - lastAutoPlaceTime > 120) {
+          lastAutoPlaceTime = now;
+          placeShape();
+        }
+      }
+
+      if (cheatFly) {
+        let forward = 0, right = 0, up = 0;
+        if (keys['KeyW']) forward += 1;
+        if (keys['KeyS']) forward -= 1;
+        if (keys['KeyA']) right -= 1;
+        if (keys['KeyD']) right += 1;
+        if (keys['Space']) up += 1;
+        if (keys['KeyQ']) up -= 1;
+        if (keys['KeyE']) up += 1;
+
+        camera.getWorldDirection(forwardVec);
+        forwardVec.y = 0;
+        if (forwardVec.length() > 0.001) forwardVec.normalize();
+        else forwardVec.set(0,0,1);
+        rightVec.crossVectors(forwardVec, upVec).normalize();
+
+        const moveDelta = new THREE.Vector3(0,0,0);
+        moveDelta.addScaledVector(forwardVec, forward);
+        moveDelta.addScaledVector(rightVec, right);
+        moveDelta.y += up;
+
+        if (moveDelta.length() > 0.001) {
+          moveDelta.normalize().multiplyScalar(moveSpeed * dt);
+          playerBody.position.x += moveDelta.x;
+          playerBody.position.y += moveDelta.y;
+          playerBody.position.z += moveDelta.z;
+        }
+        camera.position.set(
+          playerBody.position.x,
+          playerBody.position.y + playerBoxHalfHeight,
+          playerBody.position.z
+        );
+      } else {
+        let forward = 0, right = 0;
+        if (keys['KeyW']) forward += 1;
+        if (keys['KeyS']) forward -= 1;
+        if (keys['KeyA']) right -= 1;
+        if (keys['KeyD']) right += 1;
+
+        camera.getWorldDirection(forwardVec);
+        forwardVec.y = 0;
+        const len = forwardVec.length();
+        if (len < 0.001) {
+          const decay = Math.exp(-DAMPING_RATE * dt);
+          playerBody.velocity.x *= decay;
+          playerBody.velocity.z *= decay;
+          return;
+        }
+        forwardVec.normalize();
+        rightVec.crossVectors(forwardVec, upVec).normalize();
+
+        const moveDir = new THREE.Vector3(0,0,0);
+        moveDir.addScaledVector(forwardVec, forward);
+        moveDir.addScaledVector(rightVec, right);
+
+        if (moveDir.length() > 0.001) {
+          moveDir.normalize();
+          playerBody.velocity.x = moveDir.x * moveSpeed;
+          playerBody.velocity.z = moveDir.z * moveSpeed;
+        } else {
+          const decay = Math.exp(-DAMPING_RATE * dt);
+          playerBody.velocity.x *= decay;
+          playerBody.velocity.z *= decay;
+          if (Math.abs(playerBody.velocity.x) < 0.05) playerBody.velocity.x = 0;
+          if (Math.abs(playerBody.velocity.z) < 0.05) playerBody.velocity.z = 0;
+        }
+
+        const clampedX = THREE.MathUtils.clamp(playerBody.position.x, -17.5, 17.5);
+        const clampedZ = THREE.MathUtils.clamp(playerBody.position.z, -17.5, 17.5);
+        if (clampedX !== playerBody.position.x) {
+          playerBody.position.x = clampedX;
+          playerBody.velocity.x = 0;
+        }
+        if (clampedZ !== playerBody.position.z) {
+          playerBody.position.z = clampedZ;
+          playerBody.velocity.z = 0;
+        }
+      }
+    };
+
+    // ────────────────────────── 动画循环 ──────────────────────────
+    const clock = new THREE.Clock();
+    const FIXED_TIME_STEP = 1 / 50;
+    const MAX_SUB_STEPS = 3;
+
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+    let currentFps = 60;
+
+    const updateShadowQuality = () => {
+      const count = placedShapes.length;
+      if (count > 500) {
+        renderer.shadowMap.enabled = false;
+      } else {
+        renderer.shadowMap.enabled = true;
+        if (count > 200) {
+          renderer.shadowMap.type = THREE.BasicShadowMap;
+        } else {
+          renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        }
+      }
+    };
+
+    const animate = () => {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.2);
+
+      updatePlayerMovement(dt);
+
+      if (isLocked && !isDead) {
+        previewUpdateCounter++;
+        if (previewUpdateCounter >= getPreviewInterval()) {
+          previewUpdateCounter = 0;
+          const info = getPlacementInfo();
+          if (info.valid && info.position && (cheatRange || info.position.distanceTo(camera.position) >= 0.85)) {
+            previewMesh.position.copy(info.position);
+            previewMesh.visible = true;
+            previewMaterial.color.set(getCurrentColor());
+          } else {
+            previewMesh.visible = false;
+          }
+        }
+      } else if (!isDead) {
+        if (previewMesh.visible) previewMesh.visible = false;
+        previewUpdateCounter = 0;
+      }
+
+      world.step(FIXED_TIME_STEP, dt, MAX_SUB_STEPS);
+      syncPhysicsToRender();
+
+      if (!isDead && !cheatGod && playerBody.position.y < -12) {
+        triggerDeath();
+      }
+
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsTime >= 500) {
+        currentFps = Math.round((frameCount / (now - lastFpsTime)) * 1000);
+        frameCount = 0;
+        lastFpsTime = now;
+        objCountSpan.textContent = placedShapes.length;
+        fpsSpan.textContent = currentFps;
+        updateShadowQuality();
+      }
+
+      renderer.render(scene, camera);
+    };
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // 启动
+    resetPlayer();
+    refreshPreviewGeometry();
+    updateHUD();
+    requestAnimationFrame(animate);
+
+    console.log('✅ 3D 物理沙盒 v5.0 · 超能增强版 (含作弊脚本)');
+    console.log('  🧲 引力/斥力/爆炸 · 撤销 · 5种形状 · F2执行脚本');
+    console.log('  📜 脚本示例: setGravity(-2); spawnSphere(0,5,0); clearAll();');
+  </script>
+</body>
+</html>

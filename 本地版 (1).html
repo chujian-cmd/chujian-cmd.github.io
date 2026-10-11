@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>融合 · 3D 时钟点云</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060c; touch-action: none; }
+  canvas { display: block; }
+  #info {
+    position: fixed; left: 12px; top: 12px;
+    color: #0f0; font-size: 13px;
+    font-family: monospace;
+    z-index: 1000;
+    background: rgba(0,0,0,0.7);
+    padding: 6px 10px;
+    border-radius: 6px;
+    line-height: 1.5;
+  }
+  #hint {
+    position: fixed; left: 50%; bottom: 20px;
+    transform: translateX(-50%);
+    color: #8a8f98; font-size: 13px;
+    opacity: 0.7;
+    z-index: 1000;
+    pointer-events: none;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="info">
+  目标点: <span id="cnt">?</span> · 已填: <span id="filled">0</span> · 粒子: <span id="pc">0</span>
+</div>
+<div id="hint">单指按住施力 · 双指拖动旋转 · 双指捏合缩放</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://registry.npmmirror.com/three/0.170.0/files/build/three.module.js",
+    "three/addons/": "https://registry.npmmirror.com/three/0.170.0/files/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ============================================================
+// ★★★ 所有可调参数都在这里 ★★★
+// ============================================================
+
+// ---- 文字内容 ----
+const ROWS = [
+  { kind: 'fixed', text: '✡' },
+  { kind: 'fixed', text: '❤中国万岁❤' },
+  { kind: 'fixed', text: '🎉国庆快乐🎉' },
+  { kind: 'date' },
+  { kind: 'time' }
+];
+
+// ---- 字体 / 采样 ----
+const FONT_SIZE   = 110;   // 字号（像素）
+const FONT_FAMILY = 'monospace';  // 字体
+const FIDELITY    = 1;     // 采样间隔，越小点越密
+const LINE_GAP    = 24;    // 行间距
+
+// ---- 相机 ----
+const FOV        = 750;    // 视野角度
+const CAM_MARGIN = 1.3;    // 整体缩放，越大越远
+const CAM_MIN_R  = 0.3;    // 最近缩放比例
+const CAM_MAX_R  = 10;     // 最远缩放比例
+
+// ---- 3D 深度 ----
+const DEPTH = 30;          // 字在 z 方向的厚度
+
+// ---- 动画速度（帧数，越小越快）----
+const SEC_LIFE          = 30;  // 秒球炸开重生总帧数
+const SEC_BLAST_FRAMES  = 8;   // 秒球前段炸开帧数
+
+// ---- 点 ----
+const MAX_POINTS  = 200000; // 点云上限
+const POINT_SIZE  = 1.6;    // 点大小
+
+// ---- 渐变颜色：左上红 → 右下黄 ----
+const HUE_START = 0;
+const HUE_END   = 100;
+const LIGHTNESS = 0.6;
+const SATURATION = 1.0;
+
+// ---- ★ 磁铁效果 ----
+const MAGNET_RADIUS = 360;   // 屏幕像素半径
+const MAGNET_FORCE  = 200;    // 推开距离（世界单位）
+const MAGNET_EASE   = 0.14;  // 朝目标移动的 lerp 系数
+
+// ============================================================
+// 以下代码不用改
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(
+  FOV, window.innerWidth / window.innerHeight, 0.1, 5000
+);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const W = window.innerWidth;
+const H = window.innerHeight;
+
+const fovRad = (camera.fov * Math.PI) / 180;
+const BASE_DIST = (H * CAM_MARGIN) / (2 * Math.tan(fovRad / 2));
+
+camera.position.set(0, 0, BASE_DIST);
+camera.lookAt(0, 0, 0);
+
+// ---------- 数据 ----------
+let targets = [];
+const secBalls = [];
+
+let pointData      = null;
+let pointColor     = null;
+let pointTargetIdx = null;
+let pointIsSec     = null;
+
+let pointsMesh = null;
+let geometry = null;
+
+// ---------- 渐变色 ----------
+function gradHue(x, y) {
+  const tx = (x + W / 2) / W;
+  const ty = (H / 2 - y) / H;
+  const t = Math.max(0, Math.min(1, (tx + ty) / 2));
+  return HUE_START + t * (HUE_END - HUE_START);
+}
+
+// ---------- 取字 ----------
+const off = document.createElement('canvas');
+const offCtx = off.getContext('2d', { willReadFrequently: true });
+const fontStr = `900 ${FONT_SIZE}px ${FONT_FAMILY}`;
+offCtx.font = fontStr;
+
+function textToTargets(text, row, part) {
+  offCtx.font = fontStr;
+  let w = offCtx.measureText(text).width;
+  if (w < 10) w = FONT_SIZE * 4;
+
+  const pad = 20;
+  const offW = Math.ceil(w) + pad * 2;
+  const offH = FONT_SIZE + pad * 2;
+
+  off.width = offW;
+  off.height = offH;
+  offCtx.font = fontStr;
+  offCtx.fillStyle = '#fff';
+  offCtx.textBaseline = 'top';
+  offCtx.textAlign = 'center';
+  offCtx.fillText(text, offW / 2, pad);
+
+  const imgData = offCtx.getImageData(0, 0, offW, offH);
+  const data = imgData.data;
+
+  const totalH = ROWS.length * FONT_SIZE + (ROWS.length - 1) * LINE_GAP;
+  const rowY = -totalH / 2 + row * (FONT_SIZE + LINE_GAP) + FONT_SIZE / 2;
+
+  const offsetX = -offW / 2;
+  const offsetY = rowY - offH / 2;
+
+  const list = [];
+  for (let y = 0; y < offH; y += FIDELITY) {
+    for (let x = 0; x < offW; x += FIDELITY) {
+      const idx = (y * offW + x) * 4;
+      if (data[idx + 3] > 128) {
+        const wx = x + offsetX;
+        const wy = -(y + offsetY);
+        list.push({
+          x: wx, y: wy,
+          z: (Math.random() - 0.5) * DEPTH,
+          hue: gradHue(wx, wy),
+          row, part,
+          taken: false, filled: true,
+          ox: 0, oy: 0
+        });
+      }
+    }
+  }
+  return list;
+}
+
+let currentValues = { date: '', hour: '', min: '', sec: '' };
+
+function getTimePart(part) {
+  const hourStr = (currentValues.hour || '00') + ':';
+  const minStr  = (currentValues.min  || '00') + ':';
+  const secStr  = (currentValues.sec  || '00');
+  const full = hourStr + minStr + secStr;
+
+  offCtx.font = fontStr;
+  let w = offCtx.measureText(full).width;
+  if (w < 10) w = FONT_SIZE * 4;
+
+  const pad = 20;
+  const offW = Math.ceil(w) + pad * 2;
+  const offH = FONT_SIZE + pad * 2;
+
+  off.width = offW;
+  off.height = offH;
+  offCtx.font = fontStr;
+  offCtx.fillStyle = '#fff';
+  offCtx.textBaseline = 'top';
+  offCtx.textAlign = 'center';
+  offCtx.fillText(full, offW / 2, pad);
+
+  const imgData = offCtx.getImageData(0, 0, offW, offH);
+  const data = imgData.data;
+
+  const totalH = ROWS.length * FONT_SIZE + (ROWS.length - 1) * LINE_GAP;
+  const timeRowIndex = ROWS.length - 1;
+  const rowY = -totalH / 2 + timeRowIndex * (FONT_SIZE + LINE_GAP) + FONT_SIZE / 2;
+
+  const offsetX = -offW / 2;
+  const offsetY = rowY - offH / 2;
+
+  const wHour = offCtx.measureText(hourStr).width;
+  const wMin  = offCtx.measureText(minStr).width;
+
+  const startX = offW / 2 - w / 2;
+  const hourEnd = startX + wHour;
+  const minEnd  = hourEnd + wMin;
+
+  const list = [];
+  for (let y = 0; y < offH; y += FIDELITY) {
+    for (let x = 0; x < offW; x += FIDELITY) {
+      const idx = (y * offW + x) * 4;
+      if (data[idx + 3] > 128) {
+        let p;
+        if (x < hourEnd) p = 'hour';
+        else if (x < minEnd) p = 'min';
+        else p = 'sec';
+        if (p !== part) continue;
+
+        const wx = x + offsetX;
+        const wy = -(y + offsetY);
+        list.push({
+          x: wx, y: wy,
+          z: (Math.random() - 0.5) * DEPTH,
+          hue: gradHue(wx, wy),
+          row: timeRowIndex, part,
+          taken: false, filled: true,
+          ox: 0, oy: 0
+        });
+      }
+    }
+  }
+  return list;
+}
+
+function buildStaticTargets() {
+  targets = [];
+
+  let row = 0;
+  for (const r of ROWS) {
+    if (r.kind === 'fixed') {
+      targets = targets.concat(textToTargets(r.text, row, 'fixed'));
+    } else if (r.kind === 'date') {
+      const now = new Date();
+      currentValues.date =
+        now.getFullYear() + '-' +
+        String(now.getMonth() + 1).padStart(2, '0') + '-' +
+        String(now.getDate()).padStart(2, '0');
+      targets = targets.concat(textToTargets(currentValues.date, row, 'date'));
+    } else if (r.kind === 'time') {
+      const now = new Date();
+      currentValues.hour = String(now.getHours()).padStart(2, '0');
+      currentValues.min  = String(now.getMinutes()).padStart(2, '0');
+      currentValues.sec  = String(now.getSeconds()).padStart(2, '0');
+      targets = targets.concat(getTimePart('hour'));
+      targets = targets.concat(getTimePart('min'));
+    }
+    row++;
+  }
+
+  document.getElementById('cnt').textContent = targets.length;
+}
+
+function buildSecBalls() {
+  const secTargets = getTimePart('sec');
+  secBalls.length = 0;
+
+  for (let i = 0; i < secTargets.length; i++) {
+    const t = secTargets[i];
+    secBalls.push({
+      x: t.x, y: t.y, z: t.z,
+      tx: t.x, ty: t.y, tz: t.z,
+      sx: t.x, sy: t.y, sz: t.z,
+      hue: t.hue,
+      vx: 0, vy: 0, vz: 0,
+      life: SEC_LIFE,
+      maxLife: SEC_LIFE * (0.6 + Math.random() * 0.8),
+      ox: 0, oy: 0
+    });
+  }
+}
+
+function resetSecBalls() {
+  const secTargets = getTimePart('sec');
+  if (secBalls.length !== secTargets.length) {
+    buildSecBalls();
+    rebuildPointCloud();
+    return;
+  }
+  for (let i = 0; i < secTargets.length; i++) {
+    const t = secTargets[i];
+    const b = secBalls[i];
+    b.tx = t.x; b.ty = t.y; b.tz = t.z;
+    b.hue = t.hue;
+    b.sx = b.x; b.sy = b.y; b.sz = b.z;
+    const u = Math.random() * 2 - 1;
+    const theta = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(1 - u * u);
+    const sp = 2 + Math.random() * 4;
+    b.vx = r * Math.cos(theta) * sp;
+    b.vy = r * Math.sin(theta) * sp;
+    b.vz = u * sp;
+    b.life = 0;
+    b.maxLife = SEC_LIFE * (0.6 + Math.random() * 0.8);
+  }
+}
+
+// ============================================================
+// ★ 点云重建：保留已有点的位置
+// ============================================================
+function rebuildPointCloud() {
+  const totalCount = targets.length + secBalls.length;
+  if (totalCount === 0) {
+    if (pointsMesh) {
+      scene.remove(pointsMesh);
+      pointsMesh = null;
+      geometry = null;
+    }
+    return;
+  }
+
+  const count = Math.min(totalCount, MAX_POINTS);
+
+  const newPos   = new Float32Array(count * 3);
+  const newCol   = new Float32Array(count * 3);
+  const newIdx   = new Int32Array(count);
+  const newIsSec = new Uint8Array(count);
+
+  const color = new THREE.Color();
+  let idx = 0;
+
+  // 静态
+  for (let i = 0; i < targets.length && idx < count; i++) {
+    const tg = targets[i];
+    // ★ 保留旧位置
+    if (pointData && pointTargetIdx && idx < pointData.length / 3 &&
+        pointIsSec[idx] === 0) {
+      newPos[idx * 3]     = pointData[idx * 3];
+      newPos[idx * 3 + 1] = pointData[idx * 3 + 1];
+      newPos[idx * 3 + 2] = pointData[idx * 3 + 2];
+    } else {
+      newPos[idx * 3]     = tg.x + (Math.random() - 0.5) * 200;
+      newPos[idx * 3 + 1] = tg.y + (Math.random() - 0.5) * 200;
+      newPos[idx * 3 + 2] = tg.z + (Math.random() - 0.5) * 100;
+    }
+
+    color.setHSL(tg.hue / 360, SATURATION, LIGHTNESS);
+    newCol[idx * 3]     = color.r;
+    newCol[idx * 3 + 1] = color.g;
+    newCol[idx * 3 + 2] = color.b;
+
+    newIdx[idx] = i;
+    newIsSec[idx] = 0;
+    idx++;
+  }
+
+  // 秒球
+  for (let i = 0; i < secBalls.length && idx < count; i++) {
+    const b = secBalls[i];
+    newPos[idx * 3]     = b.x;
+    newPos[idx * 3 + 1] = b.y;
+    newPos[idx * 3 + 2] = b.z;
+
+    color.setHSL(b.hue / 360, SATURATION, LIGHTNESS);
+    newCol[idx * 3]     = color.r;
+    newCol[idx * 3 + 1] = color.g;
+    newCol[idx * 3 + 2] = color.b;
+
+    newIdx[idx] = i;
+    newIsSec[idx] = 1;
+    idx++;
+  }
+
+  pointData = newPos;
+  pointColor = newCol;
+  pointTargetIdx = newIdx;
+  pointIsSec = newIsSec;
+
+  if (!geometry) {
+    geometry = new THREE.BufferGeometry();
+  }
+  geometry.setAttribute('position', new THREE.BufferAttribute(pointData, 3));
+  geometry.setAttribute('color',    new THREE.BufferAttribute(pointColor, 3));
+  geometry.setAttribute('aTarget',  new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  geometry.setAttribute('aForce',   new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+
+  if (!pointsMesh) {
+    const mat = new THREE.PointsMaterial({
+      size: POINT_SIZE,
+      vertexColors: true,
+      sizeAttenuation: true,
+      transparent: true,
+      alphaTest: 0.1
+    });
+    pointsMesh = new THREE.Points(geometry, mat);
+    pointsMesh.frustumCulled = false;
+    scene.add(pointsMesh);
+  }
+
+  document.getElementById('pc').textContent = count;
+}
+
+// ---------- 时钟 ----------
+function tick() {
+  const now = new Date();
+  const newDate =
+    now.getFullYear() + '-' +
+    String(now.getMonth() + 1).padStart(2, '0') + '-' +
+    String(now.getDate()).padStart(2, '0');
+  const newHour = String(now.getHours()).padStart(2, '0');
+  const newMin  = String(now.getMinutes()).padStart(2, '0');
+  const newSec  = String(now.getSeconds()).padStart(2, '0');
+
+  let changed = false;
+  if (newDate !== currentValues.date) {
+    currentValues.date = newDate; rebuildDateRow(); changed = true;
+  }
+  if (newHour !== currentValues.hour) {
+    currentValues.hour = newHour; rebuildTimePart('hour'); changed = true;
+  }
+  if (newMin !== currentValues.min) {
+    currentValues.min = newMin; rebuildTimePart('min'); changed = true;
+  }
+  if (newSec !== currentValues.sec) {
+    currentValues.sec = newSec;
+    if (secBalls.length > 0) resetSecBalls();
+  }
+  if (changed) {
+    document.getElementById('cnt').textContent = targets.length;
+  }
+}
+
+function findDateRowIndex() {
+  for (let i = 0; i < ROWS.length; i++) if (ROWS[i].kind === 'date') return i;
+  return -1;
+}
+
+function rebuildDateRow() {
+  const idx = findDateRowIndex();
+  if (idx < 0) return;
+  targets = targets.filter(t => t.part !== 'date');
+  targets = targets.concat(textToTargets(currentValues.date, idx, 'date'));
+  rebuildPointCloud();
+}
+
+function rebuildTimePart(part) {
+  targets = targets.filter(t => t.part !== part);
+  targets = targets.concat(getTimePart(part));
+  rebuildPointCloud();
+}
+
+// ============================================================
+// 相机控制 ★ 单指留给磁铁
+// ============================================================
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = BASE_DIST * CAM_MIN_R;
+controls.maxDistance = BASE_DIST * CAM_MAX_R;
+controls.enablePan = false;
+controls.mouseButtons.LEFT = null;                 // 左键留给磁铁
+controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
+controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;  // 右键旋转
+controls.touches.ONE = null;                       // ★ 单指留给磁铁
+controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;   // ★ 双指缩放 + 旋转
+controls.target.set(0, 0, 0);
+
+// ============================================================
+// 交互
+// ============================================================
+const magnet = { active: false, sx: 0, sy: 0 };
+const projVec = new THREE.Vector3();
+const screenPos = { x: 0, y: 0 };
+
+function worldToScreen(x, y, z, out) {
+  projVec.set(x, y, z);
+  projVec.project(camera);
+  out.x = (projVec.x * 0.5 + 0.5) * W;
+  out.y = (-projVec.y * 0.5 + 0.5) * H;
+}
+
+// ============================================================
+// 每帧更新：目标位置 + 力
+// ============================================================
+function updateTargetsAndForces() {
+  if (!geometry || !pointData) return;
+  const tgtAttr = geometry.attributes.aTarget;
+  const frcAttr = geometry.attributes.aForce;
+  if (!tgtAttr || !frcAttr) return;
+
+  const pos = geometry.attributes.position.array;
+  const tgt = tgtAttr.array;
+  const frc = frcAttr.array;
+  const count = geometry.attributes.position.count;
+
+  const active = magnet.active;
+  const R = MAGNET_RADIUS;
+
+  for (let i = 0; i < count; i++) {
+    const isSec = pointIsSec[i];
+    const ti = pointTargetIdx[i];
+
+    let tx, ty, tz;
+    if (isSec) {
+      const b = secBalls[ti];
+      if (!b) continue;
+      tx = b.tx;
+      ty = b.ty;
+      tz = b.tz;
+    } else {
+      const tg = targets[ti];
+      if (!tg) continue;
+      tx = tg.x;
+      ty = tg.y;
+      tz = tg.z;
+    }
+
+    tgt[i * 3]     = tx;
+    tgt[i * 3 + 1] = ty;
+    tgt[i * 3 + 2] = tz;
+
+    let fx = 0, fy = 0;
+    if (active) {
+      worldToScreen(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2], screenPos);
+      const dx = screenPos.x - magnet.sx;
+      const dy = screenPos.y - magnet.sy;
+      const d = Math.hypot(dx, dy);
+      if (d < R) {
+        const k = 1 - d / R;
+        const ux = dx / (d + 0.001);
+        const uy = dy / (d + 0.001);
+        fx = ux * MAGNET_FORCE * k;
+        fy = -uy * MAGNET_FORCE * k;
+      }
+    }
+
+    frc[i * 3]     = fx;
+    frc[i * 3 + 1] = fy;
+    frc[i * 3 + 2] = 0;
+  }
+
+  tgtAttr.needsUpdate = true;
+  frcAttr.needsUpdate = true;
+}
+
+// ============================================================
+// 每帧移动点
+// ============================================================
+function updatePoints() {
+  if (!geometry || !pointData) return;
+  const posAttr = geometry.attributes.position;
+  const tgtAttr = geometry.attributes.aTarget;
+  const frcAttr = geometry.attributes.aForce;
+  if (!tgtAttr || !frcAttr) return;
+
+  const pos = posAttr.array;
+  const tgt = tgtAttr.array;
+  const frc = frcAttr.array;
+  const count = posAttr.count;
+
+  const ease = MAGNET_EASE;
+
+  for (let i = 0; i < count; i++) {
+    const j = i * 3;
+    pos[j]     += (tgt[j]     + frc[j]     - pos[j])     * ease;
+    pos[j + 1] += (tgt[j + 1] + frc[j + 1] - pos[j + 1]) * ease;
+    pos[j + 2] += (tgt[j + 2] + frc[j + 2] - pos[j + 2]) * ease;
+  }
+  posAttr.needsUpdate = true;
+}
+
+// ============================================================
+// 秒球更新
+// ============================================================
+function updateSecBalls() {
+  for (const b of secBalls) {
+    if (b.life < b.maxLife) {
+      b.life++;
+      const t = Math.min(b.life / b.maxLife, 1);
+      const blastT = Math.min(b.life / SEC_BLAST_FRAMES, 1);
+      const bx = b.sx + b.vx * blastT;
+      const by = b.sy + b.vy * blastT;
+      const bz = b.sz + b.vz * blastT;
+      b.x = bx + (b.tx - bx) * t;
+      b.y = by + (b.ty - by) * t;
+      b.z = bz + (b.tz - bz) * t;
+    } else {
+      b.x = b.tx; b.y = b.ty; b.z = b.tz;
+    }
+  }
+}
+
+// ============================================================
+// 启动
+// ============================================================
+let startTime = null;
+let frame = 0;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  frame++;
+
+  if (!startTime) startTime = now;
+  const elapsed = now - startTime;
+
+  // 秒球：等点云稳定 2 秒后
+  if (secBalls.length === 0 && targets.length > 0 && elapsed > 2000) {
+    buildSecBalls();
+    rebuildPointCloud();
+  }
+
+  updateSecBalls();
+  updateTargetsAndForces();
+  updatePoints();
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  if (frame % 10 === 0) {
+    let filled = 0;
+    for (const t of targets) if (t.filled) filled++;
+    document.getElementById('filled').textContent = filled;
+  }
+}
+
+buildStaticTargets();
+rebuildPointCloud();
+setInterval(tick, 1000);
+requestAnimationFrame(loop);
+
+// ============================================================
+// 事件 ★ 单指磁铁，双指交给 OrbitControls
+// ============================================================
+const canvas = renderer.domElement;
+
+// 桌面鼠标
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') return;   // 触摸走下面逻辑
+  if (e.button === 0) {
+    magnet.active = true;
+    magnet.sx = e.clientX;
+    magnet.sy = e.clientY;
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') return;
+  if (magnet.active) {
+    magnet.sx = e.clientX;
+    magnet.sy = e.clientY;
+  }
+});
+window.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch') return;
+  if (e.button === 0) magnet.active = false;
+});
+canvas.addEventListener('pointerleave', () => {
+  magnet.active = false;
+});
+
+// 触屏：单指磁铁，双指缩放旋转（交给 OrbitControls）
+canvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    // 单指 → 磁铁
+    magnet.active = true;
+    magnet.sx = e.touches[0].clientX;
+    magnet.sy = e.touches[0].clientY;
+  } else if (e.touches.length >= 2) {
+    // 双指 → 关闭磁铁，交给 OrbitControls
+    magnet.active = false;
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchmove', (e) => {
+  if (e.touches.length === 1 && magnet.active) {
+    magnet.sx = e.touches[0].clientX;
+    magnet.sy = e.touches[0].clientY;
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) {
+    magnet.active = false;
+  }
+}, { passive: true });
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
+</body>
+</html>

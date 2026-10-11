@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>碎裂坠落 Shatter</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0a12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,10,18,.85),rgba(10,10,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(223,230,255,.2);border-color:rgba(223,230,255,.55);color:#f2f4ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(223,230,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(223,230,255,.6);
+    background:rgba(223,230,255,.28);color:#14161f;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(223,230,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">碎裂坠落 <b id="m">碎裂坠落</b></div>
+  <button class="btn" id="btn-mode">换模式</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">三角碎片 · 级联触发 · 重力坠落反弹</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    count: 36,
+    mode: 'fall',          // fall | assemble | explode | cycle
+    gravity: 1,
+    trigger: 'center',     // all | center | left
+    restitution: 0.35,
+    spin: 1,
+    force: 1,
+    crackWidth: 1,
+    crackColor: '#0a0a12',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    fill: '#dfe6ff',
+    background: '#0a0a12'
+  };
+
+  var MODES = [
+    { key: 'fall',     label: '碎裂坠落' },
+    { key: 'assemble', label: '倒放聚合' },
+    { key: 'explode',  label: '爆炸飞散' },
+    { key: 'cycle',    label: '循环轮回' }
+  ];
+  var TRIGGERS = ['all', 'center', 'left'];
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildKey = '';
+    return true;
+  }
+
+  // ---------- 几何 ----------
+  // 三角剖分：全部已生成的三角形与新增点做 Delaunay 检查
+  function inCircumcircle(a, b, c, p) {
+    var ax = a.x, ay = a.y, bx = b.x, by = b.y, cx = c.x, cy = c.y;
+    var d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if (Math.abs(d) < 1e-12) return false;
+    var ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+    var uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+    var r2 = (ax - ux) * (ax - ux) + (ay - uy) * (ay - uy);
+    return (p.x - ux) * (p.x - ux) + (p.y - uy) * (p.y - uy) < r2 - 1e-9;
+  }
+
+  function triangulate(pts) {
+    var n = pts.length;
+    if (n < 3) return [];
+    // 加超级三角形
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var i = 0; i < n; i++) {
+      var p = pts[i];
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    var dx = maxX - minX || 1;
+    var dy = maxY - minY || 1;
+    var dmax = Math.max(dx, dy) || 1;
+    var midX = (minX + maxX) / 2;
+    var midY = (minY + maxY) / 2;
+    var all = pts.concat([
+      { x: midX - 20 * dmax, y: midY - dmax },
+      { x: midX, y: midY + 20 * dmax },
+      { x: midX + 20 * dmax, y: midY - dmax }
+    ]);
+    var tris = [[n, n + 1, n + 2]];
+    for (var k = 0; k < n; k++) {
+      var p2 = all[k];
+      var edges = [];
+      var keep = [];
+      for (var ti = 0; ti < tris.length; ti++) {
+        var t = tris[ti];
+        if (inCircumcircle(all[t[0]], all[t[1]], all[t[2]], p2)) {
+          edges.push([t[0], t[1]], [t[1], t[2]], [t[2], t[0]]);
+        } else keep.push(t);
+      }
+      var edgeMap = {};
+      var boundary = [];
+      for (var ei = 0; ei < edges.length; ei++) {
+        var e = edges[ei];
+        var key = e[0] < e[1] ? e[0] + '_' + e[1] : e[1] + '_' + e[0];
+        if (edgeMap[key]) { delete edgeMap[key]; }
+        else edgeMap[key] = e;
+      }
+      for (var kk in edgeMap) boundary.push(edgeMap[kk]);
+      tris = keep;
+      for (var bi = 0; bi < boundary.length; bi++) {
+        tris.push([boundary[bi][0], boundary[bi][1], k]);
+      }
+    }
+    // 过滤掉使用了超级顶点的三角形
+    return tris.filter(function (t) {
+      return t[0] < n && t[1] < n && t[2] < n;
+    });
+  }
+
+  function mulberry(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  // ---------- 文字位图 ----------
+  var textCanvas = document.createElement('canvas');
+  var textCtx = textCanvas.getContext('2d', { willReadFrequently: true });
+  var raster = document.createElement('canvas');
+  var rctx = raster.getContext('2d', { willReadFrequently: true });
+
+  // ---------- 碎片 ----------
+  var frags = [];
+  var buildKey = '';
+  var bbox = { x: 0, y: 0, w: 1, h: 1 };
+
+  function build() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + CFG.fill + '|' + CFG.count + '|' + CFG.crackWidth + '|' + CFG.crackColor + '|' + W + 'x' + H;
+    if (key === buildKey && frags.length) return;
+    buildKey = key;
+    frags = [];
+
+    // 1. 画文字到 raster
+    raster.width = W; raster.height = H;
+    rctx.clearRect(0, 0, W, H);
+    rctx.fillStyle = '#fff';
+    rctx.textAlign = 'center';
+    rctx.textBaseline = 'middle';
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) return;
+    var maxW = W * 0.9, maxH = H * 0.8;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.8);
+    var setF = function (s) { rctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = rctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      rctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+
+    // 2. 上色
+    textCanvas.width = W; textCanvas.height = H;
+    var tc = textCtx;
+    tc.globalCompositeOperation = 'source-over';
+    tc.clearRect(0, 0, W, H);
+    tc.drawImage(raster, 0, 0);
+    tc.globalCompositeOperation = 'source-in';
+    tc.fillStyle = CFG.fill;
+    tc.fillRect(0, 0, W, H);
+
+    // 3. 找包围盒
+    var img = rctx.getImageData(0, 0, W, H).data;
+    var hx = W, ux = 0, hy = H, uy = 0, found = false;
+    for (var y = 0; y < H; y += 2) {
+      for (var x = 0; x < W; x += 2) {
+        if (img[(y * W + x) * 4 + 3] > 16) {
+          found = true;
+          if (x < hx) hx = x; if (x > ux) ux = x;
+          if (y < hy) hy = y; if (y > uy) uy = y;
+        }
+      }
+    }
+    if (!found) return;
+    bbox = { x: hx, y: hy, w: Math.max(1, ux - hx), h: Math.max(1, uy - hy) };
+
+    // 4. 生成点集
+    var N = Math.max(10, Math.min(80, Math.round(CFG.count)));
+    var rng = mulberry(24301 + N * 7);
+    var pts = [];
+    var ring = Math.max(4, Math.round(N * 0.55));
+    for (var r = 0; r < ring; r++) {
+      pts.push({ x: bbox.x + rng() * bbox.w, y: bbox.y + rng() * bbox.h });
+    }
+    for (var e = 0; e <= 5; e++) {
+      pts.push({ x: bbox.x + e / 5 * bbox.w, y: bbox.y });
+      pts.push({ x: bbox.x + e / 5 * bbox.w, y: bbox.y + bbox.h });
+    }
+    for (var e2 = 1; e2 < 4; e2++) {
+      pts.push({ x: bbox.x, y: bbox.y + e2 / 4 * bbox.h });
+      pts.push({ x: bbox.x + bbox.w, y: bbox.y + e2 / 4 * bbox.h });
+    }
+
+    // 5. 三角剖分
+    var tris = triangulate(pts);
+
+    // 6. 每个三角形做成一个碎片
+    var cw = CFG.crackWidth;
+    var col = CFG.crackColor;
+    for (var ti = 0; ti < tris.length; ti++) {
+      var t = tris[ti];
+      var a = pts[t[0]], b = pts[t[1]], c = pts[t[2]];
+      // 面积过滤
+      var area = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+      if (area < 3) continue;
+
+      // 中点在文字内？
+      var cxm = (a.x + b.x + c.x) / 3;
+      var cym = (a.y + b.y + c.y) / 3;
+      var inside = false;
+      for (var kk = 0; kk < 14 && !inside; kk++) {
+        var rr = Math.sqrt(rng()), tt = rng();
+        var px = a.x * (1 - rr) + b.x * (rr * (1 - tt)) + c.x * (rr * tt);
+        var py = a.y * (1 - rr) + b.y * (rr * (1 - tt)) + c.y * (rr * tt);
+        var idx = (Math.max(0, Math.min(H - 1, Math.round(py))) * W + Math.max(0, Math.min(W - 1, Math.round(px)))) * 4;
+        if (img[idx + 3] > 20) inside = true;
+      }
+      if (!inside) continue;
+
+      // 碎片截图区
+      var minX = Math.min(a.x, b.x, c.x) - cw - 2;
+      var minY = Math.min(a.y, b.y, c.y) - cw - 2;
+      var maxX = Math.max(a.x, b.x, c.x) + cw + 2;
+      var maxY = Math.max(a.y, b.y, c.y) + cw + 2;
+      var fw = Math.max(2, Math.ceil(maxX - minX));
+      var fh = Math.max(2, Math.ceil(maxY - minY));
+
+      var fc = document.createElement('canvas');
+      fc.width = fw; fc.height = fh;
+      var fctx = fc.getContext('2d');
+      fctx.translate(-minX, -minY);
+      fctx.beginPath();
+      fctx.moveTo(a.x, a.y);
+      fctx.lineTo(b.x, b.y);
+      fctx.lineTo(c.x, c.y);
+      fctx.closePath();
+      fctx.save();
+      fctx.clip();
+      fctx.drawImage(textCanvas, 0, 0);
+      fctx.restore();
+      if (cw > 0) {
+        fctx.globalCompositeOperation = 'source-atop';
+        fctx.strokeStyle = col;
+        fctx.lineWidth = cw;
+        fctx.lineJoin = 'round';
+        fctx.beginPath();
+        fctx.moveTo(a.x, a.y);
+        fctx.lineTo(b.x, b.y);
+        fctx.lineTo(c.x, c.y);
+        fctx.closePath();
+        fctx.stroke();
+      }
+
+      var sizeF = Math.max(0.5, Math.min(2.2, 30 / Math.sqrt(area)));
+      frags.push({
+        canvas: fc,
+        ox: minX - cxm,
+        oy: minY - cym,
+        bw: fw, bh: fh,
+        hx: cxm, hy: cym,
+        sizeF: sizeF,
+        r0: rng(), r1: rng(), r2: rng(), r3: rng(),
+        x: cxm, y: cym,
+        vx: 0, vy: 0, rot: 0, vr: 0,
+        launched: false, resting: false, delay: 0,
+        sx: 0, sy: 0, srot: 0
+      });
+    }
+  }
+
+  // ---------- 模拟 ----------
+  var epoch = null;
+  var needReset = true;
+  var lastMode = '';
+  var lastTrigger = '';
+
+  function resetSim(params) {
+    var mode = params.mode;
+    var trig = params.trigger;
+    var cx = bbox.x + bbox.w / 2;
+    var cy = bbox.y + bbox.h / 2;
+    var rMax = Math.hypot(bbox.w, bbox.h) / 2 || 1;
+    var spanL = Math.max(W, H);
+    for (var i = 0; i < frags.length; i++) {
+      var f = frags[i];
+      f.x = f.hx; f.y = f.hy;
+      f.vx = 0; f.vy = 0; f.rot = 0; f.vr = 0;
+      f.launched = false; f.resting = false;
+      if (trig === 'all') f.delay = f.r0 * 0.18;
+      else if (trig === 'left') f.delay = (f.hx - bbox.x) / bbox.w * 1.2 + f.r0 * 0.12;
+      else f.delay = Math.hypot(f.hx - cx, f.hy - cy) / rMax * 0.9 + f.r0 * 0.15;
+
+      if (mode === 'assemble') {
+        var ang = f.r3 * Math.PI * 2;
+        var dist = (0.55 + 0.6 * f.r2) * spanL;
+        f.sx = Math.cos(ang) * dist;
+        f.sy = Math.sin(ang) * dist;
+        f.srot = (f.r1 - 0.5) * 5;
+      } else if (mode === 'cycle') {
+        f.sx = (f.r2 - 0.5) * W * 0.5;
+        f.sy = (0.25 + f.r3 * 0.75) * H * 0.55;
+        f.srot = (f.r1 - 0.5) * 3;
+      }
+    }
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    build();
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    if (!frags.length) { requestAnimationFrame(render); return; }
+
+    if (CFG.mode !== lastMode || CFG.trigger !== lastTrigger) {
+      lastMode = CFG.mode;
+      lastTrigger = CFG.trigger;
+      needReset = true;
+    }
+    if (needReset || epoch === null) {
+      needReset = false;
+      epoch = time;
+      resetSim(CFG);
+    }
+
+    var t = time - epoch;
+    var mode = CFG.mode;
+    var g = CFG.gravity * 1500;
+    var rest = CFG.restitution;
+    var spin = CFG.spin;
+    var force = CFG.force;
+    var floorY = H * 0.94;
+    var bxc = bbox.x + bbox.w / 2;
+    var byc = bbox.y + bbox.h / 2;
+
+    for (var i = 0; i < frags.length; i++) {
+      var f = frags[i];
+
+      if (mode === 'fall' || mode === 'explode') {
+        if (!f.launched && t >= f.delay) {
+          f.launched = true;
+          if (mode === 'explode') {
+            var dx = f.hx - bxc, dy = f.hy - byc;
+            var d = Math.hypot(dx, dy) || 1;
+            var v = force * (260 + 480 * f.r1);
+            f.vx = dx / d * v + (f.r2 - 0.5) * 60;
+            f.vy = dy / d * v * 0.9 - 140 * force;
+            f.vr = (f.r3 - 0.5) * 8 * spin * f.sizeF;
+          } else {
+            f.vx = (f.r1 - 0.5) * 70;
+            f.vy = 20 * f.r2;
+            f.vr = (f.r3 - 0.5) * 6 * spin * f.sizeF;
+          }
+        }
+        if (f.launched && !f.resting) {
+          f.vy += g * dt;
+          f.x += f.vx * dt;
+          f.y += f.vy * dt;
+          f.rot += f.vr * dt;
+          if (f.y > floorY && f.vy > 0) {
+            f.y = floorY;
+            f.vy = -f.vy * rest;
+            f.vx *= 0.9;
+            f.vr *= 0.72;
+            if (Math.abs(f.vy) < 45) {
+              f.vy = 0;
+              if (Math.abs(f.vx) < 12) f.resting = true;
+            }
+          }
+          if (f.y >= floorY - 0.5) f.vx *= Math.max(0, 1 - 2.5 * dt);
+        }
+      } else if (mode === 'assemble') {
+        var p = Math.max(0, Math.min(1, (t - f.delay) / 1.15));
+        var e = (1 - p) * (1 - p);
+        f.x = f.hx + f.sx * e;
+        f.y = f.hy + f.sy * e;
+        f.rot = f.srot * e;
+      } else {
+        // cycle
+        var ph = ((t - f.delay * 0.6) / 4.6 % 1 + 1) % 1;
+        var e2 = 0.5 - 0.5 * Math.cos(ph * Math.PI * 2);
+        f.x = f.hx + f.sx * e2;
+        f.y = f.hy + f.sy * e2;
+        f.rot = f.srot * e2;
+      }
+    }
+
+    // 绘制
+    for (var j = 0; j < frags.length; j++) {
+      var fr = frags[j];
+      ctx.save();
+      ctx.translate(fr.x, fr.y);
+      if (fr.rot !== 0) ctx.rotate(fr.rot);
+      ctx.drawImage(fr.canvas, fr.ox, fr.oy, fr.bw, fr.bh);
+      ctx.restore();
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA', mode: 'fall',     trigger: 'center', count: 44, gravity: 1.1, restitution: 0.4, fill: '#cfe6ff', crackColor: '#0a0a12' },
+    { text: '倒放聚合', mode: 'assemble', trigger: 'center', count: 36, spin: 1.2, fill: '#ffe9a8', background: '#0a0702' },
+    { text: 'EXPLODE', mode: 'explode',  trigger: 'all',    count: 60, gravity: 0.8, force: 1.6, spin: 2, fill: '#ff6b8a', background: '#0c060a' },
+    { text: '轮回',   mode: 'cycle',    trigger: 'center', count: 40, spin: 1, fill: '#8b7bff', background: '#08060f' }
+  ];
+  var presetIdx = 0;
+
+  function applyPreset(p) {
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    buildKey = '';
+    needReset = true;
+    var mm = MODES.find(function (x) { return x.key === CFG.mode; });
+    if (mm) mLabel.textContent = mm.label;
+    var mi = MODES.findIndex(function (x) { return x.key === CFG.mode; });
+    if (mi >= 0) modeIdx = mi;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyPreset(PRESETS[presetIdx]);
+  });
+
+  // ---------- 换模式 ----------
+  var modeIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-mode').addEventListener('click', function () {
+    modeIdx = (modeIdx + 1) % MODES.length;
+    CFG.mode = MODES[modeIdx].key;
+    mLabel.textContent = MODES[modeIdx].label;
+    needReset = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    buildKey = '';
+    needReset = true;
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

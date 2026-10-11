@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#05030a">
+<title>中国龙 · Chinese Dragon</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#05030a;
+    overscroll-behavior:none;touch-action:none;
+  }
+  body{
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-user-select:none;user-select:none;
+    -webkit-touch-callout:none;
+  }
+  canvas{display:block;touch-action:none;cursor:crosshair}
+  .title{
+    position:fixed;left:50%;top:calc(20px + env(safe-area-inset-top));
+    transform:translateX(-50%);
+    color:rgba(255,224,160,.30);font-size:12px;letter-spacing:.7em;
+    pointer-events:none;user-select:none;text-indent:.7em;white-space:nowrap;
+  }
+  .hint{
+    position:fixed;left:50%;bottom:calc(26px + env(safe-area-inset-bottom));
+    transform:translateX(-50%);
+    color:rgba(255,224,160,.58);font-size:13px;letter-spacing:.14em;
+    pointer-events:none;white-space:nowrap;user-select:none;
+    transition:opacity .9s ease;text-shadow:0 0 14px rgba(255,170,60,.5);
+    padding:0 14px;text-align:center;
+  }
+  .hint.fade{opacity:0}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="title">中 国 龙</div>
+<div class="hint" id="hint"></div>
+
+<script>
+(function(){
+'use strict';
+
+/* ===================== 工具 ===================== */
+const TAU = Math.PI * 2;
+const clamp = (v,a,b)=> v<a?a:(v>b?b:v);
+const rand  = (a,b)=> a+Math.random()*(b-a);
+
+/* ===================== 设备判定 ===================== */
+const isTouch = (('ontouchstart' in window) || navigator.maxTouchPoints > 0)
+              && window.matchMedia('(pointer: coarse)').matches;
+
+/* ===================== 画布 ===================== */
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+const hintEl = document.getElementById('hint');
+
+let W=0,H=0,DPR=1,scale=1;
+let bgGrad=null, vigGrad=null, bodyGrad=null;
+
+/* ===================== 全局状态 ===================== */
+const N = isTouch ? 46 : 64;          // 身体节点数（手机端减负）
+let   segLen = 15;
+const pts = [];
+let headAngle = 0;
+let speed = 0;
+let autoMode = true;
+let firing = false;
+
+const pointer   = {x:0, y:0, lastMove:-99};
+const particles = [];
+const stars     = [];
+const mouthPos  = {x:0, y:0};
+
+/* 交互状态 */
+let pointerHeld = false;   // 桌面端按住
+let burstUntil  = -1;      // 触屏端双击后的龙息截止时间(秒)
+let downTime = 0, downX = 0, downY = 0;
+let isDragging = false;
+let lastTapTime = -1;
+
+/* ===================== 初始化 ===================== */
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, isTouch ? 1.75 : 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // 手机端把龙控制在合适的大小
+  scale = isTouch
+    ? clamp(Math.min(W/1000, H/1500), 0.40, 0.85)
+    : clamp(Math.min(W/1400, H/900), 0.42, 1.5);
+
+  buildGradients();
+  buildStars();
+  resetDragon();
+
+  pointer.x = W * 0.5;
+  pointer.y = H * 0.5;
+}
+
+function buildGradients(){
+  bgGrad = ctx.createRadialGradient(W*0.5, H*0.42, 0, W*0.5, H*0.5, Math.max(W,H)*0.78);
+  bgGrad.addColorStop(0,    '#1a1230');
+  bgGrad.addColorStop(0.45, '#0d0918');
+  bgGrad.addColorStop(1,    '#04030a');
+
+  vigGrad = ctx.createRadialGradient(W*0.5, H*0.5, Math.min(W,H)*0.28,
+                                     W*0.5, H*0.5, Math.max(W,H)*0.78);
+  vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vigGrad.addColorStop(1, 'rgba(0,0,0,0.62)');
+
+  bodyGrad = ctx.createLinearGradient(0, 0, 0, H);
+  bodyGrad.addColorStop(0,    '#f3c855');
+  bodyGrad.addColorStop(0.45, '#dda02e');
+  bodyGrad.addColorStop(1,    '#a56712');
+}
+
+function buildStars(){
+  stars.length = 0;
+  const n = Math.floor(W * H / (isTouch ? 22000 : 16000));
+  for(let i=0;i<n;i++){
+    stars.push({
+      x: Math.random()*W,
+      y: Math.random()*H,
+      r: Math.random()*1.3 + 0.25,
+      p: Math.random()*TAU,
+      sp: 0.4 + Math.random()*1.3
+    });
+  }
+}
+
+function resetDragon(){
+  segLen = 15 * scale;
+  pts.length = 0;
+  const cx = W*0.5, cy = H*0.5;
+  for(let i=0;i<N;i++){
+    pts.push({ x: cx - i*segLen, y: cy });
+  }
+  headAngle = 0;
+  speed = 0;
+}
+
+/* ===================== 身体半径曲线 ===================== */
+const RADII = [
+  [0.00, 0.62],
+  [0.10, 0.90],
+  [0.32, 1.00],
+  [0.60, 0.78],
+  [0.82, 0.42],
+  [1.00, 0.06]
+];
+function radiusAt(u){
+  u = clamp(u, 0, 1);
+  let v = 0.06;
+  for(let i=0;i<RADII.length-1;i++){
+    const u0=RADII[i][0], r0=RADII[i][1];
+    const u1=RADII[i+1][0], r1=RADII[i+1][1];
+    if(u <= u1){
+      const k = clamp((u-u0)/(u1-u0), 0, 1);
+      const sm = k*k*(3-2*k);
+      v = r0 + (r1-r0)*sm;
+      break;
+    }
+  }
+  return Math.max(v * 30 * scale, 0.8);
+}
+
+/* ===================== 平滑路径 ===================== */
+function catmull(p0,p1,p2,p3,t){
+  const t2=t*t, t3=t2*t;
+  return 0.5*((2*p1) + (-p0+p2)*t + (2*p0-5*p1+4*p2-p3)*t2 + (-p0+3*p1-3*p2+p3)*t3);
+}
+
+function buildPath(list){
+  const out = [];
+  const n = list.length;
+  const SUB = isTouch ? 1 : 2;
+
+  for(let i=0;i<n-1;i++){
+    const p0 = list[i>0 ? i-1 : 0];
+    const p1 = list[i];
+    const p2 = list[i+1];
+    const p3 = list[i+2<n ? i+2 : n-1];
+    for(let j=0;j<SUB;j++){
+      const t = j/SUB;
+      out.push({
+        x: catmull(p0.x,p1.x,p2.x,p3.x,t),
+        y: catmull(p0.y,p1.y,p2.y,p3.y,t),
+        u: (i+t)/(n-1)
+      });
+    }
+  }
+  const last = list[n-1];
+  out.push({ x:last.x, y:last.y, u:1 });
+
+  for(let i=0;i<out.length;i++){
+    const a = out[Math.max(0,i-1)];
+    const b = out[Math.min(out.length-1,i+1)];
+    out[i].ang = Math.atan2(b.y-a.y, b.x-a.x);
+  }
+  return out;
+}
+
+/* ===================== 更新 ===================== */
+function update(dt, time){
+  /* 龙息开关：桌面端按住 / 触屏双击爆发 */
+  firing = pointerHeld || (time < burstUntil);
+
+  /* ---- 目标点 ---- */
+  let tx, ty;
+  if(autoMode){
+    tx = W*0.5 + Math.cos(time*0.37) * W*0.32;
+    ty = H*0.5 + Math.sin(time*0.53) * H*0.30;
+  }else{
+    tx = pointer.x;
+    ty = pointer.y;
+  }
+  const m = 80*scale;
+  tx = clamp(tx, m, W-m);
+  ty = clamp(ty, m, H-m);
+
+  /* ---- 头部转向 ---- */
+  const h = pts[0];
+  const dx = tx - h.x, dy = ty - h.y;
+  const dist = Math.hypot(dx, dy);
+  const desired = Math.atan2(dy, dx);
+
+  let da = desired - headAngle;
+  while(da >  Math.PI) da -= TAU;
+  while(da < -Math.PI) da += TAU;
+
+  const maxTurn = (isTouch ? 4.2 : 3.2) * dt;
+  headAngle += clamp(da, -maxTurn, maxTurn);
+  headAngle += Math.sin(time*2.1) * 0.4 * dt;
+  if(headAngle >  Math.PI) headAngle -= TAU;
+  if(headAngle < -Math.PI) headAngle += TAU;
+
+  /* ---- 速度（手机端补足基础速度，否则太慢追不上手指） ---- */
+  const base = isTouch ? (300*scale + 150) : (240*scale + 40);
+  let ts = base * clamp(dist / (200*scale), 0.45, 1.8);
+  if(firing) ts *= 1.4;
+  speed += (ts - speed) * (1 - Math.exp(-3.8*dt));
+
+  h.x += Math.cos(headAngle) * speed * dt;
+  h.y += Math.sin(headAngle) * speed * dt;
+
+  /* ---- 身体约束 ---- */
+  for(let iter=0; iter<3; iter++){
+    for(let i=1;i<N;i++){
+      const p = pts[i], q = pts[i-1];
+      let ddx = p.x-q.x, ddy = p.y-q.y;
+      let d = Math.hypot(ddx, ddy);
+      if(d < 1e-4){ ddx = 1; ddy = 0; d = 1e-4; }
+      const diff = (d - segLen) / d;
+      const k = 0.95 - 0.5 * (i/N);
+      p.x -= ddx * diff * k;
+      p.y -= ddy * diff * k;
+    }
+  }
+
+  /* ---- 游动波 ---- */
+  const waveT = time * 5.0;
+  for(let i=1;i<N;i++){
+    const p = pts[i], q = pts[i-1];
+    const ddx = q.x-p.x, ddy = q.y-p.y;
+    const d = Math.hypot(ddx, ddy) || 1;
+    const nx = -ddy/d, ny = ddx/d;
+    const u = i/N;
+    const amp = 5*scale * Math.sin(u*Math.PI) * (0.25+u);
+    const off = Math.sin(waveT - u*6) * amp;
+    p.x += nx * off * 0.45;
+    p.y += ny * off * 0.45;
+  }
+
+  /* ---- 龙嘴坐标 ---- */
+  const cosA = Math.cos(headAngle), sinA = Math.sin(headAngle);
+  const mlx = 58, mly = -4;
+  mouthPos.x = h.x + (mlx*cosA - mly*sinA) * scale;
+  mouthPos.y = h.y + (mlx*sinA + mly*cosA) * scale;
+
+  /* ---- 龙息粒子 ---- */
+  if(firing){
+    const cnt = isTouch ? 3 : 5;
+    for(let i=0;i<cnt;i++){
+      const a  = headAngle + rand(-0.30, 0.30);
+      const sp = rand(170, 540) * (isTouch ? 1 : scale);
+      const lf = rand(0.25, 0.7);
+      particles.push({
+        x: mouthPos.x + rand(-7,7)*scale,
+        y: mouthPos.y + rand(-7,7)*scale,
+        vx: Math.cos(a)*sp + Math.cos(headAngle)*speed*0.45,
+        vy: Math.sin(a)*sp + Math.sin(headAngle)*speed*0.45,
+        life: lf, maxLife: lf,
+        size: rand(5, 16) * scale,
+        color: Math.random() < 0.42 ? '255,244,190'
+             : (Math.random() < 0.6 ? '255,152,42' : '255,78,28')
+      });
+    }
+  }
+
+  /* ---- 粒子更新 ---- */
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.life -= dt;
+    if(p.life <= 0){ particles.splice(i,1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    const drag = Math.exp(-2.2*dt);
+    p.vx *= drag;
+    p.vy *= drag;
+    p.vy -= 42 * scale * dt;
+  }
+  const cap = isTouch ? 300 : 520;
+  if(particles.length > cap) particles.splice(0, particles.length - cap);
+
+  /* ---- 空闲回归自动巡游 ---- */
+  if(!autoMode && time - pointer.lastMove > 3.2) autoMode = true;
+}
+
+/* ===================== 背景 ===================== */
+function drawStars(t){
+  ctx.save();
+  ctx.fillStyle = '#ffe9b8';
+  for(let i=0;i<stars.length;i++){
+    const s = stars[i];
+    const a = 0.18 + 0.42 * Math.sin(t*s.sp + s.p);
+    if(a <= 0.03) continue;
+    ctx.globalAlpha = a;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawClouds(t){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const cnt = isTouch ? 3 : 5;
+  for(let i=0;i<cnt;i++){
+    const tt = t*0.05 + i*1.7;
+    const x = W*0.5 + Math.cos(tt*0.7 + i) * W*0.42;
+    const y = H*0.5 + Math.sin(tt*0.9 + i*2.1) * H*0.36;
+    const r = (170 + i*45) * scale;
+    const g = ctx.createRadialGradient(x,y,0,x,y,r);
+    const hue = (i%2===0) ? '255,178,80' : '96,178,220';
+    g.addColorStop(0, 'rgba('+hue+',0.055)');
+    g.addColorStop(1, 'rgba('+hue+',0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ===================== 龙身 ===================== */
+function traceCircles(path, pad){
+  ctx.beginPath();
+  for(let i=0;i<path.length;i++){
+    const p = path[i];
+    const r = radiusAt(p.u) + pad;
+    if(r <= 0.2) continue;
+    ctx.moveTo(p.x + r, p.y);
+    ctx.arc(p.x, p.y, r, 0, TAU);
+  }
+}
+
+function drawBody(path){
+  const len = path.length;
+
+  /* 外发光 */
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.10;
+  ctx.fillStyle = '#ffb03a';
+  traceCircles(path, 16*scale);
+  ctx.fill();
+  ctx.restore();
+
+  /* 深色轮廓 */
+  ctx.fillStyle = '#5e2a08';
+  traceCircles(path, 3*scale);
+  ctx.fill();
+
+  /* 金色主体 */
+  ctx.fillStyle = bodyGrad;
+  traceCircles(path, 0);
+  ctx.fill();
+
+  /* 上侧高光 */
+  ctx.save();
+  ctx.globalAlpha = 0.42;
+  ctx.fillStyle = '#ffe9a3';
+  ctx.beginPath();
+  for(let i=0;i<len;i++){
+    const p = path[i];
+    const r = radiusAt(p.u) * 0.70;
+    if(r < 1) continue;
+    const ox = p.x, oy = p.y - r*0.38;
+    ctx.moveTo(ox + r, oy);
+    ctx.arc(ox, oy, r, 0, TAU);
+  }
+  ctx.fill();
+  ctx.restore();
+
+  /* 鳞纹 */
+  const step = isTouch ? 7 : 5;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(112,55,8,0.32)';
+  ctx.lineWidth = Math.max(1.2*scale, 0.8);
+  for(let i=8;i<len-6;i+=step){
+    const p = path[i];
+    const r = radiusAt(p.u);
+    if(r < 3*scale) continue;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r*0.84, p.ang - 1.45, p.ang + 1.45);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  /* 背鳍 */
+  const fstep = isTouch ? 8 : 6;
+  ctx.fillStyle = '#bf3520';
+  ctx.beginPath();
+  for(let i=6;i<len-10;i+=fstep){
+    const p = path[i];
+    const r = radiusAt(p.u);
+    if(r < 2.5*scale) continue;
+    const a = p.ang;
+    const nx = -Math.sin(a), ny = Math.cos(a);
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const bx = p.x + nx*(r*0.55);
+    const by = p.y + ny*(r*0.55);
+    const hgt = 10*scale * Math.sin(clamp(p.u,0,1)*Math.PI*0.92);
+    const wdt = 4.5*scale;
+    ctx.moveTo(bx - dx*wdt, by - dy*wdt);
+    ctx.lineTo(bx + nx*hgt,  by + ny*hgt);
+    ctx.lineTo(bx + dx*wdt, by + dy*wdt);
+  }
+  ctx.fill();
+
+  /* 背鳍高光 */
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = '#ffd06a';
+  ctx.beginPath();
+  for(let i=9;i<len-10;i+=12){
+    const p = path[i];
+    const r = radiusAt(p.u);
+    if(r < 3*scale) continue;
+    const a = p.ang;
+    const nx = -Math.sin(a), ny = Math.cos(a);
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const bx = p.x + nx*(r*0.55);
+    const by = p.y + ny*(r*0.55);
+    const hgt = 6*scale * Math.sin(clamp(p.u,0,1)*Math.PI*0.92);
+    const wdt = 2.2*scale;
+    ctx.moveTo(bx - dx*wdt, by - dy*wdt);
+    ctx.lineTo(bx + nx*hgt,  by + ny*hgt);
+    ctx.lineTo(bx + dx*wdt, by + dy*wdt);
+  }
+  ctx.fill();
+  ctx.restore();
+}
+
+/* ===================== 龙爪 ===================== */
+const CLAW_U = [0.14, 0.36, 0.58, 0.78];
+
+function drawClaw(cx, cy, ang, size, t, seed){
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang);
+  ctx.rotate(Math.sin(t*3.2 + seed*7) * 0.12);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.strokeStyle = '#c08a1c';
+  ctx.lineWidth = Math.max(size*0.26, 1.5);
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.quadraticCurveTo(size*0.55, -size*0.18, size*0.92, size*0.05);
+  ctx.stroke();
+
+  const px = size*0.92, py = size*0.05;
+  ctx.strokeStyle = '#f8e6ae';
+  ctx.lineWidth = Math.max(size*0.13, 1);
+  for(let i=-1;i<=1;i++){
+    const a = 0.5 + i*0.62;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.quadraticCurveTo(
+      px + Math.cos(a)*size*0.42, py + Math.sin(a)*size*0.42,
+      px + Math.cos(a+0.55)*size*0.80, py + Math.sin(a+0.55)*size*0.80
+    );
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawClaws(path, t){
+  const len = path.length;
+  for(let i=0;i<CLAW_U.length;i++){
+    const idx = Math.round(CLAW_U[i] * (len-1));
+    const p = path[clamp(idx, 0, len-1)];
+    const r = radiusAt(p.u);
+    if(r < 4*scale) continue;
+    const side = (i%2===0) ? 1 : -1;
+    const na = p.ang + (Math.PI/2)*side;
+    const ex = p.x + Math.cos(na)*r*0.70;
+    const ey = p.y + Math.sin(na)*r*0.70;
+    drawClaw(ex, ey, na, r*1.75, t, i);
+  }
+}
+
+/* ===================== 龙头 ===================== */
+function drawHead(t){
+  const h = pts[0];
+  const s = scale;
+
+  ctx.save();
+  ctx.translate(h.x, h.y);
+  ctx.rotate(headAngle);
+  ctx.scale(s, s);
+
+  /* 鬃毛（暗层） */
+  ctx.fillStyle = '#8e2413';
+  for(let i=0;i<6;i++){
+    const y0 = -22 + i*9;
+    const wob = Math.sin(t*4.5 + i*1.1)*4;
+    const len = 30 + (2 - Math.abs(i-2.5))*6;
+    ctx.beginPath();
+    ctx.moveTo(-6, y0);
+    ctx.quadraticCurveTo(-16-len*0.45, y0*0.65 + wob, -8-len, y0 + wob*1.5);
+    ctx.quadraticCurveTo(-14-len*0.40, y0*1.10 + wob*0.5, -6, y0 + 9);
+    ctx.closePath();
+    ctx.fill();
+  }
+  /* 鬃毛（亮层） */
+  ctx.fillStyle = '#cc4a26';
+  for(let i=0;i<5;i++){
+    const y0 = -18 + i*9;
+    const wob = Math.sin(t*4.5 + i*1.1 + 0.6)*4;
+    const len = 20 + (2 - Math.abs(i-2))*5;
+    ctx.beginPath();
+    ctx.moveTo(-6, y0);
+    ctx.quadraticCurveTo(-14-len*0.45, y0*0.65 + wob, -8-len, y0 + wob*1.5);
+    ctx.quadraticCurveTo(-12-len*0.40, y0*1.10 + wob*0.5, -6, y0 + 7);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /* 龙角 */
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#e8d6a6';
+  function horn(ox, oy, sc){
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.scale(sc, sc);
+    ctx.lineWidth = 5.5;
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.quadraticCurveTo(-13,-15, -28,-17);
+    ctx.stroke();
+    ctx.lineWidth = 3.6;
+    ctx.beginPath();
+    ctx.moveTo(-13,-12);
+    ctx.quadraticCurveTo(-17,-24, -30,-28);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-24,-16);
+    ctx.quadraticCurveTo(-34,-20, -40,-13);
+    ctx.stroke();
+    ctx.restore();
+  }
+  horn(-4,-18, 1.00);
+  horn(-2,-12, 0.76);
+
+  /* 头部底色 */
+  ctx.fillStyle = '#43140a';
+  ctx.beginPath();
+  ctx.ellipse(18, 3, 48, 27, 0, 0, TAU);
+  ctx.fill();
+
+  /* 上颚 */
+  const gU = ctx.createLinearGradient(0,-28,0,4);
+  gU.addColorStop(0,   '#f8d67e');
+  gU.addColorStop(0.55,'#e2aa34');
+  gU.addColorStop(1,   '#b87a18');
+  ctx.fillStyle = gU;
+  ctx.beginPath();
+  ctx.moveTo(-16,-16);
+  ctx.bezierCurveTo(6,-28, 34,-27, 54,-14);
+  ctx.quadraticCurveTo(64,-10, 60,-4);
+  ctx.lineTo(26,-1);
+  ctx.quadraticCurveTo(4,-1, -16,-1);
+  ctx.closePath();
+  ctx.fill();
+
+  /* 下颚 */
+  const gL = ctx.createLinearGradient(0,6,0,28);
+  gL.addColorStop(0,'#cb8c22');
+  gL.addColorStop(1,'#8a5a10');
+  ctx.fillStyle = gL;
+  ctx.beginPath();
+  ctx.moveTo(-16,9);
+  ctx.quadraticCurveTo(6,11, 28,11);
+  ctx.quadraticCurveTo(48,13, 54,18);
+  ctx.quadraticCurveTo(46,27, 22,27);
+  ctx.quadraticCurveTo(0,24, -16,17);
+  ctx.closePath();
+  ctx.fill();
+
+  /* 牙齿 */
+  ctx.fillStyle = '#fff6dd';
+  for(let i=0;i<5;i++){
+    const x = 2 + i*10.5;
+    ctx.beginPath();
+    ctx.moveTo(x,-1);
+    ctx.lineTo(x+4.6,-1);
+    ctx.lineTo(x+2.3,3.6);
+    ctx.closePath();
+    ctx.fill();
+  }
+  for(let i=0;i<4;i++){
+    const x = 8 + i*11;
+    ctx.beginPath();
+    ctx.moveTo(x,10.5);
+    ctx.lineTo(x+4.6,10.5);
+    ctx.lineTo(x+2.3,5.2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /* 眼睛 */
+  ctx.fillStyle = '#8a2b10';
+  ctx.beginPath();
+  ctx.ellipse(14,-13, 10, 8, -0.12, 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = '#fff3c8';
+  ctx.beginPath();
+  ctx.ellipse(15,-13, 7.5, 6, -0.12, 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = '#20100a';
+  ctx.beginPath();
+  ctx.ellipse(17.5,-13, 3.2, 5, -0.08, 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  ctx.arc(19.6,-15, 1.5, 0, TAU);
+  ctx.fill();
+
+  /* 眉焰 */
+  ctx.fillStyle = '#a8321a';
+  ctx.beginPath();
+  ctx.moveTo(4,-18);
+  ctx.quadraticCurveTo(14,-28, 28,-21);
+  ctx.quadraticCurveTo(16,-23, 6,-15);
+  ctx.closePath();
+  ctx.fill();
+
+  /* 鼻孔 */
+  ctx.fillStyle = '#3a1408';
+  ctx.beginPath();
+  ctx.ellipse(54,-10, 2.6, 1.8, -0.35, 0, TAU);
+  ctx.fill();
+
+  /* 龙须 */
+  ctx.strokeStyle = 'rgba(255,242,196,0.88)';
+  ctx.lineWidth = 2.4;
+  const sw  = Math.sin(t*2.4);
+  const sw2 = Math.sin(t*2.4 + 1.2);
+  ctx.beginPath();
+  ctx.moveTo(58,-7);
+  ctx.bezierCurveTo(78,-26 + sw*10, 88, 12 + sw2*12, 56, 54 + sw*18);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(56,-11);
+  ctx.bezierCurveTo(86,-34 + sw2*8, 100,-8 + sw*14, 72, 30 + sw2*14);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/* ===================== 龙珠 ===================== */
+function drawDragonBall(t){
+  const h = pts[0];
+  const d = 96 * scale;
+  const bx = h.x + Math.cos(headAngle)*d + Math.cos(t*3.0)*5*scale;
+  const by = h.y + Math.sin(headAngle)*d + Math.sin(t*2.6)*5*scale;
+
+  const pulse = firing ? 1 + 0.22*Math.sin(t*18) : 1;
+  const R = 48 * scale * pulse;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(bx,by,0,bx,by,R);
+  g.addColorStop(0,    'rgba(255,255,235,0.95)');
+  g.addColorStop(0.16, 'rgba(255,228,145,0.85)');
+  g.addColorStop(0.44, 'rgba(255,172,52,0.32)');
+  g.addColorStop(1,    'rgba(255,120,20,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(bx, by, R, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = '#fffbe8';
+  ctx.beginPath();
+  ctx.arc(bx, by, 7*scale, 0, TAU);
+  ctx.fill();
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(let i=0;i<3;i++){
+    const a = t*1.8 + i*TAU/3;
+    const rr = 26*scale;
+    ctx.globalAlpha = 0.55 + 0.35*Math.sin(t*4 + i*2);
+    ctx.fillStyle = '#ffd97a';
+    ctx.beginPath();
+    ctx.arc(bx + Math.cos(a)*rr, by + Math.sin(a)*rr*0.7, 2.6*scale, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ===================== 粒子 ===================== */
+function drawParticles(){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(let i=0;i<particles.length;i++){
+    const p = particles[i];
+    const a = clamp(p.life / p.maxLife, 0, 1);
+    ctx.globalAlpha = a*a*0.9;
+    ctx.fillStyle = 'rgb(' + p.color + ')';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size*(0.35 + a*0.65), 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* ===================== 渲染 ===================== */
+function render(t){
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  drawStars(t);
+  drawClouds(t);
+
+  const path = buildPath(pts);
+
+  drawBody(path);
+  drawClaws(path, t);
+  drawHead(t);
+  drawDragonBall(t);
+  drawParticles();
+
+  ctx.fillStyle = vigGrad;
+  ctx.fillRect(0, 0, W, H);
+}
+
+/* ===================== 主循环 ===================== */
+let lastTime = 0;
+function loop(now){
+  requestAnimationFrame(loop);
+  if(!lastTime) lastTime = now;
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  if(dt > 0.05) dt = 0.05;
+  const t = now / 1000;
+
+  update(dt, t);
+  render(t);
+}
+
+/* ===================== 交互 ===================== */
+let hintHidden = false;
+function hideHint(){
+  if(hintHidden) return;
+  hintHidden = true;
+  hintEl.classList.add('fade');
+  setTimeout(function(){ hintEl.style.display = 'none'; }, 1000);
+}
+
+function nowSec(){ return performance.now() / 1000; }
+
+/* --- 按下 --- */
+function onDown(e){
+  autoMode = false;
+  hideHint();
+
+  pointer.x = e.clientX;
+  pointer.y = e.clientY;
+  pointer.lastMove = nowSec();
+
+  if(isTouch){
+    downX = e.clientX;
+    downY = e.clientY;
+    downTime = performance.now();
+    isDragging = false;
+    // 触屏：按下不喷火，交给双击判定
+  }else{
+    pointerHeld = true;
+  }
+
+  if(canvas.setPointerCapture){
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
+  }
+}
+
+/* --- 移动 --- */
+function onMove(e){
+  pointer.x = e.clientX;
+  pointer.y = e.clientY;
+  pointer.lastMove = nowSec();
+  autoMode = false;
+
+  if(isTouch && downTime){
+    if(!isDragging &&
+       Math.hypot(e.clientX - downX, e.clientY - downY) > 12){
+      isDragging = true;
+    }
+  }
+}
+
+/* --- 抬起 --- */
+function onUp(e){
+  if(isTouch){
+    const held = performance.now() - downTime;
+    if(!isDragging && held < 350){
+      const t = performance.now();
+      if(lastTapTime > 0 && t - lastTapTime < 320){
+        // 双击 → 喷吐龙息 1.6 秒
+        burstUntil = nowSec() + 1.6;
+        lastTapTime = -1;
+      }else{
+        lastTapTime = t;
+      }
+    }
+    downTime = 0;
+    isDragging = false;
+  }
+  pointerHeld = false;
+}
+
+canvas.addEventListener('pointerdown', onDown, {passive:true});
+canvas.addEventListener('pointermove', onMove, {passive:true});
+window.addEventListener('pointerup',     onUp);
+window.addEventListener('pointercancel', function(){ pointerHeld = false; downTime = 0; });
+window.addEventListener('blur',          function(){ pointerHeld = false; downTime = 0; });
+
+canvas.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+/* 防止 iOS 手势缩放 / 双击放大 */
+['gesturestart','gesturechange','gestureend'].forEach(function(ev){
+  document.addEventListener(ev, function(e){ e.preventDefault(); }, {passive:false});
+});
+document.addEventListener('touchmove', function(e){
+  if(e.touches.length > 1) e.preventDefault();
+}, {passive:false});
+
+/* ===================== 启动 ===================== */
+hintEl.textContent = isTouch
+  ? '拖动 · 引龙随行　双击 · 喷吐龙息'
+  : '移动 · 引龙随行　按住 · 喷吐龙息';
+
+window.addEventListener('resize', function(){
+  clearTimeout(window.__rz);
+  window.__rz = setTimeout(resize, 150);
+});
+window.addEventListener('orientationchange', function(){
+  setTimeout(resize, 260);
+});
+
+resize();
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>

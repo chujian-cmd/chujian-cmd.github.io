@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>黏菌 Physarum</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #080510;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(8,5,16,0.85), rgba(8,5,16,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; font-variant-numeric: tabular-nums; letter-spacing: 0.5px; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: background .15s, border-color .15s;
+  }
+  .btn:active { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.24); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">黏菌 <b id="m">菌丝</b></div>
+  <button class="btn" id="btn-reset">重新播种</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">按住屏幕 = 食物源 · 菌丝会往这里爬</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  const CFG = {
+    agents: isMobile ? 3500 : 6000,
+    moveSpeed: 1.0,
+    sensorDist: 9,
+    sensorAngle: 28 * Math.PI / 180,
+    turnAngle: 35 * Math.PI / 180,
+    deposit: 14,
+
+    decay: 0.94,
+    diffuse: 0.6,
+    brightness: 1.4,
+
+    scheme: 0,
+    schemes: [
+      { name: '血管', low: '#ffcf6b', high: '#ff2e63', bg: '#080510' },
+      { name: '菌丝', low: '#8fffe0', high: '#2f7bff', bg: '#040c14' },
+      { name: '神经元', low: '#c9d4ff', high: '#7c4bff', bg: '#050510' },
+      { name: '岩浆', low: '#ffe27a', high: '#ff5a2c', bg: '#100402' },
+      { name: '森林', low: '#c8ff6b', high: '#0d6030', bg: '#04100a' }
+    ],
+
+    // ★ 加大后
+    attract: 1.5,
+    pushAhead: 12
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+
+  const SIM_LONG = isMobile ? 380 : 480;
+
+  let W = 0, H = 0, dpr = 1;
+  let GW = 0, GH = 0;
+
+  const off = document.createElement('canvas');
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  let trail, next, imgData;
+
+  let ax, ay, ah;
+  let rngState = 7;
+  const rng = () => {
+    rngState ^= rngState << 13; rngState ^= rngState >>> 17; rngState ^= rngState << 5;
+    return ((rngState >>> 0) % 1e6) / 1e6;
+  };
+
+  function buildGrid() {
+    const long = Math.max(W, H);
+    const scale = Math.min(1, SIM_LONG / long);
+    GW = Math.max(2, Math.round(W * scale));
+    GH = Math.max(2, Math.round(H * scale));
+    off.width = GW;
+    off.height = GH;
+    trail = new Float32Array(GW * GH);
+    next  = new Float32Array(GW * GH);
+    imgData = octx.createImageData(GW, GH);
+  }
+
+  function allocAgents() {
+    const n = CFG.agents;
+    ax = new Float32Array(n);
+    ay = new Float32Array(n);
+    ah = new Float32Array(n);
+    scatter();
+  }
+
+  function scatter() {
+    const cx = GW / 2, cy = GH / 2;
+    const R = Math.min(GW, GH) * 0.3;
+    for (let i = 0; i < ax.length; i++) {
+      const a = rng() * Math.PI * 2;
+      const r = Math.sqrt(rng()) * R;
+      ax[i] = cx + Math.cos(a) * r;
+      ay[i] = cy + Math.sin(a) * r;
+      ah[i] = rng() * Math.PI * 2;
+    }
+    trail.fill(0);
+  }
+
+  function sense(x, y, ang, dist) {
+    let sx = Math.round(x + Math.cos(ang) * dist);
+    let sy = Math.round(y + Math.sin(ang) * dist);
+    sx = ((sx % GW) + GW) % GW;
+    sy = ((sy % GH) + GH) % GH;
+    return trail[sy * GW + sx];
+  }
+
+  function simulate(dt, pointer) {
+    const n = ax.length;
+    const speed = CFG.moveSpeed;
+    const sD = CFG.sensorDist;
+    const sA = CFG.sensorAngle;
+    const tA = CFG.turnAngle;
+    const dep = CFG.deposit;
+
+    const px = pointer.inside ? (pointer.x / W) * GW : -1;
+    const py = pointer.inside ? (pointer.y / H) * GH : -1;
+
+    for (let i = 0; i < n; i++) {
+      let x = ax[i], y = ay[i], h = ah[i];
+
+      const F = sense(x, y, h, sD);
+      const L = sense(x, y, h - sA, sD);
+      const R = sense(x, y, h + sA, sD);
+
+      if (F >= L && F >= R) {
+        // 直行
+      } else if (L > R) {
+        h -= tA;
+      } else if (R > L) {
+        h += tA;
+      } else {
+        h += (rng() < 0.5 ? -1 : 1) * tA;
+      }
+
+      // ★ 吸引范围加大到 200，转向速度 *0.25
+      if (px >= 0 && CFG.attract > 0) {
+        const dx = px - x, dy = py - y;
+        const dd = Math.hypot(dx, dy);
+        if (dd < 200) {
+          let want = Math.atan2(dy, dx);
+          let diff = want - h;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          h += diff * CFG.attract * 0.25;
+        }
+      }
+
+      const nx = x + Math.cos(h) * speed;
+      const ny = y + Math.sin(h) * speed;
+      x = ((nx % GW) + GW) % GW;
+      y = ((ny % GH) + GH) % GH;
+
+      ax[i] = x; ay[i] = y; ah[i] = h;
+
+      const gx = x | 0, gy = y | 0;
+      const idx = gy * GW + gx;
+      trail[idx] += dep;
+
+      // ★ 食物源范围加大到半径 20 格
+      if (px >= 0 && CFG.pushAhead > 0) {
+        const dx = px - x, dy = py - y;
+        const dd = dx * dx + dy * dy;
+        if (dd < 400) {
+          trail[idx] += CFG.pushAhead * 5;
+        }
+      }
+    }
+
+    const decay = CFG.decay;
+    const diff = CFG.diffuse;
+    const oneMinusDiff = 1 - diff;
+
+    for (let y = 0; y < GH; y++) {
+      const yUp = (y - 1 + GH) % GH;
+      const yDn = (y + 1) % GH;
+      const row = y * GW;
+      const rowU = yUp * GW;
+      const rowD = yDn * GW;
+      for (let x = 0; x < GW; x++) {
+        const xL = (x - 1 + GW) % GW;
+        const xR = (x + 1) % GW;
+        const s =
+          trail[rowU + xL] + trail[rowU + x] + trail[rowU + xR] +
+          trail[row   + xL] + trail[row   + x] + trail[row   + xR] +
+          trail[rowD + xL] + trail[rowD + x] + trail[rowD + xR];
+        const avg = s / 9;
+        next[row + x] = (trail[row + x] * oneMinusDiff + avg * diff) * decay;
+      }
+    }
+
+    const t = trail; trail = next; next = t;
+  }
+
+  let colorLUT_L, colorLUT_H;
+  function buildLUT() {
+    const s = CFG.schemes[CFG.scheme];
+    const [lr, lg, lb] = hex2rgb(s.low);
+    const [hr, hg, hb] = hex2rgb(s.high);
+    const N = 256;
+    colorLUT_L = new Uint8Array(N * 3);
+    colorLUT_H = new Uint8Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1);
+      if (t < 0.5) {
+        const k = t * 2;
+        colorLUT_L[i * 3]     = lr * k;
+        colorLUT_L[i * 3 + 1] = lg * k;
+        colorLUT_L[i * 3 + 2] = lb * k;
+      } else {
+        const k = (t - 0.5) * 2;
+        colorLUT_L[i * 3]     = lr;
+        colorLUT_L[i * 3 + 1] = lg;
+        colorLUT_L[i * 3 + 2] = lb;
+        colorLUT_H[i * 3]     = hr * k;
+        colorLUT_H[i * 3 + 1] = hg * k;
+        colorLUT_H[i * 3 + 2] = hb * k;
+      }
+    }
+  }
+
+  function render() {
+    const s = CFG.schemes[CFG.scheme];
+    const bgRGB = hex2rgb(s.bg);
+    const br = bgRGB[0], bg = bgRGB[1], bb = bgRGB[2];
+
+    const bright = CFG.brightness * 0.02;
+    const data = imgData.data;
+    const n = GW * GH;
+
+    for (let i = 0; i < n; i++) {
+      let v = trail[i] * bright;
+      v = v > 1 ? 1 : v;
+      v = Math.pow(v, 0.7);
+      const k = (v * 255) | 0;
+      const p = i * 4;
+      data[p]     = br + colorLUT_L[k * 3]     + colorLUT_H[k * 3];
+      data[p + 1] = bg + colorLUT_L[k * 3 + 1] + colorLUT_H[k * 3 + 1];
+      data[p + 2] = bb + colorLUT_L[k * 3 + 2] + colorLUT_H[k * 3 + 2];
+      data[p + 3] = 255;
+    }
+
+    octx.putImageData(imgData, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, GW, GH, 0, 0, W, H);
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildGrid();
+    allocAgents();
+  }
+
+  const pointer = { x: 0, y: 0, inside: false };
+  const onDown = e => {
+    const r = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    e.preventDefault();
+  };
+  const onMove = e => {
+    const r = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.inside = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', scatter);
+  document.getElementById('btn-change').addEventListener('click', () => {
+    CFG.scheme = (CFG.scheme + 1) % CFG.schemes.length;
+    mEl.textContent = CFG.schemes[CFG.scheme].name;
+    buildLUT();
+  });
+
+  let lastTime = performance.now();
+  let acc = 0;
+  const STEP = 1 / 60;
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    acc += dt;
+    let steps = 0;
+    while (acc >= STEP && steps < 3) {
+      simulate(STEP, pointer);
+      acc -= STEP;
+      steps++;
+    }
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  buildLUT();
+  mEl.textContent = CFG.schemes[CFG.scheme].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

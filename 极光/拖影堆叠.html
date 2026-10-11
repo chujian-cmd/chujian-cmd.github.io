@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>拖影堆叠 Echo</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0a12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,10,18,.85),rgba(10,10,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(139,123,255,.28);border-color:rgba(139,123,255,.6);color:#eae4ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(139,123,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(139,123,255,.6);
+    background:rgba(139,123,255,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(139,123,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">拖影堆叠 <b id="m">迷幻螺旋</b></div>
+  <button class="btn" id="btn-traj">换轨迹</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">多层残影 · 斜向/圆周/弹簧/抖动 · 逐层换色</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    layers: 14,
+    traj: 'linear',        // linear | orbit | spring | jitter
+    spacing: 6,
+    palette: 'mono',       // mono | rainbow | duo | neon
+    angle: 225,
+    rotSpeed: 0.8,
+    scaleStep: 0,
+    breathAmp: 0.35,
+    breathSpeed: 1.2,
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    colorA: '#f2ecff',
+    colorB: '#8b7bff',
+    background: '#0a0a12'
+  };
+
+  var TRAJS = [
+    { key: 'linear', label: '直线斜向' },
+    { key: 'orbit',  label: '圆周螺旋' },
+    { key: 'spring', label: '弹簧回弹' },
+    { key: 'jitter', label: '随机抖动' }
+  ];
+
+  var NEON = ['#00f0ff', '#ff2ed6', '#7c5cff', '#00ff9d', '#ffe14d'];
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bakeKey = '';
+    return true;
+  }
+
+  // ---------- 源图 ----------
+  var raster = document.createElement('canvas');
+  var rctx = raster.getContext('2d');
+  var tint = document.createElement('canvas');
+  var tctx = tint.getContext('2d');
+  var tmp = document.createElement('canvas');
+  var tmpCtx = tmp.getContext('2d');
+  var tintColor = '';
+  var bakeKey = '';
+
+  function bake() {
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === bakeKey && raster.width) return;
+    bakeKey = key;
+
+    raster.width = W; raster.height = H;
+    rctx.clearRect(0, 0, W, H);
+    rctx.fillStyle = '#fff';
+    rctx.textAlign = 'center';
+    rctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) return;
+
+    var maxW = W * 0.86, maxH = H * 0.7;
+    var lh = maxH / Math.max(1, lines.length);
+    var size = Math.floor(lh * 0.8);
+    var setF = function (s) { rctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = rctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      rctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    tintColor = '';
+  }
+
+  function setTint(color) {
+    if (color === tintColor && tint.width) return;
+    tintColor = color;
+    tint.width = raster.width;
+    tint.height = raster.height;
+    tctx.globalCompositeOperation = 'source-over';
+    tctx.clearRect(0, 0, tint.width, tint.height);
+    tctx.drawImage(raster, 0, 0);
+    tctx.globalCompositeOperation = 'source-in';
+    tctx.fillStyle = color;
+    tctx.fillRect(0, 0, tint.width, tint.height);
+    tctx.globalCompositeOperation = 'source-over';
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    bake();
+
+    if (!raster.width) { requestAnimationFrame(render); return; }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var layers = Math.max(4, Math.min(24, Math.round(CFG.layers)));
+    var traj = CFG.traj;
+    var palette = CFG.palette;
+    var spacing = CFG.spacing;
+    var angle = CFG.angle / 360 * Math.PI * 2;
+    var rotSpeed = CFG.rotSpeed;
+    var scaleStep = CFG.scaleStep;
+    var breathAmp = CFG.breathAmp;
+    var breathSpeed = CFG.breathSpeed;
+    var t = time;
+    var breath = 1 + breathAmp * Math.sin(t * breathSpeed * 2);
+    var colA = CFG.colorA, colB = CFG.colorB;
+    var neon = palette === 'neon';
+
+    // 中心坐标
+    var cx = W / 2, cy = H / 2;
+    var rw = raster.width, rh = raster.height;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // 从最远的层画到最前的层
+    for (var L = layers - 1; L >= 0; L--) {
+      var ox = 0, oy = 0;
+
+      if (L > 0) {
+        if (traj === 'linear') {
+          var dist = spacing * L * breath;
+          ox = Math.cos(angle) * dist;
+          oy = Math.sin(angle) * dist;
+        } else if (traj === 'orbit') {
+          var a = angle + t * rotSpeed * 2 + L * 0.45;
+          var r = spacing * L * breath;
+          ox = Math.cos(a) * r;
+          oy = Math.sin(a) * r;
+        } else if (traj === 'spring') {
+          var ph = ((t * (0.5 + rotSpeed) - L * 0.12) % 2.6 + 2.6) % 2.6;
+          var spring = Math.sin(ph * 9) * Math.exp(-ph * 1.9);
+          var d = spacing * L * breath * (0.55 + 1.1 * spring);
+          ox = Math.cos(angle) * d;
+          oy = Math.sin(angle) * d;
+        } else {
+          // jitter
+          var frame = Math.floor(t * (2 + rotSpeed * 8));
+          var amp = spacing * (0.35 + 0.14 * L) * breath;
+          var h1 = hash(L * 17.3 + frame * 3.1);
+          var h2 = hash(L * 9.7 + frame * 7.7);
+          ox = (h1 - 0.5) * 2 * amp;
+          oy = (h2 - 0.5) * 2 * amp;
+        }
+      }
+
+      // 颜色
+      var color;
+      var prog = L / Math.max(1, layers);
+      if (palette === 'rainbow') {
+        color = 'hsl(' + ((prog * 300 + t * 40 * (0.4 + rotSpeed)) % 360).toFixed(1) + ', 85%, 62%)';
+      } else if (palette === 'duo') {
+        color = L % 2 === 0 ? colA : colB;
+      } else if (palette === 'neon') {
+        color = NEON[L % NEON.length];
+      } else {
+        color = colA;
+      }
+
+      var alpha;
+      if (palette === 'rainbow') {
+        alpha = L === 0 ? 1 : 0.85 * Math.pow(1 - prog, 1.1);
+      } else if (palette === 'duo') {
+        alpha = L === 0 ? 1 : 0.9 * Math.pow(1 - prog, 1.3);
+      } else if (palette === 'neon') {
+        alpha = L === 0 ? 0.95 : 0.55 * Math.pow(1 - prog, 0.7);
+      } else {
+        alpha = L === 0 ? 1 : 0.85 * Math.pow(1 - prog, 1.6);
+      }
+
+      // 缩放
+      var sc = 1 + scaleStep * L;
+
+      ctx.save();
+      ctx.globalCompositeOperation = neon ? 'lighter' : 'source-over';
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+      ctx.translate(ox, oy);
+      ctx.scale(sc, sc);
+      ctx.drawImage(tint, 0, 0, rw, rh, -cx, -cy, rw, rh);
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    requestAnimationFrame(render);
+  }
+
+  function hash(n) {
+    var t = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+    return t - Math.floor(t);
+  }
+
+  // 让颜色在每次 L 循环前生效
+  function paintTint(color) {
+    setTint(color);
+  }
+
+  // 修改 render：使用 tint，需要每层都 setTint 一遍（用闭包技巧不好，直接放进主循环里）
+  // 下面重写 render 中 drawImage 前的 setTint 调用
+  var _origRender = render;
+
+  // 用重新定义的 render：每层先 setTint
+  render = function (now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    bake();
+    if (!raster.width) { requestAnimationFrame(render); return; }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var layers = Math.max(4, Math.min(24, Math.round(CFG.layers)));
+    var traj = CFG.traj;
+    var palette = CFG.palette;
+    var spacing = CFG.spacing;
+    var angle = CFG.angle / 360 * Math.PI * 2;
+    var rotSpeed = CFG.rotSpeed;
+    var scaleStep = CFG.scaleStep;
+    var breathAmp = CFG.breathAmp;
+    var breathSpeed = CFG.breathSpeed;
+    var t = time;
+    var breath = 1 + breathAmp * Math.sin(t * breathSpeed * 2);
+    var colA = CFG.colorA, colB = CFG.colorB;
+    var neon = palette === 'neon';
+    var rw = raster.width, rh = raster.height;
+    var cx = W / 2, cy = H / 2;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    for (var L = layers - 1; L >= 0; L--) {
+      var ox = 0, oy = 0;
+      if (L > 0) {
+        if (traj === 'linear') {
+          var dist = spacing * L * breath;
+          ox = Math.cos(angle) * dist;
+          oy = Math.sin(angle) * dist;
+        } else if (traj === 'orbit') {
+          var a = angle + t * rotSpeed * 2 + L * 0.45;
+          var r = spacing * L * breath;
+          ox = Math.cos(a) * r;
+          oy = Math.sin(a) * r;
+        } else if (traj === 'spring') {
+          var ph = ((t * (0.5 + rotSpeed) - L * 0.12) % 2.6 + 2.6) % 2.6;
+          var spring = Math.sin(ph * 9) * Math.exp(-ph * 1.9);
+          var d = spacing * L * breath * (0.55 + 1.1 * spring);
+          ox = Math.cos(angle) * d;
+          oy = Math.sin(angle) * d;
+        } else {
+          var frame = Math.floor(t * (2 + rotSpeed * 8));
+          var amp = spacing * (0.35 + 0.14 * L) * breath;
+          ox = (hash(L * 17.3 + frame * 3.1) - 0.5) * 2 * amp;
+          oy = (hash(L * 9.7 + frame * 7.7) - 0.5) * 2 * amp;
+        }
+      }
+
+      var prog = L / Math.max(1, layers);
+      var color;
+      if (palette === 'rainbow') {
+        color = 'hsl(' + ((prog * 300 + t * 40 * (0.4 + rotSpeed)) % 360).toFixed(1) + ', 85%, 62%)';
+      } else if (palette === 'duo') {
+        color = L % 2 === 0 ? colA : colB;
+      } else if (palette === 'neon') {
+        color = NEON[L % NEON.length];
+      } else {
+        color = colA;
+      }
+
+      setTint(color);
+
+      var alpha;
+      if (palette === 'rainbow') alpha = L === 0 ? 1 : 0.85 * Math.pow(1 - prog, 1.1);
+      else if (palette === 'duo') alpha = L === 0 ? 1 : 0.9 * Math.pow(1 - prog, 1.3);
+      else if (palette === 'neon') alpha = L === 0 ? 0.95 : 0.55 * Math.pow(1 - prog, 0.7);
+      else alpha = L === 0 ? 1 : 0.85 * Math.pow(1 - prog, 1.6);
+
+      var sc = 1 + scaleStep * L;
+
+      ctx.save();
+      ctx.globalCompositeOperation = neon ? 'lighter' : 'source-over';
+      ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+      ctx.translate(ox, oy);
+      ctx.scale(sc, sc);
+      ctx.drawImage(tint, 0, 0, rw, rh, -cx, -cy, rw, rh);
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    requestAnimationFrame(render);
+  };
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA',  traj: 'orbit',  palette: 'rainbow', layers: 18, spacing: 7,  rotSpeed: 1,   scaleStep: 0.012, breathAmp: 0.25, breathSpeed: 1,   background: '#0a0612' },
+    { text: 'SPEED',   traj: 'linear', palette: 'mono',    layers: 16, spacing: 9,  angle: 200, breathAmp: 0.5, breathSpeed: 2, colorA: '#5be0ff', background: '#060a12' },
+    { text: 'NEON',    traj: 'linear', palette: 'neon',    layers: 10, spacing: 5,  angle: 315, breathAmp: 0.3, breathSpeed: 1.4, background: '#050308' },
+    { text: '呼吸',     traj: 'spring', palette: 'duo',     layers: 14, spacing: 6,  rotSpeed: 1.2, breathAmp: 0.7, breathSpeed: 1.6, colorA: '#ffe9a8', colorB: '#ff7a2c', background: '#0a0602' }
+  ];
+  var presetIdx = 0;
+
+  function applyPreset(p) {
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    bakeKey = '';
+    var tj = TRAJS.find(function (x) { return x.key === CFG.traj; });
+    if (tj) mLabel.textContent = tj.label;
+    var ti = TRAJS.findIndex(function (x) { return x.key === CFG.traj; });
+    if (ti >= 0) trajIdx = ti;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyPreset(PRESETS[presetIdx]);
+  });
+
+  // ---------- 换轨迹 ----------
+  var trajIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-traj').addEventListener('click', function () {
+    trajIdx = (trajIdx + 1) % TRAJS.length;
+    CFG.traj = TRAJS[trajIdx].key;
+    mLabel.textContent = TRAJS[trajIdx].label;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    bakeKey = '';
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

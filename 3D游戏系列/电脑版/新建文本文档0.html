@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>灵动魔方 · 视线追随</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at 30% 30%, #1a2533, #080d13);
+      touch-action: none; /* 禁止浏览器默认手势，提升触摸体验 */
+    }
+    #info {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      background: rgba(10, 18, 28, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      padding: 8px 24px;
+      border-radius: 40px;
+      color: #eef5ff;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.8px;
+      border: 1px solid rgba(255, 255, 250, 0.25);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+      pointer-events: none;
+      z-index: 100;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    @media (max-width: 600px) {
+      #info {
+        top: 16px;
+        right: 16px;
+        font-size: 12px;
+        padding: 6px 18px;
+      }
+    }
+    .instruction-hint {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(20, 30, 42, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: #ccddee;
+      padding: 6px 20px;
+      border-radius: 30px;
+      font-size: 13px;
+      white-space: nowrap;
+      border: 1px solid rgba(255,255,240,0.2);
+      z-index: 100;
+      pointer-events: none;
+      opacity: 0.85;
+    }
+    @media (max-width: 600px) {
+      .instruction-hint {
+        font-size: 11px;
+        padding: 5px 16px;
+        bottom: 20px;
+      }
+    }
+    /* 自定义光标样式，增强视觉反馈 */
+    canvas {
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">⬡ 完美立方</div>
+  <div class="instruction-hint">鼠标移动旋转 | 滚轮变形 | 双击螺旋 | 中键复位</div>
+
+  <!-- 引入 Three.js 核心库以及扩展 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+    // ---------- 初始化场景、相机、渲染器 ----------
+    const scene = new THREE.Scene();
+    scene.background = null; // 透明，由CSS渐变背景呈现
+    
+    // 主渲染器 (WebGL)
+    const renderer = new THREE.WebGLRenderer({ 
+      antialias: true, 
+      alpha: true 
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+    
+    // 辅助CSS2渲染器（保留以备后续扩展，此处未使用文字标签但无影响）
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    labelRenderer.domElement.style.position = 'absolute';
+    labelRenderer.domElement.style.top = '0px';
+    labelRenderer.domElement.style.left = '0px';
+    labelRenderer.domElement.style.pointerEvents = 'none';
+    document.body.appendChild(labelRenderer.domElement);
+    
+    // ---------- 相机: 采用透视相机且位置固定，不再依赖 OrbitControls 实现自动跟随鼠标旋转 ----------
+    // 相机位置固定在一个适宜的距离，围绕目标点 (0,0,0) 进行观察
+    // 但我们不使用 OrbitControls 来控制相机旋转，而是直接通过鼠标位置计算目标的旋转角度来控制魔方组自身的旋转。
+    // 这样实现“魔方一直跟着鼠标”，不需要按下，移动即旋转，体验更直觉。
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 1.5, 5.5);
+    camera.lookAt(0, 0, 0);
+    
+    // 不再需要 OrbitControls，但保留旋转逻辑的自定义实现
+    // 为了体验“一直跟着鼠标”，我们需要监听鼠标移动事件（或触摸移动），并根据鼠标位置映射到魔方的欧拉旋转。
+    
+    // 定义目标旋转角度 (弧度)
+    let targetRotX = 0;     // 绕X轴旋转 (上下倾斜)
+    let targetRotY = 0;     // 绕Y轴旋转 (水平旋转)
+    let currentRotX = 0;
+    let currentRotY = 0;
+    
+    // 平滑跟随系数 (数值越大跟随越快，0.1~0.2 手感舒适)
+    const FOLLOW_SPEED = 0.12;
+    
+    // 鼠标位置范围映射: 将鼠标在屏幕上的坐标映射到 [-maxAngle, maxAngle] 范围
+    // X轴: 左右移动 => 绕Y轴旋转, 范围 -PI 到 PI (但为了视觉舒适，限制在 ±PI * 0.9)
+    // Y轴: 上下移动 => 绕X轴旋转, 范围 -PI/2.4 到 PI/2.4 避免视角过度翻转
+    const MAX_ROT_Y = Math.PI * 0.95;   // 水平最大旋转角度约 171度
+    const MAX_ROT_X = Math.PI / 2.4;    // 垂直最大约 75度，避免完全倒置
+    
+    // 鼠标坐标归一化函数: 返回 -1 到 1 范围 (基于屏幕中心)
+    let mouseXNorm = 0;
+    let mouseYNorm = 0;
+    
+    // 监听鼠标移动 (无按键判断，始终响应)
+    window.addEventListener('mousemove', (event) => {
+      // 计算归一化坐标: 范围[-1, 1]，屏幕中心为0
+      mouseXNorm = (event.clientX / window.innerWidth) * 2 - 1;
+      mouseYNorm = (event.clientY / window.innerHeight) * 2 - 1;
+      
+      // 更新目标旋转角: X坐标影响水平转向(Y轴旋转)，Y坐标影响垂直转向(X轴旋转)
+      targetRotY = mouseXNorm * MAX_ROT_Y;
+      targetRotX = mouseYNorm * MAX_ROT_X;
+    });
+    
+    // 移动端支持: 触摸移动时同样跟随
+    window.addEventListener('touchmove', (event) => {
+      if (event.touches.length) {
+        const touch = event.touches[0];
+        mouseXNorm = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouseYNorm = (touch.clientY / window.innerHeight) * 2 - 1;
+        targetRotY = mouseXNorm * MAX_ROT_Y;
+        targetRotX = mouseYNorm * MAX_ROT_X;
+        event.preventDefault();
+      }
+    }, { passive: false });
+    
+    // 可选: 触摸结束时无需特殊处理，保持最后角度即可（也可设置轻微归位？不强制归位以符合直观）
+    // 添加一个轻微的动态效果：当鼠标离开窗口时不重置，保持最后角度，但为了更优雅，不做归零。
+    
+    // ---------- 灯光系统 (营造立体光泽) ----------
+    const ambientLight = new THREE.AmbientLight(0x404066);
+    scene.add(ambientLight);
+    
+    const dirLight1 = new THREE.DirectionalLight(0xfff5e6, 1.1);
+    dirLight1.position.set(1, 3, 2);
+    dirLight1.castShadow = true;
+    dirLight1.receiveShadow = true;
+    dirLight1.shadow.mapSize.width = 512;
+    dirLight1.shadow.mapSize.height = 512;
+    dirLight1.shadow.camera.near = 0.5;
+    dirLight1.shadow.camera.far = 20;
+    dirLight1.shadow.camera.left = -5;
+    dirLight1.shadow.camera.right = 5;
+    dirLight1.shadow.camera.top = 5;
+    dirLight1.shadow.camera.bottom = -5;
+    scene.add(dirLight1);
+    
+    const dirLight2 = new THREE.DirectionalLight(0xccddff, 0.9);
+    dirLight2.position.set(-2, -0.5, -2);
+    scene.add(dirLight2);
+    
+    const backLight = new THREE.PointLight(0x4466aa, 0.6);
+    backLight.position.set(-1.5, 0.8, -2.2);
+    scene.add(backLight);
+    
+    const fillLight = new THREE.PointLight(0xaaccff, 0.5);
+    fillLight.position.set(0.5, -0.3, 1.2);
+    scene.add(fillLight);
+    
+    // ---------- 创建核心魔方组 ----------
+    const cubeGroup = new THREE.Group();
+    scene.add(cubeGroup);
+    
+    // 形态数据
+    const shapes = [
+      { name: '⬡ 完美立方', scale: new THREE.Vector3(1, 1, 1) },
+      { name: '▯ 电影宽屏', scale: new THREE.Vector3(1.9, 0.68, 0.68) },
+      { name: '▯ 羽翼薄片', scale: new THREE.Vector3(1.4, 1.35, 0.28) },
+      { name: '▮ 摩天立柱', scale: new THREE.Vector3(0.62, 1.92, 0.62) },
+      { name: '◧ 浮空石板', scale: new THREE.Vector3(1.58, 0.45, 1.58) },
+      { name: '◨ 光之棱柱', scale: new THREE.Vector3(0.56, 0.56, 1.95) },
+      { name: '⬚ 超薄晶元', scale: new THREE.Vector3(1.68, 1.68, 0.2) },
+      { name: '◫ 优雅长砖', scale: new THREE.Vector3(2.05, 0.58, 0.58) }
+    ];
+    let currentShapeIndex = 0;
+    
+    // 存储六个面的材质引用
+    const faceMaterials = [];
+    
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    
+    // 高级配色
+    const colors = [
+      new THREE.Color('#f8f9fc'), // 前
+      new THREE.Color('#e6ecf8'), // 后
+      new THREE.Color('#fff6ed'), // 右
+      new THREE.Color('#eaf0ff'), // 左
+      new THREE.Color('#fff3e0'), // 上
+      new THREE.Color('#e4ebf5')  // 下
+    ];
+    
+    for (let i = 0; i < 6; i++) {
+      const material = new THREE.MeshStandardMaterial({
+        color: colors[i],
+        roughness: 0.28,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.92,
+        emissive: new THREE.Color(0x000000),
+        side: THREE.DoubleSide
+      });
+      faceMaterials.push(material);
+    }
+    
+    const cube = new THREE.Mesh(geometry, faceMaterials);
+    cube.castShadow = true;
+    cube.receiveShadow = true;
+    cubeGroup.add(cube);
+    
+    // 精致边框
+    const edgesGeometry = new THREE.EdgesGeometry(geometry);
+    const lineMaterial = new THREE.LineBasicMaterial({ 
+      color: 0x2c4052, 
+      transparent: true,
+      opacity: 0.45
+    });
+    const wireframe = new THREE.LineSegments(edgesGeometry, lineMaterial);
+    cube.add(wireframe);
+    
+    // 内部粒子系统
+    const particleGeo = new THREE.BufferGeometry();
+    const particleCount = 24;
+    const particlePositions = new Float32Array(particleCount * 3);
+    for (let i = 0; i < particleCount; i++) {
+      particlePositions[i*3] = (Math.random() - 0.5) * 1.2;
+      particlePositions[i*3+1] = (Math.random() - 0.5) * 1.2;
+      particlePositions[i*3+2] = (Math.random() - 0.5) * 1.2;
+    }
+    particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+    const particleMat = new THREE.PointsMaterial({
+      color: 0xd4e0ff,
+      size: 0.025,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.7
+    });
+    const particles = new THREE.Points(particleGeo, particleMat);
+    cube.add(particles);
+    
+    const infoDiv = document.getElementById('info');
+    
+    // 应用形态 (带动画)
+    function applyShape(index, animate = true) {
+      const shape = shapes[index];
+      if (!shape) return;
+      currentShapeIndex = index;
+      infoDiv.textContent = shape.name;
+      
+      const targetScale = shape.scale;
+      
+      if (animate) {
+        const startScale = cube.scale.clone();
+        const duration = 280;
+        const startTime = performance.now();
+        
+        function animateScale(now) {
+          const elapsed = now - startTime;
+          const progress = Math.min(elapsed / duration, 1.0);
+          const easeOut = 1 - Math.pow(1 - progress, 2.5);
+          cube.scale.lerpVectors(startScale, targetScale, easeOut);
+          
+          if (progress < 1) {
+            requestAnimationFrame(animateScale);
+          } else {
+            cube.scale.copy(targetScale);
+          }
+        }
+        requestAnimationFrame(animateScale);
+      } else {
+        cube.scale.copy(targetScale);
+      }
+      
+      // 脉冲发光
+      faceMaterials.forEach(mat => {
+        mat.emissive.set(0x332211);
+        mat.emissiveIntensity = 0.25;
+      });
+      setTimeout(() => {
+        faceMaterials.forEach(mat => {
+          mat.emissive.set(0x000000);
+          mat.emissiveIntensity = 0;
+        });
+      }, 200);
+    }
+    
+    applyShape(0, false);
+    
+    // ---------- 交互逻辑: 滚轮变形，双击螺旋，中键复位 ----------
+    // 滚轮切换形态 (preventDefault 同时保证不干扰页面滚动)
+    window.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY;
+      if (delta > 0) {
+        currentShapeIndex = (currentShapeIndex + 1) % shapes.length;
+      } else {
+        currentShapeIndex = (currentShapeIndex - 1 + shapes.length) % shapes.length;
+      }
+      applyShape(currentShapeIndex, true);
+      createRipple(e.clientX, e.clientY);
+    }, { passive: false });
+    
+    // 双击螺旋动画
+    renderer.domElement.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      triggerSpinAnimation();
+      createRipple(event.clientX, event.clientY, true);
+    });
+    
+    // 中键重置视角和形态
+    renderer.domElement.addEventListener('auxclick', (event) => {
+      if (event.button === 1) {
+        event.preventDefault();
+        resetToDefault();
+        createRipple(event.clientX, event.clientY, true);
+      }
+    });
+    
+    // 简单点击波纹 (左键)
+    renderer.domElement.addEventListener('click', (event) => {
+      createRipple(event.clientX, event.clientY, false);
+    });
+    
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    
+    // 螺旋动画状态
+    let isSpinning = false;
+    let spinAnimationId = null;
+    
+    function triggerSpinAnimation() {
+      if (isSpinning) return;
+      isSpinning = true;
+      
+      // 记录当前旋转值 (欧拉角当前值)
+      const startRotY = currentRotY;
+      const startRotX = currentRotX;
+      // 目标旋转: 水平旋转增加 2*PI，垂直轻微摆动
+      const targetSpinY = startRotY + Math.PI * 2.8;
+      const duration = 750;
+      const startTime = performance.now();
+      
+      function spin(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1.0);
+        const easeOut = 1 - Math.pow(1 - progress, 3);
+        // 更新当前旋转角度 (动画期间覆盖鼠标控制)
+        currentRotY = startRotY + (targetSpinY - startRotY) * easeOut;
+        currentRotX = startRotX + (Math.sin(progress * Math.PI) * 0.35); // 轻微上下浮动
+        // 直接应用到cubeGroup的旋转
+        cubeGroup.rotation.x = currentRotX;
+        cubeGroup.rotation.y = currentRotY;
+        
+        if (progress < 1) {
+          spinAnimationId = requestAnimationFrame(spin);
+        } else {
+          // 动画结束后同步目标角度，避免跳变 (将目标旋转设为最终值)
+          targetRotY = currentRotY % (Math.PI * 2);
+          targetRotX = currentRotX;
+          // 归一化处理角度，使其保持在合理范围
+          if (targetRotY > Math.PI) targetRotY -= Math.PI * 2;
+          if (targetRotY < -Math.PI) targetRotY += Math.PI * 2;
+          targetRotX = Math.min(MAX_ROT_X, Math.max(-MAX_ROT_X, targetRotX));
+          
+          mouseXNorm = targetRotY / MAX_ROT_Y;
+          mouseYNorm = targetRotX / MAX_ROT_X;
+          // 限制范围
+          mouseXNorm = Math.min(1, Math.max(-1, mouseXNorm));
+          mouseYNorm = Math.min(1, Math.max(-1, mouseYNorm));
+          
+          isSpinning = false;
+          spinAnimationId = null;
+        }
+      }
+      spinAnimationId = requestAnimationFrame(spin);
+    }
+    
+    function resetToDefault() {
+      if (isSpinning) {
+        if (spinAnimationId) cancelAnimationFrame(spinAnimationId);
+        isSpinning = false;
+      }
+      // 重置形态为立方体
+      applyShape(0, true);
+      // 重置鼠标归一化坐标以及目标旋转角和当前旋转角
+      mouseXNorm = 0;
+      mouseYNorm = 0;
+      targetRotY = 0;
+      targetRotX = 0;
+      currentRotY = 0;
+      currentRotX = 0;
+      cubeGroup.rotation.set(0, 0, 0);
+      // 不需要重置相机位置，相机本身不动，让立方体居中视野即可
+    }
+    
+    // 波纹特效 (CSS)
+    function createRipple(clientX, clientY, small = false) {
+      const ripple = document.createElement('div');
+      ripple.style.position = 'fixed';
+      ripple.style.left = clientX + 'px';
+      ripple.style.top = clientY + 'px';
+      ripple.style.width = small ? '20px' : '28px';
+      ripple.style.height = small ? '20px' : '28px';
+      ripple.style.border = '2px solid rgba(255, 255, 240, 0.85)';
+      ripple.style.borderRadius = '50%';
+      ripple.style.transform = 'translate(-50%, -50%) scale(0)';
+      ripple.style.opacity = '0.8';
+      ripple.style.pointerEvents = 'none';
+      ripple.style.zIndex = '1000';
+      ripple.style.boxShadow = '0 0 12px rgba(255,240,160,0.5)';
+      ripple.style.animation = 'rippleExpand 0.75s cubic-bezier(0.2, 0.9, 0.3, 1.1) forwards';
+      document.body.appendChild(ripple);
+      
+      setTimeout(() => {
+        ripple.remove();
+      }, 800);
+    }
+    
+    const styleSheet = document.createElement("style");
+    styleSheet.textContent = `
+      @keyframes rippleExpand {
+        0% { transform: translate(-50%, -50%) scale(0); opacity: 0.8; border-width: 3px; }
+        40% { opacity: 0.5; }
+        100% { transform: translate(-50%, -50%) scale(7); opacity: 0; border-width: 0.5px; }
+      }
+    `;
+    document.head.appendChild(styleSheet);
+    
+    // 窗口自适应
+    window.addEventListener('resize', onWindowResize, false);
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    
+    // ---------- 额外的光晕效果：添加一个微弱的光晕点光源围绕鼠标? 可选但不需要，保持简洁 ----------
+    // 为了让魔方更生动，在场景中添加一个跟随鼠标旋转的辅助背光? 但是已经足够, 继续原有逻辑
+    
+    // 由于去掉了OrbitControls，我们需要手动管理魔方的旋转，每一帧平滑跟随目标角度
+    // 此外相机保持固定，这样魔方自身旋转时，所有角度都能被用户看到，仿佛物体在手里转动。
+    // 注意：原来的粒子内部旋转依然保留，不影响主体旋转。
+    
+    // 动画循环: 平滑更新cubeGroup的旋转角度
+    function animateRotation() {
+      // 如果正在螺旋动画中，则跳过鼠标跟随更新，因为动画独立控制了旋转值
+      if (!isSpinning) {
+        // 线性插值平滑跟随鼠标 (lerp)
+        currentRotY += (targetRotY - currentRotY) * FOLLOW_SPEED;
+        currentRotX += (targetRotX - currentRotX) * FOLLOW_SPEED;
+        
+        // 应用到魔方组
+        cubeGroup.rotation.x = currentRotX;
+        cubeGroup.rotation.y = currentRotY;
+        // Z轴不旋转，保持稳固
+        cubeGroup.rotation.z = 0;
+      }
+    }
+    
+    // 添加额外的环境互动: 为了让跟随体验更细腻，当鼠标移动缓慢时依然流畅，无需额外操作。
+    
+    // 重新调整灯光阴影投射优化、保持粒子动画
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // 更新旋转跟随（内部非螺旋状态时才平滑修改）
+      animateRotation();
+      
+      // 粒子系统自转，增加科技感
+      if (particles) {
+        particles.rotation.y += 0.003;
+        particles.rotation.x += 0.002;
+        particles.rotation.z += 0.001;
+      }
+      
+      // 相机轻微微动? 不移动相机以保证固定的视角感受，魔方自身旋转完全由鼠标控制。
+      // 但为了凸显空间感，相机位置保持不变，魔方在中心旋转，用户可感知每个面的细节。
+      
+      renderer.render(scene, camera);
+      labelRenderer.render(scene, camera);
+    }
+    
+    animate();
+    
+    // 为移动端添加一个额外事件保证触摸离开后不再持续移动，无影响。
+    // 另外增加一个小功能：鼠标离开窗口时不需要重置，保持最后的旋转姿态，符合预期。
+    
+    // 添加初始指向提示效果: 轻微默认旋转展示响应性，但无所谓。
+    console.log('✨ 灵动魔方 · 视线追随版已启动 — 鼠标移动即旋转 | 滚轮变形 | 双击螺旋');
+    
+    // 为了优化体验，将相机稍微提高一点点，让视觉集中在立方体上。
+    camera.position.set(0, 1.2, 6.2);
+    camera.lookAt(0, 0, 0);
+    
+    // 可选：添加一个很小的环境旋转动画让粒子更生动，已完成。
+  </script>
+</body>
+</html>

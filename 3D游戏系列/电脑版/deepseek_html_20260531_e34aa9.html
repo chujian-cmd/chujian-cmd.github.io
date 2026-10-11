@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - 无限创造 | 统一UI风格</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; overflow: hidden; background: #050a12; user-select: none; }
+    canvas { display: block; }
+
+    /* 全新统一UI设计：半透明磨砂玻璃 + 霓虹青紫渐变 */
+    :root {
+      --glow-cyan: #4ecdc4;
+      --glow-coral: #ff6b6b;
+      --dark-bg: rgba(8, 16, 28, 0.88);
+      --glass-border: rgba(78, 205, 196, 0.5);
+      --glass-shadow: 0 8px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(78,205,196,0.2);
+    }
+
+    /* 起始覆盖层 */
+    #start-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, rgba(10, 18, 32, 0.98) 0%, rgba(3, 8, 18, 0.98) 100%);
+      backdrop-filter: blur(16px);
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+      visibility: visible;
+    }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+
+    #start-box {
+      background: rgba(12, 22, 40, 0.95);
+      border: 1px solid var(--glow-coral);
+      border-radius: 32px;
+      padding: 42px 52px;
+      text-align: center;
+      color: #fff;
+      box-shadow: 0 0 60px rgba(255, 107, 107, 0.25), inset 0 1px 0 rgba(255,255,255,0.08);
+      backdrop-filter: blur(8px);
+      max-width: 620px;
+      width: 92%;
+      transition: 0.2s;
+    }
+    #start-box h1 { font-size: 2.5rem; margin-bottom: 16px; background: linear-gradient(135deg, #ff8a8a, #4ecdc4, #5f9eff); -webkit-background-clip: text; background-clip: text; color: transparent; letter-spacing: -0.5px; }
+    .subtitle { color: var(--glow-coral); font-size: 1.2rem; margin-bottom: 22px; font-weight: 600; text-shadow: 0 0 6px rgba(255,107,107,0.4); animation: pulse 1.8s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; transform: scale(1); } 50% { opacity:0.7; transform: scale(1.02); } }
+    .key { background: rgba(20, 30, 55, 0.8); border: 1px solid var(--glow-cyan); border-radius: 8px; padding: 4px 10px; font-size: 0.75rem; font-weight: bold; margin: 0 4px; display: inline-block; box-shadow: 0 1px 2px rgba(0,0,0,0.4); color: #caf0ff; }
+
+    /* HUD 统一磨砂风格 */
+    .hud {
+      position: fixed; z-index: 20; pointer-events: none;
+      color: #f0fcff;
+      background: rgba(8, 18, 32, 0.85);
+      border: 1px solid var(--glass-border);
+      border-radius: 28px;
+      padding: 12px 28px;
+      opacity: 0; transition: opacity 0.3s ease, transform 0.2s;
+      backdrop-filter: blur(16px);
+      font-weight: 500;
+      letter-spacing: 0.3px;
+    }
+    .hud.visible { opacity: 1; }
+    #hud-top { top:20px; left:50%; transform:translateX(-50%); min-width: 380px; text-align: center; background: rgba(6, 14, 26, 0.85); }
+    #hud-bottom { bottom:22px; left:50%; transform:translateX(-50%); display:flex; gap:18px; flex-wrap:wrap; justify-content:center; background: rgba(6, 14, 26, 0.85); border-radius: 40px; padding: 8px 22px; }
+    #coord-display { position: fixed; bottom: 22px; right: 22px; background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(12px); padding: 8px 16px; border-radius: 40px; font-family: monospace; font-size: 0.8rem; color: var(--glow-cyan); border: 1px solid rgba(78,205,196,0.5); pointer-events: none; z-index: 25; font-weight: 500; }
+    #stats { position: fixed; top:20px; left:20px; background: rgba(6, 14, 26, 0.85); backdrop-filter: blur(12px); padding: 8px 18px; border-radius: 40px; color: #baf0f0; font-size: 0.75rem; opacity:0; transition:opacity 0.3s; border:1px solid rgba(78,205,196,0.4); pointer-events: none; z-index:30; font-family: monospace; font-weight: 500; }
+    #stats.visible { opacity:1; }
+    .shape-dot { width:18px; height:18px; border-radius: 6px; display:inline-block; border:2px solid rgba(255,255,240,0.9); margin:0 5px; vertical-align: middle; box-shadow: 0 0 4px currentColor; }
+    
+    /* 死亡UI 统一风格 */
+    #death-overlay { position:fixed; inset:0; background: radial-gradient(circle at center, rgba(0,0,0,0.92) 0%, rgba(45,12,12,0.96) 100%); backdrop-filter: blur(12px); z-index:200; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.4s; }
+    #death-overlay.active { opacity:1; pointer-events:auto; }
+    #death-box { background: rgba(20, 12, 28, 0.98); border: 1px solid var(--glow-coral); border-radius: 38px; padding: 38px 52px; text-align:center; color:#fff; backdrop-filter: blur(8px); box-shadow: 0 0 40px rgba(255,107,107,0.3);}
+    #death-box button { background: linear-gradient(120deg, #ff6b6b, #f08e6e); border:none; color:#fff; font-weight:bold; padding:12px 32px; border-radius: 40px; cursor:pointer; margin-top:20px; font-size:1rem; transition:0.1s; letter-spacing:1px;}
+
+    /* 统一侧边栏: 高级黑色磨砂 + 青色描边 */
+    .side-panel {
+      position: fixed; top: 50%; transform: translateY(-50%);
+      right: 20px; width: 290px;
+      background: rgba(6, 14, 26, 0.94);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(78, 205, 196, 0.6);
+      border-radius: 28px;
+      padding: 18px 18px;
+      color: #eef5ff;
+      font-family: 'Segoe UI', system-ui, monospace;
+      font-size: 0.82rem;
+      z-index: 10060;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(78,205,196,0.2);
+      transition: 0.2s ease;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: auto;
+    }
+    .side-panel.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+    .side-panel h4 {
+      margin: 0 0 14px 0;
+      font-size: 1.08rem;
+      border-left: 4px solid #4ecdc4;
+      padding-left: 12px;
+      letter-spacing: 0.5px;
+      background: linear-gradient(135deg, #ffffff, #9ad8e0);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      font-weight: 600;
+    }
+    .side-panel .row-info {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      border-bottom: 1px dashed rgba(100, 200, 200, 0.25);
+      padding: 6px 0;
+    }
+    .side-panel .row-info label { color: #b0e0e6; font-weight: 500; }
+    .side-panel .row-info span { font-family: monospace; color: #ffda9e; font-weight: 500; }
+    .side-panel .input-group { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .side-panel .input-group label { width: 70px; font-size: 0.75rem; color: #b6ecf0; }
+    .side-panel input, .side-panel select { background: #0a1222; border: 1px solid #4ecdc4; color: #ecf9ff; border-radius: 14px; padding: 6px 8px; width: 120px; font-size: 0.75rem; outline: none; transition: 0.1s; }
+    .side-panel input:focus { border-color: #ffaa66; box-shadow:0 0 5px rgba(78,205,196,0.5);}
+    .side-panel button { background: rgba(31, 55, 86, 0.9); border: 1px solid #5f9eff; color: #ddf4ff; border-radius: 28px; padding: 5px 12px; font-size: 0.7rem; cursor: pointer; transition: 0.12s; margin-top: 4px; font-weight: 500; backdrop-filter: blur(2px);}
+    .side-panel button:hover { background: #2e4970; border-color: #ffaa66; color: white; }
+    .side-panel .btn-group { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+    .obj-status-small { background: #0f1a2c; border-radius: 32px; padding: 6px 12px; text-align: center; font-size: 0.7rem; margin-bottom: 14px; color: #ffda88; border: 1px solid #2c6370; }
+    
+    /* 控制台面板 (CHEAT) 统一新风格 */
+    #cheat-panel {
+      position: fixed; top: 80px; right: 24px; width: 300px; background: rgba(8, 16, 28, 0.95); backdrop-filter: blur(20px);
+      border: 1px solid #36f0d0; color: #bff8ff; padding: 18px; opacity: 0; pointer-events: none; transition: opacity 0.25s; border-radius: 28px;
+      max-height: 85vh; overflow-y: auto; z-index: 9999; font-family: monospace; box-shadow: 0 10px 28px black;
+    }
+    #cheat-panel.visible { opacity: 1; pointer-events: auto; }
+    .cheat-btn { width: 100%; padding: 8px; margin: 6px 0; background: rgba(0, 40, 40, 0.5); border: 1px solid #4ecdc4; color: #cafcff; border-radius: 40px; cursor: pointer; font-weight: bold; transition: 0.1s; }
+    .cheat-btn:hover { background: #1e6b6b; border-color: #ffaa66; }
+    #cheat-script-input { width:100%; background: #0c1426; border:1px solid #4ecdc4; color:#b3f0ff; padding:8px; border-radius: 20px; min-height:80px; font-size:0.7rem;}
+
+    /* 光影面板统一 */
+    #render-settings-panel {
+      position: fixed; top: 20px; right: 340px; z-index: 9998; width: 290px; background: rgba(6, 14, 26, 0.94); backdrop-filter: blur(24px);
+      border: 1px solid #6fc8ff; border-radius: 28px; padding: 18px; color: #e0f7ff; font-family: monospace; opacity: 0; pointer-events: none; transition: 0.3s; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    }
+    #render-settings-panel.visible { opacity: 1; pointer-events: auto; }
+    .set-row { display: flex; justify-content: space-between; margin: 12px 0; align-items: center;}
+    .set-row label { width: 110px; color:#b1e6ff;}
+    .set-row input, .set-row select { width: 140px; background: #0c162a; border: 1px solid #4a9eff; border-radius: 20px; padding: 6px 8px; color: #fff; }
+    .set-buttons button { background: #1e293b; border-radius: 32px; padding: 6px; border: 1px solid #5fc0ff; color: #b9f2ff; cursor: pointer; }
+
+    /* 加载页面 */
+    #loading-overlay { position:fixed; inset:0; background:#03070f; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; color:#4ecdc4; backdrop-filter: blur(4px);}
+    .loader { width:54px; height:54px; border:4px solid rgba(78,205,196,0.2); border-top:4px solid #4ecdc4; border-radius:50%; animation: spin 1s linear infinite; margin-bottom:20px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div id="loading-overlay"><div class="loader"></div><p style="letter-spacing:1px;">⚡ 初始化 Cannon.es 专业引擎 ...</p></div>
+<div id="start-overlay"><div id="start-box"><h1>✨ 3D 物理沙盒</h1><p class="subtitle">✦ 点击任意处 开启创造 ✦</p><p style="margin-bottom:12px;">WASD移动 · 空格跳跃 · 鼠标控制视角</p><p>左键放置 · 右键删除 · 滚轮切换形状</p><p><span class="key">1-8</span>形状 <span class="key">R</span>换色 <span class="key">G/H</span>吸/推 <span class="key">B</span>爆炸 <span class="key">V</span>全吸<br><span class="key">N</span>反重力 <span class="key">F</span>重生 <span class="key">K</span>冻结放置 <span class="key">~</span>控制台 <span class="key">Ctrl+Z</span>撤销 <span class="key">O</span>光影</p><p style="margin-top:12px;">✨ 新增快捷: <span class="key">T</span>信息面板 <span class="key">E</span>物体编辑 <span class="key">C</span>精确坐标</p></div></div>
+<div id="stats">📊 <span id="obj-count">0</span> 物体  ⚡ <span id="fps-val">60</span> FPS  🧮 <span id="physics-time">0</span>ms</div>
+<div id="hud-top" class="hud">🎨 形状: <span id="shape-dot" class="shape-dot"></span> <span id="shape-name">立方体</span>  |  🎨 颜色: <span id="color-dot" style="width:18px;height:18px;border-radius:8px;display:inline-block;border:2px solid #fff;"></span></div>
+<div id="hud-bottom" class="hud"><span><span class="key">1-8</span>形状</span><span><span class="key">R</span>换色</span><span><span class="key">G/H</span>力场</span><span><span class="key">B</span>爆裂</span><span><span class="key">V</span>真空</span><span><span class="key">F</span>重生</span><span><span class="key">K</span>冻结</span><span><span class="key">~</span>面板</span><span><span class="key">T</span>信息</span><span><span class="key">E</span>编辑</span><span><span class="key">C</span>坐标</span></div>
+<div id="coord-display">📍 玩家坐标: -- , -- , --</div>
+<div id="death-overlay"><div id="death-box"><h2>💀 坠落虚空</h2><p>点击重生 或按 F</p><button id="respawn-btn">重 生</button></div></div>
+<div id="cheat-panel"><h3>⚙️ 超级控制台</h3><div><label>🕊️ 飞行模式</label><input type="checkbox" id="cheat-fly"></div><div><label>🛡️ 上帝模式</label><input type="checkbox" id="cheat-god"></div><div><label>🔭 无限放置距离</label><input type="checkbox" id="cheat-range"></div><div><label>⚙️ 自动放置</label><input type="checkbox" id="cheat-auto"></div><div>🌍 重力 <input type="range" id="cheat-gravity" min="-20" max="20" value="-12" step="0.5"></div><div>🏃 移速 <input type="range" id="cheat-speed" min="3" max="30" value="8" step="0.5"></div><div>🦘 跳跃力 <input type="range" id="cheat-jump" min="2" max="20" value="8" step="0.5"></div><div>💥 吸推力度 <input type="range" id="cheat-force" min="500" max="5000" value="1500" step="100"></div><div>📦 批量数量 <input type="number" id="cheat-batch" value="80" min="1" step="1"></div><button class="cheat-btn" id="btn-spawn-batch">✨ 批量生成</button><button class="cheat-btn" id="btn-clear">🗑️ 清空世界</button><button class="cheat-btn" id="btn-random-color">🎲 随机颜色</button><label>📜 脚本工具</label><textarea id="cheat-script-input">// 示例: setGravity(-9.8); spawnSphere(0,3,2,'#88ffaa');</textarea><button class="cheat-btn" id="btn-exec-script">▶ 执行脚本</button></div>
+<div id="render-settings-panel"><h3>🎨 光影渲染</h3><div class="set-row"><label>阴影质量</label><select id="shadow-quality"><option value="off">关闭</option><option value="low">低</option><option value="medium" selected>中</option><option value="high">高</option></select></div><div class="set-row"><label>阴影浓度</label><input type="range" id="shadow-darkness" min="0" max="1" step="0.05" value="0.6"></div><div class="set-row"><label>环境光强</label><input type="range" id="ambient-light" min="0" max="2" step="0.05" value="0.5"></div><div class="set-row"><label>太阳光强</label><input type="range" id="sun-intensity" min="0" max="2" step="0.05" value="1.2"></div><div class="set-row"><label>色调映射</label><select id="tone-map"><option value="none">无</option><option value="filmic" selected>电影级</option><option value="reinhard">柔和</option></select></div><div class="set-row"><label>曝光度</label><input type="range" id="exposure" min="0.5" max="3" step="0.05" value="1"></div><div class="set-buttons"><button id="save-render">保存</button><button id="reset-render">重置</button></div></div>
+
+<!-- 三大统一侧边栏：信息，编辑，精确坐标 -->
+<div id="info-sidebar" class="side-panel"><h4>📡 实时信息</h4>
+  <div class="row-info"><label>玩家坐标</label><span id="side_px">0.00</span> , <span id="side_py">0.00</span> , <span id="side_pz">0.00</span></div>
+  <div class="row-info"><label>旋转/俯仰</label><span id="side_rot">0.0°</span> / <span id="side_pitch">0.0°</span></div>
+  <div class="row-info"><label>物体数量/FPS</label><span id="side_objs">0</span> / <span id="side_fps">0</span></div>
+  <div class="row-info"><label>物理耗时/重力</label><span id="side_phys">0</span>ms / <span id="side_grav">-12.0</span></div>
+  <div class="row-info"><label>当前形状/颜色</label><span id="side_shape">立方体</span> / <span id="side_color">#ff6b6b</span></div>
+  <button id="close-info" style="width:100%; margin-top:10px;">关闭 [T]</button>
+</div>
+<div id="edit-sidebar" class="side-panel"><h4>🔧 物体编辑</h4>
+  <div id="edit-status" class="obj-status-small">⚪ 未选中物体</div>
+  <div class="input-group"><label>位置 XYZ</label><input type="number" id="edit_x" step="0.05" placeholder="X" style="width:70px"> <input type="number" id="edit_y" step="0.05" placeholder="Y" style="width:70px"> <input type="number" id="edit_z" step="0.05" placeholder="Z" style="width:70px"></div>
+  <div class="input-group"><label>旋转 °</label><input type="number" id="edit_rx" step="1" placeholder="X" style="width:70px"> <input type="number" id="edit_ry" step="1" placeholder="Y" style="width:70px"> <input type="number" id="edit_rz" step="1" placeholder="Z" style="width:70px"></div>
+  <div class="input-group"><label>缩放/颜色</label><input type="number" id="edit_scale" step="0.05" value="1" style="width:70px"> <input type="text" id="edit_col" placeholder="#rrggbb" style="width:90px"></div>
+  <div class="btn-group"><button id="edit_apply">应用</button><button id="edit_copy">复制</button><button id="edit_delete">删除</button><button id="edit_reset">重置缩放/旋转</button></div>
+  <button id="close-edit" style="width:100%; margin-top:12px;">关闭 [E]</button>
+</div>
+<div id="coord-sidebar" class="side-panel"><h4>🎯 精确坐标编辑</h4>
+  <div id="coord-mode" class="obj-status-small">🎮 当前模式: 玩家坐标</div>
+  <div class="input-group"><label>X 坐标</label><input type="number" id="coord_x" step="0.01" style="width:175px"></div>
+  <div class="input-group"><label>Y 坐标</label><input type="number" id="coord_y" step="0.01" style="width:175px"></div>
+  <div class="input-group"><label>Z 坐标</label><input type="number" id="coord_z" step="0.01" style="width:175px"></div>
+  <div class="btn-group"><button id="coord_apply_player">👤 应用至玩家</button><button id="coord_apply_obj">📦 应用至选中物体</button></div>
+  <div class="btn-group"><button id="coord_sync_player">🔄 同步玩家坐标</button><button id="coord_sync_obj">🔄 同步选中物体</button></div>
+  <button id="close-coord" style="width:100%; margin-top:12px;">关闭 [C]</button>
+</div>
+
+<script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+
+// ----- 核心游戏对象 (整合保留逻辑，增强UI一致性) -----
+const game = window.game = {
+  scene: new THREE.Scene(), camera: new THREE.PerspectiveCamera(68, window.innerWidth/window.innerHeight, 0.1, 200),
+  renderer: new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" }),
+  clock: new THREE.Clock(), raycaster: new THREE.Raycaster(), world: null, groundBody: null, playerBody: null,
+  isLocked: false, isDead: false, panelVisible: false, holdK: false,
+  cheat: { fly: false, god: false, range: false, auto: false },
+  config: { moveSpeed: 8, jumpForce: 8, forceStrength: 1500, mouseSensitivity: 0.002 },
+  placedItems: [], allPlaceables: [], undoStack: [], selectedPlaceable: null,
+  shapes: { types: ['cube','sphere','cylinder','cone','torus','pyramid','capsule','octahedron'], names: ['立方体','球体','圆柱','圆锥','圆环','金字塔','胶囊','八面体'], index: 0,
+            colors: ['#ff6b6b','#ff9f43','#feca57','#54a0ff','#5f27cd','#00d2d3','#55efc4','#fd79a8','#ffffff','#e056a0'], colorIndex: 0 },
+  input: { keys: {}, euler: new THREE.Euler(0,0,0,'YXZ') }, geometries: {}, previewMesh: null, directionalLight: null, ambientLight: null,
+  statsFrames:0, statsTime:0, physicsTime:0, timeFreeze: false
+};
+
+// 基础几何 / 物理 / 辅助函数 (保留完整)
+function getGeometry(type) { if(!game.geometries[type]) { const g=game.geometries; switch(type){case'cube':g.cube=new THREE.BoxGeometry(0.95,0.95,0.95);break;case'sphere':g.sphere=new THREE.SphereGeometry(0.48,24,18);break;case'cylinder':g.cylinder=new THREE.CylinderGeometry(0.48,0.48,0.95,16);break;case'cone':g.cone=new THREE.ConeGeometry(0.48,0.95,16);break;case'torus':g.torus=new THREE.TorusGeometry(0.4,0.18,12,24);break;case'pyramid':g.pyramid=new THREE.ConeGeometry(0.48,0.9,4);break;case'capsule':g.capsule=new THREE.CylinderGeometry(0.32,0.32,0.8,12);break;case'octahedron':g.octahedron=new THREE.OctahedronGeometry(0.48);break;default:g.cube=new THREE.BoxGeometry(0.95,0.95,0.95);}} return game.geometries[type]; }
+function getPhysicsShape(type) { switch(type){case'cube':return new CANNON.Box(new CANNON.Vec3(0.48,0.48,0.48));case'sphere':return new CANNON.Sphere(0.48);case'cylinder':return new CANNON.Cylinder(0.48,0.48,0.95,8);case'cone':return new CANNON.Cylinder(0,0.48,0.95,8);case'torus':return new CANNON.Sphere(0.45);case'pyramid':return new CANNON.Cylinder(0,0.48,0.9,4);case'capsule':return new CANNON.Cylinder(0.32,0.32,0.8,8);default:return new CANNON.Box(new CANNON.Vec3(0.48,0.48,0.48));} }
+function createPlacedShape(type,colorHex,position,isStatic=false){ const mesh=new THREE.Mesh(getGeometry(type),new THREE.MeshStandardMaterial({color:colorHex,roughness:0.35,metalness:0.1})); mesh.position.copy(position); mesh.castShadow=mesh.receiveShadow=true; mesh.name='placed-shape'; game.scene.add(mesh); game.allPlaceables.push(mesh); const shape=getPhysicsShape(type); const body=new CANNON.Body({mass:isStatic?0:1}); body.addShape(shape); body.position.set(position.x,position.y,position.z); body.userData={mesh,type:'placed'}; body.linearDamping=0.3; body.angularDamping=0.1; game.world.addBody(body); const entry={mesh,body,shapeType:type,isStatic}; game.placedItems.push(entry); return entry; }
+function removeEntry(entry){ game.world.removeBody(entry.body); game.scene.remove(entry.mesh); entry.mesh.material?.dispose(); const idx=game.placedItems.indexOf(entry); if(idx!==-1)game.placedItems.splice(idx,1); const pIdx=game.allPlaceables.indexOf(entry.mesh); if(pIdx!==-1)game.allPlaceables.splice(pIdx,1); if(game.selectedPlaceable===entry) game.selectedPlaceable=null; }
+function initPhysics(){ game.world=new CANNON.World(); game.world.gravity=new CANNON.Vec3(0,-12,0); game.world.broadphase=new CANNON.NaiveBroadphase(); game.world.defaultContactMaterial.restitution=0.5; const groundShape=new CANNON.Box(new CANNON.Vec3(18,0.2,18)); game.groundBody=new CANNON.Body({mass:0}); game.groundBody.addShape(groundShape); game.groundBody.position.set(0,-0.3,0); game.world.addBody(game.groundBody); const bounds=17.5; [[0,0,-bounds],[0,0,bounds],[-bounds,0,0],[bounds,0,0]].forEach((pos,i)=>{ const box=new CANNON.Box(new CANNON.Vec3(i<2?bounds*2:0.5,10,i<2?0.5:bounds*2)); const body=new CANNON.Body({mass:0}); body.addShape(box); body.position.set(pos[0],pos[1],pos[2]); game.world.addBody(body); }); const playerShape=new CANNON.Sphere(0.4); game.playerBody=new CANNON.Body({mass:1}); game.playerBody.addShape(playerShape); game.playerBody.position.set(0,2,8); game.playerBody.linearDamping=0.9; game.world.addBody(game.playerBody); }
+function resetPlayer(){ game.playerBody.position.set(0,2,8); game.playerBody.velocity.set(0,0,0); if(game.cheat.fly) setFlyMode(true); else setFlyMode(false); game.world.gravity.set(0,-12,0); document.getElementById('cheat-gravity').value=-12; game.camera.position.set(0,2.6,8); game.input.euler.set(0,0,0); game.camera.quaternion.setFromEuler(game.input.euler); game.isDead=false; }
+function setFlyMode(enable){ if(enable){ game.playerBody.type=CANNON.Body.KINEMATIC; game.playerBody.mass=0; game.playerBody.updateMassProperties(); }else{ game.playerBody.type=CANNON.Body.DYNAMIC; game.playerBody.mass=1; game.playerBody.updateMassProperties(); game.playerBody.velocity.set(0,0,0);} }
+function die(){ if(game.isDead||game.cheat.god)return; game.isDead=true; document.exitPointerLock(); document.getElementById('death-overlay').classList.add('active');}
+function getPlacement(){ game.raycaster.setFromCamera(new THREE.Vector2(0,0),game.camera); game.raycaster.far=game.cheat.range?100:30; const hits=game.raycaster.intersectObjects(game.allPlaceables,false); if(hits.length){ const point=hits[0].point.clone(); const normal=hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld); const pos=point.add(normal.multiplyScalar(0.48)); pos.x=THREE.MathUtils.clamp(pos.x,-17,17); pos.z=THREE.MathUtils.clamp(pos.z,-17,17); pos.y=Math.max(pos.y,0.2); return{pos,valid:true};} return{pos:null,valid:false};}
+function applyForceToAll(attract){const p=game.playerBody.position,str=game.config.forceStrength;game.placedItems.forEach(item=>{if(item.isStatic)return;const dx=p.x-item.body.position.x,dy=p.y-item.body.position.y,dz=p.z-item.body.position.z;const dist=Math.hypot(dx,dy,dz);if(dist<8&&dist>0.3){const power=(1-dist/8)*str;const fx=dx/dist*power,fy=dy/dist*power,fz=dz/dist*power;item.body.applyForce(new CANNON.Vec3(attract?fx:-fx,attract?fy:-fy,attract?fz:-fz),item.body.position);}});}
+function explode(){const p=game.playerBody.position;game.placedItems.forEach(item=>{if(item.isStatic)return;const dx=item.body.position.x-p.x,dy=item.body.position.y-p.y,dz=item.body.position.z-p.z;const dist=Math.hypot(dx,dy,dz);if(dist<10&&dist>0.3){const factor=(1-dist/10)*game.config.forceStrength*0.7;const inv=1/dist;item.body.applyImpulse(new CANNON.Vec3(dx*inv*factor,(dy+0.5)*inv*factor,dz*inv*factor),item.body.position);}});}
+function vacuum(){const p=game.playerBody.position;game.placedItems.forEach(item=>{if(item.isStatic)return;const dx=p.x-item.body.position.x,dy=p.y+0.5-item.body.position.y,dz=p.z-item.body.position.z;const dist=Math.hypot(dx,dy,dz);if(dist>1&&dist<15)item.body.applyImpulse(new CANNON.Vec3(dx*12,dy*12,dz*12),item.body.position);});}
+function clearWorld(){ while(game.placedItems.length) removeEntry(game.placedItems[0]); game.undoStack=[]; game.selectedPlaceable=null; updateEditUI();}
+function spawnBatch(num){ const type=game.shapes.types[game.shapes.index],col=game.shapes.colors[game.shapes.colorIndex]; const dir=new THREE.Vector3(); game.camera.getWorldDirection(dir); const base=game.camera.position.clone().add(dir.multiplyScalar(3)); const batch=[]; for(let i=0;i<num;i++){ const ang=(i/num)*Math.PI*2+Math.random()*0.5; const r=1.5+Math.random()*3; const x=base.x+Math.cos(ang)*r,z=base.z+Math.sin(ang)*r,y=base.y+Math.random()*2; batch.push(createPlacedShape(type,col,new THREE.Vector3(x,y,z),game.holdK));} game.undoStack.push({entries:batch});}
+function updateHUD(){const col=game.shapes.colors[game.shapes.colorIndex];document.getElementById('shape-dot').style.background=col;document.getElementById('shape-name').innerText=game.shapes.names[game.shapes.index];document.getElementById('color-dot').style.background=col;}
+function refreshPreview(){ game.previewMesh.geometry=getGeometry(game.shapes.types[game.shapes.index]); game.previewMesh.material.color.set(game.shapes.colors[game.shapes.colorIndex]);}
+function initGraphics(){ game.renderer.setSize(window.innerWidth,window.innerHeight); game.renderer.shadowMap.enabled=true; game.renderer.setClearColor('#0b1725'); document.body.appendChild(game.renderer.domElement); game.scene.background=new THREE.Color('#0b1725'); game.scene.fog=new THREE.FogExp2('#0b1725',0.012); game.ambientLight=new THREE.AmbientLight('#bcd4f0',0.55); game.scene.add(game.ambientLight); game.directionalLight=new THREE.DirectionalLight('#fff8e7',1.3); game.directionalLight.position.set(18,28,12); game.directionalLight.castShadow=true; game.scene.add(game.directionalLight); const groundMesh=new THREE.Mesh(new THREE.PlaneGeometry(36,36),new THREE.MeshStandardMaterial({color:'#1e2a36',roughness:0.8,metalness:0.1})); groundMesh.rotation.x=-Math.PI/2; groundMesh.position.y=-0.22; groundMesh.receiveShadow=true; game.scene.add(groundMesh); game.allPlaceables.push(groundMesh); game.scene.add(new THREE.GridHelper(36,36,'#6f8faa','#2f5f7a')); game.previewMesh=new THREE.Mesh(getGeometry('cube'),new THREE.MeshStandardMaterial({color:'#ff6b6b',transparent:true,opacity:0.45})); game.previewMesh.visible=false; game.scene.add(game.previewMesh);}
+function initDemo(){[[0,1,-2,'cube','#ff6b6b'],[3,1,1,'sphere','#4ecdc4'],[-3,1,2,'cylinder','#ffe66d'],[2,1,3,'pyramid','#a29bfe'],[-2,1,-3,'capsule','#00d2d3'],[0,1.5,4,'octahedron','#fd79a8']].forEach(([x,y,z,type,color])=>createPlacedShape(type,color,new THREE.Vector3(x,y,z),false));}
+function updateEditUI(){const sel=game.selectedPlaceable;const st=document.getElementById('edit-status');if(!sel){st.innerText='⚪ 未选中物体';['x','y','z','rx','ry','rz'].forEach(id=>document.getElementById(`edit_${id}`).value='');document.getElementById('edit_scale').value=1;document.getElementById('edit_col').value='';return;}st.innerText=`✅ 已选中 ${sel.shapeType}`;const p=sel.body.position;document.getElementById('edit_x').value=p.x.toFixed(3);document.getElementById('edit_y').value=p.y.toFixed(3);document.getElementById('edit_z').value=p.z.toFixed(3);const euler=new THREE.Euler().setFromQuaternion(sel.mesh.quaternion);document.getElementById('edit_rx').value=(euler.x*180/Math.PI).toFixed(1);document.getElementById('edit_ry').value=(euler.y*180/Math.PI).toFixed(1);document.getElementById('edit_rz').value=(euler.z*180/Math.PI).toFixed(1);document.getElementById('edit_scale').value=sel.mesh.scale.x;document.getElementById('edit_col').value='#'+sel.mesh.material.color.getHexString();}
+function initSidebars(){
+  setInterval(()=>{if(document.getElementById('info-sidebar').classList.contains('visible')){const p=game.playerBody.position;const e=game.input.euler;document.getElementById('side_px').innerText=p.x.toFixed(2);document.getElementById('side_py').innerText=p.y.toFixed(2);document.getElementById('side_pz').innerText=p.z.toFixed(2);document.getElementById('side_rot').innerText=(e.y*180/Math.PI).toFixed(1);document.getElementById('side_pitch').innerText=(e.x*180/Math.PI).toFixed(1);document.getElementById('side_objs').innerText=game.placedItems.length;document.getElementById('side_fps').innerText=document.getElementById('fps-val').innerText;document.getElementById('side_phys').innerText=game.physicsTime.toFixed(1);document.getElementById('side_grav').innerText=game.world.gravity.y.toFixed(1);document.getElementById('side_shape').innerText=game.shapes.names[game.shapes.index];document.getElementById('side_color').innerText=game.shapes.colors[game.shapes.colorIndex];}},120);
+  document.getElementById('close-info').onclick=()=>document.getElementById('info-sidebar').classList.remove('visible');
+  document.getElementById('close-edit').onclick=()=>document.getElementById('edit-sidebar').classList.remove('visible');
+  document.getElementById('close-coord').onclick=()=>document.getElementById('coord-sidebar').classList.remove('visible');
+  document.getElementById('edit_apply').onclick=()=>{if(!game.selectedPlaceable)return;const sel=game.selectedPlaceable;const x=parseFloat(document.getElementById('edit_x').value),y=parseFloat(document.getElementById('edit_y').value),z=parseFloat(document.getElementById('edit_z').value);if(!isNaN(x))sel.body.position.x=x;if(!isNaN(y))sel.body.position.y=y;if(!isNaN(z))sel.body.position.z=z;sel.mesh.position.copy(sel.body.position);const rx=parseFloat(document.getElementById('edit_rx').value)*Math.PI/180,ry=parseFloat(document.getElementById('edit_ry').value)*Math.PI/180,rz=parseFloat(document.getElementById('edit_rz').value)*Math.PI/180;const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(rx,ry,rz));sel.mesh.quaternion.copy(q);sel.body.quaternion.copy(q);const sc=parseFloat(document.getElementById('edit_scale').value);if(sc>0)sel.mesh.scale.set(sc,sc,sc);const col=document.getElementById('edit_col').value;if(col&&/^#[0-9A-Fa-f]{6}$/.test(col))sel.mesh.material.color.set(col);updateEditUI();};
+  document.getElementById('edit_copy').onclick=()=>{if(game.selectedPlaceable){const old=game.selectedPlaceable;const newPos=old.body.position.clone().add(new THREE.Vector3(1.2,0.2,1.2));const newEntry=createPlacedShape(old.shapeType,old.mesh.material.color.getHexString(),newPos,false);game.undoStack.push({entries:[newEntry]});game.selectedPlaceable=newEntry;updateEditUI();}};
+  document.getElementById('edit_delete').onclick=()=>{if(game.selectedPlaceable){removeEntry(game.selectedPlaceable);game.selectedPlaceable=null;updateEditUI();}};
+  document.getElementById('edit_reset').onclick=()=>{if(game.selectedPlaceable){const sel=game.selectedPlaceable;sel.mesh.scale.set(1,1,1);sel.body.quaternion.set(0,0,0,1);sel.mesh.quaternion.set(0,0,0,1);updateEditUI();}};
+  const syncPlayerUI=()=>{const p=game.playerBody.position;document.getElementById('coord_x').value=p.x.toFixed(3);document.getElementById('coord_y').value=p.y.toFixed(3);document.getElementById('coord_z').value=p.z.toFixed(3);document.getElementById('coord-mode').innerHTML='🎮 当前模式: 玩家坐标';};
+  const syncObjUI=()=>{if(game.selectedPlaceable){const p=game.selectedPlaceable.body.position;document.getElementById('coord_x').value=p.x.toFixed(3);document.getElementById('coord_y').value=p.y.toFixed(3);document.getElementById('coord_z').value=p.z.toFixed(3);document.getElementById('coord-mode').innerHTML='📦 当前模式: 物体坐标';}else{syncPlayerUI();}};
+  document.getElementById('coord_apply_player').onclick=()=>{const x=parseFloat(document.getElementById('coord_x').value),y=parseFloat(document.getElementById('coord_y').value),z=parseFloat(document.getElementById('coord_z').value);if(!isNaN(x)&&!isNaN(y)&&!isNaN(z)){game.playerBody.position.set(x,y,z);game.camera.position.set(x,y+0.6,z);}};
+  document.getElementById('coord_apply_obj').onclick=()=>{if(game.selectedPlaceable){const x=parseFloat(document.getElementById('coord_x').value),y=parseFloat(document.getElementById('coord_y').value),z=parseFloat(document.getElementById('coord_z').value);if(!isNaN(x)&&!isNaN(y)&&!isNaN(z)){game.selectedPlaceable.body.position.set(x,y,z);game.selectedPlaceable.mesh.position.set(x,y,z);updateEditUI();}}};
+  document.getElementById('coord_sync_player').onclick=syncPlayerUI;
+  document.getElementById('coord_sync_obj').onclick=()=>{syncObjUI();};
+  document.addEventListener('keydown',(e)=>{if(e.code==='KeyT'&&game.isLocked&&!game.isDead){e.preventDefault();document.getElementById('info-sidebar').classList.toggle('visible');}if(e.code==='KeyE'&&game.isLocked&&!game.isDead){e.preventDefault();document.getElementById('edit-sidebar').classList.toggle('visible');if(game.selectedPlaceable)updateEditUI();}if(e.code==='KeyC'&&game.isLocked&&!game.isDead){e.preventDefault();document.getElementById('coord-sidebar').classList.toggle('visible');if(game.selectedPlaceable)syncObjUI();else syncPlayerUI();}});
+  document.addEventListener('mousedown',(e)=>{if(e.button===0 && (document.getElementById('edit-sidebar').classList.contains('visible')||document.getElementById('coord-sidebar').classList.contains('visible')) && game.isLocked && !game.isDead){game.raycaster.setFromCamera(new THREE.Vector2(0,0),game.camera);const hits=game.raycaster.intersectObjects(game.allPlaceables,false);for(let hit of hits){if(hit.object.name==='placed-shape'){const ent=game.placedItems.find(i=>i.mesh===hit.object);if(ent){game.selectedPlaceable=ent;updateEditUI();if(document.getElementById('coord-sidebar').classList.contains('visible'))syncObjUI();break;}}}}});
+}
+
+function initEvents(){ /* 原事件钩子简化但完整保留移动及快捷键 */ // 只添加核心事件不重写全部避免冲突但保留完整性
+document.addEventListener('mousemove',(e)=>{if(document.pointerLockElement===game.renderer.domElement&&!game.isDead){const mx=e.movementX||0,my=e.movementY||0;game.input.euler.y-=mx*game.config.mouseSensitivity;game.input.euler.x-=my*game.config.mouseSensitivity;game.input.euler.x=Math.max(-Math.PI/2.2,Math.min(Math.PI/2.2,game.input.euler.x));game.camera.quaternion.setFromEuler(game.input.euler);}});
+document.getElementById('start-box').addEventListener('click',()=>game.renderer.domElement.requestPointerLock());
+document.getElementById('respawn-btn').addEventListener('click',()=>{resetPlayer();document.getElementById('death-overlay').classList.remove('active');});
+document.addEventListener('keydown',(e)=>{game.input.keys[e.code]=true;if(e.code==='KeyK')game.holdK=true;if(e.code>='Digit1'&&e.code<='Digit8'){game.shapes.index=parseInt(e.code.slice(-1))-1;updateHUD();refreshPreview();}if(e.code==='KeyR'){game.shapes.colorIndex=(game.shapes.colorIndex+1)%game.shapes.colors.length;updateHUD();refreshPreview();}if(e.code==='Space'&&game.isLocked&&!game.isDead&&!game.cheat.fly&&game.playerBody.position.y<=0.8){e.preventDefault();game.playerBody.velocity.y=game.config.jumpForce;}if(e.code==='Backquote'){game.panelVisible=!game.panelVisible;document.getElementById('cheat-panel').classList.toggle('visible',game.panelVisible);e.preventDefault();}if((e.ctrlKey||e.metaKey)&&e.code==='KeyZ'&&game.isLocked){e.preventDefault();if(game.undoStack.length)game.undoStack.pop().entries.forEach(removeEntry);}if(e.code==='KeyF'){e.preventDefault();resetPlayer();document.getElementById('death-overlay').classList.remove('active');}if(e.code==='KeyU'){e.preventDefault();if(document.pointerLockElement===game.renderer.domElement)document.exitPointerLock();else game.renderer.domElement.requestPointerLock();}if(e.code==='KeyN'){let newG=game.world.gravity.y>0?-12:6;game.world.gravity.set(0,newG,0);document.getElementById('cheat-gravity').value=newG;}if(e.code==='KeyG')applyForceToAll(true);if(e.code==='KeyH')applyForceToAll(false);if(e.code==='KeyB')explode();if(e.code==='KeyV')vacuum();if(e.code==='KeyO')document.getElementById('render-settings-panel').classList.toggle('visible');});
+document.addEventListener('keyup',(e)=>{game.input.keys[e.code]=false;if(e.code==='KeyK')game.holdK=false;});
+document.addEventListener('wheel',(e)=>{if(!game.isLocked||game.isDead)return;e.preventDefault();game.shapes.index=(game.shapes.index+(e.deltaY>0?1:-1)+game.shapes.types.length)%game.shapes.types.length;updateHUD();refreshPreview();},{passive:false});
+document.addEventListener('mousedown',(e)=>{if(!game.isLocked||game.isDead)return;if(e.button===0){const place=getPlacement();if(place.valid&&place.pos){const entry=createPlacedShape(game.shapes.types[game.shapes.index],game.shapes.colors[game.shapes.colorIndex],place.pos,game.holdK);game.undoStack.push({entries:[entry]});}}if(e.button===2){game.raycaster.setFromCamera(new THREE.Vector2(0,0),game.camera);const hits=game.raycaster.intersectObjects(game.allPlaceables,false);for(let hit of hits)if(hit.object.name==='placed-shape'){const ent=game.placedItems.find(i=>i.mesh===hit.object);if(ent)removeEntry(ent);break;}}});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+window.addEventListener('resize',()=>{game.camera.aspect=window.innerWidth/window.innerHeight;game.camera.updateProjectionMatrix();game.renderer.setSize(window.innerWidth,window.innerHeight);});
+document.getElementById('cheat-fly').addEventListener('change',e=>{game.cheat.fly=e.target.checked;setFlyMode(game.cheat.fly);});
+document.getElementById('cheat-god').addEventListener('change',e=>game.cheat.god=e.target.checked);
+document.getElementById('cheat-range').addEventListener('change',e=>game.cheat.range=e.target.checked);
+document.getElementById('cheat-auto').addEventListener('change',e=>game.cheat.auto=e.target.checked);
+document.getElementById('cheat-gravity').addEventListener('input',e=>game.world.gravity.set(0,parseFloat(e.target.value),0));
+document.getElementById('cheat-speed').addEventListener('input',e=>game.config.moveSpeed=parseFloat(e.target.value));
+document.getElementById('cheat-jump').addEventListener('input',e=>game.config.jumpForce=parseFloat(e.target.value));
+document.getElementById('cheat-force').addEventListener('input',e=>game.config.forceStrength=parseFloat(e.target.value));
+document.getElementById('btn-spawn-batch').addEventListener('click',()=>{const cnt=parseInt(document.getElementById('cheat-batch').value);if(!isNaN(cnt))spawnBatch(Math.min(cnt,500));});
+document.getElementById('btn-clear').addEventListener('click',clearWorld);
+document.getElementById('btn-random-color').addEventListener('click',()=>{game.shapes.colorIndex=Math.floor(Math.random()*game.shapes.colors.length);updateHUD();refreshPreview();});
+document.getElementById('btn-exec-script').addEventListener('click',()=>{const code=document.getElementById('cheat-script-input').value;try{const ctx={setGravity:(v)=>{game.world.gravity.set(0,v,0);document.getElementById('cheat-gravity').value=v;},spawnSphere:(x,y,z,col)=>createPlacedShape('sphere',col||'#ff6b6b',new THREE.Vector3(x,y,z)),spawnCube:(x,y,z,col)=>createPlacedShape('cube',col||'#ff6b6b',new THREE.Vector3(x,y,z)),clearAll:clearWorld,log:console.log};new Function(...Object.keys(ctx),code)(...Object.values(ctx));}catch(e){alert("脚本错误:"+e.message);}});
+}
+function animate(){ requestAnimationFrame(animate); const dt=Math.min(game.clock.getDelta(),0.033); const physStart=performance.now(); if(!game.timeFreeze) game.world.step(1/60,dt,3); game.physicsTime=performance.now()-physStart; for(let item of game.placedItems){ item.mesh.position.copy(item.body.position); item.mesh.quaternion.copy(item.body.quaternion); } if(game.isLocked&&!game.isDead){ if(game.cheat.fly){ let f=0,r=0,u=0; if(game.input.keys.KeyW)f++;if(game.input.keys.KeyS)f--;if(game.input.keys.KeyA)r--;if(game.input.keys.KeyD)r++;if(game.input.keys.Space)u++;if(game.input.keys.ShiftLeft)u--; const camDir=new THREE.Vector3();game.camera.getWorldDirection(camDir);camDir.y=0;if(camDir.length())camDir.normalize(); const rightVec=new THREE.Vector3().crossVectors(camDir,new THREE.Vector3(0,1,0)).normalize(); const move=new THREE.Vector3().addScaledVector(camDir,f).addScaledVector(rightVec,r);move.y=u;if(move.length())move.normalize().multiplyScalar(game.config.moveSpeed*dt);game.playerBody.position.x+=move.x;game.playerBody.position.y+=move.y;game.playerBody.position.z+=move.z;game.camera.position.copy(game.playerBody.position);game.camera.position.y+=0.6; } else { let f=0,r=0; if(game.input.keys.KeyW)f++;if(game.input.keys.KeyS)f--;if(game.input.keys.KeyA)r--;if(game.input.keys.KeyD)r++; const camDir=new THREE.Vector3();game.camera.getWorldDirection(camDir);camDir.y=0;if(camDir.length())camDir.normalize(); const rightVec=new THREE.Vector3().crossVectors(camDir,new THREE.Vector3(0,1,0)).normalize(); const dir=new THREE.Vector3().addScaledVector(camDir,f).addScaledVector(rightVec,r);if(dir.length())dir.normalize(); game.playerBody.velocity.x=dir.x*game.config.moveSpeed;game.playerBody.velocity.z=dir.z*game.config.moveSpeed; } if(!game.cheat.fly)game.camera.position.copy(game.playerBody.position); game.camera.position.y=game.playerBody.position.y+0.6; if(game.cheat.auto){game._autoTimer=(game._autoTimer||0)+dt;if(game._autoTimer>0.12){game._autoTimer=0;const place=getPlacement();if(place.valid&&place.pos)createPlacedShape(game.shapes.types[game.shapes.index],game.shapes.colors[game.shapes.colorIndex],place.pos,game.holdK);}} game._previewTimer=(game._previewTimer||0)+dt; if(game._previewTimer>0.05){game._previewTimer=0;const place=getPlacement();if(place.valid&&place.pos){game.previewMesh.position.copy(place.pos);game.previewMesh.visible=true;game.previewMesh.material.color.set(game.shapes.colors[game.shapes.colorIndex]);}else game.previewMesh.visible=false;}} if(!game.isDead&&!game.cheat.god&&game.playerBody.position.y<-8)die(); const pos=game.playerBody.position; document.getElementById('coord-display').innerHTML=`📍 玩家坐标: ${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}`; const now=performance.now(); if(!game.statsTime)game.statsTime=now; game.statsFrames++; if(now-game.statsTime>=500){ let fps=Math.round(game.statsFrames/((now-game.statsTime)/1000)); document.getElementById('obj-count').innerText=game.placedItems.length; document.getElementById('fps-val').innerText=fps; document.getElementById('physics-time').innerText=game.physicsTime.toFixed(1); game.statsFrames=0; game.statsTime=now; } game.renderer.render(game.scene,game.camera); }
+function initRenderSettings(){ const dom={quality:document.getElementById('shadow-quality'),ambient:document.getElementById('ambient-light'),sunIntensity:document.getElementById('sun-intensity'),toneMap:document.getElementById('tone-map'),exposure:document.getElementById('exposure')}; function apply(){const q=dom.quality.value;if(game.renderer){game.renderer.shadowMap.enabled=q!=='off';let size=512;if(q==='medium')size=1024;if(q==='high')size=2048;if(game.directionalLight)game.directionalLight.shadow.mapSize.set(size,size);if(game.ambientLight)game.ambientLight.intensity=parseFloat(dom.ambient.value);if(game.directionalLight)game.directionalLight.intensity=parseFloat(dom.sunIntensity.value);const mapping={none:THREE.NoToneMapping,filmic:THREE.ACESFilmicToneMapping,reinhard:THREE.ReinhardToneMapping};game.renderer.toneMapping=mapping[dom.toneMap.value]||THREE.ACESFilmicToneMapping;game.renderer.toneMappingExposure=parseFloat(dom.exposure.value);}} dom.quality.addEventListener('input',apply);dom.ambient.addEventListener('input',apply);dom.sunIntensity.addEventListener('input',apply);dom.toneMap.addEventListener('input',apply);dom.exposure.addEventListener('input',apply);apply();}
+async function init(){ initGraphics(); initPhysics(); initEvents(); initDemo(); initRenderSettings(); setFlyMode(false); initSidebars(); animate(); setTimeout(()=>{const ld=document.getElementById('loading-overlay');ld.style.opacity=0;setTimeout(()=>ld.style.display='none',500);},1000);}
+init();
+</script>
+</body>
+</html>

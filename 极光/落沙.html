@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>落沙 Falling Sand</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #08080e;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(8,8,14,0.8), rgba(8,8,14,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">落沙 <b id="m">彩虹</b></div>
+  <button class="btn" id="btn-reset">清空</button>
+  <button class="btn pri" id="btn-change">换配色</button>
+</div>
+
+<div id="hint">拖动屏幕撒沙 · 沙会自己堆积成坡</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    cellSize: isMobile ? 3 : 4,      // 格子尺寸（像素）：越小沙子越细
+    speed: 2,                         // 模拟速度：每帧步数
+    emitRate: 12,                     // 顶部自动撒沙量（每秒）
+    autoEmit: true,                   // 是否自动从顶部漏沙
+    hueShift: 0.3,                    // 色相推进速度
+    saturation: 75,                   // 饱和度
+    lightness: 58,                    // 亮度
+    drain: false,                     // 底部泄漏
+    backgroundColor: '#08080e'
+  };
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  let GW = 0, GH = 0;
+  let grid, hueGrid;
+  let curHue = 0;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildGrid();
+  }
+
+  function buildGrid() {
+    GW = Math.max(4, Math.floor(W / CFG.cellSize));
+    GH = Math.max(4, Math.floor(H / CFG.cellSize));
+    grid = new Uint8Array(GW * GH);       // 0 = 空，>0 = 有沙
+    hueGrid = new Uint8Array(GW * GH);    // 每粒沙的色相（0~255）
+  }
+
+  function clear() {
+    grid.fill(0);
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  const onDown = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    pointer.down = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onMove = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+  const onUp = () => { pointer.down = false; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 撒沙 ----------
+  function emit(x, y, radius = 6, count = 6) {
+    const r2 = radius * radius;
+    const cx = Math.max(0, Math.floor(x - radius));
+    const cy = Math.max(0, Math.floor(y - radius));
+    const cx1 = Math.min(GW - 1, Math.ceil(x + radius));
+    const cy1 = Math.min(GH - 1, Math.ceil(y + radius));
+    for (let n = 0; n < count; n++) {
+      const px = cx + Math.random() * (cx1 - cx);
+      const py = cy + Math.random() * (cy1 - cy);
+      const dx = px - x, dy = py - y;
+      if (dx * dx + dy * dy < r2) {
+        const ix = px | 0, iy = py | 0;
+        if (ix >= 0 && iy >= 0 && ix < GW && iy < GH) {
+          const idx = iy * GW + ix;
+          if (grid[idx] === 0) {
+            grid[idx] = 1;
+            hueGrid[idx] = (curHue * 255) & 255;
+          }
+        }
+      }
+    }
+  }
+
+  function emitTop() {
+    const cx = GW / 2;
+    const spread = Math.max(2, Math.floor(GW * 0.06));
+    for (let n = 0; n < CFG.emitRate; n++) {
+      const x = cx + (Math.random() - 0.5) * spread;
+      const ix = Math.max(0, Math.min(GW - 1, x | 0));
+      const iy = 0;
+      const idx = iy * GW + ix;
+      if (grid[idx] === 0) {
+        grid[idx] = 1;
+        hueGrid[idx] = (curHue * 255) & 255;
+      }
+    }
+  }
+
+  // ---------- 模拟一步 ----------
+  function step() {
+    // 从底往上扫（避免每帧同一方向造成偏移）
+    // 交替左右方向，避免偏移偏差
+    const flip = (step.flip = !step.flip);
+    for (let y = GH - 2; y >= 0; y--) {
+      const row = y * GW;
+      const rowD = row + GW;
+      if (flip) {
+        for (let x = 0; x < GW; x++) {
+          const i = row + x;
+          if (grid[i] === 0) continue;
+          const d = rowD + x;
+          if (grid[d] === 0) {
+            grid[d] = grid[i]; hueGrid[d] = hueGrid[i];
+            grid[i] = 0; continue;
+          }
+          const dl = x > 0 && grid[d - 1] === 0;
+          const dr = x < GW - 1 && grid[d + 1] === 0;
+          if (dl && dr) {
+            const go = Math.random() < 0.5 ? -1 : 1;
+            const t = d + go;
+            grid[t] = grid[i]; hueGrid[t] = hueGrid[i];
+            grid[i] = 0;
+          } else if (dl) {
+            grid[d - 1] = grid[i]; hueGrid[d - 1] = hueGrid[i];
+            grid[i] = 0;
+          } else if (dr) {
+            grid[d + 1] = grid[i]; hueGrid[d + 1] = hueGrid[i];
+            grid[i] = 0;
+          }
+        }
+      } else {
+        for (let x = GW - 1; x >= 0; x--) {
+          const i = row + x;
+          if (grid[i] === 0) continue;
+          const d = rowD + x;
+          if (grid[d] === 0) {
+            grid[d] = grid[i]; hueGrid[d] = hueGrid[i];
+            grid[i] = 0; continue;
+          }
+          const dl = x > 0 && grid[d - 1] === 0;
+          const dr = x < GW - 1 && grid[d + 1] === 0;
+          if (dl && dr) {
+            const go = Math.random() < 0.5 ? -1 : 1;
+            const t = d + go;
+            grid[t] = grid[i]; hueGrid[t] = hueGrid[i];
+            grid[i] = 0;
+          } else if (dl) {
+            grid[d - 1] = grid[i]; hueGrid[d - 1] = hueGrid[i];
+            grid[i] = 0;
+          } else if (dr) {
+            grid[d + 1] = grid[i]; hueGrid[d + 1] = hueGrid[i];
+            grid[i] = 0;
+          }
+        }
+      }
+    }
+    if (CFG.drain) {
+      const row = (GH - 1) * GW;
+      for (let x = 0; x < GW; x++) grid[row + x] = 0;
+    }
+  }
+  step.flip = false;
+
+  // ---------- 渲染 ----------
+  function render() {
+    const [bgR, bgG, bgB] = (() => {
+      const s = CFG.backgroundColor.replace('#', '');
+      const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+      return [n >> 16 & 255, n >> 8 & 255, n & 255];
+    })();
+
+    // 背景
+    ctx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
+    ctx.fillRect(0, 0, W, H);
+
+    const sat = CFG.saturation;
+    const lig = CFG.lightness;
+    const size = CFG.cellSize;
+
+    // 按色相分组批绘（更高效）
+    // 但为了简单，还是逐格绘制（因为已经有色相需要逐格）
+    // 每个格子的色相 -> HSL 色
+    // 用缓存表：255 种色相预计算
+    if (!render.cache || render.cacheSat !== sat || render.cacheLig !== lig) {
+      const cache = new Array(256);
+      for (let h = 0; h < 256; h++) {
+        cache[h] = `hsl(${(h / 255 * 360) | 0}, ${sat}%, ${lig}%)`;
+      }
+      render.cache = cache;
+      render.cacheSat = sat;
+      render.cacheLig = lig;
+    }
+
+    const cache = render.cache;
+    for (let y = 0; y < GH; y++) {
+      const row = y * GW;
+      for (let x = 0; x < GW; x++) {
+        const i = row + x;
+        if (grid[i] === 0) continue;
+        ctx.fillStyle = cache[hueGrid[i]];
+        ctx.fillRect(x * size, y * size, size, size);
+      }
+    }
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  let emitAcc = 0;
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    // 色相推进
+    curHue = (curHue + CFG.hueShift * dt) % 1;
+
+    // 自动撒沙
+    if (CFG.autoEmit) {
+      emitAcc += CFG.emitRate * dt;
+      while (emitAcc >= 1) {
+        emitTop();
+        emitAcc -= 1;
+      }
+    }
+
+    // 手指撒沙
+    if (pointer.down && pointer.inside) {
+      const gx = (pointer.x / W) * GW;
+      const gy = (pointer.y / H) * GH;
+      const radius = Math.max(3, Math.min(10, CFG.cellSize * 2.5));
+      emit(gx, gy, radius, isMobile ? 4 : 6);
+    }
+
+    // 仿真
+    for (let s = 0; s < CFG.speed; s++) step();
+
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+  document.getElementById('btn-reset').addEventListener('click', clear);
+
+  const SCHEMES = [
+    { name: '彩虹', hueShift: 0.3, sat: 75, lig: 58, bg: '#08080e' },
+    { name: '霓虹', hueShift: 1.2, sat: 95, lig: 60, bg: '#05040a' },
+    { name: '金沙', hueShift: 0.03, sat: 55, lig: 60, bg: '#120e08' },
+    { name: '灰烬', hueShift: 0.02, sat: 8, lig: 65, bg: '#0a0a0a' },
+    { name: '雪',   hueShift: 0, sat: 0, lig: 92, bg: '#0a0c10' }
+  ];
+  let schemeIdx = 0;
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+    const s = SCHEMES[schemeIdx];
+    CFG.hueShift = s.hueShift;
+    CFG.saturation = s.sat;
+    CFG.lightness = s.lig;
+    CFG.backgroundColor = s.bg;
+    mEl.textContent = s.name;
+    render.cache = null;
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); });
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  mEl.textContent = SCHEMES[0].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>文字粒子 · 你好</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #06070c; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  // ---------- 可调参数 ----------
+  const CFG = {
+    text: '你好',
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC","Noto Sans CJK SC",sans-serif',
+    weight: 800,
+    step: 3.5,               // 采样步长：越小粒子越多越清晰
+    dotSize: 2.4,          // 粒子大小
+    ease: 0.22,            // 聚合速度
+    jitter: 0.03,          // 抖动：0=完全静止，0.03=轻微呼吸
+    alphaThreshold: 0.6,   // alpha 阈值
+    trail: 1,              // 拖尾：1=不残留
+    background: '#06070c',
+    colorMode: 'rainbow',  // rainbow | mono | duo
+    colorA: '#8ea2ff',
+    colorB: '#ff7de0',
+    mouseMode: 'repel',    // repel | attract | swirl
+    mouseForce: 1.6,
+    mouseRadius: 130,
+    maxParticles: 55000
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 文字栅格化 ----------
+  const raster = {
+    big: document.createElement('canvas'),
+    grid: document.createElement('canvas'),
+    bigCtx: null,
+    gridCtx: null,
+    init() {
+      this.bigCtx = this.big.getContext('2d');
+      this.gridCtx = this.grid.getContext('2d', { willReadFrequently: true });
+    },
+    sample(text, gw, gh, weight, font, aspect) {
+      const BIG_H = 1024;
+      const BIG_W = Math.max(64, Math.round(BIG_H * aspect));
+      this.big.width = BIG_W;
+      this.big.height = BIG_H;
+
+      const bc = this.bigCtx;
+      bc.clearRect(0, 0, BIG_W, BIG_H);
+      bc.fillStyle = '#fff';
+      bc.textAlign = 'center';
+      bc.textBaseline = 'middle';
+
+      const lines = (text || '你好').split('\n').filter(l => l.length > 0);
+      if (!lines.length) return null;
+
+      const maxW = BIG_W * 0.82;
+      const maxH = BIG_H * 0.82;
+
+      let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+      const setFont = s => { bc.font = `${weight} ${s}px ${font}`; };
+      setFont(size);
+
+      let widest = 0;
+      for (const l of lines) widest = Math.max(widest, bc.measureText(l).width);
+      if (widest > maxW) {
+        size = Math.max(4, Math.floor(size * maxW / widest));
+        setFont(size);
+      }
+      const totalH = size * 1.15 * lines.length;
+      if (totalH > maxH) {
+        size = Math.max(4, Math.floor(size * maxH / totalH));
+        setFont(size);
+      }
+
+      const lineH = size * 1.15;
+      const startY = BIG_H / 2 - (lines.length - 1) * lineH / 2;
+      for (let i = 0; i < lines.length; i++) {
+        bc.fillText(lines[i], BIG_W / 2, startY + i * lineH);
+      }
+
+      this.grid.width = gw;
+      this.grid.height = gh;
+      const gc = this.gridCtx;
+      gc.clearRect(0, 0, gw, gh);
+      gc.imageSmoothingEnabled = true;
+      gc.imageSmoothingQuality = 'high';
+      gc.drawImage(this.big, 0, 0, BIG_W, BIG_H, 0, 0, gw, gh);
+
+      return gc.getImageData(0, 0, gw, gh);
+    }
+  };
+  raster.init();
+
+  // ---------- 粒子 ----------
+  class TextParticles {
+    constructor(w, h) {
+      this.w = w; this.h = h;
+      this.n = 0;
+      this.x = this.y = null;
+      this.tx = this.ty = null;
+      this.sig = '';
+      this.swirlDir = 1;
+      this.lastRightClicks = 0;
+    }
+    resize(w, h) { this.w = w; this.h = h; this.sig = ''; }
+
+    rebuild() {
+      const w = this.w, h = this.h;
+      const fit = 0.9;
+      const rw = w * fit, rh = h * fit;
+
+      let gw = Math.max(2, Math.round(rw / CFG.step));
+      let gh = Math.max(2, Math.round(rh / CFG.step));
+
+      if (gw * gh > CFG.maxParticles) {
+        const k = Math.sqrt(gw * gh / CFG.maxParticles);
+        gw = Math.max(2, Math.round(gw / k));
+        gh = Math.max(2, Math.round(gh / k));
+      }
+
+      const img = raster.sample(CFG.text, gw, gh, CFG.weight, CFG.font, gw / gh);
+      if (!img) { this.n = 0; this.sig = ''; return; }
+
+      const data = img.data;
+      const total = gw * gh;
+      const T = CFG.alphaThreshold * 255;
+      const valid = [];
+      for (let i = 0; i < total; i++) {
+        if (data[i * 4 + 3] > T) valid.push(i);
+      }
+      const n = valid.length;
+      console.log('[粒子] 网格', gw, 'x', gh, '有效粒子', n, '/', total);
+
+      const ox = (w - rw) / 2, oy = (h - rh) / 2;
+      const cw = rw / gw, ch = rh / gh;
+
+      if (n !== this.n) {
+        this.x = new Float32Array(n);
+        this.y = new Float32Array(n);
+        this.tx = new Float32Array(n);
+        this.ty = new Float32Array(n);
+      }
+      for (let k = 0; k < n; k++) {
+        const i = valid[k];
+        const gx = i % gw;
+        const gy = (i / gw) | 0;
+        this.tx[k] = ox + (gx + 0.5) * cw;
+        this.ty[k] = oy + (gy + 0.5) * ch;
+        // 从随机位置开始（开场粒子聚拢）
+        this.x[k] = Math.random() * w;
+        this.y[k] = Math.random() * h;
+      }
+      this.n = n;
+
+      // ★ 关键：签名与 update() 完全一致（都是 w x h），避免每帧重建
+      this.sig = `${CFG.text}|${CFG.weight}|${CFG.font}|${w}x${h}`;
+    }
+
+    update(frame) {
+      const { ctx2d, pointer, time } = frame;
+      const w = this.w, h = this.h;
+
+      const sig = `${CFG.text}|${CFG.weight}|${CFG.font}|${w}x${h}`;
+      if (sig !== this.sig) this.rebuild();
+
+      const [br, bg, bb] = hex2rgb(CFG.background);
+      ctx2d.globalCompositeOperation = 'source-over';
+      if (CFG.trail >= 0.999) ctx2d.fillStyle = `rgb(${br},${bg},${bb})`;
+      else ctx2d.fillStyle = `rgba(${br},${bg},${bb},${CFG.trail})`;
+      ctx2d.fillRect(0, 0, w, h);
+
+      if (this.n === 0) return;
+
+      const ease = CFG.ease;
+      const dot = CFG.dotSize;
+      const half = dot / 2;
+      const jit = CFG.jitter;
+      const [caR, caG, caB] = hex2rgb(CFG.colorA);
+      const [cbR, cbG, cbB] = hex2rgb(CFG.colorB);
+
+      const mActive = pointer.inside && CFG.mouseForce > 0;
+      const mx = pointer.x, my = pointer.y;
+      const RAD = CFG.mouseRadius;
+      const FORCE = CFG.mouseForce;
+      const MODE = CFG.mouseMode;
+
+      if (pointer.rightClicks !== this.lastRightClicks) {
+        this.swirlDir *= -1;
+        this.lastRightClicks = pointer.rightClicks;
+      }
+      const dir = this.swirlDir;
+      const mode = CFG.colorMode;
+      const P = time * 20;
+
+      for (let i = 0; i < this.n; i++) {
+        let px = this.x[i], py = this.y[i];
+        let tx = this.tx[i], ty = this.ty[i];
+
+        if (mActive) {
+          const dx = px - mx, dy = py - my;
+          const d = Math.hypot(dx, dy) + 0.001;
+          if (d < RAD) {
+            const v = (1 - d / RAD) * FORCE * RAD * 0.6;
+            const ux = dx / d, uy = dy / d;
+            if (MODE === 'attract') { tx -= ux * v; ty -= uy * v; }
+            else if (MODE === 'swirl') { tx += -uy * v * dir; ty += ux * v * dir; }
+            else { tx += ux * v; ty += uy * v; }
+          }
+        }
+
+        px += (tx - px) * ease + (Math.random() - 0.5) * jit;
+        py += (ty - py) * ease + (Math.random() - 0.5) * jit;
+
+        this.x[i] = px;
+        this.y[i] = py;
+
+        if (mode === 'rainbow') {
+          const hue = (this.tx[i] / w * 300 + P) % 360;
+          ctx2d.fillStyle = `hsl(${hue},80%,66%)`;
+        } else if (mode === 'duo') {
+          const t = clamp(this.tx[i] / w, 0, 1);
+          const r = caR + (cbR - caR) * t | 0;
+          const g = caG + (cbG - caG) * t | 0;
+          const b = caB + (cbB - caB) * t | 0;
+          ctx2d.fillStyle = `rgb(${r},${g},${b})`;
+        } else {
+          ctx2d.fillStyle = `rgb(${caR},${caG},${caB})`;
+        }
+
+        ctx2d.fillRect(px - half, py - half, dot, dot);
+      }
+    }
+  }
+
+  let W = 0, H = 0, particles = null;
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (particles) particles.resize(W, H);
+  }
+
+  const pointer = { x: 0, y: 0, down: false, inside: false, rightClicks: 0 };
+  let rightDownX = 0, rightDownY = 0, rightMoved = false;
+
+  cv.addEventListener('pointermove', e => {
+    pointer.x = e.clientX; pointer.y = e.clientY; pointer.inside = true;
+    if (e.buttons & 2 && Math.hypot(e.clientX - rightDownX, e.clientY - rightDownY) > 6) rightMoved = true;
+  });
+  cv.addEventListener('pointerenter', () => { pointer.inside = true; });
+  cv.addEventListener('pointerleave', () => { pointer.inside = false; pointer.down = false; });
+  cv.addEventListener('pointerdown', e => {
+    pointer.x = e.clientX; pointer.y = e.clientY; pointer.inside = true;
+    if (e.button === 0) pointer.down = true;
+    if (e.button === 2) { rightDownX = e.clientX; rightDownY = e.clientY; rightMoved = false; }
+  });
+  window.addEventListener('pointerup', e => { if (e.button === 0) pointer.down = false; });
+  cv.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (!rightMoved) pointer.rightClicks++;
+  });
+
+  let startTime = performance.now();
+  let lastTime = startTime;
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.1);
+    lastTime = now;
+    const time = (now - startTime) / 1000;
+    if (!particles) particles = new TextParticles(W, H);
+    particles.update({ ctx2d: ctx, pointer, time, dt });
+    requestAnimationFrame(loop);
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+
+  const start = () => requestAnimationFrame(loop);
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => setTimeout(start, 80));
+  } else {
+    setTimeout(start, 300);
+  }
+})();
+</script>
+</body>
+</html>

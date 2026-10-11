@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>变形字 Warp</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0a12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,10,18,.85),rgba(10,10,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(139,123,255,.28);border-color:rgba(139,123,255,.6);color:#eae4ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(139,123,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(139,123,255,.6);
+    background:rgba(139,123,255,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(139,123,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">变形字 <b id="m">旗帜飘动</b></div>
+  <button class="btn" id="btn-algo">换算法</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">文字切片逐条位移缩放 · 五种变形</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    algo: 'flag',          // flag | fisheye | persp | squeeze | wave
+    strength: 0.55,
+    speed: 1.2,
+    slice: 3,              // 切片宽 px
+    freq: 1.6,
+    focus: 0.5,
+    perspDir: 'up',        // up | down | left | right
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei",sans-serif',
+    fill: '#8b7bff',
+    strokeColor: '#f2ecff',
+    strokeWidth: 0,
+    background: '#0a0a12'
+  };
+
+  var ALGOS = [
+    { key: 'flag',    label: '旗帜飘动' },
+    { key: 'fisheye', label: '鱼眼放大' },
+    { key: 'persp',   label: '透视梯形' },
+    { key: 'squeeze', label: '挤压波' },
+    { key: 'wave',    label: '波浪基线' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bakeKey = '';
+    return true;
+  }
+
+  // ---------- 源图（带色的文字） ----------
+  var tinted = document.createElement('canvas');
+  var tctx = tinted.getContext('2d');
+  var tmp = document.createElement('canvas');
+  var tmpCtx = tmp.getContext('2d');
+  var raster = document.createElement('canvas');
+  var rctx = raster.getContext('2d');
+  var bakeKey = '';
+
+  // 屏幕像素下的文字尺寸：占宽 90%，占高 62%，居中的宽条
+  function textArea(w, h) {
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    var maxW = w * 0.9;
+    var maxH = h * 0.62;
+    var lh = maxH / Math.max(1, lines.length);
+    var size = Math.floor(lh * 0.8);
+    ctx.font = CFG.weight + ' ' + size + 'px ' + CFG.font;
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = ctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      ctx.font = CFG.weight + ' ' + size + 'px ' + CFG.font;
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+    }
+    var finalW = maxW;
+    var finalH = size * 1.15 * lines.length;
+    return { w: finalW, h: finalH, size: size, lines: lines };
+  }
+
+  function bake() {
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.fill + '|' + CFG.strokeColor + '|' + CFG.strokeWidth;
+    if (key === bakeKey && raster.width) return;
+    bakeKey = key;
+
+    var area = textArea(W, H);
+    var rw = Math.max(4, Math.round(area.w));
+    var rh = Math.max(4, Math.round(area.h));
+
+    raster.width = rw; raster.height = rh;
+    rctx.clearRect(0, 0, rw, rh);
+    rctx.fillStyle = '#fff';
+    rctx.textAlign = 'center';
+    rctx.textBaseline = 'middle';
+    rctx.font = CFG.weight + ' ' + area.size + 'px ' + CFG.font;
+    var startY = rh / 2 - (area.lines.length - 1) * area.size * 1.15 / 2;
+    for (var i = 0; i < area.lines.length; i++) {
+      rctx.fillText(area.lines[i], rw / 2, startY + i * area.size * 1.15);
+    }
+
+    // 上色 / 描边
+    tinted.width = rw; tinted.height = rh;
+    tmp.width = rw; tmp.height = rh;
+    var t = tctx, tm = tmpCtx;
+
+    // 先画描边（向外扩散）
+    if (CFG.strokeWidth > 0) {
+      tm.globalCompositeOperation = 'source-over';
+      tm.clearRect(0, 0, rw, rh);
+      tm.drawImage(raster, 0, 0);
+      tm.globalCompositeOperation = 'source-in';
+      tm.fillStyle = CFG.strokeColor;
+      tm.fillRect(0, 0, rw, rh);
+
+      var sw = CFG.strokeWidth;
+      t.clearRect(0, 0, rw, rh);
+      var steps = 12;
+      for (var k = 0; k < steps; k++) {
+        var ang = k / steps * Math.PI * 2;
+        t.drawImage(tmp, Math.cos(ang) * sw, Math.sin(ang) * sw);
+      }
+    } else {
+      t.clearRect(0, 0, rw, rh);
+    }
+
+    // 再画填充色
+    tm.globalCompositeOperation = 'source-over';
+    tm.clearRect(0, 0, rw, rh);
+    tm.drawImage(raster, 0, 0);
+    tm.globalCompositeOperation = 'source-in';
+    tm.fillStyle = CFG.fill;
+    tm.fillRect(0, 0, rw, rh);
+
+    t.drawImage(tmp, 0, 0);
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    bake();
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var rw = raster.width, rh = raster.height;
+    if (!rw || !rh) { requestAnimationFrame(render); return; }
+
+    // 缩放：源图匹配到屏幕的显示尺寸
+    var displayW = Math.min(W * 0.9, rw);
+    var displayH = rh * (displayW / rw);
+    if (displayH > H * 0.62) {
+      displayH = H * 0.62;
+      displayW = rw * (displayH / rh);
+    }
+    var ox = (W - displayW) / 2;
+    var oy = (H - displayH) / 2;
+
+    var algo = CFG.algo;
+    var strength = CFG.strength;
+    var freq = CFG.freq;
+    var speed = CFG.speed;
+    var t = time * speed;
+    var sliceW = Math.max(1, Math.round(CFG.slice));
+
+    // 屏幕像素坐标 与 源图像素 的比例
+    var scale = displayW / rw;
+
+    ctx.save();
+
+    if (algo === 'flag') {
+      // 横向切片，每条向上下偏移，越靠右振幅越大
+      var amp = strength * displayH * 0.32;
+      for (var x = 0; x < rw; x += sliceW) {
+        var u = (x + sliceW / 2) / rw;
+        var dy = Math.sin(u * freq * Math.PI * 2 - t * 2.6) * amp * (0.12 + 0.88 * u);
+        var sx = ox + x * scale;
+        var sy = oy + dy;
+        ctx.drawImage(tinted,
+          x, 0, sliceW, rh,
+          sx, sy, sliceW * scale + 0.5, displayH);
+      }
+    } else if (algo === 'fisheye') {
+      // 鱼眼：横向切片，每条按到焦点的距离放大
+      var focus = CFG.focus;
+      var fisheyeAmp = strength * 2.4;
+      var fw = 0.32 / Math.max(0.01, freq);
+      var fw2 = 1 / (2 * fw * fw);
+      for (var x2 = 0; x2 < rw; x2 += sliceW) {
+        var u2 = (x2 + sliceW / 2) / rw;
+        var d = u2 - focus;
+        var mag = 1 + fisheyeAmp * Math.exp(-d * d * fw2);
+        var sw = sliceW / mag;
+        var sx2 = u2 - sw / 2 / rw;
+        if (sx2 < 0) sx2 = 0;
+        if (sx2 > 1 - sw / rw) sx2 = 1 - sw / rw;
+        var dx = ox + x2 * scale;
+        var dh = displayH * mag;
+        var dy2 = oy - (dh - displayH) / 2;
+        var dw = sliceW * scale + 0.5;
+        ctx.drawImage(tinted, sx2 * rw, 0, sw, rh, dx, dy2, dw, dh);
+      }
+    } else if (algo === 'persp') {
+      // 逐行（纵切片）缩放
+      var dir = CFG.perspDir;
+      var perspAmp = strength * 0.78 * (0.85 + 0.15 * Math.sin(t * 1.2));
+      var rows = Math.max(1, Math.ceil(rh / sliceW));
+      for (var i = 0; i < rows; i++) {
+        var yy = i * sliceW;
+        var v = (yy + sliceW / 2) / rh;
+        var f;
+        if (dir === 'up') f = 1 - perspAmp + 2 * perspAmp * v;
+        else if (dir === 'down') f = 1 + perspAmp - 2 * perspAmp * v;
+        else if (dir === 'left') f = 1 - perspAmp + 2 * perspAmp * v;
+        else f = 1 + perspAmp - 2 * perspAmp * v;
+        f = Math.max(0.04, f);
+        var sh = sliceW;
+        var dySlice = oy + yy * scale;
+        var dhSlice = sliceW * scale + 0.5;
+        if (dir === 'up' || dir === 'down') {
+          var rowW = displayW * f;
+          var rowX = (W - rowW) / 2;
+          ctx.drawImage(tinted,
+            0, yy, rw, sh,
+            rowX, dySlice, rowW, dhSlice);
+        } else {
+          // left / right：横向缩放行
+          var dw2 = displayW * f;
+          var rowX2 = dir === 'left' ? ox : ox + (displayW - dw2);
+          ctx.drawImage(tinted,
+            0, yy, rw, sh,
+            rowX2, dySlice, dw2, dhSlice);
+        }
+      }
+    } else if (algo === 'squeeze') {
+      // 横向切片，每条按正弦横向缩放
+      var sqAmp = strength * 0.62;
+      for (var x3 = 0; x3 < rw; x3 += sliceW) {
+        var u3 = (x3 + sliceW / 2) / rw;
+        var mag3 = 1 + sqAmp * Math.sin(u3 * freq * Math.PI * 2 - t * 3);
+        var sh3 = displayH * Math.max(0.06, mag3);
+        var dy3 = oy + (displayH - sh3) / 2;
+        ctx.drawImage(tinted,
+          x3, 0, sliceW, rh,
+          ox + x3 * scale, dy3, sliceW * scale + 0.5, sh3);
+      }
+    } else {
+      // wave：横向切片，正弦基线起伏
+      var waveAmp = strength * displayH * 0.38;
+      for (var x4 = 0; x4 < rw; x4 += sliceW) {
+        var u4 = (x4 + sliceW / 2) / rw;
+        var phase = u4 * freq * Math.PI * 2 - t * 2.6;
+        var dy4 = Math.sin(phase) * waveAmp;
+        var tilt = Math.cos(phase) * waveAmp * freq * Math.PI * 2 / rw;
+        ctx.save();
+        ctx.translate(ox + (x4 + sliceW / 2) * scale, oy + displayH / 2 + dy4);
+        ctx.rotate(Math.atan(tilt));
+        ctx.drawImage(tinted,
+          x4, 0, sliceW, rh,
+          -sliceW * scale / 2 - 0.25, -displayH / 2, sliceW * scale + 0.5, displayH);
+        ctx.restore();
+      }
+    }
+
+    ctx.restore();
+    requestAnimationFrame(render);
+  }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA',     algo: 'flag',    fill: '#5be0ff', strokeColor: '#ffffff', strokeWidth: 0, background: '#060a12' },
+    { text: 'BULGE',      algo: 'fisheye', fill: '#8b7bff', strokeColor: '#ffffff', strokeWidth: 0 },
+    { text: 'PERSPECT',   algo: 'persp',   fill: '#ffd86b', strokeColor: '#ff7a2c', strokeWidth: 2, background: '#0a0602' },
+    { text: 'JELLY',      algo: 'squeeze', fill: '#5bffb0', strokeColor: '#ffffff', strokeWidth: 0, background: '#04100a' },
+    { text: 'WAVE',       algo: 'wave',    fill: '#ff7de0', strokeColor: '#ffffff', strokeWidth: 0, background: '#0a060c' }
+  ];
+  var presetIdx = 0;
+
+  function applyPreset(p) {
+    if (p.text) CFG.text = p.text;
+    if (p.algo) CFG.algo = p.algo;
+    if (p.fill) CFG.fill = p.fill;
+    if (p.strokeColor) CFG.strokeColor = p.strokeColor;
+    if (typeof p.strokeWidth === 'number') CFG.strokeWidth = p.strokeWidth;
+    if (p.background) CFG.background = p.background;
+    bakeKey = '';
+
+    // 同步按钮标签
+    var m = ALGOS.find(function (a) { return a.key === CFG.algo; });
+    if (m) mLabel.textContent = m.label;
+    var ai = ALGOS.findIndex(function (a) { return a.key === CFG.algo; });
+    if (ai >= 0) algoIdx = ai;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyPreset(PRESETS[presetIdx]);
+  });
+
+  // ---------- 换算法 ----------
+  var algoIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-algo').addEventListener('click', function () {
+    algoIdx = (algoIdx + 1) % ALGOS.length;
+    CFG.algo = ALGOS[algoIdx].key;
+    mLabel.textContent = ALGOS[algoIdx].label;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    bakeKey = '';
+    closePanel();
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', confirmInput);
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

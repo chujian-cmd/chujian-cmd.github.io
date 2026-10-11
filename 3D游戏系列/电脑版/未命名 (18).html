@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 物理沙盒 - 坐标追踪增强版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            overflow: hidden;
+            font-family: 'Segoe UI', 'Poppins', 'Microsoft YaHei', sans-serif;
+        }
+
+        /* HUD 面板 - 现代化玻璃效果 */
+        .hud-panel {
+            position: fixed;
+            background: rgba(20, 20, 30, 0.75);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 12px 20px;
+            color: #f0f0f0;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+            pointer-events: none;
+            z-index: 100;
+            font-size: 14px;
+        }
+
+        /* 坐标主面板 - 左下角 */
+        .coords-panel {
+            bottom: 20px;
+            left: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0,0,0,0.65);
+            backdrop-filter: blur(16px);
+            border-left: 4px solid #00e0ff;
+        }
+
+        .coords-panel .title {
+            font-size: 12px;
+            color: #aaa;
+            margin-bottom: 6px;
+            letter-spacing: 1px;
+        }
+
+        .coords-values {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .coord-item {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .coord-item span {
+            color: #ffaa66;
+        }
+
+        /* 瞄准坐标辅助 */
+        .aim-coord {
+            bottom: 20px;
+            right: 20px;
+            text-align: right;
+            font-family: monospace;
+            background: rgba(0,0,0,0.55);
+            border-right: 3px solid #ffaa44;
+        }
+
+        .stats-panel {
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(8px);
+            min-width: 160px;
+        }
+
+        .controls-info {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(10px);
+            font-size: 12px;
+            white-space: nowrap;
+            pointer-events: none;
+            font-family: monospace;
+        }
+
+        .freeze-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: #2c3e66;
+            color: white;
+            border: none;
+            border-radius: 40px;
+            padding: 8px 18px;
+            cursor: pointer;
+            font-weight: bold;
+            backdrop-filter: blur(4px);
+            background: rgba(30,40,60,0.9);
+            border: 1px solid #5a7a9a;
+            transition: 0.2s;
+            pointer-events: auto;
+            z-index: 200;
+            font-family: inherit;
+        }
+
+        .freeze-btn.active {
+            background: #e67e22;
+            border-color: #f39c12;
+            box-shadow: 0 0 12px rgba(230,126,34,0.6);
+        }
+
+        .crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 24px;
+            height: 24px;
+            transform: translate(-50%, -50%);
+            border: 2px solid rgba(255,255,200,0.9);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 200;
+            box-shadow: 0 0 4px #000;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: white;
+        }
+        .crosshair::before {
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 1px;
+            transform: translateY(-50%);
+        }
+        .crosshair::after {
+            top: 0;
+            left: 50%;
+            width: 1px;
+            height: 100%;
+            transform: translateX(-50%);
+        }
+
+        .shape-counter {
+            color: #ffaa77;
+            font-weight: bold;
+        }
+
+        button, .freeze-btn {
+            pointer-events: auto;
+            font-size: 14px;
+        }
+
+        @media (max-width: 600px) {
+            .coords-values { gap: 8px; }
+            .coord-item { font-size: 12px; }
+            .hud-panel { padding: 8px 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="hud-panel coords-panel">
+        <div class="title">📍 玩家坐标 (XYZ)</div>
+        <div class="coords-values">
+            <div class="coord-item">X: <span id="player-pos-x">0.00</span></div>
+            <div class="coord-item">Y: <span id="player-pos-y">0.00</span></div>
+            <div class="coord-item">Z: <span id="player-pos-z">0.00</span></div>
+        </div>
+    </div>
+
+    <div class="hud-panel aim-coord">
+        <div class="title">🎯 瞄准点坐标</div>
+        <div class="coord-item" style="font-size:14px">X: <span id="aim-pos-x">—</span> &nbsp; Y: <span id="aim-pos-y">—</span> &nbsp; Z: <span id="aim-pos-z">—</span></div>
+    </div>
+
+    <div class="hud-panel stats-panel">
+        <div>📦 物体数量: <span id="obj-count" class="shape-counter">0</span></div>
+        <div>⚡ FPS: <span id="fps-val">60</span></div>
+        <div>🔮 当前形状: <span id="curr-shape">立方体</span></div>
+        <div>❄️ 物理: <span id="freeze-status">运行中</span></div>
+    </div>
+
+    <div class="hud-panel controls-info">
+        🖱️ WASD移动 | 🖱️ 鼠标拖拽环顾 | 左键放置 | 右键删除 | 1️⃣立方体 2️⃣球体 3️⃣圆柱体 | 🔒 冻结/解冻
+    </div>
+
+    <button id="freeze-toggle" class="freeze-btn">⏸️ 冻结物理</button>
+    <div class="crosshair"></div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import * as CANNON from 'cannon-es';
+
+        // ------------------------------------------------------------------
+        // 优化型物理封装 (基于 Cannon.es，高性能无数量限制)
+        // ------------------------------------------------------------------
+        class OptimizedPhysics {
+            constructor() {
+                this.world = new CANNON.World();
+                this.world.gravity = new CANNON.Vec3(0, -12.0, 0);
+                this.world.broadphase = new CANNON.NaiveBroadphase(); // 适合动态物体多但数量无限制，性能足够
+                this.world.defaultContactMaterial.restitution = 0.5;
+                
+                // 地面材质与物体材质
+                const groundMat = new CANNON.Material("ground");
+                const defaultMat = new CANNON.Material("default");
+                this.world.addContactMaterial(new CANNON.ContactMaterial(groundMat, defaultMat, {
+                    friction: 0.5,
+                    restitution: 0.6,
+                    contactEquationStiffness: 1e8,
+                }));
+                this.world.addContactMaterial(new CANNON.ContactMaterial(defaultMat, defaultMat, {
+                    friction: 0.4,
+                    restitution: 0.7,
+                }));
+                this.world.defaultContactMaterial.material1 = defaultMat;
+                this.world.defaultContactMaterial.material2 = defaultMat;
+                
+                this.bodies = new Map(); // 存储 body 额外信息
+                this.groundBody = null;
+                this.createGround();
+            }
+            
+            createGround() {
+                const groundShape = new CANNON.Box(new CANNON.Vec3(50, 0.5, 50));
+                const groundBody = new CANNON.Body({ mass: 0, material: new CANNON.Material("ground") });
+                groundBody.addShape(groundShape);
+                groundBody.position.set(0, -0.8, 0);
+                this.world.addBody(groundBody);
+                this.groundBody = groundBody;
+            }
+            
+            createBody(x, y, z, mass = 1, radiusOrSize = 0.48, shapeType = 'box') {
+                let shape;
+                if (shapeType === 'sphere') {
+                    shape = new CANNON.Sphere(radiusOrSize);
+                } else if (shapeType === 'cylinder') {
+                    shape = new CANNON.Cylinder(radiusOrSize, radiusOrSize, radiusOrSize * 1.2, 12);
+                } else {
+                    shape = new CANNON.Box(new CANNON.Vec3(radiusOrSize, radiusOrSize, radiusOrSize));
+                }
+                
+                const body = new CANNON.Body({ mass: mass, material: new CANNON.Material("default") });
+                body.addShape(shape);
+                body.position.set(x, y, z);
+                if (mass !== 0) {
+                    body.linearDamping = 0.1;
+                    body.angularDamping = 0.05;
+                }
+                this.world.addBody(body);
+                this.bodies.set(body, { type: shapeType });
+                return body;
+            }
+            
+            removeBody(body) {
+                if (!body) return;
+                this.world.removeBody(body);
+                this.bodies.delete(body);
+            }
+            
+            step(deltaTime) {
+                this.world.step(1 / 60, deltaTime, 3);
+            }
+            
+            setGravity(enabled) {
+                if (enabled) {
+                    this.world.gravity.set(0, -12.0, 0);
+                } else {
+                    this.world.gravity.set(0, 0, 0);
+                }
+            }
+        }
+
+        // --------------------------------------------------------------
+        // 游戏核心
+        // --------------------------------------------------------------
+        const game = {
+            physics: null,
+            scene: null,
+            camera: null,
+            renderer: null,
+            raycaster: new THREE.Raycaster(),
+            clock: new THREE.Clock(),
+            
+            // 玩家移动
+            moveForward: false, moveBack: false, moveLeft: false, moveRight: false,
+            canJump: false, velocityY: 0,
+            playerBody: null,      // 物理胶囊/球体
+            cameraPitch: 0,
+            cameraYaw: -Math.PI / 4,
+            mouseLocked: false,
+            
+            // 放置系统
+            currentShapeType: 'cube',   // cube, sphere, cylinder
+            previewMesh: null,
+            isLocked: true,    // 鼠标锁定状态 (指针锁定)
+            timeFreeze: false,
+            isDead: false,
+            
+            // 缓存
+            cache: {
+                geometries: {},
+                materials: {},
+                placedShapes: [],     // { mesh, body, type }
+                allPlaceables: [],
+                previewMesh: null,
+            },
+            ui: {
+                loadingOverlay: { style: { opacity: 0 }, display: 'none' } // mock
+            }
+        };
+        
+        // 几何体缓存 (标准尺寸 0.96直径，便于物理碰撞)
+        const SIZE = 0.96;
+        function initGeometries() {
+            const { cache } = game;
+            cache.geometries.cube = new THREE.BoxGeometry(SIZE, SIZE, SIZE);
+            cache.geometries.sphere = new THREE.SphereGeometry(SIZE/2, 32, 32);
+            cache.geometries.cylinder = new THREE.CylinderGeometry(SIZE/2, SIZE/2, SIZE*0.9, 32);
+            
+            // 材质共享
+            const mat = new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.2, color: 0xccaaff });
+            cache.materials.default = mat;
+        }
+        
+        // 创建放置物体 (同步物理+图形)
+        function createPlacedShape(type, color, position, isStatic = false) {
+            const { geometries, materials } = game.cache;
+            let geometry;
+            let cannonType = 'box';
+            let radiusSize = SIZE/2;
+            if (type === 'cube') {
+                geometry = geometries.cube;
+                cannonType = 'box';
+                radiusSize = SIZE/2;
+            } else if (type === 'sphere') {
+                geometry = geometries.sphere;
+                cannonType = 'sphere';
+                radiusSize = SIZE/2;
+            } else {
+                geometry = geometries.cylinder;
+                cannonType = 'cylinder';
+                radiusSize = SIZE/2;
+            }
+            
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                roughness: 0.4,
+                metalness: 0.3,
+                emissive: 0x000000,
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.copy(position);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            
+            const mass = isStatic ? 0 : 1.2;
+            const body = game.physics.createBody(position.x, position.y, position.z, mass, radiusSize, cannonType);
+            mesh.userData.body = body;
+            body.userData = { mesh, type };
+            
+            game.scene.add(mesh);
+            const entry = { mesh, body, type };
+            game.cache.placedShapes.push(entry);
+            game.cache.allPlaceables.push(mesh);
+            return entry;
+        }
+        
+        // 删除物体
+        function deleteShapeAt(intersect) {
+            if (!intersect) return false;
+            let hitMesh = intersect.object;
+            // 寻找实际放置物体 (避免地面等)
+            if (hitMesh.name === 'ground' || hitMesh.userData?.isGround) return false;
+            const entry = game.cache.placedShapes.find(e => e.mesh === hitMesh);
+            if (entry) {
+                game.scene.remove(entry.mesh);
+                game.physics.removeBody(entry.body);
+                const idx = game.cache.placedShapes.indexOf(entry);
+                if (idx !== -1) game.cache.placedShapes.splice(idx, 1);
+                const idx2 = game.cache.allPlaceables.indexOf(entry.mesh);
+                if (idx2 !== -1) game.cache.allPlaceables.splice(idx2, 1);
+                return true;
+            }
+            return false;
+        }
+        
+        // 获取放置位置 (射线检测地面/物体表面)
+        function getPlacement() {
+            const center = new THREE.Vector2(0, 0);
+            game.raycaster.setFromCamera(center, game.camera);
+            const intersects = game.raycaster.intersectObjects(game.cache.allPlaceables.concat([game.scene.getObjectByName('ground')]), true);
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                let point = hit.point.clone();
+                // 法线偏移避免重叠
+                const normal = hit.face?.normal.clone();
+                if (normal) {
+                    normal.transformDirection(hit.object.matrixWorld);
+                    normal.normalize();
+                    point.addScaledVector(normal, 0.52);
+                } else {
+                    point.y += 0.52;
+                }
+                // 边界限制
+                point.y = Math.max(0.2, point.y);
+                // 简单碰撞预览有效性 (不做复杂穿插检查, 保证可用)
+                let valid = true;
+                for (let entry of game.cache.placedShapes) {
+                    const dist = entry.mesh.position.distanceTo(point);
+                    if (dist < 0.95) { valid = false; break; }
+                }
+                return { pos: point, valid };
+            }
+            return null;
+        }
+        
+        // 初始化玩家物理 (动态球体)
+        function initPlayerPhysics() {
+            // 玩家胶囊模拟: 使用球体 
+            const playerMass = 70;
+            const radius = 0.45;
+            const shape = new CANNON.Sphere(radius);
+            const body = new CANNON.Body({ mass: playerMass, material: new CANNON.Material("default") });
+            body.addShape(shape);
+            body.position.set(0, 1.2, 0);
+            body.linearDamping = 0.3;
+            body.fixedRotation = true;
+            game.physics.world.addBody(body);
+            game.playerBody = body;
+            
+            // 用于跳跃检测
+            game.canJump = false;
+            body.addEventListener('collide', (e) => {
+                if (e.contact.bi.id === body.id || e.contact.bj.id === body.id) {
+                    const vel = body.velocity.y;
+                    if (vel < 0.5) game.canJump = true;
+                }
+            });
+        }
+        
+        // 更新相机跟随及移动
+        function updatePlayerMovement(delta) {
+            if (game.timeFreeze || game.isDead) return;
+            const body = game.playerBody;
+            if (!body) return;
+            
+            const speed = 7.0;
+            const moveVec = new THREE.Vector3();
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(game.camera.quaternion);
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(game.camera.quaternion);
+            forward.y = 0;
+            forward.normalize();
+            right.y = 0;
+            right.normalize();
+            
+            if (game.moveForward) moveVec.add(forward);
+            if (game.moveBack) moveVec.sub(forward);
+            if (game.moveRight) moveVec.add(right);
+            if (game.moveLeft) moveVec.sub(right);
+            moveVec.multiplyScalar(speed * delta);
+            
+            // 应用水平速度
+            let newVelX = moveVec.x;
+            let newVelZ = moveVec.z;
+            body.velocity.x = newVelX;
+            body.velocity.z = newVelZ;
+            
+            // 跳跃
+            if (game.canJump && (window.keyJump || false)) {
+                body.velocity.y = 6.2;
+                game.canJump = false;
+                window.keyJump = false;
+            }
+            
+            // 相机跟随 body 位置
+            game.camera.position.copy(body.position);
+            game.camera.position.y += 0.75; // 视线高度
+            
+            // 防止掉下悬崖重生
+            if (body.position.y < -5) {
+                body.position.set(0, 2, 0);
+                body.velocity.set(0, 0, 0);
+            }
+        }
+        
+        // 鼠标/键盘监听
+        function initEvents() {
+            document.addEventListener('keydown', (e) => {
+                const k = e.code;
+                if (k === 'KeyW') game.moveForward = true;
+                if (k === 'KeyS') game.moveBack = true;
+                if (k === 'KeyA') game.moveLeft = true;
+                if (k === 'KeyD') game.moveRight = true;
+                if (k === 'Space') { window.keyJump = true; e.preventDefault(); }
+                // 形状切换 1 2 3
+                if (k === 'Digit1') { game.currentShapeType = 'cube'; document.getElementById('curr-shape').innerText = '立方体'; }
+                if (k === 'Digit2') { game.currentShapeType = 'sphere'; document.getElementById('curr-shape').innerText = '球体'; }
+                if (k === 'Digit3') { game.currentShapeType = 'cylinder'; document.getElementById('curr-shape').innerText = '圆柱体'; }
+                if (k === 'KeyF') { toggleFreeze(); }
+                // 防止移动滚动
+                if (['KeyW','KeyS','KeyA','KeyD','Space'].includes(k)) e.preventDefault();
+            });
+            document.addEventListener('keyup', (e) => {
+                const k = e.code;
+                if (k === 'KeyW') game.moveForward = false;
+                if (k === 'KeyS') game.moveBack = false;
+                if (k === 'KeyA') game.moveLeft = false;
+                if (k === 'KeyD') game.moveRight = false;
+                if (k === 'Space') window.keyJump = false;
+            });
+            
+            // 鼠标锁定 & 放置/删除
+            const canvas = game.renderer.domElement;
+            canvas.addEventListener('click', () => {
+                if (!game.mouseLocked) {
+                    canvas.requestPointerLock();
+                }
+            });
+            document.addEventListener('pointerlockchange', lockChange);
+            function lockChange() {
+                if (document.pointerLockElement === canvas) {
+                    game.mouseLocked = true;
+                    game.isLocked = true;
+                    document.addEventListener('mousemove', onMouseMove);
+                } else {
+                    game.mouseLocked = false;
+                    document.removeEventListener('mousemove', onMouseMove);
+                }
+            }
+            
+            function onMouseMove(e) {
+                if (!game.mouseLocked) return;
+                const sens = 0.002;
+                game.cameraYaw -= e.movementX * sens;
+                game.cameraPitch -= e.movementY * sens;
+                game.cameraPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, game.cameraPitch));
+                const euler = new THREE.Euler(game.cameraPitch, game.cameraYaw, 0, 'YXZ');
+                game.camera.quaternion.setFromEuler(euler);
+            }
+            
+            canvas.addEventListener('mousedown', (e) => {
+                if (!game.mouseLocked) return;
+                e.preventDefault();
+                if (e.button === 0) { // 左键放置
+                    const placement = getPlacement();
+                    if (placement && placement.valid) {
+                        let color = 0x6c9eff;
+                        if (game.currentShapeType === 'cube') color = 0x6c9eff;
+                        else if (game.currentShapeType === 'sphere') color = 0xff6c6c;
+                        else color = 0x6cff9e;
+                        createPlacedShape(game.currentShapeType, color, placement.pos, false);
+                    }
+                } else if (e.button === 2) { // 右键删除
+                    const center = new THREE.Vector2(0,0);
+                    game.raycaster.setFromCamera(center, game.camera);
+                    const intersects = game.raycaster.intersectObjects(game.cache.placedShapes.map(s => s.mesh));
+                    if (intersects.length) deleteShapeAt(intersects[0]);
+                }
+            });
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+        }
+        
+        // 预览网格更新
+        function updatePreview() {
+            if (!game.mouseLocked || game.timeFreeze) {
+                if (game.previewMesh) game.previewMesh.visible = false;
+                return;
+            }
+            const placement = getPlacement();
+            if (placement && placement.pos) {
+                game.previewMesh.position.copy(placement.pos);
+                game.previewMesh.visible = placement.valid;
+                game.previewMesh.material.emissiveIntensity = placement.valid ? 0.35 : 0.8;
+                game.previewMesh.material.color.setHex(placement.valid ? 0xaaffaa : 0xff8888);
+            } else {
+                game.previewMesh.visible = false;
+            }
+        }
+        
+        // 辅助: 坐标UI更新 & 瞄准点坐标
+        function updateCoordinatesUI() {
+            // 玩家坐标
+            if (game.playerBody) {
+                const pos = game.playerBody.position;
+                document.getElementById('player-pos-x').innerText = pos.x.toFixed(2);
+                document.getElementById('player-pos-y').innerText = pos.y.toFixed(2);
+                document.getElementById('player-pos-z').innerText = pos.z.toFixed(2);
+            }
+            // 瞄准点坐标 (从摄像机中心射线)
+            const center = new THREE.Vector2(0,0);
+            game.raycaster.setFromCamera(center, game.camera);
+            const intersects = game.raycaster.intersectObjects(game.cache.allPlaceables.concat([game.scene.getObjectByName('ground')]), true);
+            if (intersects.length > 0) {
+                const hitPoint = intersects[0].point;
+                document.getElementById('aim-pos-x').innerText = hitPoint.x.toFixed(2);
+                document.getElementById('aim-pos-y').innerText = hitPoint.y.toFixed(2);
+                document.getElementById('aim-pos-z').innerText = hitPoint.z.toFixed(2);
+            } else {
+                document.getElementById('aim-pos-x').innerText = '—';
+                document.getElementById('aim-pos-y').innerText = '—';
+                document.getElementById('aim-pos-z').innerText = '—';
+            }
+        }
+        
+        // 冻结切换
+        function toggleFreeze() {
+            game.timeFreeze = !game.timeFreeze;
+            const btn = document.getElementById('freeze-toggle');
+            const statusSpan = document.getElementById('freeze-status');
+            if (game.timeFreeze) {
+                game.physics.setGravity(false);
+                btn.innerText = '▶️ 解冻物理';
+                btn.classList.add('active');
+                statusSpan.innerText = '冻结❄️';
+            } else {
+                game.physics.setGravity(true);
+                btn.innerText = '⏸️ 冻结物理';
+                btn.classList.remove('active');
+                statusSpan.innerText = '运行中';
+            }
+        }
+        
+        // 性能统计 & FPS
+        let fpsCounter = 0, lastTime = performance.now();
+        function updateStats() {
+            const now = performance.now();
+            const delta = now - lastTime;
+            if (delta >= 1000) {
+                const fps = Math.round((fpsCounter * 1000) / delta);
+                document.getElementById('fps-val').innerText = Math.min(144, fps);
+                fpsCounter = 0;
+                lastTime = now;
+            }
+            fpsCounter++;
+            document.getElementById('obj-count').innerText = game.cache.placedShapes.length;
+        }
+        
+        // 场景光照 & 阴影终极优化
+        function initScene() {
+            const scene = game.scene;
+            scene.background = new THREE.Color('#0a1030');
+            scene.fog = new THREE.FogExp2('#0a1030', 0.008);
+            
+            // 环境光 + 方向光阴影高质量
+            const ambient = new THREE.AmbientLight(0x404060, 0.65);
+            scene.add(ambient);
+            const mainLight = new THREE.DirectionalLight(0xfff5e0, 1.3);
+            mainLight.position.set(18, 32, 12);
+            mainLight.castShadow = true;
+            mainLight.receiveShadow = true;
+            mainLight.shadow.mapSize.width = 2048;
+            mainLight.shadow.mapSize.height = 2048;
+            mainLight.shadow.camera.near = 0.5;
+            mainLight.shadow.camera.far = 80;
+            mainLight.shadow.camera.left = -30;
+            mainLight.shadow.camera.right = 30;
+            mainLight.shadow.camera.top = 30;
+            mainLight.shadow.camera.bottom = -30;
+            mainLight.shadow.bias = -0.0001;
+            scene.add(mainLight);
+            
+            const fillLight = new THREE.PointLight(0x5566aa, 0.45);
+            fillLight.position.set(3, 5, 4);
+            scene.add(fillLight);
+            
+            const backLight = new THREE.PointLight(0xffaa66, 0.3);
+            backLight.position.set(-4, 3, -6);
+            scene.add(backLight);
+            
+            // 地面视觉
+            const groundVis = new THREE.Mesh(
+                new THREE.PlaneGeometry(120, 120),
+                new THREE.MeshStandardMaterial({ color: 0x3a4a6e, roughness: 0.85, metalness: 0.05 })
+            );
+            groundVis.rotation.x = -Math.PI / 2;
+            groundVis.position.y = -0.75;
+            groundVis.receiveShadow = true;
+            groundVis.name = 'ground';
+            scene.add(groundVis);
+            
+            const gridHelper = new THREE.GridHelper(100, 40, 0x88aaff, 0x335588);
+            gridHelper.position.y = -0.65;
+            scene.add(gridHelper);
+            
+            game.cache.allPlaceables.push(groundVis);
+        }
+        
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = Math.min(game.clock.getDelta(), 0.033);
+            
+            if (!game.timeFreeze && !game.isDead) {
+                game.physics.step(delta);
+                // 同步所有放置物体位置
+                for (let entry of game.cache.placedShapes) {
+                    const { mesh, body } = entry;
+                    mesh.position.copy(body.position);
+                    mesh.quaternion.copy(body.quaternion);
+                }
+                updatePlayerMovement(delta);
+            }
+            
+            // 预览更新
+            if (game.mouseLocked && game.previewMesh) {
+                updatePreview();
+            } else if (game.previewMesh) game.previewMesh.visible = false;
+            
+            updateCoordinatesUI();
+            updateStats();
+            
+            game.renderer.render(game.scene, game.camera);
+        }
+        
+        // 初始化整个应用
+        function init() {
+            game.physics = new OptimizedPhysics();
+            game.scene = new THREE.Scene();
+            game.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.08, 250);
+            game.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            game.renderer.setSize(window.innerWidth, window.innerHeight);
+            game.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            game.renderer.shadowMap.enabled = true;
+            game.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            game.renderer.outputColorSpace = THREE.SRGBColorSpace;
+            game.renderer.physicallyCorrectLights = true;
+            document.body.appendChild(game.renderer.domElement);
+            
+            initGeometries();
+            initScene();
+            initPlayerPhysics();
+            
+            // 预览物体创建
+            const previewGeo = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+            const previewMat = new THREE.MeshStandardMaterial({ color: 0x88ff88, emissive: 0x226622, transparent: true, opacity: 0.65 });
+            game.previewMesh = new THREE.Mesh(previewGeo, previewMat);
+            game.previewMesh.castShadow = false;
+            game.previewMesh.receiveShadow = false;
+            game.scene.add(game.previewMesh);
+            game.cache.previewMesh = game.previewMesh;
+            
+            // 初始化相机旋转角度
+            game.cameraYaw = -0.8;
+            game.cameraPitch = 0.2;
+            game.camera.quaternion.setFromEuler(new THREE.Euler(game.cameraPitch, game.cameraYaw, 0, 'YXZ'));
+            
+            initEvents();
+            
+            // 绑定冻结按钮
+            document.getElementById('freeze-toggle').addEventListener('click', toggleFreeze);
+            
+            // 添加起始几个演示物体
+            createPlacedShape('cube', 0x66aaff, new THREE.Vector3(2, 0.5, 1.5), false);
+            createPlacedShape('sphere', 0xff8866, new THREE.Vector3(-1.8, 0.5, 2.2), false);
+            createPlacedShape('cylinder', 0x88ffaa, new THREE.Vector3(0, 0.6, -2), false);
+            
+            window.addEventListener('resize', () => {
+                game.camera.aspect = window.innerWidth / window.innerHeight;
+                game.camera.updateProjectionMatrix();
+                game.renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            animate();
+        }
+        
+        window.init = init;
+        init();
+    </script>
+</body>
+</html>

@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>调试面板 · 豪宅大亨</title>
+    <style>
+        /* 全局重置与主题变量 */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        :root {
+            --mod-bg: rgba(18, 28, 40, 0.75);
+            --mod-border: rgba(255, 215, 0, 0.25);
+            --mod-text: #f0e6c5;
+            --mod-accent: #f7d44a;
+            --mod-shadow: 0 12px 40px rgba(0, 0, 0, 0.7);
+            --radius-lg: 20px;
+            --radius-sm: 12px;
+            --transition: 0.2s ease;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #0b1a2b;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            touch-action: pan-y;
+            margin: 0;
+            overflow: hidden;
+        }
+        /* 游戏容器 – 仅用于演示背景 */
+        .game-placeholder {
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        /* ---------- 悬浮球 ---------- */
+        .mod-fab {
+            position: fixed;
+            bottom: 28px;
+            right: 28px;
+            width: 56px;
+            height: 56px;
+            border-radius: 30px;
+            background: linear-gradient(145deg, #f7d44a, #d4a017);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 0 2px rgba(255, 215, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            color: #1f2f3a;
+            cursor: pointer;
+            z-index: 9999;
+            user-select: none;
+            touch-action: none;
+            border: none;
+            font-weight: 700;
+            transition: transform 0.15s;
+            will-change: transform;
+        }
+        .mod-fab:active {
+            transform: scale(0.92);
+        }
+        .mod-fab .badge {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: #e74c3c;
+            color: #fff;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 20px;
+            font-weight: 700;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+            display: none;
+        }
+        .mod-fab .badge.show {
+            display: block;
+        }
+        /* ---------- 面板 ---------- */
+        .mod-panel {
+            position: fixed;
+            bottom: 100px;
+            right: 28px;
+            width: 400px;
+            max-width: 92vw;
+            max-height: 70vh;
+            background: var(--mod-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--mod-border);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--mod-shadow);
+            color: var(--mod-text);
+            padding: 18px 16px 16px;
+            z-index: 9998;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            transition: opacity 0.25s, transform 0.25s;
+            transform: scale(0.92) translateY(12px);
+            opacity: 0;
+            pointer-events: none;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+        }
+        .mod-panel.open {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+            pointer-events: auto;
+        }
+        .mod-panel::-webkit-scrollbar {
+            width: 4px;
+        }
+        .mod-panel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .mod-panel::-webkit-scrollbar-thumb {
+            background: var(--mod-accent);
+            border-radius: 12px;
+        }
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 215, 0, 0.15);
+            padding-bottom: 8px;
+            flex-shrink: 0;
+            cursor: move;
+            user-select: none;
+        }
+        .panel-header h3 {
+            font-weight: 600;
+            font-size: 1.05rem;
+            letter-spacing: 0.5px;
+            color: #f7e8b0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .panel-header .close-btn {
+            background: none;
+            border: none;
+            color: #b0a58a;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 30px;
+            transition: 0.15s;
+        }
+        .panel-header .close-btn:hover {
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+        }
+        /* 模块卡片 */
+        .mod-section {
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: var(--radius-sm);
+            padding: 12px 14px;
+            border: 1px solid rgba(255, 215, 0, 0.06);
+            transition: 0.2s;
+            flex-shrink: 0;
+        }
+        .mod-section-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #b8b08a;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .mod-section-title .toggle-icon {
+            cursor: pointer;
+            font-size: 0.7rem;
+            transition: 0.2s;
+            opacity: 0.6;
+        }
+        /* 数值条目 */
+        .value-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            flex-wrap: wrap;
+        }
+        .value-item label {
+            min-width: 60px;
+            font-weight: 500;
+            font-size: 0.85rem;
+            color: #ddd0b0;
+        }
+        .value-item input[type="number"] {
+            flex: 1;
+            min-width: 60px;
+            background: #0f1f2b;
+            border: 1px solid #3a5a6a;
+            border-radius: 30px;
+            padding: 4px 12px;
+            color: #f5e8c0;
+            font-weight: 600;
+            outline: none;
+            transition: 0.15s;
+            font-size: 0.85rem;
+            height: 32px;
+        }
+        .value-item input:focus {
+            border-color: var(--mod-accent);
+            box-shadow: 0 0 0 2px rgba(247, 212, 74, 0.2);
+        }
+        .value-item .bool-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: #0f1f2b;
+            padding: 2px 10px 2px 6px;
+            border-radius: 40px;
+            border: 1px solid #3a5a6a;
+            cursor: pointer;
+            font-size: 0.8rem;
+            height: 32px;
+        }
+        .value-item .bool-toggle .dot {
+            width: 20px;
+            height: 20px;
+            border-radius: 20px;
+            background: #4a6a7a;
+            transition: 0.2s;
+        }
+        .value-item .bool-toggle .dot.on {
+            background: var(--mod-accent);
+            box-shadow: 0 0 12px #f7d44a66;
+        }
+        .value-flash {
+            animation: flashGreen 0.25s ease;
+        }
+        @keyframes flashGreen {
+            0% { background: rgba(46, 204, 113, 0.5); }
+            100% { background: transparent; }
+        }
+        /* 速度控制 */
+        .speed-control {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .speed-control input[type="range"] {
+            flex: 1;
+            min-width: 100px;
+            accent-color: var(--mod-accent);
+            height: 4px;
+            background: #2a4a5a;
+            border-radius: 10px;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        .speed-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--mod-accent);
+            cursor: pointer;
+        }
+        .speed-control .speed-value {
+            min-width: 48px;
+            text-align: center;
+            font-weight: 700;
+            color: var(--mod-accent);
+            font-size: 0.95rem;
+        }
+        .speed-control .speed-btn {
+            background: #1f3a4a;
+            border: none;
+            color: #ecd9b0;
+            padding: 4px 14px;
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: 0.1s;
+            border: 1px solid #b8860b44;
+            height: 32px;
+        }
+        .speed-control .speed-btn:active {
+            transform: scale(0.92);
+        }
+        /* 快捷按钮 */
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .btn-group .quick-btn {
+            background: #1f3a4a;
+            border: 1px solid #b8860b44;
+            padding: 6px 14px;
+            border-radius: 40px;
+            color: #ecd9b0;
+            font-weight: 600;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: 0.1s;
+            box-shadow: 0 2px 0 #0f1f28;
+            flex: 0 1 auto;
+        }
+        .btn-group .quick-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 0 0 #0f1f28;
+        }
+        /* 日志 */
+        .log-area {
+            background: #0a1720cc;
+            border-radius: var(--radius-sm);
+            padding: 8px 10px;
+            max-height: 120px;
+            overflow-y: auto;
+            font-size: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            border: 1px solid #2a4f5f;
+            margin-top: 4px;
+        }
+        .log-area .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #1a2f3b;
+            display: flex;
+            gap: 8px;
+        }
+        .log-area .log-entry .time {
+            color: #7f9aa8;
+            min-width: 52px;
+        }
+        .log-area .log-entry .msg {
+            color: #d4d0b0;
+            word-break: break-word;
+        }
+        .log-area .log-entry .msg.error { color: #f28b82; }
+        .log-area .log-entry .msg.warn { color: #f7d44a; }
+        .log-area .log-entry .msg.info { color: #8ab3c9; }
+        .log-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 4px;
+            flex-wrap: wrap;
+        }
+        .log-actions button {
+            background: #1f3a4a;
+            border: none;
+            color: #b8b08a;
+            padding: 2px 12px;
+            border-radius: 30px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            border: 1px solid #3a5a6a;
+        }
+        .log-actions button:active { opacity: 0.6; }
+        /* 响应式 */
+        @media (max-width: 480px) {
+            .mod-panel { right: 12px; bottom: 90px; width: 94vw; max-height: 60vh; padding: 14px; }
+            .mod-fab { width: 48px; height: 48px; font-size: 24px; bottom: 20px; right: 20px; }
+            .value-item label { min-width: 48px; font-size: 0.75rem; }
+        }
+        .flex-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .badge-mod {
+            background: #f7d44a33;
+            padding: 0 8px;
+            border-radius: 30px;
+            font-size: 0.6rem;
+            color: #f7d44a;
+        }
+    </style>
+</head>
+<body>
+    <!-- 游戏容器（仅用于视觉上下文） -->
+    <div class="game-placeholder">
+        <div style="background:#1f3a4a; border-radius:36px; padding:20px; text-align:center; color:#b8b08a; border:1px solid #b8860b33;">
+            <div style="font-size:2rem;">🏰</div>
+            <div style="font-weight:300; letter-spacing:1px;">豪宅大亨 · 金库版</div>
+            <div style="font-size:0.8rem; margin-top:8px; opacity:0.6;">调试面板已就绪 · 点击右下角⚙️</div>
+        </div>
+    </div>
+
+    <!-- 悬浮球 -->
+    <button class="mod-fab" id="modFab" aria-label="调试面板">
+        ⚙️
+        <span class="badge" id="logBadge">0</span>
+    </button>
+
+    <!-- 调试面板 -->
+    <div class="mod-panel" id="modPanel">
+        <div class="panel-header" id="panelHeader">
+            <h3>🛠️ 调试面板 <span class="badge-mod">v1</span></h3>
+            <button class="close-btn" id="closePanel">✕</button>
+        </div>
+
+        <!-- 数值修改 -->
+        <div class="mod-section" id="valuesSection">
+            <div class="mod-section-title">
+                <span>📊 数值修改</span>
+                <span class="toggle-icon" data-toggle="values">−</span>
+            </div>
+            <div id="valuesContainer"></div>
+        </div>
+
+        <!-- 速度控制 -->
+        <div class="mod-section">
+            <div class="mod-section-title">⏱️ 速度控制</div>
+            <div class="speed-control">
+                <input type="range" id="speedSlider" min="0.1" max="20" step="0.1" value="1">
+                <span class="speed-value" id="speedDisplay">1.0x</span>
+                <button class="speed-btn" id="resetSpeed">重置</button>
+            </div>
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="mod-section">
+            <div class="mod-section-title">⚡ 快捷操作</div>
+            <div class="btn-group" id="buttonGroup"></div>
+        </div>
+
+        <!-- 日志监控 -->
+        <div class="mod-section" style="flex-shrink: 1;">
+            <div class="mod-section-title">
+                <span>📋 日志 <span id="logCount" style="font-weight:400;font-size:0.7rem;">0</span></span>
+                <span style="display:flex;gap:6px;">
+                    <span class="toggle-icon" style="opacity:0.6;cursor:pointer;" id="toggleLogs">⏸</span>
+                </span>
+            </div>
+            <div class="log-area" id="logContainer"></div>
+            <div class="log-actions">
+                <button id="clearLogs">清空</button>
+                <button id="filterInfo">info</button>
+                <button id="filterWarn">warn</button>
+                <button id="filterError">error</button>
+                <button id="filterAll">全部</button>
+            </div>
+        </div>
+        <div style="font-size:0.6rem; text-align:right; opacity:0.3; margin-top:-4px;">点击⚙️开关面板 · 拖拽标题移动</div>
+    </div>
+
+    <script>
+        (function() {
+            // ---------- 配置 ----------
+            const CONFIG = {
+                values: [
+                    { id: 'gold', label: '💰 金币', value: 50, min: 0, max: 9999, type: 'number' },
+                    { id: 'income', label: '📈 收入/s', value: 1, min: 0, max: 999, type: 'number' },
+                    { id: 'invincible', label: '🛡️ 无敌', value: false, type: 'boolean' }
+                ],
+                buttons: [
+                    { id: 'addGold', label: '+100 金币', action: () => { modifyValue('gold', 100, true); } },
+                    { id: 'resetGame', label: '重置金币', action: () => { modifyValue('gold', 50, false); } },
+                    { id: 'logTest', label: '📢 测试日志', action: () => { addLog('测试日志信息', 'info'); } }
+                ],
+                speed: { min: 0.1, max: 20, step: 0.1, default: 1 },
+                logs: { enabled: true, maxEntries: 100 }
+            };
+
+            // ---------- 状态 ----------
+            let values = JSON.parse(JSON.stringify(CONFIG.values));
+            let speed = 1;
+            let logs = [];
+            let logFilter = 'all';
+            let logEnabled = true;
+            let panelOpen = false;
+
+            // DOM 引用
+            const panel = document.getElementById('modPanel');
+            const fab = document.getElementById('modFab');
+            const closeBtn = document.getElementById('closePanel');
+            const valuesContainer = document.getElementById('valuesContainer');
+            const speedSlider = document.getElementById('speedSlider');
+            const speedDisplay = document.getElementById('speedDisplay');
+            const resetSpeedBtn = document.getElementById('resetSpeed');
+            const buttonGroup = document.getElementById('buttonGroup');
+            const logContainer = document.getElementById('logContainer');
+            const logCount = document.getElementById('logCount');
+            const clearLogsBtn = document.getElementById('clearLogs');
+            const toggleLogsBtn = document.getElementById('toggleLogs');
+            const logBadge = document.getElementById('logBadge');
+
+            // ---------- 辅助函数 ----------
+            function findValue(id) {
+                return values.find(v => v.id === id);
+            }
+
+            function modifyValue(id, newVal, additive = false) {
+                const item = findValue(id);
+                if (!item) return;
+                if (additive) {
+                    let cur = typeof item.value === 'number' ? item.value : 0;
+                    let added = typeof newVal === 'number' ? newVal : 0;
+                    item.value = Math.min(item.max || Infinity, Math.max(item.min || -Infinity, cur + added));
+                } else {
+                    if (typeof newVal === 'boolean' && item.type === 'boolean') {
+                        item.value = newVal;
+                    } else if (typeof newVal === 'number' && item.type === 'number') {
+                        item.value = Math.min(item.max || Infinity, Math.max(item.min || -Infinity, newVal));
+                    } else {
+                        item.value = newVal;
+                    }
+                }
+                // 触发回调 — 模拟游戏内修改
+                if (id === 'gold') {
+                    const goldSpan = document.getElementById('goldDisplay');
+                    if (goldSpan) goldSpan.textContent = Math.floor(item.value);
+                    if (window._gameGoldUpdate) window._gameGoldUpdate(item.value);
+                }
+                if (id === 'income') {
+                    const incomeSpan = document.getElementById('incomeDisplay');
+                    if (incomeSpan) incomeSpan.textContent = item.value;
+                }
+                renderValues();
+                flashValue(id);
+                addLog(`数值变更: ${item.label} = ${item.value}`, 'info');
+            }
+
+            function flashValue(id) {
+                const el = document.querySelector(`[data-value-id="${id}"]`);
+                if (el) {
+                    el.classList.remove('value-flash');
+                    void el.offsetWidth;
+                    el.classList.add('value-flash');
+                }
+            }
+
+            // ---------- 渲染数值 ----------
+            function renderValues() {
+                valuesContainer.innerHTML = '';
+                values.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'value-item';
+                    div.dataset.valueId = item.id;
+                    const label = document.createElement('label');
+                    label.textContent = item.label;
+                    div.appendChild(label);
+
+                    if (item.type === 'boolean') {
+                        const toggle = document.createElement('div');
+                        toggle.className = 'bool-toggle';
+                        const dot = document.createElement('span');
+                        dot.className = 'dot' + (item.value ? ' on' : '');
+                        toggle.appendChild(dot);
+                        const txt = document.createElement('span');
+                        txt.textContent = item.value ? 'ON' : 'OFF';
+                        txt.style.fontWeight = '600';
+                        toggle.appendChild(txt);
+                        toggle.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            item.value = !item.value;
+                            renderValues();
+                            flashValue(item.id);
+                            addLog(`开关 ${item.label} → ${item.value}`, 'info');
+                            if (item.id === 'invincible' && window._gameInvincible) {
+                                window._gameInvincible(item.value);
+                            }
+                        });
+                        div.appendChild(toggle);
+                    } else {
+                        const input = document.createElement('input');
+                        input.type = 'number';
+                        input.value = item.value;
+                        input.min = item.min ?? 0;
+                        input.max = item.max ?? 9999;
+                        input.step = 0.1;
+                        input.addEventListener('change', () => {
+                            let val = parseFloat(input.value);
+                            if (isNaN(val)) return;
+                            val = Math.min(item.max ?? Infinity, Math.max(item.min ?? -Infinity, val));
+                            item.value = val;
+                            modifyValue(item.id, val, false);
+                        });
+                        div.appendChild(input);
+                    }
+                    valuesContainer.appendChild(div);
+                });
+            }
+
+            // ---------- 日志 ----------
+            function addLog(message, level = 'info') {
+                if (!logEnabled) return;
+                const entry = { time: new Date().toLocaleTimeString(), message, level };
+                logs.push(entry);
+                if (logs.length > (CONFIG.logs.maxEntries || 100)) logs.shift();
+                renderLogs();
+                updateBadge();
+            }
+
+            function renderLogs() {
+                logContainer.innerHTML = '';
+                const filtered = logs.filter(e => {
+                    if (logFilter === 'all') return true;
+                    return e.level === logFilter;
+                });
+                filtered.forEach(e => {
+                    const div = document.createElement('div');
+                    div.className = 'log-entry';
+                    const time = document.createElement('span');
+                    time.className = 'time';
+                    time.textContent = e.time;
+                    const msg = document.createElement('span');
+                    msg.className = `msg ${e.level}`;
+                    msg.textContent = e.message;
+                    div.appendChild(time);
+                    div.appendChild(msg);
+                    logContainer.appendChild(div);
+                });
+                logContainer.scrollTop = logContainer.scrollHeight;
+                logCount.textContent = logs.length;
+            }
+
+            function updateBadge() {
+                const unread = logs.filter(e => e.level === 'error' || e.level === 'warn').length;
+                logBadge.textContent = unread > 0 ? unread : '0';
+                logBadge.classList.toggle('show', unread > 0);
+            }
+
+            // ---------- 速度 ----------
+            function setSpeed(val) {
+                speed = Math.min(20, Math.max(0.1, val));
+                speedSlider.value = speed;
+                speedDisplay.textContent = speed.toFixed(1) + 'x';
+                if (window._gameSpeedUpdate) window._gameSpeedUpdate(speed);
+                addLog(`速度倍率 → ${speed.toFixed(1)}x`, 'info');
+            }
+
+            // ---------- 渲染按钮 ----------
+            function renderButtons() {
+                buttonGroup.innerHTML = '';
+                CONFIG.buttons.forEach(btn => {
+                    const b = document.createElement('button');
+                    b.className = 'quick-btn';
+                    b.textContent = btn.label;
+                    b.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        btn.action();
+                        b.style.transform = 'scale(0.92)';
+                        setTimeout(() => b.style.transform = '', 120);
+                    });
+                    buttonGroup.appendChild(b);
+                });
+            }
+
+            // ---------- 面板拖拽 ----------
+            function initPanelDrag() {
+                const header = document.getElementById('panelHeader');
+                let isDragging = false, startX, startY, origX, origY;
+
+                const onStart = (e) => {
+                    if (e.target.closest('.close-btn')) return;
+                    isDragging = true;
+                    const rect = panel.getBoundingClientRect();
+                    const clientX = e.clientX || e.touches?.[0]?.clientX;
+                    const clientY = e.clientY || e.touches?.[0]?.clientY;
+                    if (clientX == null) return;
+                    startX = clientX;
+                    startY = clientY;
+                    origX = rect.left;
+                    origY = rect.top;
+                    panel.style.transition = 'none';
+                    e.preventDefault?.();
+                };
+
+                const onMove = (e) => {
+                    if (!isDragging) return;
+                    const clientX = e.clientX || e.touches?.[0]?.clientX;
+                    const clientY = e.clientY || e.touches?.[0]?.clientY;
+                    if (clientX == null) return;
+                    const dx = clientX - startX;
+                    const dy = clientY - startY;
+                    panel.style.left = (origX + dx) + 'px';
+                    panel.style.top = (origY + dy) + 'px';
+                    panel.style.right = 'auto';
+                    panel.style.bottom = 'auto';
+                    e.preventDefault?.();
+                };
+
+                const onEnd = () => {
+                    if (isDragging) {
+                        isDragging = false;
+                        panel.style.transition = '';
+                        try {
+                            const rect = panel.getBoundingClientRect();
+                            localStorage.setItem('modPanelPos', JSON.stringify({ left: rect.left, top: rect.top }));
+                        } catch (e) {}
+                    }
+                };
+
+                header.addEventListener('mousedown', onStart);
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onEnd);
+                header.addEventListener('touchstart', onStart, { passive: false });
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onEnd, { passive: false });
+            }
+
+            // ---------- 悬浮球点击（无拖拽） ----------
+            function initFab() {
+                fab.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    togglePanel();
+                });
+            }
+
+            // ---------- 面板切换 ----------
+            function togglePanel() {
+                panelOpen = !panelOpen;
+                panel.classList.toggle('open', panelOpen);
+                if (panelOpen) {
+                    try {
+                        const pos = JSON.parse(localStorage.getItem('modPanelPos'));
+                        if (pos) {
+                            panel.style.left = pos.left + 'px';
+                            panel.style.top = pos.top + 'px';
+                            panel.style.right = 'auto';
+                            panel.style.bottom = 'auto';
+                        }
+                    } catch (e) {}
+                }
+            }
+
+            // ---------- 初始化 ----------
+            function init() {
+                renderValues();
+                renderButtons();
+                setSpeed(CONFIG.speed.default);
+
+                // 恢复面板位置
+                try {
+                    const pos = JSON.parse(localStorage.getItem('modPanelPos'));
+                    if (pos) {
+                        panel.style.left = pos.left + 'px';
+                        panel.style.top = pos.top + 'px';
+                        panel.style.right = 'auto';
+                        panel.style.bottom = 'auto';
+                    }
+                } catch (e) {}
+
+                // 事件绑定
+                closeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    panelOpen = false;
+                    panel.classList.remove('open');
+                });
+
+                resetSpeedBtn.addEventListener('click', () => setSpeed(1));
+                speedSlider.addEventListener('input', () => {
+                    setSpeed(parseFloat(speedSlider.value));
+                });
+
+                clearLogsBtn.addEventListener('click', () => {
+                    logs = [];
+                    renderLogs();
+                    updateBadge();
+                    addLog('日志已清空', 'info');
+                });
+
+                toggleLogsBtn.addEventListener('click', () => {
+                    logEnabled = !logEnabled;
+                    toggleLogsBtn.textContent = logEnabled ? '⏸' : '▶️';
+                    addLog(logEnabled ? '日志已开启' : '日志已暂停', 'warn');
+                });
+
+                // 过滤
+                document.getElementById('filterAll').addEventListener('click', () => { logFilter = 'all'; renderLogs(); });
+                document.getElementById('filterInfo').addEventListener('click', () => { logFilter = 'info'; renderLogs(); });
+                document.getElementById('filterWarn').addEventListener('click', () => { logFilter = 'warn'; renderLogs(); });
+                document.getElementById('filterError').addEventListener('click', () => { logFilter = 'error'; renderLogs(); });
+
+                // 折叠
+                document.querySelectorAll('[data-toggle]').forEach(el => {
+                    el.addEventListener('click', function() {
+                        const section = this.closest('.mod-section');
+                        const target = section.querySelector('#valuesContainer') || section.querySelector('.log-area');
+                        if (target) {
+                            const display = target.style.display;
+                            target.style.display = display === 'none' ? '' : 'none';
+                            this.textContent = display === 'none' ? '−' : '+';
+                        }
+                    });
+                });
+
+                initPanelDrag();
+                initFab();
+
+                // 添加示例日志
+                addLog('调试面板已启动', 'info');
+                addLog('点击⚙️开关面板，拖拽标题移动', 'info');
+                addLog('数值修改实时生效', 'warn');
+
+                // 挂载到window供游戏调用
+                window.mod = {
+                    addLog,
+                    setSpeed,
+                    modifyValue,
+                    values,
+                    speed,
+                };
+                window._gameGoldUpdate = (val) => {
+                    const el = document.getElementById('goldDisplay');
+                    if (el) el.textContent = Math.floor(val);
+                };
+                window._gameSpeedUpdate = (val) => {};
+                window._gameInvincible = (val) => {
+                    addLog(`无敌模式: ${val ? '开启' : '关闭'}`, 'warn');
+                };
+            }
+
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                init();
+            } else {
+                document.addEventListener('DOMContentLoaded', init);
+            }
+        })();
+    </script>
+</body>
+</html>

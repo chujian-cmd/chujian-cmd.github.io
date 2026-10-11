@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Blockudoku</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; text-align: center; margin: 0; padding: 0; }
+    canvas { background: white; border: 2px solid #333; margin: 20px auto; display: block; touch-action: none; }
+    #info { font-size: 18px; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <h1>🧩 Blockudoku</h1>
+  <div id="info">Punkte: <span id="score">0</span> | 🏆 Highscore: <span id="highscore">0</span></div>
+  <canvas id="game" width="360" height="360"></canvas>
+  <canvas id="preview" width="120" height="120"></canvas>
+  <p>🖱 Drag to place the piece</p>
+  <button onclick="restartGame()">🔁 Restart</button>
+
+<script>
+const ctxAudio = new (window.AudioContext || window.webkitAudioContext)();
+function playTone(type, freq, duration = 0.3, volume = 0.3) {
+  const osc = ctxAudio.createOscillator();
+  const gain = ctxAudio.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, ctxAudio.currentTime);
+  gain.gain.setValueAtTime(volume, ctxAudio.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctxAudio.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(ctxAudio.destination);
+  osc.start();
+  osc.stop(ctxAudio.currentTime + duration);
+}
+function playPlace() { playTone("triangle", 880); }
+function playCombo() { playTone("square", 600); setTimeout(() => playTone("square", 900), 150); }
+function playError() { playTone("sawtooth", 100); }
+function playGameOver() { playTone("sine", 200, 0.6); }
+function playBlockClear() { playTone("triangle", 500, 0.2); }
+
+const SIZE = 9;
+const CELL = 40;
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const preview = document.getElementById("preview");
+const pctx = preview.getContext("2d");
+const scoreSpan = document.getElementById("score");
+
+let board = Array(SIZE * SIZE).fill(0);
+let score = 0;
+let highscore = parseInt(localStorage.getItem("blockudoku_highscore") || "0");
+
+const shapes = [
+  [[1,1,0],[0,1,1]],
+  [[1,1],[1,1]],
+  [[1,1,1]],
+  [[1],[1],[1]],
+  [[1]],
+  [[1,1],[0,1]],
+  [[0,1],[1,1]],
+];
+
+let currentShape = shapes[Math.floor(Math.random()*shapes.length)];
+let hoverX = null;
+let hoverY = null;
+
+function drawBoard() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  board.forEach((val, i) => {
+    const x = i % SIZE;
+    const y = Math.floor(i / SIZE);
+    ctx.strokeStyle = "#ccc";
+    ctx.strokeRect(x*CELL, y*CELL, CELL, CELL);
+    if (val) {
+      ctx.fillStyle = "#333";
+      ctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+    }
+  });
+
+  if (hoverX !== null && hoverY !== null) {
+    let valid = canPlace(currentShape, hoverX, hoverY);
+    ctx.fillStyle = valid ? "rgba(50, 150, 50, 0.4)" : "rgba(200, 0, 0, 0.3)";
+    currentShape.forEach((row, y) => {
+      row.forEach((val, x) => {
+        if (val) {
+          ctx.fillRect((hoverX + x) * CELL, (hoverY + y) * CELL, CELL, CELL);
+        }
+      });
+    });
+  }
+}
+
+function restartGame() {
+  board = Array(SIZE * SIZE).fill(0);
+  score = 0;
+  scoreSpan.textContent = score;
+  if (score > highscore) {
+    highscore = score;
+    localStorage.setItem("blockudoku_highscore", highscore);
+    document.getElementById("highscore").textContent = highscore;
+  }
+  currentShape = shapes[Math.floor(Math.random()*shapes.length)];
+  drawBoard();
+  drawPreview();
+  playTone("sine", 600, 0.3, 0.2);
+}
+
+function checkGameOver() {
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      if (canPlace(currentShape, x, y)) return false;
+    }
+  }
+  playGameOver();
+  setTimeout(() => alert("🛑 No moves left! Game over."), 100);
+  return true;
+}
+
+function drawPreview() {
+  pctx.clearRect(0, 0, preview.width, preview.height);
+  pctx.fillStyle = "#333";
+  currentShape.forEach((row, y) => {
+    row.forEach((val, x) => {
+      if (val) pctx.fillRect(x*CELL, y*CELL, CELL, CELL);
+    });
+  });
+}
+
+function canPlace(shape, gx, gy) {
+  for (let y = 0; y < shape.length; y++) {
+    for (let x = 0; x < shape[y].length; x++) {
+      if (shape[y][x]) {
+        let bx = gx + x, by = gy + y;
+        if (bx < 0 || by < 0 || bx >= SIZE || by >= SIZE) return false;
+        if (board[by * SIZE + bx]) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function placeShape(shape, gx, gy) {
+  for (let y = 0; y < shape.length; y++) {
+    for (let x = 0; x < shape[y].length; x++) {
+      if (shape[y][x]) {
+        let bx = gx + x, by = gy + y;
+        board[by * SIZE + bx] = 1;
+      }
+    }
+  }
+  playPlace();
+  score += 10;
+  scoreSpan.textContent = score;
+  if (score > highscore) {
+    highscore = score;
+    localStorage.setItem("blockudoku_highscore", highscore);
+    document.getElementById("highscore").textContent = highscore;
+  }
+  const cleared = clearLinesAndBlocks();
+  if (cleared >= 2) playCombo();
+  currentShape = shapes[Math.floor(Math.random()*shapes.length)];
+  drawPreview();
+  checkGameOver();
+  document.getElementById("highscore").textContent = highscore;
+}
+
+function clearLinesAndBlocks() {
+  let cleared = 0;
+
+  // Zeilen und Spalten
+  for (let i = 0; i < SIZE; i++) {
+    let fullRow = true, fullCol = true;
+    for (let j = 0; j < SIZE; j++) {
+      if (!board[i*SIZE + j]) fullRow = false;
+      if (!board[j*SIZE + i]) fullCol = false;
+    }
+    if (fullRow) {
+      for (let j = 0; j < SIZE; j++) board[i*SIZE + j] = 0;
+      cleared++;
+    }
+    if (fullCol) {
+      for (let j = 0; j < SIZE; j++) board[j*SIZE + i] = 0;
+      cleared++;
+    }
+  }
+
+  // 3x3 Blöcke
+  for (let by = 0; by < SIZE; by += 3) {
+    for (let bx = 0; bx < SIZE; bx += 3) {
+      let fullBlock = true;
+      for (let y = 0; y < 3; y++) {
+        for (let x = 0; x < 3; x++) {
+          if (!board[(by + y) * SIZE + (bx + x)]) fullBlock = false;
+        }
+      }
+      if (fullBlock) {
+        for (let y = 0; y < 3; y++) {
+          for (let x = 0; x < 3; x++) {
+            board[(by + y) * SIZE + (bx + x)] = 0;
+          }
+        }
+        cleared++;
+        playBlockClear();
+      }
+    }
+  }
+
+  score += cleared * 10;
+  scoreSpan.textContent = score;
+  if (score > highscore) {
+    highscore = score;
+    localStorage.setItem("blockudoku_highscore", highscore);
+    document.getElementById("highscore").textContent = highscore;
+  }
+  return cleared;
+}
+
+canvas.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  hoverX = Math.floor((e.clientX - rect.left) / CELL);
+  hoverY = Math.floor((e.clientY - rect.top) / CELL);
+  drawBoard();
+});
+canvas.addEventListener("mouseleave", () => { hoverX = null; hoverY = null; drawBoard(); });
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  hoverX = Math.floor((touch.clientX - rect.left) / CELL);
+  hoverY = Math.floor((touch.clientY - rect.top) / CELL);
+  drawBoard();
+});
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.touches[0];
+  hoverX = Math.floor((touch.clientX - rect.left) / CELL);
+  hoverY = Math.floor((touch.clientY - rect.top) / CELL);
+  drawBoard();
+});
+canvas.addEventListener("touchend", () => {
+  if (hoverX !== null && hoverY !== null) {
+    if (canPlace(currentShape, hoverX, hoverY)) {
+      placeShape(currentShape, hoverX, hoverY);
+      drawBoard();
+    } else {
+      playError();
+    }
+  }
+});
+canvas.addEventListener("click", () => {
+  if (hoverX !== null && hoverY !== null) {
+    if (canPlace(currentShape, hoverX, hoverY)) {
+      placeShape(currentShape, hoverX, hoverY);
+      drawBoard();
+    } else {
+      playError();
+    }
+  }
+});
+
+drawBoard();
+drawPreview();
+checkGameOver();
+</script>
+<script>document.addEventListener("contextmenu",function(e){e.preventDefault();});</script>
+</body>
+</html>

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>流场描线 Edge Flow</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0d12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(11,13,18,.85),rgba(11,13,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+
+  #panel{
+    position:fixed;left:0;right:0;bottom:0;z-index:20;
+    padding:14px 14px max(14px,env(safe-area-inset-bottom));
+    background:rgba(14,15,22,.92);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border-top:1px solid rgba(255,255,255,.1);
+    transform:translateY(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    font:14px -apple-system,"PingFang SC",sans-serif;color:#eef1ff;
+  }
+  #panel.open{transform:translateY(0)}
+  #panel label{display:block;font-size:11px;color:#8a8f98;margin-bottom:6px;letter-spacing:.4px}
+  #panel .row{display:flex;gap:8px;align-items:flex-start}
+  #panel textarea{
+    flex:1;min-height:60px;max-height:160px;padding:9px 12px;border-radius:10px;
+    background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);
+    color:#fff;font:14px -apple-system,"PingFang SC",sans-serif;outline:none;resize:none;
+  }
+  #panel textarea:focus{border-color:rgba(63,169,255,.7)}
+  #panel .ok{
+    height:42px;padding:0 18px;border-radius:10px;border:1px solid rgba(63,169,255,.6);
+    background:rgba(63,169,255,.3);color:#fff;font:600 14px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;
+  }
+  #panel .ok:active{background:rgba(63,169,255,.5)}
+  #backdrop{position:fixed;inset:0;z-index:19;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .28s}
+  #backdrop.open{opacity:1;pointer-events:auto}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">流场描线 <b id="m">暗部驱动</b></div>
+  <button class="btn" id="btn-driver">换驱动</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn pri" id="btn-custom">自定义</button>
+</div>
+
+<div id="hint">在字的笔画里画顺轮廓流线 · 钢笔铜版画质感</div>
+
+<div id="backdrop"></div>
+<div id="panel">
+  <label>文字内容（支持换行）</label>
+  <div class="row">
+    <textarea id="inp" rows="2" spellcheck="false" placeholder="AURORA"></textarea>
+    <button class="ok" id="btn-ok">确定</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA',
+    weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    driver: 'dark',        // dark | edge | uniform
+    spacing: 2.4,
+    align: 'contour',      // contour | gradient
+    colorMode: 'mono',     // mono | duotone
+    lineLen: 26,
+    stepLen: 3,
+    lineWidth: 0.9,
+    alpha: 0.6,
+    threshold: 0.12,
+    jitter: 0.14,
+    colorA: '#e8ecff',
+    colorB: '#5b6cff',
+    background: '#0b0d12',
+    underlay: 'none',      // none | dim
+    underlayAlpha: 0.22
+  };
+
+  var DRIVERS = [
+    { key: 'dark',    label: '暗部驱动' },
+    { key: 'edge',    label: '边缘驱动' },
+    { key: 'uniform', label: '均匀铺满' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buf.width = cv.width; buf.height = cv.height;
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var buf = document.createElement('canvas');
+  var bctx = buf.getContext('2d');
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 掩膜（文字）----------
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null;
+  var maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center';
+    mctx.textBaseline = 'middle';
+
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+
+    var maxW = W * 0.88, maxH = H * 0.82;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.82);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) {
+      size = Math.max(6, Math.floor(size * maxW / widest));
+      setF(size);
+    }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(6, Math.floor(size * maxH / totalH));
+      setF(size);
+    }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) {
+      mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    }
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function alphaAt(x, y) {
+    if (!maskData) return 0;
+    x = x | 0; y = y | 0;
+    if (x < 0) x = 0; else if (x >= W) x = W - 1;
+    if (y < 0) y = 0; else if (y >= H) y = H - 1;
+    return maskData[(y * W + x) * 4 + 3] / 255;
+  }
+
+  // ---------- 采样：低分辨率 lum / gx / gy / mag ----------
+  // 采样区 = 整幅画布（因为文字可能占满）
+  var SAMPLE_MAX = 240;
+
+  function sample() {
+    var aspect = W / H;
+    var gw, gh;
+    if (aspect >= 1) { gw = SAMPLE_MAX; gh = Math.max(2, Math.round(SAMPLE_MAX / aspect)); }
+    else { gh = SAMPLE_MAX; gw = Math.max(2, Math.round(SAMPLE_MAX * aspect)); }
+
+    var cellW = W / gw;
+    var cellH = H / gh;
+    var n = gw * gh;
+    var lum = new Float32Array(n);
+    // 从掩膜降采样亮度 = 覆盖度
+    for (var y = 0; y < gh; y++) {
+      for (var x = 0; x < gw; x++) {
+        var sx = x * cellW + cellW / 2;
+        var sy = y * cellH + cellH / 2;
+        lum[y * gw + x] = alphaAt(sx, sy);
+      }
+    }
+
+    var gx = new Float32Array(n);
+    var gy = new Float32Array(n);
+    var mag = new Float32Array(n);
+    var maxMag = 1e-6;
+    for (var yy = 0; yy < gh; yy++) {
+      for (var xx = 0; xx < gw; xx++) {
+        var i = yy * gw + xx;
+        var xl = xx > 0 ? lum[i - 1] : lum[i];
+        var xr = xx < gw - 1 ? lum[i + 1] : lum[i];
+        var yu = yy > 0 ? lum[i - gw] : lum[i];
+        var yd = yy < gh - 1 ? lum[i + gw] : lum[i];
+        var Gx = xr - xl;
+        var Gy = yd - yu;
+        gx[i] = Gx; gy[i] = Gy;
+        var gg = Math.hypot(Gx, Gy);
+        mag[i] = gg;
+        if (gg > maxMag) maxMag = gg;
+      }
+    }
+    for (var k = 0; k < n; k++) mag[k] /= maxMag;
+
+    return {
+      gw: gw, gh: gh, lum: lum, gx: gx, gy: gy, mag: mag,
+      cellW: cellW, cellH: cellH
+    };
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    buildMask();
+
+    var key = W + 'x' + H + '@' + dpr + '|' + maskKey + '|' +
+              CFG.driver + '|' + CFG.spacing + '|' + CFG.lineLen + '|' +
+              CFG.stepLen + '|' + CFG.align + '|' + CFG.lineWidth + '|' +
+              CFG.alpha + '|' + CFG.threshold + '|' + CFG.jitter + '|' +
+              CFG.colorMode + '|' + CFG.colorA + '|' + CFG.colorB + '|' +
+              CFG.background + '|' + CFG.underlay + '|' + CFG.underlayAlpha;
+
+    if (dirty || key !== sig) {
+      drawFrame(CFG);
+      sig = key;
+      dirty = false;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(buf, 0, 0, W, H);
+
+    requestAnimationFrame(render);
+  }
+
+  function drawFrame(cfg) {
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    bctx.fillStyle = cfg.background;
+    bctx.fillRect(0, 0, W, H);
+
+    // 半透明垫字
+    if (cfg.underlay === 'dim') {
+      bctx.save();
+      bctx.globalAlpha = cfg.underlayAlpha;
+      bctx.drawImage(maskCanvas, 0, 0, W, H);
+      bctx.restore();
+      bctx.globalAlpha = 1;
+    }
+
+    var s = sample();
+    var gw = s.gw, gh = s.gh;
+    var lum = s.lum, gx = s.gx, gy = s.gy, mag = s.mag;
+    var cellW = s.cellW, cellH = s.cellH;
+    var cellAvg = (cellW + cellH) / 2;
+
+    function sampleGrad(u, v) {
+      var x = u * gw - 0.5;
+      var y = v * gh - 0.5;
+      var x0 = Math.max(0, Math.min(gw - 1, Math.floor(x)));
+      var y0 = Math.max(0, Math.min(gh - 1, Math.floor(y)));
+      var x1 = Math.min(gw - 1, x0 + 1);
+      var y1 = Math.min(gh - 1, y0 + 1);
+      var fx = x - x0;
+      var fy = y - y0;
+      var i00 = y0 * gw + x0, i10 = y0 * gw + x1;
+      var i01 = y1 * gw + x0, i11 = y1 * gw + x1;
+      var Gx = (gx[i00] * (1 - fx) + gx[i10] * fx) * (1 - fy) + (gx[i01] * (1 - fx) + gx[i11] * fx) * fy;
+      var Gy = (gy[i00] * (1 - fx) + gy[i10] * fx) * (1 - fy) + (gy[i01] * (1 - fx) + gy[i11] * fx) * fy;
+      var L = (lum[i00] * (1 - fx) + lum[i10] * fx) * (1 - fy) + (lum[i01] * (1 - fx) + lum[i11] * fx) * fy;
+      return [Gx, Gy, L];
+    }
+
+    var align = cfg.align === 'contour';
+    var jitter = cfg.jitter * 0.9;
+    var spacing = cfg.spacing;
+    var lineLen = cfg.lineLen;
+    var stepLen = cfg.stepLen / cellAvg;
+    var colorMode = cfg.colorMode;
+    var colA = hex2rgb(cfg.colorA);
+    var colB = hex2rgb(cfg.colorB);
+
+    bctx.lineCap = 'round';
+    bctx.lineJoin = 'round';
+    bctx.lineWidth = cfg.lineWidth;
+
+    for (var j = 1; j < gh - 1; j += spacing) {
+      for (var i = 1; i < gw - 1; i += spacing) {
+        var ii = (j | 0) * gw + (i | 0);
+        var act = cfg.driver === 'edge' ? mag[ii] :
+                  cfg.driver === 'uniform' ? 0.7 :
+                  (1 - lum[ii]);
+        if (act < cfg.threshold) continue;
+
+        var sx = i + (Math.random() - 0.5) * spacing * 0.6;
+        var sy = j + (Math.random() - 0.5) * spacing * 0.6;
+
+        var path = [];
+        var u = sx, v = sy;
+        var lastGx = 0, lastGy = 0;
+        var steps = Math.round(lineLen * (0.4 + act * 0.6));
+        for (var st = 0; st < steps; st++) {
+          var g2 = sampleGrad(u / gw, v / gh);
+          var tx, ty;
+          if (align) { tx = -g2[1]; ty = g2[0]; }
+          else { tx = g2[0]; ty = g2[1]; }
+          var m2 = Math.hypot(tx, ty);
+          if (m2 < 1e-5) break;
+          tx /= m2; ty /= m2;
+          if (st > 0 && tx * lastGx + ty * lastGy < 0) { tx = -tx; ty = -ty; }
+          lastGx = tx; lastGy = ty;
+          u += tx * stepLen + (Math.random() - 0.5) * jitter * 0.04;
+          v += ty * stepLen + (Math.random() - 0.5) * jitter * 0.04;
+          if (u < 0 || u >= gw || v < 0 || v >= gh) break;
+          path.push([u, v]);
+        }
+        if (path.length < 2) continue;
+
+        if (colorMode === 'duotone') {
+          var tr = lum[ii];
+          bctx.strokeStyle = 'rgb(' +
+            Math.round(colA[0] + (colB[0] - colA[0]) * tr) + ',' +
+            Math.round(colA[1] + (colB[1] - colA[1]) * tr) + ',' +
+            Math.round(colA[2] + (colB[2] - colA[2]) * tr) + ')';
+        } else {
+          bctx.strokeStyle = 'rgb(' + colA[0] + ',' + colA[1] + ',' + colA[2] + ')';
+        }
+        bctx.globalAlpha = Math.max(0.12, Math.min(1, act * 1.2)) * cfg.alpha;
+
+        bctx.beginPath();
+        bctx.moveTo((path[0][0] + 0.5) * cellW, (path[0][1] + 0.5) * cellH);
+        for (var pi = 1; pi < path.length; pi++) {
+          bctx.lineTo((path[pi][0] + 0.5) * cellW, (path[pi][1] + 0.5) * cellH);
+        }
+        bctx.stroke();
+      }
+    }
+    bctx.globalAlpha = 1;
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 预设 ----------
+  var PRESETS = [
+    { text: 'AURORA',   driver: 'dark',    colorA: '#e8ecff', background: '#0b0d12', underlay: 'none' },
+    { text: '铜版',     driver: 'edge',    colorA: '#e8ecff', background: '#f2efe6', underlay: 'none' },
+    { text: 'BOLD',     driver: 'dark',    colorA: '#ffe9a8', colorB: '#ff7a2c', colorMode: 'duotone', background: '#0a0602', underlay: 'dim' },
+    { text: '笔画',     driver: 'uniform', colorA: '#7fd4ff', background: '#050a12', underlay: 'none' },
+    { text: 'FLOW',     driver: 'edge',    colorA: '#ff8ae0', colorB: '#7fd4ff', colorMode: 'duotone', background: '#0a0410', underlay: 'none' }
+  ];
+  var presetIdx = 0;
+
+  function applyPreset(p) {
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    dirty = true; sig = ''; maskData = null; maskKey = '';
+    var m = DRIVERS.find(function (d) { return d.key === CFG.driver; });
+    if (m) mLabel.textContent = m.label;
+    var mi = DRIVERS.findIndex(function (d) { return d.key === CFG.driver; });
+    if (mi >= 0) driverIdx = mi;
+  }
+
+  document.getElementById('btn-text').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    applyPreset(PRESETS[presetIdx]);
+  });
+
+  // ---------- 换驱动 ----------
+  var driverIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-driver').addEventListener('click', function () {
+    driverIdx = (driverIdx + 1) % DRIVERS.length;
+    CFG.driver = DRIVERS[driverIdx].key;
+    mLabel.textContent = DRIVERS[driverIdx].label;
+    dirty = true;
+  });
+
+  // ---------- 自定义 ----------
+  var panel = document.getElementById('panel');
+  var backdrop = document.getElementById('backdrop');
+  var inp = document.getElementById('inp');
+
+  function openPanel() {
+    inp.value = CFG.text;
+    panel.classList.add('open');
+    backdrop.classList.add('open');
+    setTimeout(function () { inp.focus(); inp.select(); }, 320);
+  }
+  function closePanel() {
+    panel.classList.remove('open');
+    backdrop.classList.remove('open');
+    inp.blur();
+  }
+  function confirmInput() {
+    var v = inp.value;
+    if (!v.replace(/\s/g, '').length) v = 'AURORA';
+    CFG.text = v;
+    maskData = null; maskKey = '';
+    dirty = true;
+  }
+
+  document.getElementById('btn-custom').addEventListener('click', openPanel);
+  document.getElementById('btn-ok').addEventListener('click', function () {
+    confirmInput();
+    closePanel();
+  });
+  backdrop.addEventListener('click', closePanel);
+  inp.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); confirmInput(); closePanel(); }
+  });
+  inp.addEventListener('input', function () {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(160, inp.scrollHeight) + 'px';
+  });
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

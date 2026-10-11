@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>倾斜视差</title>
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 50%; bottom: 40px;
+    transform: translateX(-50%);
+    color: rgba(120,255,255,.7);
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+    text-shadow: 0 0 10px rgba(0,255,255,.8);
+    letter-spacing: .08em;
+    white-space: nowrap;
+  }
+  #perm {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.85);
+    z-index: 100; color: #0ff;
+    font: 16px/1.5 -apple-system, sans-serif;
+    letter-spacing: .15em;
+    text-shadow: 0 0 14px #0ff;
+    cursor: pointer;
+  }
+  #perm .btn {
+    padding: 22px 40px;
+    border: 1px solid #0ff; border-radius: 12px;
+    background: rgba(0, 30, 40, .7);
+    box-shadow: 0 0 24px rgba(0,255,255,.35);
+  }
+  #perm.hide { display: none; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+<div id="hint">倾斜手机 → 立方体跟着动</div>
+<div id="perm"><div class="btn">点击启用传感器</div></div>
+
+<script src="./three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const hintEl = document.getElementById('hint');
+  const permEl = document.getElementById('perm');
+
+  if (!window.THREE) {
+    hintEl.textContent = 'three.min.js 未加载';
+    return;
+  }
+
+  /* ============ 3D 场景 ============ */
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+
+  const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 200);
+  camera.position.set(0, 0, 0);
+  camera.lookAt(0, 0, -1);
+
+  // 立方体
+  const cube = new THREE.Mesh(
+    new THREE.BoxGeometry(2, 2, 2),
+    new THREE.MeshStandardMaterial({
+      color: 0x33ccff, emissive: 0x116688,
+      metalness: 0.3, roughness: 0.4
+    })
+  );
+  cube.position.set(0, 0, -6);
+  scene.add(cube);
+  cube.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(cube.geometry),
+    new THREE.LineBasicMaterial({ color: 0xffffff })
+  ));
+
+  // 背景参考球
+  const sphereA = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 20, 20),
+    new THREE.MeshBasicMaterial({ color: 0xff66cc })
+  );
+  sphereA.position.set(-4, 3, -12);
+  scene.add(sphereA);
+
+  const sphereB = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 20, 20),
+    new THREE.MeshBasicMaterial({ color: 0xffcc33 })
+  );
+  sphereB.position.set(4, -3, -12);
+  scene.add(sphereB);
+
+  // 网格
+  const grid = new THREE.GridHelper(20, 20, 0x2266aa, 0x113355);
+  grid.position.y = -4;
+  scene.add(grid);
+
+  // 灯光
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  const dl = new THREE.DirectionalLight(0xffffff, 1);
+  dl.position.set(3, 5, 4);
+  scene.add(dl);
+
+  function onResize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  addEventListener('resize', onResize);
+
+  /* ============ 倾斜 → 视差（用重力方向） ============ */
+  // 用重力在设备坐标系下的方向，等价于"手机相对世界竖直线歪了多少"
+  // 这和系统水平仪的原理完全一样
+
+  // 重力低通（极慢，只反映长期姿态，不反应手抖）
+  let gx = 0, gy = 0, gz = 0, gReady = false;
+  let lastT = 0;
+
+  // 相机偏移
+  let camX = 0, camY = 0, camZ = 0;
+
+  // 标定零点（重力方向）
+  let gx0 = 0, gy0 = 0, gz0 = 0;
+  let calReady = false;
+
+  const GAIN_X = 0.30;    // 左右倾斜 → X 位移
+  const GAIN_Y = 0.30;    // 上下倾斜 → Y 位移（有些手机上下倾斜会体现在这）
+  const GAIN_Z = 0.30;    // 前后倾斜 → Z 位移（推近/拉远）
+  const MAX_OFFSET = 3.5;
+
+  function onMotion(e) {
+    const ag = e.accelerationIncludingGravity;
+    if (!ag || ag.x == null) return;
+
+    const now = performance.now();
+    let dt = lastT ? (now - lastT) / 1000 : 1/60;
+    lastT = now;
+    if (dt <= 0 || dt > 0.1) dt = 0.05;
+
+    if (!gReady) {
+      gx = ag.x; gy = ag.y; gz = ag.z;
+      gReady = true;
+      return;
+    }
+
+    // 极慢的低通，估计重力方向（时间常数 1 秒）
+    const k = 1 - Math.exp(-dt / 1.0);
+    gx += (ag.x - gx) * k;
+    gy += (ag.y - gy) * k;
+    gz += (ag.z - gz) * k;
+
+    // 第一次拿到稳定重力后，标定为零点
+    if (!calReady) {
+      gx0 = gx; gy0 = gy; gz0 = gz;
+      calReady = true;
+      return;
+    }
+
+    // 相对重力变化：手机相对"标定姿态"倾斜了多少
+    const dgx = gx - gx0;
+    const dgy = gy - gy0;
+    const dgz = gz - gz0;
+
+    // 映射到相机偏移
+    // dgx：手机左右倾斜 → 相机 X
+    // dgy：手机上下倾斜 → 相机 Y
+    // dgz：手机前后倾斜 → 相机 Z（推近拉远）
+    let tx = -dgx * GAIN_X;
+    let ty = -dgy * GAIN_Y;
+    let tz =  dgz * GAIN_Z;
+
+    tx = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, tx));
+    ty = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, ty));
+    tz = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, tz));
+
+    camX = tx;
+    camY = ty;
+    camZ = tz;
+  }
+
+  /* ============ 权限 ============ */
+  function needsPerm() {
+    return typeof DeviceMotionEvent !== 'undefined' &&
+           typeof DeviceMotionEvent.requestPermission === 'function';
+  }
+
+  function bind() {
+    window.addEventListener('devicemotion', onMotion, { passive: true });
+    permEl.classList.add('hide');
+    hintEl.textContent = '倾斜手机 → 立方体跟着动';
+  }
+
+  if (!needsPerm()) {
+    bind();
+  } else {
+    permEl.addEventListener('click', function () {
+      DeviceMotionEvent.requestPermission().then(bind).catch(function () {
+        permEl.querySelector('.btn').textContent = '授权失败 · 刷新重试';
+      });
+    });
+  }
+
+  /* ============ 主循环 ============ */
+  // 平滑位置
+  let px = 0, py = 0, pz = 0;
+
+  function loop() {
+    requestAnimationFrame(loop);
+
+    // 平滑跟随
+    px += (camX - px) * 0.15;
+    py += (camY - py) * 0.15;
+    pz += (camZ - pz) * 0.15;
+
+    camera.position.set(px, py, pz);
+    camera.lookAt(px, py, pz - 1);
+
+    renderer.render(scene, camera);
+  }
+  loop();
+
+})();
+</script>
+</body>
+</html>

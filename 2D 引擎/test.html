@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>甜瓜人 · 布娃娃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    background: #6b7d80;
+    overflow: hidden;
+    font-family: system-ui, sans-serif;
+  }
+  #world {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+  /* 每个身体部件 */
+  .part {
+    position: absolute;
+    background: #6b8e23;
+    border: 3px solid #4a6318;
+    border-radius: 3px;
+    box-sizing: border-box;
+    /* 让质心旋转看起来更自然 */
+    transform-origin: center center;
+    will-change: transform;
+  }
+  /* 头部 */
+  .part.head { background: #6b8e23; }
+  .eye {
+    position: absolute;
+    width: 7px; height: 7px;
+    background: #000;
+    border-radius: 1px;
+    right: 20%;
+    top: 35%;
+  }
+  /* 脖子、胯部：深一点 */
+  .part.neck, .part.hip {
+    background: #5a7a1e;
+  }
+  /* 躯干纹理 */
+  .part.torso::before,
+  .part.torso::after {
+    content: '';
+    position: absolute;
+    top: 10%; bottom: 10%;
+    width: 3px;
+    background: #4a6318;
+    border-radius: 1px;
+  }
+  .part.torso::before { left: 22%; }
+  .part.torso::after  { right: 22%; }
+
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    color: #e8f0e0;
+    background: rgba(0,0,0,0.35);
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="world"></div>
+<div class="hint">拖动任意部位 · 摔打甜瓜人</div>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+const { Engine, Runner, World, Bodies, Body, Composite, Constraint, Mouse, MouseConstraint, Events } = Matter;
+
+// ---------- 引擎 ----------
+const engine = Engine.create();
+engine.gravity.y = 1;
+const world = engine.world;
+
+// ---------- 地面 & 墙 ----------
+const W = window.innerWidth;
+const H = window.innerHeight;
+
+const ground = Bodies.rectangle(W / 2, H - 30, W, 60, {
+  isStatic: true,
+  friction: 0.8,
+  render: { visible: false }
+});
+// 左右墙，防止跑出屏幕
+const wallL = Bodies.rectangle(-30, H / 2, 60, H * 2, { isStatic: true, render: { visible: false } });
+const wallR = Bodies.rectangle(W + 30, H / 2, 60, H * 2, { isStatic: true, render: { visible: false } });
+
+Composite.add(world, [ground, wallL, wallR]);
+
+// ---------- 甜瓜人尺寸 ----------
+// 每个部件：{ w, h, x, y, name }
+// 以屏幕中心为基准摆放
+const baseX = W / 2;
+const baseY = H - 400;
+
+const parts = [
+  { name: 'head',  w: 80,  h: 72,  x: baseX,      y: baseY + 40  },
+  { name: 'neck',  w: 34,  h: 14,  x: baseX,      y: baseY + 83  },
+  { name: 'torso', w: 64,  h: 100, x: baseX,      y: baseY + 140 },
+  { name: 'armL',  w: 28,  h: 80,  x: baseX - 46, y: baseY + 145 },
+  { name: 'armR',  w: 28,  h: 80,  x: baseX + 46, y: baseY + 145 },
+  { name: 'hip',   w: 56,  h: 16,  x: baseX,      y: baseY + 198 },
+  { name: 'legL',  w: 30,  h: 110, x: baseX - 22, y: baseY + 260 },
+  { name: 'legR',  w: 30,  h: 110, x: baseX + 22, y: baseY + 260 },
+  { name: 'footL', w: 44,  h: 22,  x: baseX - 32, y: baseY + 322 },
+  { name: 'footR', w: 44,  h: 22,  x: baseX + 32, y: baseY + 322 },
+];
+
+// 关节连接定义：哪两个部件、在哪个点连接
+// pointA / pointB 是相对于各自刚体中心的偏移
+const joints = [
+  // 头 - 脖子
+  { a: 'head',  b: 'neck',  pa: { x: 0, y: 36 },  pb: { x: 0, y: -7 },  len: 0, stiff: 0.9 },
+  // 脖子 - 躯干
+  { a: 'neck',  b: 'torso', pa: { x: 0, y: 7 },   pb: { x: 0, y: -50 }, len: 0, stiff: 0.9 },
+  // 躯干 - 左臂（肩）
+  { a: 'torso', b: 'armL',  pa: { x: -32, y: -40 }, pb: { x: 0, y: -40 }, len: 0, stiff: 0.6 },
+  // 躯干 - 右臂（肩）
+  { a: 'torso', b: 'armR',  pa: { x: 32, y: -40 },  pb: { x: 0, y: -40 }, len: 0, stiff: 0.6 },
+  // 躯干 - 胯
+  { a: 'torso', b: 'hip',   pa: { x: 0, y: 50 },   pb: { x: 0, y: -8 },   len: 0, stiff: 0.9 },
+  // 胯 - 左腿（髋）
+  { a: 'hip',   b: 'legL',  pa: { x: -20, y: 8 },  pb: { x: 0, y: -55 },  len: 0, stiff: 0.7 },
+  // 胯 - 右腿（髋）
+  { a: 'hip',   b: 'legR',  pa: { x: 20, y: 8 },   pb: { x: 0, y: -55 },  len: 0, stiff: 0.7 },
+  // 左腿 - 左脚（踝）
+  { a: 'legL',  b: 'footL', pa: { x: 0, y: 55 },   pb: { x: 0, y: -11 },  len: 0, stiff: 0.8 },
+  // 右腿 - 右脚（踝）
+  { a: 'legR',  b: 'footR', pa: { x: 0, y: 55 },   pb: { x: 0, y: -11 },  len: 0, stiff: 0.8 },
+];
+
+// ---------- 创建刚体 + DOM ----------
+const worldEl = document.getElementById('world');
+const bodyMap = {};   // name -> Matter body
+const domMap = {};    // name -> DOM element
+
+parts.forEach(p => {
+  // 物理刚体
+  const body = Bodies.rectangle(p.x, p.y, p.w, p.h, {
+    friction: 0.5,
+    frictionAir: 0.01,
+    restitution: 0.1,
+    density: 0.002,
+    chamfer: { radius: 3 },
+  });
+  bodyMap[p.name] = body;
+  Composite.add(world, body);
+
+  // DOM 元素
+  const el = document.createElement('div');
+  el.className = 'part ' + p.name;
+  el.style.width  = p.w + 'px';
+  el.style.height = p.h + 'px';
+  if (p.name === 'head') {
+    const eye = document.createElement('div');
+    eye.className = 'eye';
+    el.appendChild(eye);
+  }
+  worldEl.appendChild(el);
+  domMap[p.name] = el;
+});
+
+// ---------- 创建约束 ----------
+joints.forEach(j => {
+  const bodyA = bodyMap[j.a];
+  const bodyB = bodyMap[j.b];
+  const constraint = Constraint.create({
+    bodyA,
+    bodyB,
+    pointA: j.pa,
+    pointB: j.pb,
+    length: j.len,
+    stiffness: j.stiff,
+    damping: 0.1,
+    render: { visible: false }
+  });
+  Composite.add(world, constraint);
+});
+
+// ---------- 鼠标拖拽 ----------
+const mouse = Mouse.create(worldEl);
+const mouseConstraint = MouseConstraint.create(engine, {
+  mouse,
+  constraint: {
+    stiffness: 0.2,
+    render: { visible: false }
+  }
+});
+Composite.add(world, mouseConstraint);
+
+// 防止页面滚动
+mouse.element.removeEventListener('wheel', mouse.mousewheel);
+mouse.element.addEventListener('wheel', e => e.preventDefault(), { passive: false });
+
+// ---------- 同步 DOM 位置到物理刚体 ----------
+function syncDOM() {
+  parts.forEach(p => {
+    const body = bodyMap[p.name];
+    const el = domMap[p.name];
+    const { x, y } = body.position;
+    const angle = body.angle;
+    // 元素以左上角为原点，需要减去半宽半高
+    el.style.transform =
+      `translate(${x - p.w / 2}px, ${y - p.h / 2}px) rotate(${angle}rad)`;
+  });
+}
+
+// 每帧更新
+Events.on(engine, 'afterUpdate', syncDOM);
+
+// ---------- 启动 ----------
+const runner = Runner.create();
+Runner.run(runner, engine);
+
+// 初始同步一次
+syncDOM();
+
+// 窗口 resize 时刷新地面
+window.addEventListener('resize', () => {
+  const nw = window.innerWidth;
+  const nh = window.innerHeight;
+  Body.setPosition(ground, { x: nw / 2, y: nh - 30 });
+  Body.setPosition(wallR, { x: nw + 30, y: nh / 2 });
+});
+</script>
+</body>
+</html>

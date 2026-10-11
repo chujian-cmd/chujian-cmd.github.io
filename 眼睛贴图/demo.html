@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>眼睛贴图 Demo</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; background: #f5f5f5; }
+  canvas { border: 1px solid #ccc; max-width: 100%; }
+  #log { margin-top: 10px; color: #555; font-size: 14px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<h2>眼睛贴图 Demo（YuNet + ONNX Runtime Web）</h2>
+
+<canvas id="canvas"></canvas>
+<div id="log">加载中…</div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+<script>
+// ===== 占位符：替换成你的实际内容 =====
+const MODEL_URL   = "face_detection_yunet_2023mar.onnx"; // 模型路径或 URL
+const IMAGE_B64   = "<BASE64_IMAGE_PLACEHOLDER>";        // base64 图片（不含 data:image 前缀）
+const STICKER_URL = "sticker.png";                        // 贴纸图片路径（建议带透明通道）
+
+const INPUT_SIZE = 320;
+const CONF_THRESHOLD = 0.9;
+const NMS_THRESHOLD  = 0.3;
+
+const log = (msg) => document.getElementById("log").textContent = msg;
+
+// ===== 工具：base64 → Image =====
+function b64ToImage(b64) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = "data:image/jpeg;base64," + b64;
+  });
+}
+
+// ===== 工具：图片 → 归一化张量 [1,3,H,W] =====
+function imageToTensor(img, size) {
+  const c = document.createElement("canvas");
+  c.width = size; c.height = size;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0, size, size);
+  const { data } = ctx.getImageData(0, 0, size, size);
+  const f = new Float32Array(3 * size * size);
+  for (let i = 0; i < size * size; i++) {
+    f[i]              = data[i * 4];       // R
+    f[i + size*size]  = data[i * 4 + 1];   // G
+    f[i + size*size*2]= data[i * 4 + 2];   // B
+  }
+  return new ort.Tensor("float32", f, [1, 3, size, size]);
+}
+
+// ===== 工具：NMS =====
+function nms(boxes, scores, thr) {
+  const idx = scores.map((s, i) => i).sort((a, b) => scores[b] - scores[a]);
+  const keep = [];
+  while (idx.length) {
+    const i = idx.shift();
+    keep.push(i);
+    for (let j = idx.length - 1; j >= 0; j--) {
+      const k = idx[j];
+      const x1 = Math.max(boxes[i][0], boxes[k][0]);
+      const y1 = Math.max(boxes[i][1], boxes[k][1]);
+      const x2 = Math.min(boxes[i][2], boxes[k][2]);
+      const y2 = Math.min(boxes[i][3], boxes[k][3]);
+      const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+      const areaI = (boxes[i][2]-boxes[i][0]) * (boxes[i][3]-boxes[i][1]);
+      const areaK = (boxes[k][2]-boxes[k][0]) * (boxes[k][3]-boxes[k][1]);
+      if (inter / (areaI + areaK - inter) > thr) idx.splice(j, 1);
+    }
+  }
+  return keep;
+}
+
+// ===== 主流程 =====
+async function main() {
+  log("加载模型…");
+  const session = await ort.InferenceSession.create(MODEL_URL, {
+    executionProviders: ["wasm"]
+  });
+
+  log("解码图片…");
+  const img = await b64ToImage(IMAGE_B64);
+  const tensor = imageToTensor(img, INPUT_SIZE);
+
+  log("推理中…");
+  const feeds = {};
+  feeds[session.inputNames[0]] = tensor;
+  const out = await session.run(feeds);
+
+  // YuNet 输出：cls / obj / bbox / kps 四组
+  // 简化处理：按输出名顺序拼接
+  const names = session.outputNames;
+  const dataMap = {};
+  for (const n of names) dataMap[n] = out[n].data;
+
+  log("输出节点: " + names.join(", "));
+
+  // ⚠️ 实际解码需按 YuNet 官方后处理（priorbox + 解码 + NMS）
+  // 这里仅示意流程，真实项目建议用 opencv.js 或参考官方 Python 后处理
+  log("推理完成。请根据 YuNet 官方后处理解析双眼坐标。");
+}
+
+main().catch(e => log("出错: " + e.message));
+</script>
+</body>
+</html>

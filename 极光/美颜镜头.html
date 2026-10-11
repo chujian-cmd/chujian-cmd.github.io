@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>美颜镜头 Beauty</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0a0b10;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(10,11,16,.85),rgba(10,11,16,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(255,154,200,.24);border-color:rgba(255,154,200,.6);color:#ffe4f0}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+  #cam{position:fixed;top:64px;left:50%;transform:translateX(-50%);
+    display:none;gap:8px;z-index:11;font:13px -apple-system,"PingFang SC",sans-serif}
+  #cam.show{display:flex}
+  #cam .cbtn{height:38px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.2);
+    background:rgba(20,22,30,.85);color:#eef1ff;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+  #cam .cbtn.on{background:rgba(255,154,200,.24);border-color:rgba(255,154,200,.6);color:#ffe4f0}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <div class="mode">美颜镜头 <b id="m">自然</b></div>
+  <button class="btn" id="btn-preset">换预设</button>
+  <button class="btn" id="btn-text">换文字</button>
+  <button class="btn" id="btn-upload">上传图片</button>
+  <button class="btn pri" id="btn-cam">开摄像头</button>
+</div>
+<div id="cam">
+  <button class="cbtn" id="btn-split">对比分屏</button>
+  <button class="cbtn" id="btn-camclose">关闭摄像头</button>
+</div>
+<div id="hint">磨皮 · 美白 · 红润 · 锐化（肤色识别保边）</div>
+<input id="file" type="file" accept="image/*" style="display:none">
+
+<script>
+(function () {
+  'use strict';
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+
+  var CFG = {
+    text: 'AURORA', weight: 900,
+    font: '"PingFang SC","Microsoft YaHei","Heiti SC",sans-serif',
+    smooth: 0.45, whiten: 0.25, rosy: 0.25, sharpen: 0.35,
+    skinGuard: 0.85, skinRange: 0.4, showMask: false,
+    quality: 720, split: false, splitPos: 0.5,
+    background: '#0a0b10'
+  };
+
+  var PRESETS = [
+    { text: 'AURORA', smooth: 0.45, whiten: 0.25, rosy: 0.25, sharpen: 0.35, split: false },
+    { text: '清透',   smooth: 0.6,  whiten: 0.5,  rosy: 0.2,  sharpen: 0.4,  split: false },
+    { text: '网红',   smooth: 0.9,  whiten: 0.7,  rosy: 0.45, sharpen: 0.5,  split: false },
+    { text: '对比',   smooth: 0.7,  whiten: 0.45, rosy: 0.35, split: true,  splitPos: 0.5 }
+  ];
+  var presetIdx = 0;
+
+  var W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var dirty = true, sig = '';
+  var maskCanvas = document.createElement('canvas');
+  var mctx = maskCanvas.getContext('2d', { willReadFrequently: true });
+  var maskData = null, maskKey = '';
+
+  function buildMask() {
+    if (!W || !H) return;
+    var key = CFG.text + '|' + W + 'x' + H + '|' + CFG.weight + '|' + CFG.font;
+    if (key === maskKey && maskData) return;
+    maskKey = key;
+    maskCanvas.width = W; maskCanvas.height = H;
+    mctx.clearRect(0, 0, W, H);
+    mctx.fillStyle = '#fff';
+    mctx.textAlign = 'center'; mctx.textBaseline = 'middle';
+    var lines = CFG.text.split('\n').filter(function (l) { return l.length > 0; });
+    if (!lines.length) { maskData = mctx.getImageData(0, 0, W, H).data; return; }
+    var maxW = W * 0.9, maxH = H * 0.86;
+    var lh = maxH / lines.length;
+    var size = Math.floor(lh * 0.84);
+    var setF = function (s) { mctx.font = CFG.weight + ' ' + s + 'px ' + CFG.font; };
+    setF(size);
+    var widest = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var m = mctx.measureText(lines[i]).width;
+      if (m > widest) widest = m;
+    }
+    if (widest > maxW) { size = Math.max(6, Math.floor(size * maxW / widest)); setF(size); }
+    var totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) { size = Math.max(6, Math.floor(size * maxH / totalH)); setF(size); }
+    var startY = H / 2 - (lines.length - 1) * size * 1.15 / 2;
+    for (var j = 0; j < lines.length; j++) mctx.fillText(lines[j], W / 2, startY + j * size * 1.15);
+    maskData = mctx.getImageData(0, 0, W, H).data;
+  }
+
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+  // ---------- 摄像头 ----------
+  var video = null, stream = null;
+
+  async function openCamera() {
+    if (stream) return true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false
+      });
+      video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true; video.playsInline = true; video.autoplay = true;
+      video.style.display = 'none';
+      document.body.appendChild(video);
+      await video.play().catch(() => {});
+      document.getElementById('cam').classList.add('show');
+      document.getElementById('btn-cam').textContent = '摄像头开';
+      document.getElementById('btn-cam').classList.add('on');
+      dirty = true;
+      return true;
+    } catch (e) {
+      stream = null; video = null;
+      alert('摄像头不可用：请检查系统权限');
+      return false;
+    }
+  }
+
+  function closeCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); }
+    if (video) { video.pause(); video.remove(); }
+    stream = null; video = null;
+    document.getElementById('cam').classList.remove('show');
+    document.getElementById('btn-cam').textContent = '开摄像头';
+    document.getElementById('btn-cam').classList.remove('on');
+    dirty = true;
+  }
+
+  // ---------- 图片来源 ----------
+  var img = null;
+  document.getElementById('file').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var url = URL.createObjectURL(f);
+    var im = new Image();
+    im.onload = function () {
+      img = im;
+      closeCamera();
+      dirty = true;
+    };
+    im.src = url;
+  });
+
+  function sourceEl() {
+    if (video && video.readyState >= 2) return { el: video, w: video.videoWidth, h: video.videoHeight };
+    if (img && img.naturalWidth) return { el: img, w: img.naturalWidth, h: img.naturalHeight };
+    return null;
+  }
+
+  // ---------- 核心：美颜 ----------
+  // 1. 表面模糊：对小图做模糊，只在肤色区按皮肤保护权重混合 → 磨皮不糊五官
+  // 2. 提亮幂曲线 → 美白
+  // 3. 肤色区偏暖粉 → 红润
+  // 4. 原图 - 模糊 = 高频细节，加权加回 → 锐化
+
+  var srcCanvas = document.createElement('canvas');
+  var srcCtx = srcCanvas.getContext('2d', { willReadFrequently: true });
+  var blurCanvas = document.createElement('canvas');
+  var blurCtx = blurCanvas.getContext('2d');
+  var tmpCanvas = document.createElement('canvas');
+  var tmpCtx = tmpCanvas.getContext('2d');
+  var outCanvas = document.createElement('canvas');
+  var outCtx = outCanvas.getContext('2d');
+  var outImgData = null;
+
+  function drawSourceTo(c, x, y, w, h) {
+    var s = sourceEl();
+    if (s) {
+      try {
+        c.save();
+        // 摄像头默认镜像
+        if (video && video === s.el) {
+          c.translate(x + w, y);
+          c.scale(-1, 1);
+          c.drawImage(s.el, 0, 0, w, h);
+        } else {
+          c.drawImage(s.el, x, y, w, h);
+        }
+        c.restore();
+        return true;
+      } catch (e) {}
+    }
+    // 没有源：用文字 mask 当图片
+    buildMask();
+    c.save();
+    // maskCanvas 已经是屏幕大小，画的时候要按比例缩
+    c.drawImage(maskCanvas, 0, 0, W, H, x, y, w, h);
+    c.restore();
+    return false;
+  }
+
+  function processBeauty() {
+    var q = Math.max(2, Math.round(CFG.quality || 720));
+    var asp = W / H, gw, gh;
+    if (asp >= 1) { gw = q; gh = Math.max(2, Math.round(q / asp)); }
+    else { gh = q; gw = Math.max(2, Math.round(q * asp)); }
+
+    srcCanvas.width = gw; srcCanvas.height = gh;
+    srcCtx.setTransform(1, 0, 0, 1, 0, 0);
+    srcCtx.clearRect(0, 0, gw, gh);
+    drawSourceTo(srcCtx, 0, 0, gw, gh);
+
+    // 模糊：缩到 1/4 再放回
+    var bw = Math.max(2, gw >> 2), bh = Math.max(2, gh >> 2);
+    blurCanvas.width = bw; blurCanvas.height = bh;
+    blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+    blurCtx.imageSmoothingEnabled = true;
+    blurCtx.drawImage(srcCanvas, 0, 0, bw, bh);
+    // 双次下采再上采，得到柔和表面
+    var bw2 = Math.max(2, bw >> 1), bh2 = Math.max(2, bh >> 1);
+    tmpCanvas.width = bw2; tmpCanvas.height = bh2;
+    tmpCtx.imageSmoothingEnabled = true;
+    tmpCtx.drawImage(blurCanvas, 0, 0, bw2, bh2);
+    blurCtx.drawImage(tmpCanvas, 0, 0, bw, bh);
+
+    // 获取像素
+    var srcD = srcCtx.getImageData(0, 0, gw, gh).data;
+    blurCanvas.width = gw; blurCanvas.height = gh;
+    blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+    blurCtx.imageSmoothingEnabled = true;
+    blurCtx.drawImage(tmpCanvas, 0, 0, gw, gh);
+    var blurD = blurCtx.getImageData(0, 0, gw, gh).data;
+
+    if (!outImgData || outCanvas.width !== gw || outCanvas.height !== gh) {
+      outCanvas.width = gw; outCanvas.height = gh;
+      outImgData = outCtx.createImageData(gw, gh);
+    }
+    var outD = outImgData.data;
+    var n = gw * gh;
+
+    var smooth = CFG.smooth;
+    var whiten = CFG.whiten;
+    var rosy = CFG.rosy;
+    var sharpen = CFG.sharpen;
+    var skinGuard = CFG.skinGuard;
+    var skinRange = CFG.skinRange;
+    var showMask = CFG.showMask;
+
+    // 美白 LUT（幂曲线）
+    var kW = 1 + whiten * 4;
+    var lutW;
+    if (whiten > 0.005) {
+      lutW = new Uint8Array(256);
+      var invW = 1 / Math.log(kW);
+      for (var t = 0; t < 256; t++) {
+        lutW[t] = clamp(Math.round(255 * Math.log(t / 255 * (kW - 1) + 1) * invW), 0, 255);
+      }
+    }
+
+    var skinR = 1 + skinRange * 0.8;
+
+    for (var i = 0; i < n; i++) {
+      var j = i * 4;
+      var r = srcD[j], g = srcD[j + 1], b = srcD[j + 2];
+      var br = blurD[j], bg = blurD[j + 1], bb = blurD[j + 2];
+
+      // 肤色检测（YCbCr 简易模型）
+      var Y = 0.299 * r + 0.587 * g + 0.114 * b;
+      var Cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+      var Cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+      var dCb = (Cb - 102) / (25 * skinR);
+      var dCr = (Cr - 153) / (20 * skinR);
+      var dist2 = dCb * dCb + dCr * dCr;
+      var skin = dist2 < 1 ? 1 - dist2 * dist2 : 0;
+      skin = skin * skinGuard + (1 - skinGuard); // 混合：>0.85 就是强保护
+
+      if (showMask) {
+        outD[j] = 255 * skin;
+        outD[j + 1] = 60 + 150 * skin;
+        outD[j + 2] = 80;
+        outD[j + 3] = 255;
+        continue;
+      }
+
+      // 磨皮：皮肤区往模糊靠
+      if (smooth > 0.005) {
+        var L = 0.299 * r + 0.587 * g + 0.114 * b;
+        var Lb = 0.299 * br + 0.587 * bg + 0.114 * bb;
+        // 保边：原图与模糊差异过大时不混（发丝/眼睛）
+        var edge = Math.abs(L - Lb);
+        var edgeK = (edge - 10) / 35;
+        edgeK = edgeK < 0 ? 0 : edgeK > 1 ? 1 : edgeK;
+        var w = smooth * skin * (1 - edgeK * edgeK);
+        r += (br - r) * w;
+        g += (bg - g) * w;
+        b += (bb - b) * w;
+      }
+
+      // 锐化：原图 - 模糊 的高频
+      if (sharpen > 0.005) {
+        var kS = sharpen * 0.55;
+        r += (srcD[j] - br) * kS;
+        g += (srcD[j + 1] - bg) * kS;
+        b += (srcD[j + 2] - bb) * kS;
+      }
+
+      // 美白
+      if (whiten > 0.005) {
+        var skW = 0.4 + 0.6 * skin;
+        r += (lutW[clamp(r | 0, 0, 255)] - r) * skW;
+        g += (lutW[clamp(g | 0, 0, 255)] - g) * skW;
+        b += (lutW[clamp(b | 0, 0, 255)] - b) * skW;
+      }
+
+      // 红润
+      if (rosy > 0.005) {
+        var skR = rosy * skin;
+        r += (255 - r) * skR * 0.16;
+        g -= g * skR * 0.018;
+        b -= b * skR * 0.03;
+      }
+
+      outD[j]     = clamp(r, 0, 255);
+      outD[j + 1] = clamp(g, 0, 255);
+      outD[j + 2] = clamp(b, 0, 255);
+      outD[j + 3] = 255;
+    }
+    outCtx.putImageData(outImgData, 0, 0);
+    return { gw: gw, gh: gh };
+  }
+
+  function drawFrame() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = CFG.background;
+    ctx.fillRect(0, 0, W, H);
+
+    var s = sourceEl();
+    // 没有源：直接画 mask 文字，标个字
+    if (!s) {
+      buildMask();
+      ctx.drawImage(maskCanvas, 0, 0, W, H);
+      ctx.font = '500 14px -apple-system,"PingFang SC",sans-serif';
+      ctx.fillStyle = 'rgba(200,206,220,0.7)';
+      ctx.textAlign = 'center';
+      ctx.fillText('点「上传图片」或「开摄像头」开始美颜', W / 2, H - 40);
+      return;
+    }
+
+    // 处理
+    var dims = processBeauty();
+
+    // 显示：源 + 处理叠加（不透明遮住源）；分屏时切一半原图
+    var asp = W / H, dw, dh;
+    var srcAsp = dims.gw / dims.gh;
+    if (srcAsp >= asp) { dw = W; dh = W / srcAsp; }
+    else { dh = H; dw = H * srcAsp; }
+    var dx = (W - dw) / 2, dy = (H - dh) / 2;
+
+    if (CFG.split) {
+      var splitX = clamp(CFG.splitPos, 0.05, 0.95) * W;
+      // 左侧原图
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, splitX, H);
+      ctx.clip();
+      drawRawTo(ctx, dx, dy, dw, dh);
+      ctx.restore();
+      // 右侧处理
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(splitX, 0, W - splitX, H);
+      ctx.clip();
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(outCanvas, dx, dy, dw, dh);
+      ctx.restore();
+      // 分割线
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(splitX, 0);
+      ctx.lineTo(splitX, H);
+      ctx.stroke();
+      // 标签
+      var fs = Math.max(11, dh * 0.024);
+      ctx.font = '600 ' + fs + 'px -apple-system,"PingFang SC",sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.textAlign = 'right';
+      ctx.fillText('原图', splitX - 10, dy + 10);
+      ctx.textAlign = 'left';
+      ctx.fillText('美颜', splitX + 10, dy + 10);
+    } else {
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(outCanvas, dx, dy, dw, dh);
+    }
+  }
+
+  function drawRawTo(c, x, y, w, h) {
+    var s = sourceEl();
+    if (!s) return;
+    try {
+      if (video && video === s.el) {
+        c.save();
+        c.translate(x + w, y);
+        c.scale(-1, 1);
+        c.drawImage(s.el, 0, 0, w, h);
+        c.restore();
+      } else {
+        c.drawImage(s.el, x, y, w, h);
+      }
+    } catch (e) {}
+  }
+
+  function render() {
+    if (!W || !H) { requestAnimationFrame(render); return; }
+    var key = W + 'x' + H + '@' + dpr + '|' +
+              CFG.smooth + '|' + CFG.whiten + '|' + CFG.rosy + '|' + CFG.sharpen + '|' +
+              CFG.skinGuard + '|' + CFG.skinRange + '|' + CFG.showMask + '|' +
+              CFG.quality + '|' + CFG.split + '|' + CFG.splitPos + '|' +
+              (video ? 'v' + video.currentTime : img ? 'img' + img.src : 'none') + '|' +
+              CFG.background;
+    // 摄像头/视频每帧都变
+    var isLive = !!video;
+    if (dirty || key !== sig || isLive) {
+      drawFrame();
+      sig = key; dirty = false;
+    }
+    requestAnimationFrame(render);
+  }
+
+  // ---------- 交互：分屏拖动 ----------
+  var dragSplit = false;
+  cv.addEventListener('pointerdown', function (e) {
+    if (!CFG.split) return;
+    dragSplit = true;
+    CFG.splitPos = clamp(e.clientX / W, 0.05, 0.95);
+    dirty = true;
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!dragSplit) return;
+    CFG.splitPos = clamp(e.clientX / W, 0.05, 0.95);
+    dirty = true;
+  });
+  window.addEventListener('pointerup', function () { dragSplit = false; });
+
+  // ---------- UI ----------
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-preset').addEventListener('click', function () {
+    presetIdx = (presetIdx + 1) % PRESETS.length;
+    var p = PRESETS[presetIdx];
+    for (var k in p) if (p.hasOwnProperty(k)) CFG[k] = p[k];
+    mLabel.textContent = p.text;
+    dirty = true;
+  });
+
+  var CONTENTS = ['AURORA', '美颜', 'BEAUTY', '自然', '光', '⚡'];
+  var contentIdx = 0;
+  document.getElementById('btn-text').addEventListener('click', function () {
+    contentIdx = (contentIdx + 1) % CONTENTS.length;
+    CFG.text = CONTENTS[contentIdx];
+    maskData = null; maskKey = ''; dirty = true;
+  });
+
+  document.getElementById('btn-upload').addEventListener('click', function () {
+    document.getElementById('file').click();
+  });
+
+  document.getElementById('btn-cam').addEventListener('click', function () {
+    if (stream) { closeCamera(); } else { openCamera(); }
+  });
+
+  document.getElementById('btn-camclose').addEventListener('click', closeCamera);
+
+  document.getElementById('btn-split').addEventListener('click', function () {
+    CFG.split = !CFG.split;
+    this.classList.toggle('on', CFG.split);
+    dirty = true;
+  });
+
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

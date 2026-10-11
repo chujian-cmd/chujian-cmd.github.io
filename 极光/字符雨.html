@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>字符雨 Matrix</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #020604;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(2,6,4,0.7), rgba(2,6,4,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(57,255,143,0.22); border-color: rgba(57,255,143,0.6); color: #eafff2; }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #3c5a48;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">Matrix <b id="m">经典绿雨</b></div>
+  <button class="btn" id="btn-change">换配色</button>
+  <button class="btn pri" id="btn-charset">换字符</button>
+</div>
+
+<div id="hint">点击屏幕 = 切换配色 / 字符集</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ========== 参数 ==========
+  const CFG = {
+    text: 'AURORA\n矩阵',       // 要显形的文字（支持换行）
+    charset: 'katakana',        // 字符类型
+    cell: isMobile ? 14 : 16,   // 字号 / 字符格大小
+    speed: 12,                  // 下落速度
+    density: 0.85,              // 雨帘密度（有雨的列占比）
+    trail: 18,                  // 拖尾长度（字符数）
+    churn: 7,                   // 字符翻动速度
+    headGlow: 0.6,              // 首字辉光
+    revealGlow: 0.7,            // 显字辉光
+    rainColor: '#39ff8f',
+    textColor: '#eafff2',
+    background: '#020604'
+  };
+
+  // ========== 字符集 ==========
+  const split = s => s.split('').filter(c => c.trim().length > 0);
+  const CHARSETS = {
+    katakana: split('アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ'),
+    binary: split('01'),
+    digits: split('0123456789'),
+    latin: split('ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
+    korean: split('가나다라마바사아자차카타파하거너더러머버서어저처커터퍼허고노도로모보소오조초코토포호구누두루무부수우주ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㅏㅑㅓㅕㅗㅛㅜㅠㅡㅣ'),
+    chinese: split('零一二三四五六七八九十百千万天地玄黄日月星辰山水风云雷电光影时空梦幻龙虎神秘矩阵源码流数据潮汐律动'),
+    strokes: split('一丨丿丶乙亅乛乚㇀㇁㇂㇃㇄㇅㇆㇇㇈㇉㊊㇋㇌㇍㇎㇏㇐㇑㇒㇓㇔㇕㇖㇗㇘㇙㇚㇛㇜㇝㇞㇟㇠㇡㇢㇣'),
+    symbols: split('<>+=*/|:;·—…※◇◆●○□■△▽←→↑↓★☆♦♠♣♥§¥$€@#%&✦✧⚡◢◣◤◥')
+  };
+  CHARSETS.mixed = [
+    ...CHARSETS.katakana, ...CHARSETS.binary, ...CHARSETS.digits,
+    ...CHARSETS.latin, ...CHARSETS.korean, ...CHARSETS.chinese,
+    ...CHARSETS.strokes, ...CHARSETS.symbols
+  ];
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildGrid();
+  }
+
+  // ========== 网格 ==========
+  let cols = 0, rows = 0;
+  let phase = [];      // 每列的坠落相位
+  let rate = [];       // 每列的速度系数
+  let active = [];     // 每列是否有雨
+
+  function buildGrid() {
+    const cell = CFG.cell;
+    cols = Math.max(2, Math.floor(W / cell));
+    rows = Math.max(2, Math.floor(H / cell));
+    phase = new Array(cols);
+    rate = new Array(cols);
+    active = new Array(cols);
+    const rng = makeRng(7919);
+    for (let i = 0; i < cols; i++) {
+      phase[i] = rng() * (rows + 40);
+      rate[i] = 0.55 + rng() * 0.9;
+      active[i] = rng() < CFG.density;
+    }
+  }
+
+  // 简单可重现随机
+  function makeRng(seed) {
+    let s = seed | 0;
+    return () => {
+      s = Math.imul(s ^ (s >>> 15), 1 | s);
+      s = (s + Math.imul(s ^ (s >>> 7), 61 | s)) ^ s;
+      return ((s ^ (s >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function hash01(n) {
+    let x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+    return x - Math.floor(x);
+  }
+  function hashInt(n) {
+    let t = (n | 0) ^ 2654435769;
+    t = Math.imul(t ^ (t >>> 16), 73244475);
+    t = Math.imul(t ^ (t >>> 16), 73244475);
+    return (t ^ (t >>> 16)) | 0;
+  }
+
+  // ========== 文字栅格化：算出每个格子是否属于"要显形的文字" ==========
+  let textMask = null;   // cols × rows 的 0/1 数组
+
+  function rasterizeText() {
+    const cell = CFG.cell;
+    // 用一个更大的临时 canvas 来测字符位置
+    const smallW = cols;
+    const smallH = rows;
+    const tc = document.createElement('canvas');
+    tc.width = smallW;
+    tc.height = smallH;
+    const g = tc.getContext('2d', { willReadFrequently: true });
+    g.clearRect(0, 0, smallW, smallH);
+    g.fillStyle = '#fff';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+
+    const lines = (CFG.text || 'AURORA').split('\n').filter(l => l.length > 0);
+    if (!lines.length) { textMask = new Uint8Array(smallW * smallH); return; }
+
+    const maxW = smallW * 0.9;
+    const maxH = smallH * 0.9;
+    // 按网格单位估算字号
+    let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+    const setFont = s => { g.font = `700 ${s}px ui-monospace, monospace`; };
+    setFont(size);
+    let widest = 0;
+    for (const l of lines) widest = Math.max(widest, g.measureText(l).width);
+    if (widest > maxW) {
+      size = Math.max(3, Math.floor(size * maxW / widest));
+      setFont(size);
+    }
+    const totalH = size * 1.15 * lines.length;
+    if (totalH > maxH) {
+      size = Math.max(3, Math.floor(size * maxH / totalH));
+      setFont(size);
+    }
+
+    const lineH = size * 1.15;
+    const startY = smallH / 2 - (lines.length - 1) * lineH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      g.fillText(lines[i], smallW / 2, startY + i * lineH);
+    }
+
+    const data = g.getImageData(0, 0, smallW, smallH).data;
+    textMask = new Uint8Array(smallW * smallH);
+    for (let i = 0; i < smallW * smallH; i++) {
+      textMask[i] = data[i * 4 + 3] > 128 ? 1 : 0;
+    }
+  }
+
+  // ========== 渲染 ==========
+  let startTime = performance.now();
+
+  function frame(now) {
+    const t = (now - startTime) / 1000;
+    const cell = CFG.cell;
+    const chars = CHARSETS[CFG.charset] ?? CHARSETS.katakana;
+    const S = chars.length;
+
+    const [r, g, b] = hex2rgb(CFG.background);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, 0, W, H);
+
+    const [rr, rg, rb] = hex2rgb(CFG.rainColor);
+    const [tr, tg, tb] = hex2rgb(CFG.textColor);
+
+    const churnFloor = Math.floor(t * CFG.churn);
+    const trailLen = Math.max(2, Math.round(CFG.trail));
+
+    // 字号
+    const fontSize = Math.max(6, cell * 1.15);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `700 ${fontSize}px ui-monospace, "SF Mono", Menlo, "Noto Sans Mono CJK SC", monospace`;
+
+    for (let c = 0; c < cols; c++) {
+      if (!active[c]) continue;
+
+      const p = ((t * CFG.speed * rate[c]) + phase[c]) % (rows + trailLen + 6);
+      const x = (c + 0.5) * cell;
+
+      for (let k = 0; k < trailLen; k++) {
+        const yIdx = Math.floor(p) - k;
+        if (yIdx < 0 || yIdx >= rows) continue;
+        const y = (yIdx + 0.5) * cell;
+
+        // 该位置的字符
+        const ch = chars[Math.abs(hashInt(c * 131 + yIdx * 17 + churnFloor)) % S];
+        const fade = k / trailLen;    // 0 = 首字，1 = 尾部
+
+        if (k === 0) {
+          // 首字：辉光
+          if (CFG.headGlow > 0) {
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = CFG.headGlow * 0.5;
+            ctx.fillStyle = `rgb(${rr},${rg},${rb})`;
+            ctx.fillText(ch, x, y);
+            ctx.globalCompositeOperation = 'source-over';
+          }
+          ctx.globalAlpha = 1;
+          const hr = Math.min(255, rr + 140);
+          const hg = Math.min(255, rg + 90);
+          const hb = Math.min(255, rb + 120);
+          ctx.fillStyle = `rgb(${hr},${hg},${hb})`;
+          ctx.fillText(ch, x, y);
+        } else {
+          ctx.globalAlpha = Math.max(0, 1 - fade) * 0.85;
+          ctx.fillStyle = `rgb(${rr},${rg},${rb})`;
+          ctx.fillText(ch, x, y);
+        }
+      }
+    }
+
+    // ---- 显形文字 ----
+    if (!textMask) rasterizeText();
+
+    // 用背景色在文字格子上打"点"，把字符雨盖住，换成清晰字符
+    if (textMask) {
+      const dotR = cell * 0.66;
+      ctx.globalCompositeOperation = 'source-over';
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (!textMask[y * cols + x]) continue;
+          const cx = (x + 0.5) * cell;
+          const cy = (y + 0.5) * cell;
+          // 背景色圆点遮住下方字符雨
+          ctx.globalAlpha = 0.82;
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.beginPath();
+          ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // 再画文字
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (!textMask[y * cols + x]) continue;
+          const cx = (x + 0.5) * cell;
+          const cy = (y + 0.5) * cell;
+          const ch = chars[Math.abs(hashInt(x * 53 + y * 29)) % S];
+
+          if (CFG.revealGlow > 0) {
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.globalAlpha = CFG.revealGlow * 0.6;
+            ctx.fillStyle = `rgb(${tr},${tg},${tb})`;
+            ctx.font = `800 ${fontSize * 1.3}px ui-monospace, monospace`;
+            ctx.fillText(ch, cx, cy);
+            ctx.font = `700 ${fontSize}px ui-monospace, monospace`;
+          }
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = 0.92 + 0.08 * hash01(x + y * 31);
+          ctx.fillStyle = `rgb(${Math.min(255, tr + 25)},${Math.min(255, tg + 25)},${Math.min(255, tb + 25)})`;
+          ctx.fillText(ch, cx, cy);
+        }
+      }
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(frame);
+  }
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+
+  // ========== 按钮 ==========
+  const mEl = document.getElementById('m');
+
+  const SCHEMES = [
+    { name: '经典绿雨', rainColor: '#39ff8f', textColor: '#eafff2', background: '#020604',
+      charset: 'katakana', speed: 12, trail: 18, headGlow: 0.6, churn: 7 },
+    { name: '二进制青', rainColor: '#22e0ff', textColor: '#ffffff', background: '#020509',
+      charset: 'binary', speed: 15, trail: 22, headGlow: 0.7, churn: 10 },
+    { name: '汉字琥珀', rainColor: '#ffb020', textColor: '#fff2d6', background: '#080502',
+      charset: 'chinese', speed: 9, trail: 14, headGlow: 0.6, churn: 5 },
+    { name: '符号品红', rainColor: '#ff3bd0', textColor: '#ffffff', background: '#070209',
+      charset: 'symbols', speed: 18, trail: 26, headGlow: 0.8, churn: 12 },
+    { name: '矩阵红', rainColor: '#ff2b4e', textColor: '#ffe0e6', background: '#0a0204',
+      charset: 'mixed', speed: 14, trail: 20, headGlow: 0.7, churn: 8 }
+  ];
+  let schemeIdx = 0;
+
+  function applyScheme(s) {
+    Object.assign(CFG, s);
+    mEl.textContent = s.name;
+    rasterizeText();
+  }
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+    applyScheme(SCHEMES[schemeIdx]);
+  });
+
+  document.getElementById('btn-charset').addEventListener('click', () => {
+    const list = Object.keys(CHARSETS);
+    const i = list.indexOf(CFG.charset);
+    CFG.charset = list[(i + 1) % list.length];
+    mEl.textContent = CFG.charset;
+  });
+
+  // 点击屏幕切换配色
+  cv.addEventListener('click', () => {
+    schemeIdx = (schemeIdx + 1) % SCHEMES.length;
+    applyScheme(SCHEMES[schemeIdx]);
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', () => {
+    resize();
+    rasterizeText();
+  });
+  window.addEventListener('orientationchange', () => setTimeout(() => {
+    resize();
+    rasterizeText();
+  }, 200));
+
+  // 等字体加载完再光栅化文字
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      rasterizeText();
+      requestAnimationFrame(frame);
+    });
+  } else {
+    setTimeout(() => {
+      rasterizeText();
+      requestAnimationFrame(frame);
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>

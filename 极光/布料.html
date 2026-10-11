@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Verlet 布料 Cloth</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #0a0b12;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(10,11,18,0.8), rgba(10,11,18,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">布料 <b id="m">丝绸</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换布料</button>
+</div>
+
+<div id="hint">拖动屏幕 = 抓住布料 · 松手回弹</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ---------- 参数 ----------
+  const CFG = {
+    cols: isMobile ? 26 : 34,        // 网格列数
+    rows: isMobile ? 20 : 24,        // 网格行数
+    gravity: 500,                     // 重力
+    wind: 30,                         // 风力（左右飘）
+    damping: 0.99,                    // 阻尼
+    stiffness: 3,                     // 每帧约束迭代次数
+    pinTop: true,                     // 顶边固定（像旗帜）
+
+    lineColor: '#7c86ff',
+    showPoints: false,
+    mouseForce: 1.0,                  // 抓取力
+    wrinkleShade: 0.55,               // 褶皱明暗
+    fabricA: '#7c86ff',
+    fabricB: '#ff7de0',
+    background: '#0a0b12'
+  };
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+
+  // ---------- 尺寸 ----------
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildCloth();
+  }
+
+  // ---------- 布料 ----------
+  let NX = 0, NY = 0, N = 0;
+  let x, y, px, py;      // 当前 / 上一帧位置
+  let pinned;             // 是否固定
+  let restX = 1, restY = 1;   // 静止间距
+  let clothW = 0, clothH = 0; // 布料初始尺寸
+  let clothX0 = 0, clothY0 = 0;
+
+  function buildCloth() {
+    NX = CFG.cols;
+    NY = CFG.rows;
+    N = NX * NY;
+
+    x = new Float32Array(N);
+    y = new Float32Array(N);
+    px = new Float32Array(N);
+    py = new Float32Array(N);
+    pinned = new Uint8Array(N);
+
+    // 布料在画布上的位置和尺寸
+    const margin = Math.min(W, H) * 0.12;
+    clothW = W - margin * 2;
+    clothH = H - margin * 2;
+    clothX0 = margin;
+    clothY0 = margin;
+
+    restX = clothW / (NX - 1);
+    restY = clothH / (NY - 1);
+
+    for (let gy = 0; gy < NY; gy++) {
+      for (let gx = 0; gx < NX; gx++) {
+        const i = gy * NX + gx;
+        const xx = clothX0 + gx * restX;
+        const yy = clothY0 + gy * restY;
+        x[i] = xx;
+        y[i] = yy;
+        px[i] = xx;
+        py[i] = yy;
+        // 顶边固定
+        if (CFG.pinTop && gy === 0) pinned[i] = 1;
+      }
+    }
+  }
+
+  // ---------- 物理 ----------
+  const SUB_DT = 1 / 60;
+
+  function simulate() {
+    const g = CFG.gravity;
+    const damp = CFG.damping;
+    const windAmp = CFG.wind;
+
+    // 1) Verlet 积分
+    for (let i = 0; i < N; i++) {
+      if (pinned[i]) continue;
+      const vx = (x[i] - px[i]) * damp;
+      const vy = (y[i] - py[i]) * damp;
+      px[i] = x[i];
+      py[i] = y[i];
+
+      // 风力：随时间变化，正弦调制
+      const wx = Math.sin(performance.now() * 0.001 + i * 0.01) * windAmp;
+      x[i] += vx + 0 * SUB_DT;   // 已经在 px 里体现
+      y[i] += vy + g * SUB_DT * SUB_DT;
+      x[i] += wx * SUB_DT * SUB_DT;
+    }
+
+    // 2) 约束迭代（保持结构）
+    const iters = CFG.stiffness;
+    for (let it = 0; it < iters; it++) {
+      // 横边
+      for (let gy = 0; gy < NY; gy++) {
+        const row = gy * NX;
+        for (let gx = 0; gx < NX - 1; gx++) {
+          satisfy(row + gx, row + gx + 1, restX);
+        }
+      }
+      // 竖边
+      for (let gx = 0; gx < NX; gx++) {
+        for (let gy = 0; gy < NY - 1; gy++) {
+          satisfy(gy * NX + gx, (gy + 1) * NX + gx, restY);
+        }
+      }
+    }
+  }
+
+  function satisfy(i, j, rest) {
+    if (pinned[i] && pinned[j]) return;
+    const dx = x[j] - x[i];
+    const dy = y[j] - y[i];
+    const d = Math.hypot(dx, dy) || 1e-4;
+    const diff = (d - rest) / d;
+    const kx = dx * 0.5 * diff;
+    const ky = dy * 0.5 * diff;
+    if (pinned[i]) {
+      x[j] -= dx * diff;
+      y[j] -= dy * diff;
+    } else if (pinned[j]) {
+      x[i] += dx * diff;
+      y[i] += dy * diff;
+    } else {
+      x[i] += kx; y[i] += ky;
+      x[j] -= kx; y[j] -= ky;
+    }
+  }
+
+  // ---------- 指针 ----------
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  let grabbedIdx = -1;
+  let grabDX = 0, grabDY = 0;
+
+  const rect = () => cv.getBoundingClientRect();
+
+  function findNearestNode(px0, py0, maxR) {
+    const R2 = maxR * maxR;
+    let best = -1;
+    let bestD2 = R2;
+    for (let i = 0; i < N; i++) {
+      const dx = px0 - x[i];
+      const dy = py0 - y[i];
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  const onDown = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    pointer.down = true;
+    if (e.touches) e.preventDefault();
+
+    // 尝试抓取最近的节点
+    const maxR = Math.max(30, restX * 1.5);
+    grabbedIdx = findNearestNode(pointer.x, pointer.y, maxR);
+    if (grabbedIdx >= 0 && !pinned[grabbedIdx]) {
+      grabDX = x[grabbedIdx] - pointer.x;
+      grabDY = y[grabbedIdx] - pointer.y;
+    } else {
+      grabbedIdx = -1;
+    }
+  };
+
+  const onMove = e => {
+    const r = rect();
+    const t = e.touches ? e.touches[0] : e;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    if (e.touches) e.preventDefault();
+  };
+
+  const onUp = () => { pointer.down = false; grabbedIdx = -1; };
+
+  cv.addEventListener('touchstart', onDown, { passive: false });
+  cv.addEventListener('touchmove', onMove, { passive: false });
+  cv.addEventListener('touchend', onUp);
+  cv.addEventListener('touchcancel', onUp);
+  cv.addEventListener('mousedown', onDown);
+  cv.addEventListener('mousemove', onMove);
+  cv.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', onUp);
+
+  // ---------- 渲染 ----------
+  function render() {
+    const [br, bg, bb] = hex2rgb(CFG.background);
+    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+    ctx.fillRect(0, 0, W, H);
+
+    const [ar, ag, ab] = hex2rgb(CFG.fabricA);
+    const [cr, cg, cb] = hex2rgb(CFG.fabricB);
+
+    // 计算每条横/竖边的压缩程度（用于明暗）
+    // 用布料"距离压缩比"当作明暗
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 画横边
+    for (let gy = 0; gy < NY; gy++) {
+      const row = gy * NX;
+      for (let gx = 0; gx < NX - 1; gx++) {
+        const i = row + gx;
+        const j = i + 1;
+        const dx = x[j] - x[i];
+        const dy = y[j] - y[i];
+        const d = Math.hypot(dx, dy) / restX;
+        // 挤压 → d < 1 → 暗；拉伸 → d > 1 → 亮
+        const t = clamp(1 - (d - 0.6) / 0.9, 0, 1);
+        const shade = 1 - t * CFG.wrinkleShade;
+        const R = (ar + (cr - ar) * (gy / NY)) * shade | 0;
+        const G = (ag + (cg - ag) * (gy / NY)) * shade | 0;
+        const B = (ab + (cb - ab) * (gy / NY)) * shade | 0;
+        ctx.strokeStyle = `rgb(${R},${G},${B})`;
+        ctx.beginPath();
+        ctx.moveTo(x[i], y[i]);
+        ctx.lineTo(x[j], y[j]);
+        ctx.stroke();
+      }
+    }
+
+    // 画竖边
+    for (let gx = 0; gx < NX; gx++) {
+      for (let gy = 0; gy < NY - 1; gy++) {
+        const i = gy * NX + gx;
+        const j = i + NX;
+        const dx = x[j] - x[i];
+        const dy = y[j] - y[i];
+        const d = Math.hypot(dx, dy) / restY;
+        const t = clamp(1 - (d - 0.6) / 0.9, 0, 1);
+        const shade = 1 - t * CFG.wrinkleShade;
+        const R = (ar + (cr - ar) * (gy / NY)) * shade | 0;
+        const G = (ag + (cg - ag) * (gy / NY)) * shade | 0;
+        const B = (ab + (cb - ab) * (gy / NY)) * shade | 0;
+        ctx.strokeStyle = `rgb(${R},${G},${B})`;
+        ctx.beginPath();
+        ctx.moveTo(x[i], y[i]);
+        ctx.lineTo(x[j], y[j]);
+        ctx.stroke();
+      }
+    }
+
+    // 显示节点
+    if (CFG.showPoints) {
+      ctx.fillStyle = '#ffffff';
+      for (let i = 0; i < N; i++) {
+        if (pinned[i]) {
+          ctx.fillStyle = '#ff5a5a';
+          ctx.beginPath();
+          ctx.arc(x[i], y[i], 3, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(x[i], y[i], 1.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    // 抓取指示
+    if (grabbedIdx >= 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x[grabbedIdx], y[grabbedIdx], 8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // ---------- 主循环 ----------
+  let lastTime = performance.now();
+  function loop(now) {
+    lastTime = now;
+
+    // 抓取：把节点拉到指针位置（带偏移）
+    if (grabbedIdx >= 0 && pointer.down && pointer.inside) {
+      x[grabbedIdx] = pointer.x + grabDX * CFG.mouseForce;
+      y[grabbedIdx] = pointer.y + grabDY * CFG.mouseForce;
+      // 上一帧位置也一起移动，避免产生巨大速度
+      px[grabbedIdx] = x[grabbedIdx];
+      py[grabbedIdx] = y[grabbedIdx];
+    }
+
+    // 物理仿真
+    simulate();
+
+    // 渲染
+    render();
+
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- 按钮 ----------
+  const mEl = document.getElementById('m');
+
+  document.getElementById('btn-reset').addEventListener('click', buildCloth);
+
+  const FABRICS = [
+    { name: '丝绸', a: '#7c86ff', b: '#ff7de0', bg: '#0a0b12',
+      gravity: 480, wind: 40, damping: 0.995, stiffness: 3,
+      pinTop: true, showPoints: false, wrinkleShade: 0.85,
+      cols: isMobile ? 26 : 34, rows: isMobile ? 20 : 24 },
+    { name: '旗帜', a: '#ff6b5e', b: '#ffb65e', bg: '#0a0b12',
+      gravity: 240, wind: 340, damping: 0.985, stiffness: 5,
+      pinTop: true, showPoints: false, wrinkleShade: 0.6,
+      cols: isMobile ? 30 : 40, rows: isMobile ? 16 : 20 },
+    { name: '垂帘', a: '#8f9dff', b: '#c2c8ff', bg: '#0a0b12',
+      gravity: 650, wind: 15, damping: 0.99, stiffness: 4,
+      pinTop: true, showPoints: false, wrinkleShade: 0.7,
+      cols: isMobile ? 24 : 30, rows: isMobile ? 26 : 30 },
+    { name: '网兜', a: '#7de0c0', b: '#b8ffdc', bg: '#05100c',
+      gravity: 750, wind: 20, damping: 0.995, stiffness: 2,
+      pinTop: true, showPoints: true, wrinkleShade: 0.5,
+      cols: isMobile ? 16 : 20, rows: isMobile ? 16 : 20 },
+    { name: '雨幕', a: '#c8d4ff', b: '#ffffff', bg: '#05060d',
+      gravity: 500, wind: 80, damping: 0.99, stiffness: 3,
+      pinTop: true, showPoints: false, wrinkleShade: 0.4,
+      cols: isMobile ? 40 : 52, rows: isMobile ? 24 : 30 }
+  ];
+  let fabricIdx = 0;
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    fabricIdx = (fabricIdx + 1) % FABRICS.length;
+    const s = FABRICS[fabricIdx];
+    Object.assign(CFG, s);
+    mEl.textContent = s.name;
+    buildCloth();
+  });
+
+  // ---------- 启动 ----------
+  resize();
+  window.addEventListener('resize', () => { resize(); });
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  mEl.textContent = FABRICS[0].name;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

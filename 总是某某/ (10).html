@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>线 · 星 · 多</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #fff;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="c" width="600" height="400"></canvas>
+
+    <script>
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        const W = 600, H = 400;
+
+        // 底层：所有已完成的星形
+        const base = document.createElement('canvas');
+        base.width = W;
+        base.height = H;
+        const baseCtx = base.getContext('2d');
+
+        // 中层：正在变形的形状（可能同时有多个？为了简单，一次只有一个，但用数组支持多个）
+        const morphLayer = document.createElement('canvas');
+        morphLayer.width = W;
+        morphLayer.height = H;
+        const morphCtx = morphLayer.getContext('2d');
+
+        // 上层：正在画的线
+        const drawLayer = document.createElement('canvas');
+        drawLayer.width = W;
+        drawLayer.height = H;
+        const drawCtx = drawLayer.getContext('2d');
+
+        // 星形单位模板
+        const starTemplate = [
+            { x: 0,     y: -1.00 },
+            { x: 0.32,  y: -0.40 },
+            { x: 1.00,  y: -0.30 },
+            { x: 0.50,  y: 0.15 },
+            { x: 0.62,  y: 0.85 },
+            { x: 0,     y: 0.50 },
+            { x: -0.62, y: 0.85 },
+            { x: -0.50, y: 0.15 },
+            { x: -1.00, y: -0.30 },
+            { x: -0.32, y: -0.40 }
+        ];
+
+        const SAMPLE_COUNT = 120;
+        const MIN_DIST = 3;
+
+        // 当前正在画的线
+        let drawing = false;
+        let points = [];
+
+        // 正在进行的变形任务列表（支持同时多个）
+        let morphs = [];
+
+        let rafId = null;
+        let needsRender = false;
+
+        function ease(t) {
+            return t < 0.5
+                ? 4 * t * t * t
+                : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+
+        // ---------- 采样 ----------
+
+        function totalLength(pts) {
+            let len = 0;
+            for (let i = 1; i < pts.length; i++) {
+                len += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+            }
+            return len;
+        }
+
+        function resample(pts, n) {
+            if (pts.length === 0) return [];
+            if (pts.length === 1) return Array(n).fill().map(() => ({ ...pts[0] }));
+
+            const total = totalLength(pts);
+            if (total === 0) return Array(n).fill().map(() => ({ ...pts[0] }));
+
+            const step = total / (n - 1);
+            const out = [{ x: pts[0].x, y: pts[0].y }];
+
+            let segIdx = 0;
+            let segStart = pts[0];
+            let segEnd = pts[1];
+            let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+            let segDone = 0;
+
+            for (let i = 1; i < n; i++) {
+                const targetDist = i * step;
+                let ok = false;
+
+                while (segIdx < pts.length - 1) {
+                    if (segDone + segLen >= targetDist) {
+                        const t = segLen === 0 ? 0 : (targetDist - segDone) / segLen;
+                        out.push({
+                            x: segStart.x + (segEnd.x - segStart.x) * t,
+                            y: segStart.y + (segEnd.y - segStart.y) * t
+                        });
+                        ok = true;
+                        break;
+                    } else {
+                        segDone += segLen;
+                        segIdx++;
+                        if (segIdx >= pts.length - 1) break;
+                        segStart = pts[segIdx];
+                        segEnd = pts[segIdx + 1];
+                        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+                    }
+                }
+
+                if (!ok) {
+                    const last = pts[pts.length - 1];
+                    out.push({ x: last.x, y: last.y });
+                }
+            }
+
+            while (out.length < n) {
+                const last = pts[pts.length - 1];
+                out.push({ x: last.x, y: last.y });
+            }
+            return out.slice(0, n);
+        }
+
+        function resampleClosed(pts, n) {
+            if (pts.length < 2) return [];
+            const closed = pts.concat([{ ...pts[0] }]);
+            const total = totalLength(closed);
+            if (total === 0) return Array(n).fill().map(() => ({ ...pts[0] }));
+
+            const step = total / (n - 1);
+            const out = [{ x: pts[0].x, y: pts[0].y }];
+
+            let segIdx = 0;
+            let segStart = closed[0];
+            let segEnd = closed[1];
+            let segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+            let segDone = 0;
+
+            for (let i = 1; i < n; i++) {
+                const targetDist = i * step;
+                let ok = false;
+
+                while (segIdx < closed.length - 1) {
+                    if (segDone + segLen >= targetDist - 1e-9) {
+                        const t = segLen === 0 ? 0 : (targetDist - segDone) / segLen;
+                        out.push({
+                            x: segStart.x + (segEnd.x - segStart.x) * t,
+                            y: segStart.y + (segEnd.y - segStart.y) * t
+                        });
+                        ok = true;
+                        break;
+                    } else {
+                        segDone += segLen;
+                        segIdx++;
+                        if (segIdx >= closed.length - 1) break;
+                        segStart = closed[segIdx];
+                        segEnd = closed[segIdx + 1];
+                        segLen = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+                    }
+                }
+
+                if (!ok) {
+                    const last = closed[closed.length - 1];
+                    out.push({ x: last.x, y: last.y });
+                }
+            }
+
+            out[n - 1] = { x: out[0].x, y: out[0].y };
+            return out;
+        }
+
+        function enforceClosed(samples) {
+            if (samples.length > 1) {
+                samples[samples.length - 1] = { ...samples[0] };
+            }
+        }
+
+        // 根据用户画的线，动态生成星形
+        function buildStarFromPoints(pts) {
+            let minX = Infinity, minY = Infinity;
+            let maxX = -Infinity, maxY = -Infinity;
+            for (const p of pts) {
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y > maxY) maxY = p.y;
+            }
+
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+            const bw = maxX - minX;
+            const bh = maxY - minY;
+            const baseSize = Math.max(bw, bh, 40);
+            const scale = baseSize * 0.55;
+
+            return starTemplate.map(v => ({
+                x: cx + v.x * scale,
+                y: cy + v.y * scale
+            }));
+        }
+
+        // ---------- 渲染 ----------
+
+        function composite() {
+            ctx.clearRect(0, 0, W, H);
+            ctx.drawImage(base, 0, 0);
+            ctx.drawImage(morphLayer, 0, 0);
+            ctx.drawImage(drawLayer, 0, 0);
+        }
+
+        // 重绘变形层（所有进行中的 morph）
+        function renderMorphs() {
+            morphCtx.clearRect(0, 0, W, H);
+            morphCtx.strokeStyle = '#000';
+            morphCtx.lineWidth = 2;
+            morphCtx.lineCap = 'round';
+            morphCtx.lineJoin = 'round';
+
+            for (const m of morphs) {
+                const t = ease(m.progress);
+                morphCtx.beginPath();
+                for (let i = 0; i < m.startSamples.length; i++) {
+                    const s = m.startSamples[i];
+                    const e = m.endSamples[i];
+                    const x = s.x + (e.x - s.x) * t;
+                    const y = s.y + (e.y - s.y) * t;
+                    if (i === 0) morphCtx.moveTo(x, y);
+                    else morphCtx.lineTo(x, y);
+                }
+                morphCtx.stroke();
+            }
+        }
+
+        // 重绘画线层（用户正在画的线）
+        function renderDrawLayer() {
+            drawCtx.clearRect(0, 0, W, H);
+            if (points.length > 0) {
+                drawCtx.strokeStyle = '#000';
+                drawCtx.lineWidth = 2;
+                drawCtx.lineCap = 'round';
+                drawCtx.lineJoin = 'round';
+                drawCtx.beginPath();
+                drawCtx.moveTo(points[0].x, points[0].y);
+                for (let i = 1; i < points.length; i++) {
+                    drawCtx.lineTo(points[i].x, points[i].y);
+                }
+                drawCtx.stroke();
+            }
+        }
+
+        // 把星形烘焙到 base
+        function bakeToBase(samples) {
+            baseCtx.strokeStyle = '#000';
+            baseCtx.lineWidth = 2;
+            baseCtx.lineCap = 'round';
+            baseCtx.lineJoin = 'round';
+
+            baseCtx.beginPath();
+            baseCtx.moveTo(samples[0].x, samples[0].y);
+            for (let i = 1; i < samples.length; i++) {
+                baseCtx.lineTo(samples[i].x, samples[i].y);
+            }
+            baseCtx.closePath();
+            baseCtx.stroke();
+        }
+
+        // ---------- 动画 ----------
+
+        function animate() {
+            rafId = null;
+
+            let stillMorphing = false;
+
+            for (let i = morphs.length - 1; i >= 0; i--) {
+                const m = morphs[i];
+                m.progress += 0.018;
+                if (m.progress >= 1) {
+                    m.progress = 1;
+                    // 变形完成，烘焙到 base
+                    bakeToBase(m.endSamples);
+                    morphs.splice(i, 1);
+                } else {
+                    stillMorphing = true;
+                }
+            }
+
+            renderMorphs();
+            composite();
+
+            if (stillMorphing) {
+                rafId = requestAnimationFrame(animate);
+            }
+        }
+
+        function ensureAnimating() {
+            if (rafId === null && morphs.length > 0) {
+                rafId = requestAnimationFrame(animate);
+            }
+        }
+
+        // ---------- 状态 ----------
+
+        function startMorph() {
+            if (points.length < 2) {
+                points = [];
+                renderDrawLayer();
+                composite();
+                return;
+            }
+
+            const dynamicStar = buildStarFromPoints(points);
+            const startSamples = resample(points, SAMPLE_COUNT);
+            let endSamples = resampleClosed(dynamicStar, SAMPLE_COUNT);
+
+            // 起点对齐
+            let bestIdx = 0;
+            let bestDist = Infinity;
+            const first = startSamples[0];
+            for (let i = 0; i < endSamples.length; i++) {
+                const d = Math.hypot(endSamples[i].x - first.x, endSamples[i].y - first.y);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx !== 0) {
+                endSamples = endSamples.slice(bestIdx).concat(endSamples.slice(0, bestIdx));
+                enforceClosed(endSamples);
+            }
+
+            // 方向自适应
+            const dForward = Math.hypot(
+                endSamples[0].x - first.x,
+                endSamples[0].y - first.y
+            );
+            const dReverse = Math.hypot(
+                endSamples[endSamples.length - 1].x - first.x,
+                endSamples[endSamples.length - 1].y - first.y
+            );
+            if (dReverse < dForward) {
+                endSamples.reverse();
+                let bestIdx2 = 0;
+                let bestDist2 = Infinity;
+                for (let i = 0; i < endSamples.length; i++) {
+                    const d = Math.hypot(endSamples[i].x - first.x, endSamples[i].y - first.y);
+                    if (d < bestDist2) {
+                        bestDist2 = d;
+                        bestIdx2 = i;
+                    }
+                }
+                if (bestIdx2 !== 0) {
+                    endSamples = endSamples.slice(bestIdx2).concat(endSamples.slice(0, bestIdx2));
+                }
+                enforceClosed(endSamples);
+            }
+
+            morphs.push({
+                startSamples,
+                endSamples,
+                progress: 0
+            });
+
+            // 清空 drawLayer，开始新线
+            points = [];
+            renderDrawLayer();
+            composite();
+
+            ensureAnimating();
+        }
+
+        // ---------- 事件 ----------
+
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const src = e.touches ? e.touches[0] : e;
+            return {
+                x: Math.min(Math.max((src.clientX - rect.left) * scaleX, 0), W),
+                y: Math.min(Math.max((src.clientY - rect.top) * scaleY, 0), H)
+            };
+        }
+
+        function scheduleRender() {
+            if (needsRender) return;
+            needsRender = true;
+            requestAnimationFrame(() => {
+                needsRender = false;
+                renderDrawLayer();
+                composite();
+            });
+        }
+
+        function down(e) {
+            e.preventDefault();
+
+            // 无论是否在变形，都可以开始画新线
+            drawing = true;
+            points = [getPos(e)];
+            renderDrawLayer();
+            composite();
+        }
+
+        function move(e) {
+            if (!drawing) return;
+            e.preventDefault();
+            const p = getPos(e);
+            const last = points[points.length - 1];
+            if (Math.hypot(p.x - last.x, p.y - last.y) < MIN_DIST) return;
+            points.push(p);
+            scheduleRender();
+        }
+
+        function up(e) {
+            if (!drawing) return;
+            e.preventDefault();
+            drawing = false;
+
+            if (points.length >= 2) {
+                startMorph();
+            } else {
+                points = [];
+                renderDrawLayer();
+                composite();
+            }
+        }
+
+        function leave(e) {
+            if (!drawing) return;
+            drawing = false;
+
+            if (points.length >= 2) {
+                startMorph();
+            } else {
+                points = [];
+                renderDrawLayer();
+                composite();
+            }
+        }
+
+        canvas.addEventListener('mousedown', down);
+        canvas.addEventListener('mousemove', move);
+        canvas.addEventListener('mouseup', up);
+        canvas.addEventListener('mouseleave', leave);
+
+        canvas.addEventListener('touchstart', down, { passive: false });
+        canvas.addEventListener('touchmove', move, { passive: false });
+        canvas.addEventListener('touchend', up, { passive: false });
+
+        composite();
+    </script>
+</body>
+</html>

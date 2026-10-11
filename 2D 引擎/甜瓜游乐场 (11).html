@@ -1,0 +1,1614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1319">
+<title>物理沙盒 · Physics Sandbox</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    width:100%;height:100%;overflow:hidden;background:#0f1319;
+    touch-action:none;user-select:none;-webkit-user-select:none;
+    overscroll-behavior:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    position:fixed;inset:0;
+  }
+  canvas{display:block;width:100%;height:100%;touch-action:none;}
+
+  #hud{
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 8px);
+    left:calc(env(safe-area-inset-left,0px) + 10px);
+    color:#7f8ea3;font-size:12px;line-height:1.5;
+    pointer-events:none;font-variant-numeric:tabular-nums;
+    text-shadow:0 1px 3px #000;
+    z-index:5;
+  }
+  #hud b{color:#c9d6e8;font-weight:600;}
+
+  #topbar{
+    position:fixed;
+    top:calc(env(safe-area-inset-top,0px) + 8px);
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    display:flex;gap:6px;z-index:20;
+    max-width:calc(100vw - 100px);
+    flex-wrap:wrap;justify-content:flex-end;
+  }
+
+  #bottombar{
+    position:fixed;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 8px);
+    left:calc(env(safe-area-inset-left,0px) + 8px);
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    display:flex;gap:6px;z-index:20;
+    overflow-x:auto;overflow-y:hidden;
+    padding:6px;border-radius:16px;
+    background:rgba(18,22,30,.72);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.07);
+    box-shadow:0 6px 24px rgba(0,0,0,.45);
+    scrollbar-width:none;
+    justify-content:flex-start;
+    flex-wrap:nowrap;
+    -webkit-overflow-scrolling:touch;
+  }
+  #bottombar::-webkit-scrollbar{display:none;}
+  #bottombar .btn:first-child{margin-left:auto;}
+  #bottombar .btn:last-child{margin-right:auto;}
+
+  .btn{
+    flex:0 0 auto;
+    min-width:46px;height:46px;
+    border:none;border-radius:12px;
+    background:rgba(255,255,255,.07);
+    color:#d4deec;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:background .12s,transform .08s,box-shadow .12s;
+    -webkit-user-select:none;user-select:none;
+    touch-action:manipulation;
+    position:relative;
+    padding:0 8px;
+  }
+  .btn:active{transform:scale(.92);}
+  .btn.active{
+    background:linear-gradient(180deg,#3d8bfd,#2563eb);
+    color:#fff;
+    box-shadow:0 0 0 2px rgba(96,165,250,.35),0 4px 14px rgba(37,99,235,.45);
+  }
+  .btn.warn.active{background:linear-gradient(180deg,#f87171,#dc2626);box-shadow:0 0 0 2px rgba(248,113,113,.35);}
+
+  .btn svg{display:block;pointer-events:none;}
+
+  .matdot{
+    position:absolute;bottom:5px;right:5px;
+    width:10px;height:10px;border-radius:50%;
+    border:1.5px solid rgba(0,0,0,.55);
+    box-shadow:0 0 0 1px rgba(255,255,255,.14);
+    pointer-events:none;
+    transition:background .2s;
+  }
+
+  #quickmenu{
+    position:fixed;z-index:40;
+    display:none;
+    padding:8px;border-radius:16px;
+    background:rgba(20,26,36,.94);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 10px 40px rgba(0,0,0,.6);
+    grid-template-columns:repeat(3,1fr);gap:6px;
+    transform:translate(-50%,-50%);
+    visibility:hidden;
+  }
+  #quickmenu.show{display:grid;visibility:visible;}
+  #quickmenu .btn{
+    min-width:58px;height:58px;
+    flex-direction:column;gap:3px;
+    padding:4px;
+  }
+  #quickmenu .lbl{font-size:9px;opacity:.72;line-height:1;letter-spacing:.3px;}
+
+  #toast{
+    position:fixed;left:50%;
+    bottom:calc(env(safe-area-inset-bottom,0px) + 74px);
+    transform:translateX(-50%);
+    background:rgba(0,0,0,.78);color:#e6edf7;
+    padding:8px 16px;border-radius:20px;font-size:13px;
+    pointer-events:none;opacity:0;transition:opacity .25s;
+    z-index:50;white-space:nowrap;
+  }
+  #toast.show{opacity:1;}
+
+  @media (max-width:420px){
+    .btn{min-width:44px;height:44px;}
+    #topbar{gap:4px;}
+    #quickmenu .btn{min-width:54px;height:54px;}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="hud">
+  <div id="stats">FPS -- · 物体 0 · 缩放 100%</div>
+  <div id="hint" style="opacity:.7;font-size:11px"></div>
+</div>
+
+<div id="topbar">
+  <button class="btn" data-act="mat" id="btnMat" title="材质"></button>
+  <button class="btn" data-act="pause" data-icon="pause" title="暂停"></button>
+  <button class="btn" data-act="slow" data-icon="slow" title="慢动作"></button>
+  <button class="btn" data-act="debug" data-icon="debug" title="调试"></button>
+  <button class="btn" data-act="full" data-icon="full" title="全屏"></button>
+  <button class="btn" data-act="reset" data-icon="reset" title="重置"></button>
+  <button class="btn warn" data-act="clear" data-icon="clear" title="清空"></button>
+</div>
+
+<div id="bottombar">
+  <button class="btn tool active" data-tool="hand" data-icon="hand" title="拖拽/投掷"></button>
+  <button class="btn tool" data-tool="box" data-icon="box" title="方块"></button>
+  <button class="btn tool" data-tool="ball" data-icon="ball" title="圆球"></button>
+  <button class="btn tool" data-tool="tri" data-icon="tri" title="三角"></button>
+  <button class="btn tool" data-tool="hex" data-icon="hex" title="六边形"></button>
+  <button class="btn tool" data-tool="ragdoll" data-icon="ragdoll" title="布娃娃"></button>
+  <button class="btn tool" data-tool="tnt" data-icon="tnt" title="TNT"></button>
+  <button class="btn tool" data-tool="gun" data-icon="gun" title="手枪"></button>
+  <button class="btn tool" data-tool="blade" data-icon="blade" title="飞刀"></button>
+  <button class="btn tool" data-tool="bomb" data-icon="bomb" title="炸弹"></button>
+  <button class="btn tool warn" data-tool="delete" data-icon="delete" title="删除"></button>
+</div>
+
+<div id="quickmenu"></div>
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+"use strict";
+/* =========================================================================
+   0. 环境与工具
+   ========================================================================= */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent)
+              || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+
+const { Engine, Composite, Bodies, Body, Constraint, Events, Vector } = Matter;
+
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => v < a ? a : (v > b ? b : v);
+const rand  = (a, b) => a + Math.random() * (b - a);
+
+/* =========================================================================
+   1. SVG 图标
+   ========================================================================= */
+const ICONS = {
+  hand: '<path d="M18 11V6a2 2 0 0 0-4 0v5"/><path d="M14 10V4a2 2 0 0 0-4 0v6"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  box: '<rect x="4" y="4" width="16" height="16" rx="2.5"/>',
+  ball: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="9" ry="3.6"/><ellipse cx="12" cy="12" rx="3.6" ry="9"/>',
+  tri: '<path d="M12 4.5 20.5 19.5h-17z"/>',
+  hex: '<path d="M12 3 20.5 7.8v8.4L12 21 3.5 16.2V7.8z"/>',
+  ragdoll: '<circle cx="12" cy="4.2" r="2.5"/><path d="M12 6.7v6"/><path d="M12 8.2 7.8 11M12 8.2l4.2 2.8"/><path d="M12 12.7 8.8 19.5M12 12.7l3.2 6.8"/>',
+  tnt: '<rect x="4" y="7.5" width="16" height="12.5" rx="2"/><path d="M12 7.5V3.5"/><path d="M9.5 3.5h5"/><path d="M7.5 12h9"/><path d="M7.5 15.5h5"/>',
+  gun: '<path d="M3 8h14v3h4v2h-7l-2 6h-3l2-6H3z"/>',
+  blade: '<path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/>',
+  bomb: '<circle cx="10.5" cy="14.5" r="6.5"/><path d="M14.8 10.2 18 7"/><path d="M18 7c0-1.6 1-2.6 2.6-2.6"/><circle cx="20.6" cy="4.4" r="1.1" fill="currentColor" stroke="none"/>',
+  delete: '<path d="M6 6l12 12M18 6 6 18"/>',
+  pause: '<rect x="6" y="4" width="4" height="16" rx="1.2"/><rect x="14" y="4" width="4" height="16" rx="1.2"/>',
+  play: '<path d="M7 4.5 20 12 7 19.5z" fill="currentColor" stroke="none"/>',
+  slow: '<path d="M7 3h10"/><path d="M7 21h10"/><path d="M8.5 3c0 4 3.5 5 3.5 9s-3.5 5-3.5 9"/><path d="M15.5 3c0 4-3.5 5-3.5 9s3.5 5 3.5 9"/>',
+  debug: '<circle cx="12" cy="13" r="5.5"/><path d="M12 7.5V4.5"/><path d="M7.8 9.8 4.8 8.3"/><path d="M16.2 9.8l3-1.5"/><path d="M7.8 16.2l-3 1.5"/><path d="M16.2 16.2l3 1.5"/><path d="M9.6 8.2 8.2 5.3"/><path d="M14.4 8.2l1.4-2.9"/>',
+  full: '<path d="M4 9.5V4h5.5"/><path d="M20 9.5V4h-5.5"/><path d="M4 14.5V20h5.5"/><path d="M20 14.5V20h-5.5"/>',
+  reset: '<path d="M20.5 12a8.5 8.5 0 1 1-2.7-6.2"/><path d="M21 4v5h-5"/>',
+  clear: '<path d="M4 7h16"/><path d="M9.5 7V4.2h5V7"/><path d="M6.6 7l1 13h8.8l1-13"/><path d="M10.5 11v5.5"/><path d="M13.5 11v5.5"/>',
+  mat: '<path d="M12 21.5a9.5 9.5 0 1 1 0-19c5.2 0 9.5 3.8 9.5 8.5 0 2.6-2.1 4.2-4.2 4.2h-2.1a2.1 2.1 0 0 0-1.6 3.5c.3.4.5.9.5 1.3 0 .8-.8 1.5-2.1 1.5z"/><circle cx="7.5" cy="12" r="1.15" fill="currentColor" stroke="none"/><circle cx="9.8" cy="8.3" r="1.15" fill="currentColor" stroke="none"/><circle cx="14" cy="7.3" r="1.15" fill="currentColor" stroke="none"/><circle cx="17.3" cy="10" r="1.15" fill="currentColor" stroke="none"/>',
+};
+
+function makeSvg(name, size = 22, sw = 1.8) {
+  const inner = ICONS[name] || '';
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+
+/* =========================================================================
+   2. 材质表
+   ========================================================================= */
+const MATERIALS = {
+  wood:   { name: '木头', color: '#b5793a', color2: '#7e4d1e', density: 0.0018, restitution: 0.2, friction: 0.6 },
+  metal:  { name: '金属', color: '#9aa7b8', color2: '#5f6c7e', density: 0.0060, restitution: 0.1, friction: 0.4 },
+  ice:    { name: '冰块', color: '#a9e7ff', color2: '#5fb6e0', density: 0.0015, restitution: 0.1, friction: 0.03 },
+  rubber: { name: '橡胶', color: '#50536a', color2: '#2f3140', density: 0.0016, restitution: 0.7, friction: 0.9 },
+  stone:  { name: '石头', color: '#8d8d95', color2: '#5c5c66', density: 0.0050, restitution: 0.05, friction: 0.7 },
+  tnt:    { name: 'TNT',  color: '#e34b3b', color2: '#8f2418', density: 0.0030, restitution: 0.15, friction: 0.5 },
+  flesh:  { name: '肉体', color: '#e8b98f', color2: '#c08a5c', density: 0.0018, restitution: 0.1, friction: 0.7 },
+  bullet: { name: '子弹', color: '#ffe08a', color2: '#c9a13a', density: 0.0100, restitution: 0.2, friction: 0.3 },
+};
+const MAT_KEYS = ['wood', 'metal', 'ice', 'rubber', 'stone'];
+
+/* =========================================================================
+   3. 引擎初始化
+   ========================================================================= */
+const engine = Engine.create();
+engine.gravity.y = 1.6;
+engine.positionIterations = 8;
+engine.velocityIterations = 6;
+const mWorld = engine.world;
+
+const App = {
+  camera: { x: 0, y: 180, zoom: 1 },
+  particles: [],
+  shockwaves: [],
+  tool: 'hand',
+  material: 'wood',
+  paused: false,
+  timeScale: 1,
+  debug: false,
+  selected: null,
+  drag: null,
+  groundY: 520,
+  fps: 60,
+  worldEl: null,
+};
+
+const MAX_BODIES = IS_MOBILE ? 130 : 320;
+const INSTANT_TOOLS = { gun: 1, blade: 1 };
+
+// 静态刚体（地面、墙壁）单独存一份，方便重置
+let staticBodies = [];
+let ragdollGroups = [];   // 所有布娃娃小组
+
+// 自定义属性都挂在 body.plugin 上
+const P = {
+  material: 'stone',
+  tag: 'body',          // body / bullet / blade / tnt / ragdoll / anchor
+  color: '#8d8d95',
+  color2: '#5c5c66',
+  hp: Infinity,
+  dead: false,
+  fuse: -1,
+  group: null,          // 布娃娃所属组
+  isRagdollPart: false,
+  noShatter: false,
+  born: 0,
+};
+
+/* =========================================================================
+   4. 几何/多边形工具（用于 canvas 渲染多边形和破碎）
+   ========================================================================= */
+function vertsFromBody(body) {
+  if (!body.vertices) return null;
+  // Matter 的 vertices 是 world 坐标下的点
+  return body.vertices.map(v => ({ x: v.x, y: v.y }));
+}
+
+function bodyContains(body, px, py) {
+  // 简易点判断（对 circle 用半径判断，对多边形用 vertices）
+  if (body.circleRadius) {
+    const dx = px - body.position.x;
+    const dy = py - body.position.y;
+    return dx * dx + dy * dy <= body.circleRadius * body.circleRadius;
+  }
+  // 用 Matter 内置（有内置的，但外部拿不到，自己写）
+  const verts = body.vertices;
+  let sign = 0;
+  const n = verts.length;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    const c = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+    if (c > 1e-9) { if (sign < 0) return false; sign = 1; }
+    else if (c < -1e-9) { if (sign > 0) return false; sign = -1; }
+  }
+  return true;
+}
+
+/* =========================================================================
+   5. 创建物体（统一工厂）
+   ========================================================================= */
+function makeBody(opts) {
+  const mat = MATERIALS[opts.material] || MATERIALS.stone;
+  const isStatic = !!opts.isStatic;
+
+  let body;
+  const common = {
+    isStatic,
+    friction: opts.friction ?? mat.friction,
+    restitution: opts.restitution ?? mat.restitution,
+    density: isStatic ? Infinity : (opts.density ?? mat.density),
+    frictionAir: opts.frictionAir ?? 0.008,
+    angle: opts.angle || 0,
+  };
+
+  if (opts.shape === 'circle') {
+    body = Bodies.circle(opts.x, opts.y, opts.radius, common);
+  } else if (opts.shape === 'poly') {
+    body = Bodies.polygon(opts.x, opts.y, opts.sides || 3, opts.radius, common);
+  } else {
+    // 默认矩形
+    body = Bodies.rectangle(opts.x, opts.y, opts.w, opts.h, common);
+  }
+
+  // 挂自定义属性
+  body.plugin = {
+    material: opts.material || 'stone',
+    tag: opts.tag || 'body',
+    color: opts.color || mat.color,
+    color2: opts.color2 || mat.color2,
+    hp: opts.hp ?? 100,
+    dead: false,
+    fuse: opts.fuse ?? -1,
+    group: opts.group || null,
+    isRagdollPart: !!opts.isRagdollPart,
+    noShatter: !!opts.noShatter,
+    born: performance.now(),
+  };
+
+  Composite.add(mWorld, body);
+  return body;
+}
+
+/* ---------- 便捷工厂 ---------- */
+function addBox(x, y, w, h, matKey = 'wood', isStatic = false, angle = 0, tag = 'body') {
+  return makeBody({ shape: 'box', x, y, w, h, material: matKey, isStatic, angle, tag });
+}
+function addCircle(x, y, r, matKey = 'wood', isStatic = false, tag = 'body') {
+  return makeBody({ shape: 'circle', x, y, radius: r, material: matKey, isStatic, tag });
+}
+function addNgon(x, y, r, sides, matKey = 'wood', tag = 'body') {
+  return makeBody({ shape: 'poly', x, y, radius: r, sides, material: matKey, tag });
+}
+
+/* =========================================================================
+   6. 布娃娃（基于 Matter 约束）
+   ========================================================================= */
+const RAGDOLL_PARTS = [
+  { name: 'head',  shape: 'circle', radius: 14, off: { x: 0,   y: -115 } },
+  { name: 'torso', shape: 'box',    w: 32, h: 50, off: { x: 0,   y: -72  } },
+  { name: 'armL',  shape: 'box',    w: 10, h: 40, off: { x: -24, y: -74  } },
+  { name: 'armR',  shape: 'box',    w: 10, h: 40, off: { x: 24,  y: -74  } },
+  { name: 'legL',  shape: 'box',    w: 12, h: 44, off: { x: -9,  y: -22  } },
+  { name: 'legR',  shape: 'box',    w: 12, h: 44, off: { x: 9,   y: -22  } },
+];
+
+// pa/pb 相对各自刚体中心；stiffness 分级
+const RAGDOLL_JOINTS = [
+  { a: 'head',  b: 'torso', pa: { x: 0,  y: 14  }, pb: { x: 0,   y: -25 }, stiff: 0.9  },
+  { a: 'armL',  b: 'torso', pa: { x: 0,  y: -20 }, pb: { x: -16, y: -20 }, stiff: 0.55 },
+  { a: 'armR',  b: 'torso', pa: { x: 0,  y: -20 }, pb: { x: 16,  y: -20 }, stiff: 0.55 },
+  { a: 'legL',  b: 'torso', pa: { x: 0,  y: -22 }, pb: { x: -8,  y: 25  }, stiff: 0.75 },
+  { a: 'legR',  b: 'torso', pa: { x: 0,  y: -22 }, pb: { x: 8,   y: 25  }, stiff: 0.75 },
+];
+
+function makeRagdoll(cx, cy) {
+  const parts = {};
+  const group = { parts: {}, constraints: [], alive: true, bornAt: performance.now() };
+
+  // 创建刚体
+  for (const def of RAGDOLL_PARTS) {
+    const px = cx + def.off.x;
+    const py = cy + def.off.y;
+    const mat = MATERIALS.flesh;
+    let body;
+    if (def.shape === 'circle') {
+      body = makeBody({
+        shape: 'circle', x: px, y: py, radius: def.radius,
+        material: 'flesh', tag: 'ragdoll', isRagdollPart: true,
+        density: 0.0018, friction: 0.7, restitution: 0.05,
+        frictionAir: 0.015,
+        group,
+        noShatter: true,
+      });
+    } else {
+      body = makeBody({
+        shape: 'box', x: px, y: py, w: def.w, h: def.h,
+        material: 'flesh', tag: 'ragdoll', isRagdollPart: true,
+        density: 0.0018, friction: 0.7, restitution: 0.05,
+        frictionAir: 0.015,
+        group,
+        noShatter: true,
+      });
+    }
+    parts[def.name] = body;
+    group.parts[def.name] = body;
+  }
+
+  // 创建约束
+  for (const j of RAGDOLL_JOINTS) {
+    const c = Constraint.create({
+      bodyA: parts[j.a],
+      bodyB: parts[j.b],
+      pointA: j.pa,
+      pointB: j.pb,
+      length: 0,
+      stiffness: j.stiff,
+      damping: 0.1,
+    });
+    Composite.add(mWorld, c);
+    group.constraints.push(c);
+  }
+
+  ragdollGroups.push(group);
+  return group;
+}
+
+/* 让布娃娃倒下 / 破碎 */
+function ragdollHit(group) {
+  if (!group || !group.alive) return;
+  group.alive = false;
+  // 让关节变软 → 自然倒下
+  for (const c of group.constraints) {
+    c.stiffness = 0.15;
+  }
+}
+function ragdollExplode(group, px, py, radius, power) {
+  if (!group) return;
+  group.alive = false;
+  // 直接移除所有约束 → 肢体飞散
+  for (const c of group.constraints) {
+    Composite.remove(mWorld, c);
+  }
+  group.constraints = [];
+  // 给每个部件一个爆炸冲量
+  for (const name in group.parts) {
+    const b = group.parts[name];
+    if (!b) continue;
+    const dx = b.position.x - px;
+    const dy = b.position.y - py;
+    const d = Math.hypot(dx, dy) || 1;
+    const falloff = Math.max(0, 1 - d / radius);
+    const dv = falloff * power * (0.5 + 0.5 * Math.random());
+    Body.applyForce(b, b.position, {
+      x: (dx / d) * dv * b.mass,
+      y: (dy / d) * dv * b.mass - 0.3 * b.mass,
+    });
+    Body.setAngularVelocity(b, rand(-0.4, 0.4));
+  }
+}
+
+/* =========================================================================
+   7. 破碎（用于普通物体）
+   ========================================================================= */
+function shatterBody(body) {
+  if (!body || body.plugin.dead) return;
+  if (body.plugin.tag === 'ragdoll' && body.plugin.group) {
+    ragdollHit(body.plugin.group);
+    return;
+  }
+  if (body.plugin.noShatter) return;
+  if (body.isStatic) return;
+
+  const tag = body.plugin.tag;
+  if (tag === 'bullet' || tag === 'blade') {
+    body.plugin.dead = true;
+    Composite.remove(mWorld, body);
+    return;
+  }
+  if (tag === 'tnt') { triggerTNT(body); return; }
+
+  // 简单碎裂：在原位置生成 4~6 个小方块
+  const mat = MATERIALS[body.plugin.material] || MATERIALS.stone;
+  const pieces = IS_MOBILE ? 4 : 5;
+  const px = body.position.x;
+  const py = body.position.y;
+
+  // 估算尺寸
+  const bounds = body.bounds;
+  const bw = bounds.max.x - bounds.min.x;
+  const bh = bounds.max.y - bounds.min.y;
+
+  for (let i = 0; i < pieces; i++) {
+    const pw = bw / 2 * (0.6 + Math.random() * 0.6);
+    const ph = bh / 2 * (0.6 + Math.random() * 0.6);
+    const ox = rand(-bw / 4, bw / 4);
+    const oy = rand(-bh / 4, bh / 4);
+    const piece = makeBody({
+      shape: 'box',
+      x: px + ox,
+      y: py + oy,
+      w: pw,
+      h: ph,
+      material: body.plugin.material,
+      angle: body.angle + rand(-0.4, 0.4),
+      density: mat.density * 0.8,
+      frictionAir: 0.012,
+    });
+    piece.plugin.hp = 30;
+    // 冲量
+    const dl = Math.hypot(ox, oy) || 1;
+    Body.setVelocity(piece, {
+      x: (ox / dl) * rand(0.5, 2.5),
+      y: (oy / dl) * rand(0.5, 2.5) - 1.5,
+    });
+    Body.setAngularVelocity(piece, rand(-0.3, 0.3));
+  }
+
+  spawnParticles(px, py, IS_MOBILE ? 8 : 14, {
+    colors: [body.plugin.color, body.plugin.color2 || '#333', '#ffffff'],
+    spdMin: 60, spdMax: 320, lifeMin: 0.25, lifeMax: 0.8,
+    sizeMin: 1.5, sizeMax: 4.5,
+  });
+
+  body.plugin.dead = true;
+  Composite.remove(mWorld, body);
+}
+
+/* =========================================================================
+   8. 爆炸
+   ========================================================================= */
+function explode(px, py, radius = 220, power = 0.012) {
+  App.shockwaves.push({ x: px, y: py, r: radius, life: 0, maxLife: 0.45 });
+
+  // 1. 处理布娃娃：飞散
+  const hitGroups = new Set();
+  const bodies = Composite.allBodies(mWorld);
+  for (const b of bodies) {
+    if (b.isStatic) continue;
+    if (b.plugin.dead) continue;
+    const dx = b.position.x - px;
+    const dy = b.position.y - py;
+    const d = Math.hypot(dx, dy);
+    if (d > radius) continue;
+
+    // 布娃娃：整组飞散
+    if (b.plugin.tag === 'ragdoll' && b.plugin.group) {
+      if (!hitGroups.has(b.plugin.group)) {
+        hitGroups.add(b.plugin.group);
+        ragdollExplode(b.plugin.group, px, py, radius, power * b.mass * 2);
+      }
+      continue;
+    }
+
+    // 普通物体：直接推
+    const falloff = Math.max(0, 1 - d / radius);
+    const nx = dx / (d || 1), ny = dy / (d || 1);
+    const dv = falloff * power * b.mass * 2;
+    Body.applyForce(b, b.position, { x: nx * dv, y: ny * dv });
+
+    // TNT 引爆
+    if (b.plugin.tag === 'tnt' && b.plugin.fuse < 0) {
+      b.plugin.fuse = rand(0.08, 0.25);
+    } else if (falloff > 0.55 && Math.random() < 0.5) {
+      shatterBody(b);
+    }
+  }
+
+  spawnParticles(px, py, IS_MOBILE ? 22 : 46, {
+    colors: ['#ffd93d', '#ff8c42', '#ff4d2e', '#ffffff', '#ffb347'],
+    spdMin: 180, spdMax: 900, lifeMin: 0.25, lifeMax: 0.9,
+    sizeMin: 2, sizeMax: 7, gravity: 400,
+  });
+  spawnParticles(px, py, IS_MOBILE ? 10 : 20, {
+    colors: ['#6b6b6b', '#3a3a3a', '#9a9a9a'],
+    spdMin: 40, spdMax: 260, lifeMin: 0.5, lifeMax: 1.6,
+    sizeMin: 3, sizeMax: 10, gravity: -60, drag: 0.97,
+  });
+}
+
+function triggerTNT(b) {
+  if (b.plugin.dead) return;
+  b.plugin.dead = true;
+  const px = b.position.x, py = b.position.y;
+  Composite.remove(mWorld, b);
+  explode(px, py, 240, 0.010);
+}
+
+/* =========================================================================
+   9. 粒子
+   ========================================================================= */
+const PARTICLE_CAP = IS_MOBILE ? 180 : 600;
+
+function spawnParticles(x, y, count, o = {}) {
+  const colors = o.colors || ['#ffb347', '#ff7a45', '#ffd93d', '#ffffff'];
+  for (let i = 0; i < count; i++) {
+    if (App.particles.length >= PARTICLE_CAP) break;
+    const a = o.dir !== undefined ? o.dir + rand(-0.9, 0.9) : rand(0, TAU);
+    const sp = rand(o.spdMin ?? 80, o.spdMax ?? 420);
+    App.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0,
+      maxLife: rand(o.lifeMin ?? 0.3, o.lifeMax ?? 1.1),
+      size: rand(o.sizeMin ?? 1.5, o.sizeMax ?? 5),
+      color: colors[(Math.random() * colors.length) | 0],
+      gravity: o.gravity ?? 900,
+      drag: o.drag ?? 0.985,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  const ps = App.particles;
+  for (let i = ps.length - 1; i >= 0; i--) {
+    const p = ps[i];
+    p.life += dt;
+    if (p.life >= p.maxLife) { ps[i] = ps[ps.length - 1]; ps.pop(); continue; }
+    p.vy += p.gravity * dt;
+    p.vx *= p.drag; p.vy *= p.drag;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+  for (let i = App.shockwaves.length - 1; i >= 0; i--) {
+    const s = App.shockwaves[i];
+    s.life += dt;
+    if (s.life >= s.maxLife) { App.shockwaves[i] = App.shockwaves[App.shockwaves.length - 1]; App.shockwaves.pop(); }
+  }
+}
+
+/* =========================================================================
+   10. 场景
+   ========================================================================= */
+function clearScene() {
+  // 移除所有非静态物体
+  const bodies = Composite.allBodies(mWorld);
+  for (const b of bodies) {
+    if (!b.isStatic) Composite.remove(mWorld, b);
+  }
+  // 清空所有约束
+  const all = Composite.allConstraints(mWorld);
+  for (const c of all) Composite.remove(mWorld, c);
+
+  ragdollGroups = [];
+  App.particles.length = 0;
+  App.shockwaves.length = 0;
+  App.selected = null;
+  App.drag = null;
+}
+
+function buildScene() {
+  clearScene();
+
+  const GY = App.groundY;
+  const W = 4000;
+  const H = 1600;
+
+  // 地面 & 墙
+  staticBodies = [
+    Bodies.rectangle(0, GY + 200, W * 4, 400, { isStatic: true, friction: 0.9 }),
+    Bodies.rectangle(-1800, GY - 700, 200, 3000, { isStatic: true }),
+    Bodies.rectangle( 1800, GY - 700, 200, 3000, { isStatic: true }),
+  ];
+  for (const b of staticBodies) {
+    b.plugin = { material:'stone', tag:'body', color:'#2b3444', color2:'#1b2230', hp:Infinity, dead:false, fuse:-1, group:null };
+    Composite.add(mWorld, b);
+  }
+
+  // 平台
+  const p1 = addBox(-520, GY - 240, 320, 30, 'stone', true);
+  const p2 = addBox( 520, GY - 380, 320, 30, 'stone', true);
+  const p3 = addBox(0,    GY - 560, 260, 30, 'stone', true);
+  for (const p of [p1, p2, p3]) { p.plugin.color = '#33405a'; p.plugin.color2 = '#20293a'; }
+
+  const ramp = addBox(-900, GY - 60, 420, 26, 'stone', true, -0.28);
+  ramp.plugin.color = '#33405a'; ramp.plugin.color2 = '#20293a';
+
+  // 普通物体
+  addBox(-200, GY - 60, 46, 46, 'wood');
+  addBox(-160, GY - 120, 46, 46, 'wood');
+  addBox(-120, GY - 180, 46, 46, 'wood');
+  addCircle(120, GY - 60, 24, 'rubber');
+  addCircle(180, GY - 120, 24, 'rubber');
+  addNgon(320, GY - 60, 32, 3, 'metal');
+  addBox(400, GY - 120, 60, 60, 'ice');
+  addBox(700, GY - 60, 50, 50, 'tnt').plugin.tag = 'tnt';
+  addBox(760, GY - 60, 50, 50, 'tnt').plugin.tag = 'tnt';
+
+  App.camera.x = 0;
+  App.camera.y = GY - 300;
+  App.camera.zoom = 1;
+}
+
+/* =========================================================================
+   11. 渲染
+   ========================================================================= */
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d', { alpha: false });
+let dpr = 1, vw = 0, vh = 0;
+let bgCache = null, bgH = -1;
+
+function resizeCanvas() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  vw = window.innerWidth;
+  vh = window.innerHeight;
+  const pw = Math.max(1, Math.floor(vw * dpr));
+  const ph = Math.max(1, Math.floor(vh * dpr));
+  if (canvas.width === pw && canvas.height === ph) return;
+  canvas.width = pw;
+  canvas.height = ph;
+  canvas.style.width = vw + 'px';
+  canvas.style.height = vh + 'px';
+  bgCache = null;
+}
+
+function drawGrid(L, R, T, B, zoom) {
+  let step = 100;
+  while (step * zoom < 40) step *= 2;
+  while (step * zoom > 220) step /= 2;
+
+  ctx.lineWidth = 1 / zoom;
+  ctx.strokeStyle = 'rgba(255,255,255,.035)';
+  ctx.beginPath();
+  const x0 = Math.floor(L / step) * step;
+  const y0 = Math.floor(T / step) * step;
+  for (let x = x0; x <= R; x += step) { ctx.moveTo(x, T); ctx.lineTo(x, B); }
+  for (let y = y0; y <= B; y += step) { ctx.moveTo(L, y); ctx.lineTo(R, y); }
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(90,140,200,.13)';
+  ctx.lineWidth = 2 / zoom;
+  ctx.beginPath();
+  ctx.moveTo(L, 0); ctx.lineTo(R, 0);
+  ctx.moveTo(0, T); ctx.lineTo(0, B);
+  ctx.stroke();
+}
+
+function drawBody(b, zoom) {
+  if (b.plugin.dead) return;
+  const lw = Math.max(1, 2 / zoom);
+  const color = b.plugin.color || '#8d8d95';
+  const color2 = b.plugin.color2 || 'rgba(0,0,0,.55)';
+
+  ctx.lineWidth = lw;
+  ctx.strokeStyle = color2;
+  ctx.fillStyle = color;
+
+  // 活着的布娃娃：淡绿色光晕
+  if (b.plugin.tag === 'ragdoll' && b.plugin.group && b.plugin.group.alive) {
+    ctx.shadowColor = 'rgba(100, 255, 150, 0.5)';
+    ctx.shadowBlur = 8;
+  }
+
+  if (b.circleRadius) {
+    ctx.beginPath();
+    ctx.arc(b.position.x, b.position.y, b.circleRadius, 0, TAU);
+    ctx.fill();
+    ctx.stroke();
+
+    // 圆球自转指示
+    if (b.circleRadius * zoom > 9) {
+      ctx.beginPath();
+      ctx.moveTo(b.position.x, b.position.y);
+      ctx.lineTo(
+        b.position.x + Math.cos(b.angle) * b.circleRadius * 0.85,
+        b.position.y + Math.sin(b.angle) * b.circleRadius * 0.85
+      );
+      ctx.strokeStyle = 'rgba(0,0,0,.25)';
+      ctx.lineWidth = Math.max(1, lw * 0.9);
+      ctx.stroke();
+    }
+  } else if (b.vertices && b.vertices.length >= 3) {
+    const vs = b.vertices;
+    ctx.beginPath();
+    ctx.moveTo(vs[0].x, vs[0].y);
+    for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.shadowBlur = 0;
+
+  // 引信闪烁
+  if (b.plugin.fuse > 0) {
+    const blink = Math.sin(performance.now() * 0.03) > 0;
+    ctx.globalAlpha = blink ? 0.7 : 0.15;
+    ctx.fillStyle = '#fff2a0';
+    if (b.circleRadius) {
+      ctx.beginPath();
+      ctx.arc(b.position.x, b.position.y, b.circleRadius, 0, TAU);
+      ctx.fill();
+    } else {
+      const vs = b.vertices;
+      ctx.beginPath();
+      ctx.moveTo(vs[0].x, vs[0].y);
+      for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawHighlight(b, zoom) {
+  ctx.strokeStyle = '#66d9ff';
+  ctx.lineWidth = 3 / zoom;
+  ctx.shadowColor = '#66d9ff';
+  ctx.shadowBlur = 12;
+  if (b.circleRadius) {
+    ctx.beginPath();
+    ctx.arc(b.position.x, b.position.y, b.circleRadius + 3 / zoom, 0, TAU);
+    ctx.stroke();
+  } else {
+    const vs = b.vertices;
+    ctx.beginPath();
+    ctx.moveTo(vs[0].x, vs[0].y);
+    for (let i = 1; i < vs.length; i++) ctx.lineTo(vs[i].x, vs[i].y);
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+}
+
+function drawParticles(particles) {
+  let lastColor = null;
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const a = 1 - p.life / p.maxLife;
+    if (a <= 0) continue;
+    ctx.globalAlpha = a;
+    if (p.color !== lastColor) {
+      ctx.fillStyle = p.color;
+      lastColor = p.color;
+    }
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * (0.4 + a * 0.6), 0, TAU);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function render() {
+  const cam = App.camera;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  if (!bgCache || bgH !== vh) {
+    const bg = ctx.createLinearGradient(0, 0, 0, vh);
+    bg.addColorStop(0, '#131a26');
+    bg.addColorStop(1, '#0b0e13');
+    bgCache = bg;
+    bgH = vh;
+  }
+  ctx.fillStyle = bgCache;
+  ctx.fillRect(0, 0, vw, vh);
+
+  ctx.save();
+  ctx.translate(vw / 2, vh / 2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
+
+  const halfW = vw / 2 / cam.zoom, halfH = vh / 2 / cam.zoom;
+  const viewL = cam.x - halfW, viewR = cam.x + halfW;
+  const viewT = cam.y - halfH, viewB = cam.y + halfH;
+
+  drawGrid(viewL, viewR, viewT, viewB, cam.zoom);
+
+  // 约束（不画，太乱）
+  // 刚体
+  const bodies = Composite.allBodies(mWorld);
+  for (const b of bodies) {
+    if (b.plugin.dead) continue;
+    if (!b.isStatic) {
+      // 视口剔除
+      const r = (b.circleRadius || 30) + 24 / cam.zoom;
+      if (b.position.x + r < viewL || b.position.x - r > viewR) continue;
+      if (b.position.y + r < viewT || b.position.y - r > viewB) continue;
+    }
+    drawBody(b, cam.zoom);
+  }
+
+  if (App.selected && !App.selected.plugin.dead) {
+    drawHighlight(App.selected, cam.zoom);
+  }
+
+  if (App.drag && App.drag.target) {
+    const b = App.drag.body;
+    if (b && !b.plugin.dead) {
+      ctx.strokeStyle = 'rgba(120,200,255,.85)';
+      ctx.lineWidth = 2 / cam.zoom;
+      ctx.setLineDash([6 / cam.zoom, 5 / cam.zoom]);
+      ctx.beginPath();
+      ctx.moveTo(b.position.x, b.position.y);
+      ctx.lineTo(App.drag.target.x, App.drag.target.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(b.position.x, b.position.y, 5 / cam.zoom, 0, TAU);
+      ctx.fillStyle = 'rgba(120,200,255,.9)';
+      ctx.fill();
+    }
+  }
+
+  drawParticles(App.particles);
+
+  // 冲击波
+  for (const s of App.shockwaves) {
+    const t = s.life / s.maxLife;
+    ctx.strokeStyle = `rgba(255,190,110,${t * 0.8})`;
+    ctx.lineWidth = (2 + 8 * t) / cam.zoom;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r * (1 - t) + 8, 0, TAU);
+    ctx.stroke();
+  }
+
+  // 调试：约束线
+  if (App.debug) {
+    ctx.lineWidth = 1 / cam.zoom;
+    ctx.strokeStyle = 'rgba(0,255,160,.5)';
+    const all = Composite.allConstraints(mWorld);
+    for (const c of all) {
+      const pa = c.pointA, pb = c.pointB;
+      const ba = c.bodyA, bb = c.bodyB;
+      if (!ba || !bb) continue;
+      const ax = ba.position.x + (pa ? pa.x : 0);
+      const ay = ba.position.y + (pa ? pa.y : 0);
+      const bx = bb.position.x + (pb ? pb.x : 0);
+      const by = bb.position.y + (pb ? pb.y : 0);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+/* =========================================================================
+   12. 输入
+   ========================================================================= */
+let pointerDown = false;
+let dragTarget = { x: 0, y: 0 };
+let dragBody = null;
+let isPanning = false;
+let lastScreen = { x: 0, y: 0 };
+let pinchState = null;
+let longPressTimer = null;
+let didLongPress = false;
+let downScreen = { x: 0, y: 0 };
+let downTime = 0;
+let moved = false;
+let firedInstant = false;
+
+const pointers = new Map();
+
+function screenToWorld(sx, sy) {
+  const cam = App.camera;
+  return {
+    x: (sx - vw / 2) / cam.zoom + cam.x,
+    y: (sy - vh / 2) / cam.zoom + cam.y,
+  };
+}
+
+function pickBody(wx, wy) {
+  const bodies = Composite.allBodies(mWorld);
+  for (let i = bodies.length - 1; i >= 0; i--) {
+    const b = bodies[i];
+    if (b.isStatic) continue;
+    if (b.plugin.dead) continue;
+    if (bodyContains(b, wx, wy)) return b;
+  }
+  return null;
+}
+
+function spawnAt(wx, wy) {
+  const tool = App.tool;
+  const mat = App.material;
+
+  switch (tool) {
+    case 'box':   addBox(wx, wy, 52, 52, mat); break;
+    case 'ball':  addCircle(wx, wy, 26, mat); break;
+    case 'tri':   addNgon(wx, wy, 36, 3, mat); break;
+    case 'hex':   addNgon(wx, wy, 32, 6, mat); break;
+    case 'ragdoll': makeRagdoll(wx, wy); break;
+    case 'tnt': {
+      const b = addBox(wx, wy, 46, 46, 'tnt');
+      b.plugin.tag = 'tnt';
+      break;
+    }
+    case 'gun':   fireBullet(wx, wy); break;
+    case 'blade': fireBlade(wx, wy); break;
+    case 'bomb': {
+      const b = addCircle(wx, wy, 20, 'metal');
+      b.plugin.color = '#3a3f4d';
+      b.plugin.color2 = '#1e222c';
+      b.plugin.tag = 'tnt';
+      b.plugin.fuse = 1.2;
+      b.plugin.noShatter = true;
+      break;
+    }
+  }
+  enforceBodyLimit();
+}
+
+function enforceBodyLimit() {
+  const bodies = Composite.allBodies(mWorld);
+  let dyn = [];
+  for (const b of bodies) if (!b.isStatic && !b.plugin.dead) dyn.push(b);
+  if (dyn.length <= MAX_BODIES) return;
+
+  let removeCount = dyn.length - MAX_BODIES;
+  for (let i = 0; i < dyn.length && removeCount > 0; i++) {
+    const b = dyn[i];
+    if (b === App.selected) continue;
+    if (App.drag && b === App.drag.body) continue;
+    if (b.plugin.tag === 'ragdoll' && b.plugin.group) {
+      // 整个布娃娃删
+      ragdollDestroy(b.plugin.group);
+    } else {
+      Composite.remove(mWorld, b);
+    }
+    removeCount--;
+  }
+}
+
+function ragdollDestroy(group) {
+  if (!group) return;
+  for (const c of group.constraints) Composite.remove(mWorld, c);
+  for (const n in group.parts) {
+    const b = group.parts[n];
+    if (b) Composite.remove(mWorld, b);
+  }
+  const idx = ragdollGroups.indexOf(group);
+  if (idx >= 0) ragdollGroups.splice(idx, 1);
+}
+
+function fireBullet(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+
+  const b = makeBody({
+    shape: 'circle', x: wx, y: wy, radius: 5,
+    material: 'bullet', tag: 'bullet', noShatter: true,
+    frictionAir: 0.001,
+  });
+  Body.setVelocity(b, { x: dx * 28, y: dy * 28 });
+}
+
+function fireBlade(wx, wy) {
+  const cam = App.camera;
+  let dx = wx - cam.x, dy = wy - cam.y;
+  const l = Math.hypot(dx, dy) || 1;
+  dx /= l; dy /= l;
+
+  const b = addBox(wx, wy, 46, 6, 'metal');
+  b.plugin.tag = 'blade';
+  b.plugin.noShatter = true;
+  b.plugin.color = '#d8e2f0';
+  b.plugin.color2 = '#7d8da3';
+  Body.setAngle(b, Math.atan2(dy, dx));
+  Body.setVelocity(b, { x: dx * 22, y: dy * 22 });
+  Body.setAngularVelocity(b, 0.6);
+}
+
+/* ---------- 指针 ---------- */
+canvas.addEventListener('pointerdown', (e) => {
+  if (quickmenu.classList.contains('show')) {
+    hideQuickMenu();
+    if (e.cancelable) e.preventDefault();
+    return;
+  }
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+
+  const p = {
+    id: e.pointerId,
+    x: e.clientX, y: e.clientY,
+    sx: e.clientX, sy: e.clientY,
+    t0: performance.now(),
+    moved: false,
+    fired: false,
+  };
+  pointers.set(e.pointerId, p);
+  didLongPress = false;
+  moved = false;
+  firedInstant = false;
+  downScreen.x = e.clientX; downScreen.y = e.clientY;
+  downTime = performance.now();
+
+  if (pointers.size === 1) {
+    handleSingleDown(p);
+    clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(() => {
+      if (!p.moved && pointers.size === 1 && !App.drag) {
+        didLongPress = true;
+        showQuickMenu(p.x, p.y);
+      }
+    }, 520);
+  } else if (pointers.size >= 2) {
+    clearTimeout(longPressTimer);
+    releaseDrag();
+    pinchState = null;
+  }
+});
+
+function handleSingleDown(p) {
+  const w = screenToWorld(p.x, p.y);
+
+  // 即时工具
+  if (INSTANT_TOOLS[App.tool]) {
+    p.fired = true;
+    firedInstant = true;
+    if (App.tool === 'gun') fireBullet(w.x, w.y);
+    else fireBlade(w.x, w.y);
+    enforceBodyLimit();
+    return;
+  }
+
+  const hit = pickBody(w.x, w.y);
+  if (hit && App.tool !== 'delete') {
+    App.selected = hit;
+    dragBody = hit;
+    dragTarget.x = w.x; dragTarget.y = w.y;
+    App.drag = { body: hit, target: dragTarget };
+    // 唤醒
+    Body.setStatic(hit, false); // 没意义，但保持 API
+    return;
+  }
+  App.drag = null;
+  dragBody = null;
+  isPanning = true;
+  lastScreen.x = p.x; lastScreen.y = p.y;
+}
+
+function releaseDrag() {
+  App.drag = null;
+  dragBody = null;
+  isPanning = false;
+}
+
+canvas.addEventListener('pointermove', (e) => {
+  const p = pointers.get(e.pointerId);
+  if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 8) {
+    if (!p.moved) { p.moved = true; clearTimeout(longPressTimer); }
+  }
+
+  if (pointers.size >= 2) {
+    updatePinch();
+    return;
+  }
+
+  if (App.drag && dragBody) {
+    const w = screenToWorld(e.clientX, e.clientY);
+    dragTarget.x = w.x; dragTarget.y = w.y;
+  } else if (isPanning) {
+    const cam = App.camera;
+    cam.x -= dx / cam.zoom;
+    cam.y -= dy / cam.zoom;
+  }
+});
+
+canvas.addEventListener('pointerup', (e) => {
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  clearTimeout(longPressTimer);
+  if (!p) return;
+
+  if (pointers.size === 0) {
+    const dt = performance.now() - p.t0;
+    const isTap = !p.moved && dt < 320;
+    if (isTap && !didLongPress && !firedInstant) handleTap(p.sx, p.sy);
+    releaseDrag();
+    pinchState = null;
+    if (!didLongPress) hideQuickMenu();
+  } else if (pointers.size === 1) {
+    pinchState = null;
+  }
+});
+
+canvas.addEventListener('pointercancel', (e) => {
+  pointers.delete(e.pointerId);
+  clearTimeout(longPressTimer);
+  releaseDrag();
+  pinchState = null;
+});
+
+function handleTap(sx, sy) {
+  const w = screenToWorld(sx, sy);
+
+  if (App.tool === 'delete') {
+    const hit = pickBody(w.x, w.y);
+    if (hit) {
+      if (hit.plugin.tag === 'ragdoll' && hit.plugin.group) {
+        ragdollDestroy(hit.plugin.group);
+      } else {
+        Composite.remove(mWorld, hit);
+      }
+      if (App.selected === hit) App.selected = null;
+      spawnParticles(hit.position.x, hit.position.y, 6, {
+        colors: [hit.plugin.color, hit.plugin.color2 || '#333', '#fff'],
+        spdMin: 40, spdMax: 220, lifeMin: 0.15, lifeMax: 0.5,
+        sizeMin: 1.5, sizeMax: 4,
+      });
+    }
+    return;
+  }
+
+  const hit = pickBody(w.x, w.y);
+  if (hit) {
+    App.selected = hit;
+    if (hit.plugin.tag === 'tnt' && hit.plugin.fuse < 0) {
+      hit.plugin.fuse = 0.35;
+    }
+    return;
+  }
+
+  App.selected = null;
+  if (App.tool === 'hand') return;
+  spawnAt(w.x, w.y);
+}
+
+function updatePinch() {
+  const pts = [];
+  for (const p of pointers.values()) pts.push(p);
+  if (pts.length < 2) return;
+  const a = pts[0], b = pts[1];
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+
+  if (!pinchState) { pinchState = { dist, cx, cy }; return; }
+
+  const cam = App.camera;
+  const wxp = (cx - vw / 2) / cam.zoom + cam.x;
+  const wyp = (cy - vh / 2) / cam.zoom + cam.y;
+
+  const scale = dist / (pinchState.dist || dist);
+  cam.zoom = clamp(cam.zoom * scale, 0.15, 5);
+
+  cam.x = wxp - (cx - vw / 2) / cam.zoom;
+  cam.y = wyp - (cy - vh / 2) / cam.zoom;
+
+  cam.x -= (cx - pinchState.cx) / cam.zoom;
+  cam.y -= (cy - pinchState.cy) / cam.zoom;
+
+  pinchState = { dist, cx, cy };
+}
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const cam = App.camera;
+  const wxp = (e.clientX - vw / 2) / cam.zoom + cam.x;
+  const wyp = (e.clientY - vh / 2) / cam.zoom + cam.y;
+  const factor = Math.exp(-e.deltaY * 0.0014);
+  cam.zoom = clamp(cam.zoom * factor, 0.15, 5);
+  cam.x = wxp - (e.clientX - vw / 2) / cam.zoom;
+  cam.y = wyp - (e.clientY - vh / 2) / cam.zoom;
+}, { passive: false });
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('gesturechange', e => e.preventDefault());
+document.addEventListener('gestureend', e => e.preventDefault());
+document.addEventListener('touchmove', e => {
+  if (e.target === canvas) e.preventDefault();
+}, { passive: false });
+
+/* =========================================================================
+   13. 拖拽：直接改速度和位置（弹簧）
+   ========================================================================= */
+function updateDragPhysics() {
+  if (!App.drag || !dragBody) return;
+  const b = dragBody;
+  if (b.plugin.dead) { releaseDrag(); return; }
+
+  const dx = dragTarget.x - b.position.x;
+  const dy = dragTarget.y - b.position.y;
+  const dist = Math.hypot(dx, dy);
+
+  // 弹簧力
+  const k = 0.0006;
+  const damp = 0.15;
+  const fx = dx * k * b.mass;
+  const fy = dy * k * b.mass;
+  Body.applyForce(b, b.position, { x: fx, y: fy });
+  Body.setVelocity(b, {
+    x: b.velocity.x * (1 - damp),
+    y: b.velocity.y * (1 - damp),
+  });
+}
+
+/* =========================================================================
+   14. 主循环
+   ========================================================================= */
+let accumulator = 0;
+const FIXED_DT = 1 / 60;
+let lastTime = performance.now();
+let fpsAcc = 0, fpsFrames = 0;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+
+  const rawDt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  fpsAcc += rawDt; fpsFrames++;
+  if (fpsAcc >= 0.4) {
+    App.fps = Math.round(fpsFrames / fpsAcc);
+    fpsAcc = 0; fpsFrames = 0;
+  }
+
+  if (!App.paused) {
+    const scaled = rawDt * App.timeScale;
+    accumulator += scaled;
+    let steps = 0;
+    const maxSteps = App.timeScale < 0.5 ? 6 : 4;
+    while (accumulator >= FIXED_DT && steps < maxSteps) {
+      updateDragPhysics();
+      Engine.update(engine, FIXED_DT * 1000);
+      updateFuses(FIXED_DT);
+      // 清理死亡刚体
+      accumulator -= FIXED_DT;
+      steps++;
+    }
+    if (steps >= maxSteps) accumulator = 0;
+
+    updateParticles(scaled);
+  }
+
+  // 统计
+  const bodies = Composite.allBodies(mWorld);
+  let dyn = 0;
+  for (const b of bodies) if (!b.isStatic && !b.plugin.dead) dyn++;
+
+  const statsText = `FPS <b>${App.fps}</b> · 物体 <b>${dyn}</b> · 缩放 <b>${Math.round(App.camera.zoom * 100)}%</b>`;
+  if (statsText !== loop._lastStats) {
+    document.getElementById('stats').innerHTML = statsText;
+    loop._lastStats = statsText;
+  }
+
+  render();
+}
+
+function updateFuses(dt) {
+  const bodies = Composite.allBodies(mWorld);
+  for (const b of bodies) {
+    if (b.plugin.dead) continue;
+    if (b.plugin.fuse > 0) {
+      b.plugin.fuse -= dt;
+      if (b.plugin.fuse <= 0) {
+        b.plugin.fuse = -1;
+        triggerTNT(b);
+      }
+    }
+  }
+}
+
+/* =========================================================================
+   15. 全局碰撞事件
+   ========================================================================= */
+Events.on(engine, 'collisionStart', (ev) => {
+  const pairs = ev.pairs;
+  for (const pair of pairs) {
+    const A = pair.bodyA, B = pair.bodyB;
+    if (A.plugin.dead || B.plugin.dead) continue;
+
+    const relSpeed = Math.hypot(
+      (A.velocity.x - B.velocity.x),
+      (A.velocity.y - B.velocity.y)
+    );
+
+    // —— 布娃娃受击 ——
+    if (relSpeed > 12) {
+      if (A.plugin.tag === 'ragdoll' && A.plugin.group && B.plugin.tag !== 'ragdoll') {
+        ragdollHit(A.plugin.group);
+      }
+      if (B.plugin.tag === 'ragdoll' && B.plugin.group && A.plugin.tag !== 'ragdoll') {
+        ragdollHit(B.plugin.group);
+      }
+    }
+
+    // —— 子弹 ——
+    if (A.plugin.tag === 'bullet' && B.plugin.tag !== 'bullet' && B.plugin.tag !== 'blade') {
+      if (!B.isStatic) shatterBody(B);
+      spawnParticles(A.position.x, A.position.y, 6, {
+        colors: ['#ffe08a', '#ff9a3c', '#fff'],
+        spdMin: 80, spdMax: 400, lifeMin: 0.15, lifeMax: 0.45, sizeMin: 1, sizeMax: 3,
+      });
+      A.plugin.dead = true;
+      Composite.remove(mWorld, A);
+      continue;
+    }
+    if (B.plugin.tag === 'bullet' && A.plugin.tag !== 'bullet' && A.plugin.tag !== 'blade') {
+      if (!A.isStatic) shatterBody(A);
+      spawnParticles(B.position.x, B.position.y, 6, {
+        colors: ['#ffe08a', '#ff9a3c', '#fff'],
+        spdMin: 80, spdMax: 400, lifeMin: 0.15, lifeMax: 0.45, sizeMin: 1, sizeMax: 3,
+      });
+      B.plugin.dead = true;
+      Composite.remove(mWorld, B);
+      continue;
+    }
+
+    // —— 飞刀 ——
+    if (A.plugin.tag === 'blade' && B.plugin.tag !== 'bullet' && B.plugin.tag !== 'blade') {
+      if (!B.isStatic) shatterBody(B);
+      continue;
+    }
+    if (B.plugin.tag === 'blade' && A.plugin.tag !== 'bullet' && A.plugin.tag !== 'blade') {
+      if (!A.isStatic) shatterBody(A);
+      continue;
+    }
+  }
+});
+
+/* =========================================================================
+   16. UI 绑定
+   ========================================================================= */
+const quickmenu = document.getElementById('quickmenu');
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1200);
+}
+
+const toolButtons = Array.from(document.querySelectorAll('#bottombar .tool'));
+function updateToolUI() {
+  for (const btn of toolButtons) {
+    btn.classList.toggle('active', btn.dataset.tool === App.tool);
+  }
+}
+toolButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    App.tool = btn.dataset.tool;
+    updateToolUI();
+    hideQuickMenu();
+  });
+});
+
+function updateMatUI() {
+  const m = MATERIALS[App.material];
+  const dot = document.getElementById('matDot');
+  if (dot) dot.style.background = m.color;
+}
+
+document.querySelectorAll('#topbar .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const act = btn.dataset.act;
+    switch (act) {
+      case 'mat': {
+        const i = MAT_KEYS.indexOf(App.material);
+        App.material = MAT_KEYS[(i + 1) % MAT_KEYS.length];
+        updateMatUI();
+        toast('材质：' + MATERIALS[App.material].name);
+        break;
+      }
+      case 'pause':
+        App.paused = !App.paused;
+        btn.classList.toggle('active', App.paused);
+        btn.innerHTML = makeSvg(App.paused ? 'play' : 'pause');
+        toast(App.paused ? '已暂停' : '继续');
+        break;
+      case 'slow': {
+        const scales = [1, 0.4, 0.15];
+        const idx = scales.indexOf(App.timeScale);
+        App.timeScale = scales[(idx + 1) % scales.length];
+        btn.classList.toggle('active', App.timeScale !== 1);
+        toast('时间流速 ' + Math.round(App.timeScale * 100) + '%');
+        break;
+      }
+      case 'debug':
+        App.debug = !App.debug;
+        btn.classList.toggle('active', App.debug);
+        toast(App.debug ? '调试模式开' : '调试模式关');
+        break;
+      case 'full': toggleFullscreen(); break;
+      case 'reset':
+        buildScene();
+        toast('场景已重置');
+        break;
+      case 'clear':
+        clearScene();
+        toast('已清空');
+        break;
+    }
+  });
+});
+
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el).catch(() => {});
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(() => {});
+    }
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+  }
+}
+
+/* ---------- 快捷菜单 ---------- */
+const QUICK_ITEMS = [
+  { tool: 'box',     icon: 'box',     label: '方块' },
+  { tool: 'ball',    icon: 'ball',    label: '圆球' },
+  { tool: 'tri',     icon: 'tri',     label: '三角' },
+  { tool: 'hex',     icon: 'hex',     label: '六边' },
+  { tool: 'ragdoll', icon: 'ragdoll', label: '布娃娃' },
+  { tool: 'tnt',     icon: 'tnt',     label: 'TNT' },
+  { tool: 'gun',     icon: 'gun',     label: '手枪' },
+  { tool: 'blade',   icon: 'blade',   label: '飞刀' },
+  { tool: 'bomb',    icon: 'bomb',    label: '炸弹' },
+  { tool: 'delete',  icon: 'delete',  label: '删除' },
+];
+let quickMenuWorldPos = null;
+
+function showQuickMenu(sx, sy) {
+  quickmenu.innerHTML = '';
+  quickMenuWorldPos = screenToWorld(sx, sy);
+
+  for (const item of QUICK_ITEMS) {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.innerHTML = makeSvg(item.icon, 22, 1.8) + `<span class="lbl">${item.label}</span>`;
+    btn.addEventListener('pointerdown', (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      App.tool = item.tool;
+      updateToolUI();
+      hideQuickMenu();
+      if (quickMenuWorldPos && !INSTANT_TOOLS[item.tool] && item.tool !== 'delete') {
+        spawnAt(quickMenuWorldPos.x, quickMenuWorldPos.y);
+      }
+      quickMenuWorldPos = null;
+    }, { passive: false });
+    quickmenu.appendChild(btn);
+  }
+
+  quickmenu.style.left = '-9999px';
+  quickmenu.style.top = '-9999px';
+  quickmenu.classList.add('show');
+
+  const mw = quickmenu.offsetWidth || 220;
+  const mh = quickmenu.offsetHeight || 220;
+  const left = clamp(sx, mw / 2 + 10, Math.max(mw / 2 + 10, window.innerWidth - mw / 2 - 10));
+  const top  = clamp(sy, mh / 2 + 10, Math.max(mh / 2 + 10, window.innerHeight - mh / 2 - 10));
+  quickmenu.style.left = left + 'px';
+  quickmenu.style.top = top + 'px';
+
+  if (navigator.vibrate) navigator.vibrate(12);
+}
+function hideQuickMenu() {
+  quickmenu.classList.remove('show');
+  quickMenuWorldPos = null;
+}
+
+/* =========================================================================
+   17. 启动
+   ========================================================================= */
+function init() {
+  document.querySelectorAll('[data-icon]').forEach(el => {
+    el.innerHTML = makeSvg(el.dataset.icon, 22, 1.8);
+  });
+  const btnMat = document.getElementById('btnMat');
+  btnMat.innerHTML = makeSvg('mat', 22, 1.8) + '<span class="matdot" id="matDot"></span>';
+
+  resizeCanvas();
+  buildScene();
+  updateMatUI();
+  updateToolUI();
+
+  let resizePending = false;
+  const onResize = () => {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(() => {
+      resizePending = false;
+      resizeCanvas();
+    });
+  };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(onResize, 120);
+    setTimeout(onResize, 400);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onResize);
+  }
+
+  document.getElementById('hint').textContent = IS_MOBILE
+    ? '单指拖拽物体 · 双指缩放/平移 · 长按呼出菜单'
+    : '左键拖拽物体 · 空白拖拽平移 · 滚轮缩放 · 点按空白生成';
+
+  requestAnimationFrame(loop);
+}
+
+init();
+</script>
+</body>
+</html>

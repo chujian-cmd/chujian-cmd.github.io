@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>3D 物理沙盒 - 冻结悬浮版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      overflow: hidden; background: #000; user-select: none;
+    }
+    canvas { display: block; }
+
+    /* 开始界面优化 */
+    #start-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at center, rgba(15, 20, 40, 0.95) 0%, rgba(0, 0, 0, 0.98) 100%);
+      backdrop-filter: blur(12px);
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+      visibility: visible;
+    }
+    #start-overlay.hidden { 
+      opacity: 0; 
+      pointer-events: none;
+      visibility: hidden;
+    }
+
+    #start-box {
+      background: rgba(25, 30, 60, 0.98);
+      border: 2px solid rgba(255, 107, 107, 0.4);
+      border-radius: 24px;
+      padding: 45px 55px;
+      text-align: center;
+      color: #fff;
+      box-shadow: 0 0 80px rgba(255, 107, 107, 0.2), inset 0 0 20px rgba(255, 255, 255, 0.05);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      max-width: 580px;
+      width: 92%;
+      line-height: 1.7;
+      position: relative;
+      overflow: hidden;
+    }
+    #start-box::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, rgba(255, 107, 107, 0.05) 0%, rgba(94, 205, 196, 0.05) 100%);
+      z-index: -1;
+    }
+    #start-box:hover { 
+      transform: translateY(-5px) scale(1.02); 
+      border-color: #ff6b6b;
+      box-shadow: 0 0 90px rgba(255, 107, 107, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.08);
+    }
+    #start-box:active { 
+      transform: translateY(0) scale(0.98); 
+    }
+    #start-box h1 { 
+      font-size: 2.4rem; 
+      margin-bottom: 18px; 
+      text-shadow: 0 0 15px rgba(255, 107, 107, 0.4);
+      background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    #start-box .subtitle { 
+      color: #ff6b6b; 
+      font-size: 1.2rem; 
+      margin-bottom: 20px; 
+      animation: pulse 1.8s infinite ease-in-out;
+      font-weight: 600;
+    }
+    @keyframes pulse { 
+      0%,100% { opacity:1; transform: scale(1); } 
+      50% { opacity:0.7; transform: scale(1.05); } 
+    }
+    #start-box p { 
+      color: #ccd6f6; 
+      margin: 8px 0; 
+      font-size: 0.95rem; 
+    }
+
+    /* HUD样式优化 */
+    .hud {
+      position: fixed; z-index: 20; pointer-events: none;
+      color: #e6f1ff;
+      background: rgba(15, 25, 50, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 12px 24px;
+      opacity: 0; 
+      transition: opacity 0.4s ease;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    .hud.visible { opacity: 1; }
+    #hud-top { 
+      top:20px; left:50%; transform:translateX(-50%); 
+      font-size:0.9rem; 
+      min-width: 320px;
+      text-align: center;
+    }
+    #hud-bottom { 
+      bottom:25px; left:50%; transform:translateX(-50%); 
+      font-size:0.8rem; 
+      display:flex; gap:20px; flex-wrap:wrap; justify-content:center;
+      max-width: 90%;
+    }
+
+    /* 形状指示器优化 */
+    .shape-dot { 
+      width:16px; height:16px; 
+      border-radius:4px; display:inline-block; 
+      border:2px solid rgba(255,255,255,0.7);
+      margin: 0 4px;
+      box-shadow: 0 0 8px rgba(0,0,0,0.3);
+    }
+    .shape-dot.sphere,.shape-dot.cone,.shape-dot.torus { border-radius:50%; }
+    .shape-dot.pyramid { clip-path: polygon(50% 0%, 0% 100%, 100% 100%); }
+    .shape-dot.capsule { border-radius: 8px; }
+    .shape-dot.octahedron { clip-path: polygon(50% 0%, 0% 50%, 50% 100%, 100% 50%); }
+
+    /* 按键样式优化 */
+    .key { 
+      background:linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+      border:1px solid rgba(255,255,255,0.3); 
+      border-radius:6px; 
+      padding:4px 8px; 
+      font-size:0.75rem; 
+      font-weight:bold; 
+      margin:0 3px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      min-width: 24px;
+      display: inline-block;
+      text-align: center;
+    }
+
+    /* 性能统计优化 */
+    #stats {
+      position: fixed; top:20px; left:20px; z-index:30;
+      color:#a8f0f0; 
+      font-size:0.75rem; 
+      font-family:monospace;
+      background:rgba(0, 20, 40, 0.9); 
+      padding:8px 15px; 
+      border-radius:12px;
+      opacity:0; 
+      transition:opacity 0.4s ease;
+      border: 1px solid rgba(0, 210, 211, 0.3);
+      box-shadow: 0 4px 16px rgba(0, 210, 211, 0.1);
+    }
+    #stats.visible { opacity:1; }
+
+    /* 死亡界面优化 */
+    #death-overlay {
+      position:fixed; inset:0; 
+      background:radial-gradient(circle at center, rgba(0,0,0,0.9) 0%, rgba(40, 10, 10, 0.95) 100%); 
+      z-index:200;
+      display:flex; align-items:center; justify-content:center;
+      opacity:0; pointer-events:none; 
+      transition:opacity 0.5s ease;
+      backdrop-filter: blur(8px);
+    }
+    #death-overlay.active { opacity:1; pointer-events:auto; }
+
+    #death-box {
+      background:rgba(35, 20, 40, 0.98); 
+      border:1px solid rgba(255, 107, 107, 0.4);
+      border-radius:24px; 
+      padding:40px 50px; 
+      text-align:center; 
+      color:#fff;
+      box-shadow: 0 0 60px rgba(255, 107, 107, 0.3);
+      min-width: 320px;
+      max-width: 90%;
+    }
+    #death-box h2 { 
+      color:#ff6b6b; 
+      margin-bottom:15px; 
+      font-size: 1.8rem;
+      text-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
+    }
+    #death-box button {
+      background:linear-gradient(135deg, #ff6b6b 0%, #ff8787 100%);
+      border:none; 
+      color:#fff; 
+      font-weight:bold;
+      padding:12px 30px; 
+      border-radius:25px; 
+      cursor:pointer; 
+      margin-top:15px;
+      transition:all 0.2s ease;
+      font-size: 0.95rem;
+      box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+    }
+    #death-box button:hover { 
+      background:linear-gradient(135deg, #ff8787 0%, #ffa0a0 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+    }
+    #death-box button:active {
+      transform: translateY(0);
+    }
+
+    /* 作弊面板优化 */
+    #cheat-panel {
+      position:fixed; top:20px; right:20px; z-index:9999;
+      width:280px; 
+      background:linear-gradient(180deg, #0f172a 0%, #081020 100%);
+      border:1px solid #00ff00;
+      font-family:monospace; 
+      color:#00ff00; 
+      padding:15px;
+      opacity:0; 
+      pointer-events:none; 
+      transition:opacity 0.3s ease, transform 0.3s ease;
+      max-height:85vh; 
+      overflow-y:auto;
+      box-shadow:0 0 20px rgba(0,255,0,0.4);
+      border-radius: 12px;
+      transform: translateX(20px);
+    }
+    #cheat-panel.visible { 
+      opacity:1; 
+      pointer-events:auto;
+      transform: translateX(0);
+    }
+    #cheat-panel h3 {
+      text-align: center;
+      margin-bottom: 15px;
+      font-size: 1.1rem;
+      text-shadow: 0 0 8px rgba(0,255,0,0.5);
+      border-bottom: 1px solid rgba(0,255,0,0.3);
+      padding-bottom: 8px;
+    }
+    .cheat-row {
+      margin: 10px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .cheat-divider {
+      height: 1px;
+      background: rgba(0,255,0,0.2);
+      margin: 12px 0;
+    }
+    .cheat-btn {
+      width: 100%;
+      padding: 8px;
+      margin: 6px 0;
+      background: rgba(0,255,0,0.1);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: monospace;
+    }
+    .cheat-btn:hover {
+      background: rgba(0,255,0,0.2);
+      box-shadow: 0 0 10px rgba(0,255,0,0.3);
+    }
+    #cheat-script-input {
+      width: 100%;
+      background: rgba(0,10,0,0.8);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      padding: 8px;
+      border-radius: 6px;
+      margin: 8px 0;
+      min-height: 80px;
+      font-family: monospace;
+      resize: vertical;
+    }
+    #cheat-panel input[type="range"],
+    #cheat-panel input[type="number"] {
+      width: 120px;
+      background: rgba(0,10,0,0.5);
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      padding: 4px;
+      border-radius: 4px;
+    }
+    #cheat-panel input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #00ff00;
+    }
+
+    /* 滚动条美化 */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0,20,0,0.3);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #00ff00;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #00cc00;
+    }
+
+    /* 加载提示 */
+    #loading-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #000;
+      color: #4ecdc4;
+      font-size: 1.2rem;
+      transition: opacity 0.5s ease;
+    }
+    .loader {
+      width: 50px; height: 50px;
+      border: 4px solid rgba(78, 205, 196, 0.2);
+      border-top: 4px solid #4ecdc4;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div id="loading-overlay">
+  <div class="loader"></div>
+  <p>加载中... 3D 物理沙盒</p>
+</div>
+
+<div id="start-overlay">
+  <div id="start-box">
+    <h1>🎮 3D 物理沙盒</h1>
+    <p class="subtitle">👆 点击开始游戏</p>
+    <p>WASD 移动 · 空格跳跃 · 鼠标控制视角</p>
+    <p>左键放置 · 右键删除 · 滚轮切换形状</p>
+    <p style="font-size:0.9rem; margin-top:15px; line-height: 1.8;">
+      <span class="key">1-8</span>形状 &nbsp;&nbsp;
+      <span class="key">R</span>换色 &nbsp;&nbsp;
+      <span class="key">G</span>吸引 &nbsp;&nbsp;
+      <span class="key">H</span>推远 &nbsp;&nbsp;
+      <span class="key">B</span>爆炸<br>
+      <span class="key">V</span>全吸 &nbsp;&nbsp;
+      <span class="key">N</span>反重力 &nbsp;&nbsp;
+      <span class="key">F</span>重生 &nbsp;&nbsp;
+      <span class="key">U</span>鼠标 &nbsp;&nbsp;
+      <span class="key">K</span>冻结放置<br>
+      <span class="key">~</span>面板 &nbsp;&nbsp;
+      <span class="key">Ctrl+Z</span>撤销
+    </p>
+  </div>
+</div>
+
+<div id="stats">📦 <span id="obj-count">0</span> ⚡ <span id="fps-val">60</span> FPS 🕒 <span id="physics-time">0</span>ms</div>
+<div id="hud-top" class="hud">
+  形状: <span id="shape-dot" class="shape-dot" style="background:#ff6b6b;"></span>
+  <span id="shape-name">立方体</span> | 颜色: 
+  <span id="color-dot" style="width:16px;height:16px;border-radius:50%;background:#ff6b6b;display:inline-block;border:2px solid rgba(255,255,255,0.7);"></span>
+</div>
+<div id="hud-bottom" class="hud">
+  <span><span class="key">1-8</span>形状</span>
+  <span><span class="key">R</span>换色</span>
+  <span><span class="key">G</span>吸引</span>
+  <span><span class="key">H</span>推远</span>
+  <span><span class="key">B</span>爆炸</span>
+  <span><span class="key">F</span>重生</span>
+  <span><span class="key">U</span>鼠标</span>
+  <span><span class="key">K</span>冻结放置</span>
+  <span><span class="key">~</span>面板</span>
+</div>
+
+<div id="death-overlay">
+  <div id="death-box">
+    <h2>💀 掉出世界了</h2>
+    <p>按 F 重生 或 点击下方按钮</p>
+    <button id="respawn-btn">🔄 重生</button>
+  </div>
+</div>
+
+<div id="cheat-panel">
+  <h3>⚡ 控制台</h3>
+  <div class="cheat-row"><label>🕊️ 飞行</label><input type="checkbox" id="cheat-fly"></div>
+  <div class="cheat-row"><label>👑 上帝模式</label><input type="checkbox" id="cheat-god"></div>
+  <div class="cheat-row"><label>🎯 无限放置</label><input type="checkbox" id="cheat-range"></div>
+  <div class="cheat-row"><label>⚡ 自动放置</label><input type="checkbox" id="cheat-auto"></div>
+  <div class="cheat-divider"></div>
+  <div class="cheat-row"><label>重力</label><input type="range" id="cheat-gravity" min="-20" max="20" value="-12" step="0.5"></div>
+  <div class="cheat-row"><label>速度</label><input type="range" id="cheat-speed" min="2" max="30" value="8" step="0.5"></div>
+  <div class="cheat-row"><label>跳跃</label><input type="range" id="cheat-jump" min="2" max="20" value="8" step="0.5"></div>
+  <div class="cheat-row"><label>力度</label><input type="range" id="cheat-force" min="500" max="5000" value="1500" step="100"></div>
+  <div class="cheat-divider"></div>
+  <div class="cheat-row"><label>批量数量</label><input type="number" id="cheat-batch" value="100" min="1" max="5000"></div>
+  <button class="cheat-btn" id="btn-spawn-batch">💣 批量生成</button>
+  <button class="cheat-btn" id="btn-clear">🗑️ 清空世界</button>
+  <button class="cheat-btn" id="btn-random-color">🎨 随机颜色</button>
+  <div class="cheat-divider"></div>
+  <label>📜 脚本 (回车执行)</label>
+  <textarea id="cheat-script-input">// setGravity(-2); spawnSphere(0,5,0);</textarea>
+  <button class="cheat-btn" id="btn-exec-script">▶️ 执行脚本</button>
+</div>
+
+<script type="importmap">
+  { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script>
+// 性能优化：物理引擎重构
+class OptimizedPhysics {
+  constructor() {
+    this.gravity = -12;
+    this.bodies = [];
+    this.groundY = -0.2;
+    this.sleepThreshold = 0.01; // 休眠阈值
+    this.sleepTime = 1; // 休眠延迟
+    this.maxSubSteps = 2; // 减少子步数以提升性能
+  }
+
+  // 对象池优化：复用物理体
+  createBody(x, y, z, mass = 1, size = 0.5) {
+    const body = {
+      position: { x, y, z },
+      velocity: { x: 0, y: 0, z: 0 },
+      mass,
+      size,
+      isStatic: mass === 0,
+      isSleeping: false,
+      sleepTimer: 0
+    };
+    this.bodies.push(body);
+    return body;
+  }
+
+  removeBody(body) {
+    const index = this.bodies.indexOf(body);
+    if (index !== -1) {
+      this.bodies.splice(index, 1);
+    }
+  }
+
+  // 优化物理步进：减少计算量，批量处理
+  step(dt) {
+    const subDt = dt / this.maxSubSteps;
+    const bodiesLength = this.bodies.length;
+    
+    // 预计算重力
+    const gravityStep = this.gravity * subDt;
+    
+    // 第一步：更新速度和位置（批量处理）
+    for (let s = 0; s < this.maxSubSteps; s++) {
+      for (let i = 0; i < bodiesLength; i++) {
+        const b = this.bodies[i];
+        if (b.isStatic || b.isSleeping) continue;
+
+        // 重力更新
+        b.velocity.y += gravityStep;
+
+        // 地面碰撞
+        const bottom = b.position.y - b.size;
+        if (bottom < this.groundY) {
+          b.position.y = this.groundY + b.size;
+          if (b.velocity.y < 0) {
+            b.velocity.y *= -0.3;
+            b.velocity.x *= 0.8;
+            b.velocity.z *= 0.8;
+          }
+        }
+
+        // 边界碰撞
+        const lim = 17.5;
+        if (Math.abs(b.position.x) > lim) {
+          b.position.x = Math.sign(b.position.x) * lim;
+          b.velocity.x *= -0.3;
+        }
+        if (Math.abs(b.position.z) > lim) {
+          b.position.z = Math.sign(b.position.z) * lim;
+          b.velocity.z *= -0.3;
+        }
+
+        // 位置更新
+        b.position.x += b.velocity.x * subDt;
+        b.position.y += b.velocity.y * subDt;
+        b.position.z += b.velocity.z * subDt;
+
+        // 空气阻力
+        b.velocity.x *= 0.995;
+        b.velocity.y *= 0.995;
+        b.velocity.z *= 0.995;
+
+        // 休眠检测（优化：减少计算）
+        const speed = Math.hypot(b.velocity.x, b.velocity.y, b.velocity.z);
+        if (speed < this.sleepThreshold) {
+          b.sleepTimer += subDt;
+          if (b.sleepTimer > this.sleepTime) {
+            b.isSleeping = true;
+            b.velocity.x = b.velocity.y = b.velocity.z = 0;
+          }
+        } else {
+          b.sleepTimer = 0;
+        }
+      }
+
+      // 第二步：物体碰撞检测（优化：只检测活跃物体）
+      this.detectCollisions();
+    }
+  }
+
+  // 优化碰撞检测：空间分区 + 只检测非休眠物体
+  detectCollisions() {
+    const activeBodies = this.bodies.filter(b => !b.isSleeping && !b.isStatic);
+    const activeLength = activeBodies.length;
+
+    for (let i = 0; i < activeLength; i++) {
+      const a = activeBodies[i];
+      for (let j = i + 1; j < activeLength; j++) {
+        const b = activeBodies[j];
+        
+        const dx = b.position.x - a.position.x;
+        const dy = b.position.y - a.position.y;
+        const dz = b.position.z - a.position.z;
+        const distance = Math.hypot(dx, dy, dz);
+        const minDistance = a.size + b.size;
+
+        if (distance < minDistance && distance > 0.001) {
+          const nx = dx / distance;
+          const ny = dy / distance;
+          const nz = dz / distance;
+          const overlap = minDistance - distance;
+
+          // 位置修正
+          if (!a.isStatic && !b.isStatic) {
+            const totalMass = a.mass + b.mass;
+            a.position.x -= nx * overlap * (b.mass / totalMass);
+            a.position.y -= ny * overlap * (b.mass / totalMass);
+            a.position.z -= nz * overlap * (b.mass / totalMass);
+            
+            b.position.x += nx * overlap * (a.mass / totalMass);
+            b.position.y += ny * overlap * (a.mass / totalMass);
+            b.position.z += nz * overlap * (a.mass / totalMass);
+          } else if (a.isStatic) {
+            b.position.x += nx * overlap;
+            b.position.y += ny * overlap;
+            b.position.z += nz * overlap;
+          } else if (b.isStatic) {
+            a.position.x -= nx * overlap;
+            a.position.y -= ny * overlap;
+            a.position.z -= nz * overlap;
+          }
+
+          // 唤醒物体
+          a.isSleeping = b.isSleeping = false;
+          a.sleepTimer = b.sleepTimer = 0;
+        }
+      }
+    }
+  }
+
+  applyForce(body, fx, fy, fz) {
+    if (body.isStatic) return;
+    body.isSleeping = body.sleepTimer = 0;
+    body.velocity.x += fx / body.mass;
+    body.velocity.y += fy / body.mass;
+    body.velocity.z += fz / body.mass;
+  }
+
+  applyImpulse(body, ix, iy, iz) {
+    if (body.isStatic) return;
+    body.isSleeping = body.sleepTimer = 0;
+    body.velocity.x += ix / body.mass;
+    body.velocity.y += iy / body.mass;
+    body.velocity.z += iz / body.mass;
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// 全局变量管理（优化：模块化）
+const game = {
+  // 核心对象
+  physics: new OptimizedPhysics(),
+  scene: new THREE.Scene(),
+  camera: new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.1, 200),
+  renderer: new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" }),
+  raycaster: new THREE.Raycaster(),
+  clock: new THREE.Clock(),
+  
+  // 游戏状态
+  isLocked: false,
+  isDead: false,
+  panelVisible: false,
+  timeFreeze: false,
+  holdK: false,
+  
+  // 作弊状态
+  cheat: {
+    fly: false,
+    god: false,
+    range: false,
+    auto: false
+  },
+  
+  // 配置参数
+  config: {
+    moveSpeed: 8,
+    jumpForce: 8,
+    forceStrength: 1500,
+    mouseSensitivity: 0.002,
+    previewUpdateRate: 0.05,
+    maxBatchCount: 5000
+  },
+  
+  // 资源缓存
+  cache: {
+    geometries: {},
+    materials: {},
+    placedShapes: [],
+    allPlaceables: [],
+    undoStack: []
+  },
+  
+  // UI元素
+  ui: {
+    startOverlay: document.getElementById('start-overlay'),
+    startBox: document.getElementById('start-box'),
+    deathOverlay: document.getElementById('death-overlay'),
+    cheatPanel: document.getElementById('cheat-panel'),
+    stats: document.getElementById('stats'),
+    hudTop: document.getElementById('hud-top'),
+    hudBottom: document.getElementById('hud-bottom'),
+    loadingOverlay: document.getElementById('loading-overlay')
+  },
+  
+  // 形状和颜色配置
+  shapes: {
+    types: ['cube','sphere','cylinder','cone','torus','pyramid','capsule','octahedron'],
+    names: ['立方体','球体','圆柱体','圆锥','圆环','金字塔','胶囊体','八面体'],
+    index: 0,
+    colors: ['#ff6b6b','#ff9f43','#feca57','#54a0ff','#5f27cd','#00d2d3','#55efc4','#fd79a8','#ffffff','#e056a0'],
+    colorIndex: 0
+  },
+  
+  // 输入管理
+  input: {
+    keys: {},
+    euler: new THREE.Euler(0, 0, 0, 'YXZ')
+  }
+};
+
+// 初始化渲染器（性能优化）
+function initRenderer() {
+  const { renderer } = game;
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false; // 手动更新阴影以提升性能
+  renderer.shadowMap.needsUpdate = true;
+  renderer.autoClear = true;
+  renderer.setClearColor('#87CEEB');
+  document.body.appendChild(renderer.domElement);
+}
+
+// 初始化场景
+function initScene() {
+  const { scene, camera } = game;
+  
+  // 场景优化：雾效和背景
+  scene.background = new THREE.Color('#87CEEB');
+  scene.fog = new THREE.Fog('#87CEEB', 45, 130);
+  
+  // 相机位置
+  camera.position.set(0, 1.6, 10);
+  
+  // 光照优化：减少计算量
+  scene.add(new THREE.AmbientLight('#bcd4f0', 0.8));
+  
+  const sun = new THREE.DirectionalLight('#fff8e7', 4.5);
+  sun.position.set(20, 30, 10);
+  sun.castShadow = true;
+  sun.shadow.mapSize.width = sun.shadow.mapSize.height = 1024;
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = 100;
+  sun.shadow.camera.left = sun.shadow.camera.right = 30;
+  sun.shadow.camera.top = 30;
+  sun.shadow.camera.bottom = -30;
+  sun.shadow.camera.updateProjectionMatrix();
+  scene.add(sun);
+  
+  // 地面
+  const groundMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(36, 36),
+    new THREE.MeshStandardMaterial({ color: '#d5c4a1', roughness: 0.75 })
+  );
+  groundMesh.rotation.x = -Math.PI / 2;
+  groundMesh.position.y = -0.2;
+  groundMesh.receiveShadow = true;
+  groundMesh.name = 'ground';
+  scene.add(groundMesh);
+  
+  // 网格辅助
+  scene.add(new THREE.GridHelper(36, 36, '#c4b99a', '#e0d5c0'));
+  
+  // 添加到可放置列表
+  game.cache.allPlaceables.push(groundMesh);
+}
+
+// 初始化几何体缓存（性能优化：复用几何体）
+function initGeometries() {
+  const { geometries } = game.cache;
+  
+  // 优化几何体精度以提升性能
+  geometries.cube = new THREE.BoxGeometry(0.95, 0.95, 0.95);
+  geometries.sphere = new THREE.SphereGeometry(0.48, 16, 16); // 减少分段
+  geometries.cylinder = new THREE.CylinderGeometry(0.48, 0.48, 0.95, 16);
+  geometries.cone = new THREE.ConeGeometry(0.48, 0.95, 16);
+  geometries.torus = new THREE.TorusGeometry(0.4, 0.18, 8, 16);
+  geometries.pyramid = new THREE.TetrahedronGeometry(0.48, 0);
+  geometries.capsule = new THREE.CapsuleGeometry(0.24, 0.48, 8, 16);
+  geometries.octahedron = new THREE.OctahedronGeometry(0.48, 0);
+  
+  // 预览材质
+  game.cache.previewMaterial = new THREE.MeshStandardMaterial({
+    color: game.shapes.colors[0],
+    roughness: 0.3,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false
+  });
+  
+  // 预览网格
+  game.cache.previewMesh = new THREE.Mesh(geometries.cube, game.cache.previewMaterial);
+  game.cache.previewMesh.visible = false;
+  game.cache.previewMesh.renderOrder = 999;
+  game.scene.add(game.cache.previewMesh);
+}
+
+// 初始化玩家物理体
+function initPlayer() {
+  game.playerBody = game.physics.createBody(0, 2, 8, 1, 0.35);
+  resetPlayer();
+}
+
+// 更新HUD显示
+function updateHUD() {
+  const shapeDot = document.getElementById('shape-dot');
+  const shapeNameEl = document.getElementById('shape-name');
+  const colorDot = document.getElementById('color-dot');
+  
+  const currentColor = game.shapes.colors[game.shapes.colorIndex];
+  const currentType = game.shapes.types[game.shapes.index];
+  
+  shapeDot.style.background = currentColor;
+  shapeDot.className = 'shape-dot ' + currentType;
+  shapeNameEl.textContent = game.shapes.names[game.shapes.index];
+  colorDot.style.background = currentColor;
+}
+
+// 刷新预览
+function refreshPreview() {
+  const { previewMesh, previewMaterial, geometries } = game.cache;
+  const currentType = game.shapes.types[game.shapes.index];
+  
+  previewMesh.geometry = geometries[currentType] || geometries.cube;
+  previewMaterial.color.set(game.shapes.colors[game.shapes.colorIndex]);
+}
+
+// 获取当前放置位置
+function getPlacement() {
+  const { raycaster, camera, cheat } = game;
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  raycaster.far = cheat.range ? 100 : 30; // 无限放置时增加射线距离
+  
+  const hits = raycaster.intersectObjects(game.cache.allPlaceables, false);
+  
+  if (hits.length > 0) {
+    const point = hits[0].point.clone();
+    const normal = hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+    const position = point.add(normal.multiplyScalar(0.475));
+    
+    // 边界限制
+    position.x = THREE.MathUtils.clamp(position.x, -17.5, 17.5);
+    position.z = THREE.MathUtils.clamp(position.z, -17.5, 17.5);
+    position.y = Math.max(position.y, 0.3);
+    
+    // 距离限制（作弊模式除外）
+    const distanceValid = cheat.range || position.distanceTo(camera.position) >= 0.9;
+    
+    return {
+      pos: position,
+      valid: distanceValid
+    };
+  }
+  
+  return { pos: null, valid: false };
+}
+
+// 创建放置的形状
+function createPlacedShape(type, color, position, isStatic = false) {
+  const { geometries } = game.cache;
+  const geo = geometries[type] || geometries.cube;
+  
+  // 材质复用优化
+  const mat = new THREE.MeshStandardMaterial({
+    color: color,
+    roughness: 0.35,
+    metalness: 0.05
+  });
+  
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(position);
+  mesh.castShadow = mesh.receiveShadow = true;
+  mesh.name = 'placed-shape';
+  
+  // 创建物理体
+  const body = game.physics.createBody(position.x, position.y, position.z, isStatic ? 0 : 1, 0.48);
+  mesh.userData.body = body;
+  body.userData = { mesh };
+  
+  game.scene.add(mesh);
+  
+  const entry = { mesh, body };
+  game.cache.placedShapes.push(entry);
+  game.cache.allPlaceables.push(mesh);
+  
+  // 标记阴影需要更新
+  game.renderer.shadowMap.needsUpdate = true;
+  
+  return entry;
+}
+
+// 移除形状
+function removeEntry(entry) {
+  if (!entry) return;
+  
+  game.physics.removeBody(entry.body);
+  game.scene.remove(entry.mesh);
+  
+  // 从数组中移除
+  const shapeIndex = game.cache.placedShapes.indexOf(entry);
+  if (shapeIndex !== -1) game.cache.placedShapes.splice(shapeIndex, 1);
+  
+  const placeableIndex = game.cache.allPlaceables.indexOf(entry.mesh);
+  if (placeableIndex !== -1) game.cache.allPlaceables.splice(placeableIndex, 1);
+  
+  // 释放材质资源
+  if (entry.mesh.material) {
+    entry.mesh.material.dispose();
+  }
+  
+  // 标记阴影需要更新
+  game.renderer.shadowMap.needsUpdate = true;
+}
+
+// 重置玩家
+function resetPlayer() {
+  const { playerBody, camera, input } = game;
+  
+  playerBody.position.x = 0;
+  playerBody.position.y = 2;
+  playerBody.position.z = 8;
+  playerBody.velocity.x = 0;
+  playerBody.velocity.y = 0;
+  playerBody.velocity.z = 0;
+  
+  game.physics.gravity = -12;
+  document.getElementById('cheat-gravity').value = -12;
+  
+  camera.position.set(0, 2.6, 8);
+  input.euler.set(0, 0, 0, 'YXZ');
+  camera.quaternion.setFromEuler(input.euler);
+  
+  game.cache.previewMesh.visible = false;
+  game.isDead = false;
+  game.timeFreeze = false;
+}
+
+// 玩家死亡
+function die() {
+  if (game.isDead || game.cheat.god) return;
+  
+  game.isDead = true;
+  document.exitPointerLock();
+  game.ui.deathOverlay.classList.add('active');
+  game.ui.startOverlay.classList.add('hidden');
+}
+
+// 重生
+function respawn() {
+  resetPlayer();
+  game.ui.deathOverlay.classList.remove('active');
+}
+
+// 检查是否在地面上
+function isOnGround() {
+  if (game.cheat.fly) return true;
+  return game.playerBody.position.y <= 0.5;
+}
+
+// 应用力（吸引/推远）
+function applyForce(attract) {
+  const { playerBody, physics, config, cache } = game;
+  const pp = playerBody.position;
+  
+  // 批量处理所有形状
+  cache.placedShapes.forEach(({ body }) => {
+    const dx = pp.x - body.position.x;
+    const dy = pp.y - body.position.y;
+    const dz = pp.z - body.position.z;
+    const distance = Math.hypot(dx, dy, dz);
+    
+    if (distance < 8 && distance > 0.3) {
+      const power = (1 - distance / 8) * config.forceStrength;
+      const fx = (dx / distance) * power;
+      const fy = (dy / distance) * power;
+      const fz = (dz / distance) * power;
+      
+      if (!attract) {
+        physics.applyForce(body, -fx, -fy, -fz);
+      } else {
+        physics.applyForce(body, fx, fy, fz);
+      }
+    }
+  });
+}
+
+// 爆炸效果
+function explode() {
+  const { playerBody, physics, config, cache } = game;
+  const pp = playerBody.position;
+  
+  cache.placedShapes.forEach(({ body }) => {
+    const dx = body.position.x - pp.x;
+    const dy = body.position.y - pp.y;
+    const dz = body.position.z - pp.z;
+    const distance = Math.hypot(dx, dy, dz);
+    
+    if (distance < 10 && distance > 0.3) {
+      const strength = (1 - distance / 10) * config.forceStrength * 0.7;
+      const invDistance = 1 / distance;
+      
+      physics.applyImpulse(
+        body,
+        dx * invDistance * strength,
+        (dy + 0.5) * invDistance * strength,
+        dz * invDistance * strength
+      );
+    }
+  });
+}
+
+// 真空吸附
+function vacuumToPlayer() {
+  const { playerBody, physics, cache } = game;
+  const pp = playerBody.position;
+  
+  cache.placedShapes.forEach(({ body }) => {
+    const dx = pp.x - body.position.x;
+    const dy = pp.y + 0.5 - body.position.y;
+    const dz = pp.z - body.position.z;
+    const distance = Math.hypot(dx, dy, dz);
+    
+    if (distance > 1 && distance < 15) {
+      physics.applyImpulse(body, dx * 12, dy * 12, dz * 12);
+    }
+  });
+}
+
+// 执行脚本
+function execScript() {
+  const code = document.getElementById('cheat-script-input').value.trim();
+  if (!code) return;
+  
+  try {
+    const ctx = {
+      physics: game.physics,
+      scene: game.scene,
+      camera: game.camera,
+      playerBody: game.playerBody,
+      placedShapes: game.cache.placedShapes,
+      createPlacedShape,
+      removeEntry,
+      getColor: () => game.shapes.colors[game.shapes.colorIndex],
+      getType: () => game.shapes.types[game.shapes.index],
+      setGravity: (v) => {
+        game.physics.gravity = v;
+        document.getElementById('cheat-gravity').value = v;
+      },
+      setSpeed: (v) => {
+        game.config.moveSpeed = v;
+        document.getElementById('cheat-speed').value = v;
+      },
+      spawnSphere: (x, y, z, c) => createPlacedShape('sphere', c || game.shapes.colors[game.shapes.colorIndex], new THREE.Vector3(x, y, z)),
+      clearAll: () => {
+        while (game.cache.placedShapes.length) {
+          removeEntry(game.cache.placedShapes[0]);
+        }
+        game.cache.undoStack.length = 0;
+      },
+      log: console.log
+    };
+    
+    new Function(...Object.keys(ctx), code)(...Object.values(ctx));
+  } catch (err) {
+    console.error('脚本错误:', err);
+    alert(`脚本执行错误: ${err.message}`);
+  }
+}
+
+// 初始化事件监听
+function initEvents() {
+  // 鼠标移动（视角控制）
+  document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement !== game.renderer.domElement || game.isDead) return;
+    
+    const mx = e.movementX || e.mozMovementX || e.webkitMovementX || 0;
+    const my = e.movementY || e.mozMovementY || e.webkitMovementY || 0;
+    
+    const { euler } = game.input;
+    euler.setFromQuaternion(game.camera.quaternion);
+    euler.y -= mx * game.config.mouseSensitivity;
+    euler.x -= my * game.config.mouseSensitivity;
+    euler.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, euler.x));
+    
+    game.camera.quaternion.setFromEuler(euler);
+  });
+  
+  // 指针锁定变化
+  document.addEventListener('pointerlockchange', () => {
+    if (window.__FROM_U_KEY) return;
+    
+    game.isLocked = document.pointerLockElement === game.renderer.domElement;
+    
+    if (game.isLocked) {
+      game.ui.startOverlay.classList.add('hidden');
+      game.ui.hudTop.classList.add('visible');
+      game.ui.hudBottom.classList.add('visible');
+      game.ui.stats.classList.add('visible');
+      game.cache.previewMesh.visible = true;
+    } else {
+      if (!game.isDead) game.ui.startOverlay.classList.remove('hidden');
+      game.ui.hudTop.classList.remove('visible');
+      game.ui.hudBottom.classList.remove('visible');
+      game.ui.stats.classList.remove('visible');
+      game.cache.previewMesh.visible = false;
+    }
+  });
+  
+  // 开始按钮点击
+  game.ui.startBox.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!game.isLocked && !game.isDead) {
+      game.renderer.domElement.requestPointerLock();
+    }
+  });
+  
+  // 键盘按下
+  document.addEventListener('keydown', (e) => {
+    game.input.keys[e.code] = true;
+    
+    // K键按住（冻结放置）
+    if (e.code === 'KeyK') game.holdK = true;
+    
+    // 数字键切换形状
+    if (e.code >= 'Digit1' && e.code <= 'Digit8') {
+      const index = parseInt(e.code.replace('Digit', '')) - 1;
+      game.shapes.index = index;
+      updateHUD();
+      refreshPreview();
+    }
+    
+    // R键换色
+    if (e.code === 'KeyR' && !e.ctrlKey && !e.metaKey) {
+      game.shapes.colorIndex = (game.shapes.colorIndex + 1) % game.shapes.colors.length;
+      updateHUD();
+      refreshPreview();
+    }
+    
+    // 空格键跳跃
+    if (e.code === 'Space' && game.isLocked && !game.isDead && isOnGround()) {
+      e.preventDefault();
+      if (!game.cheat.fly) game.playerBody.velocity.y = game.config.jumpForce;
+    }
+    
+    // ~键打开/关闭作弊面板
+    if (e.code === 'Backquote') {
+      e.preventDefault();
+      game.panelVisible = !game.panelVisible;
+      game.ui.cheatPanel.classList.toggle('visible', game.panelVisible);
+    }
+    
+    // 回车执行脚本
+    if (e.code === 'Enter' && game.panelVisible) {
+      e.preventDefault();
+      execScript();
+    }
+    
+    // Ctrl+Z撤销
+    if (e.code === 'KeyZ' && (e.ctrlKey || e.metaKey) && game.isLocked && !game.isDead) {
+      e.preventDefault();
+      if (game.cache.undoStack.length > 0) {
+        game.cache.undoStack.pop()?.entries?.forEach(removeEntry);
+      }
+    }
+    
+    // F键重生
+    if (e.code === 'KeyF') {
+      e.preventDefault();
+      resetPlayer();
+    }
+    
+    // U键切换鼠标锁定
+    if (e.code === 'KeyU') {
+      e.preventDefault();
+      window.__FROM_U_KEY = true;
+      if (document.pointerLockElement === game.renderer.domElement) {
+        document.exitPointerLock();
+      } else {
+        game.renderer.domElement.requestPointerLock();
+      }
+      setTimeout(() => { window.__FROM_U_KEY = false; }, 50);
+    }
+    
+    // N键反重力
+    if (e.code === 'KeyN') {
+      game.physics.gravity = game.physics.gravity < 0 ? 4 : -12;
+      document.getElementById('cheat-gravity').value = game.physics.gravity;
+    }
+  });
+  
+  // 键盘松开
+  document.addEventListener('keyup', (e) => {
+    game.input.keys[e.code] = false;
+    if (e.code === 'KeyK') game.holdK = false;
+  });
+  
+  // 鼠标滚轮（切换形状）
+  document.addEventListener('wheel', (e) => {
+    if (!game.isLocked || game.isDead) return;
+    e.preventDefault();
+    
+    game.shapes.index = (game.shapes.index + (e.deltaY > 0 ? 1 : -1) + game.shapes.types.length) % game.shapes.types.length;
+    updateHUD();
+    refreshPreview();
+  }, { passive: false });
+  
+  // 鼠标点击（放置/删除）
+  document.addEventListener('mousedown', (e) => {
+    if (!game.isLocked || game.isDead) return;
+    
+    // 左键放置
+    if (e.button === 0) {
+      const placement = getPlacement();
+      if (placement.valid && placement.pos) {
+        createPlacedShape(
+          game.shapes.types[game.shapes.index],
+          game.shapes.colors[game.shapes.colorIndex],
+          placement.pos,
+          game.holdK
+        );
+      }
+    }
+    
+    // 右键删除
+    if (e.button === 2) {
+      game.raycaster.setFromCamera(new THREE.Vector2(0, 0), game.camera);
+      const hits = game.raycaster.intersectObjects(game.cache.allPlaceables, false);
+      
+      if (hits.length > 0 && hits[0].object.name === 'placed-shape') {
+        const entry = game.cache.placedShapes.find(s => s.mesh === hits[0].object);
+        if (entry) removeEntry(entry);
+      }
+    }
+  });
+  
+  // 禁止右键菜单
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  
+  // 窗口大小调整
+  window.addEventListener('resize', () => {
+    game.camera.aspect = innerWidth / innerHeight;
+    game.camera.updateProjectionMatrix();
+    game.renderer.setSize(innerWidth, innerHeight);
+  });
+  
+  // 作弊面板事件
+  document.getElementById('cheat-fly').addEventListener('change', (e) => {
+    game.cheat.fly = e.target.checked;
+  });
+  
+  document.getElementById('cheat-god').addEventListener('change', (e) => {
+    game.cheat.god = e.target.checked;
+  });
+  
+  document.getElementById('cheat-range').addEventListener('change', (e) => {
+    game.cheat.range = e.target.checked;
+  });
+  
+  document.getElementById('cheat-auto').addEventListener('change', (e) => {
+    game.cheat.auto = e.target.checked;
+    if (!e.target.checked) delete game.input.keys._autoT;
+  });
+  
+  document.getElementById('cheat-gravity').addEventListener('input', (e) => {
+    game.physics.gravity = parseFloat(e.target.value);
+  });
+  
+  document.getElementById('cheat-speed').addEventListener('input', (e) => {
+    game.config.moveSpeed = parseFloat(e.target.value);
+  });
+  
+  document.getElementById('cheat-jump').addEventListener('input', (e) => {
+    game.config.jumpForce = parseFloat(e.target.value);
+  });
+  
+  document.getElementById('cheat-force').addEventListener('input', (e) => {
+    game.config.forceStrength = parseFloat(e.target.value);
+  });
+  
+  // 批量生成按钮
+  document.getElementById('btn-spawn-batch').addEventListener('click', () => {
+    const batchCount = Math.min(
+      parseInt(document.getElementById('cheat-batch').value) || 100,
+      game.config.maxBatchCount
+    );
+    
+    const type = game.shapes.types[game.shapes.index];
+    const color = game.shapes.colors[game.shapes.colorIndex];
+    
+    const dir = new THREE.Vector3();
+    game.camera.getWorldDirection(dir);
+    const basePosition = game.camera.position.clone().add(dir.multiplyScalar(3));
+    
+    const batch = [];
+    for (let i = 0; i < batchCount; i++) {
+      const angle = (i / batchCount) * Math.PI * 2 + Math.random() * 0.3;
+      const radius = 1.5 + Math.random() * 3.5;
+      
+      batch.push(createPlacedShape(type, color, new THREE.Vector3(
+        basePosition.x + Math.cos(angle) * radius,
+        basePosition.y + Math.random() * 2.5,
+        basePosition.z + Math.sin(angle) * radius
+      )));
+    }
+    
+    game.cache.undoStack.push({ entries: batch });
+  });
+  
+  // 清空世界按钮
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    while (game.cache.placedShapes.length) {
+      removeEntry(game.cache.placedShapes[0]);
+    }
+    game.cache.undoStack.length = 0;
+  });
+  
+  // 随机颜色按钮
+  document.getElementById('btn-random-color').addEventListener('click', () => {
+    game.shapes.colorIndex = Math.floor(Math.random() * game.shapes.colors.length);
+    updateHUD();
+    refreshPreview();
+  });
+  
+  // 执行脚本按钮
+  document.getElementById('btn-exec-script').addEventListener('click', execScript);
+  
+  // 重生按钮
+  document.getElementById('respawn-btn').addEventListener('click', respawn);
+}
+
+// 初始化示例形状
+function initDemoShapes() {
+  const demoShapes = [
+    ['cube',3,1,-2,'#ff6b6b'],['cube',3,2,-2,'#ff9f43'],
+    ['sphere',-3,1,1,'#4ecdc4'],['cylinder',0,1,-4,'#ffe66d'],
+    ['cube',-1,1,-3,'#a29bfe'],['sphere',5,1,3,'#55efc4'],
+    ['pyramid',2,1,4,'#00d2d3'],['capsule',-4,1,2,'#fd79a8'],
+    ['octahedron',0,1,5,'#e056a0']
+  ];
+  
+  demoShapes.forEach(([type, x, y, z, color]) => {
+    createPlacedShape(type, color, new THREE.Vector3(x, y, z));
+  });
+}
+
+// 动画循环（性能优化）
+function animate() {
+  requestAnimationFrame(animate);
+  
+  const dt = Math.min(game.clock.getDelta(), 0.2);
+  const { keys } = game.input;
+  
+  // 性能统计
+  game.statsFrames = (game.statsFrames || 0) + 1;
+  const now = performance.now();
+  game.statsTime = game.statsTime || now;
+  
+  // 游戏逻辑更新
+  if (game.isLocked && !game.isDead && !game.timeFreeze) {
+    // 物理效果按键
+    if (keys.KeyG) applyForce(true);
+    if (keys.KeyH) applyForce(false);
+    if (keys.KeyB) explode();
+    if (keys.KeyV) vacuumToPlayer();
+    
+    // 自动放置
+    if (game.cheat.auto) {
+      keys._autoT = (keys._autoT || 0) + dt;
+      if (keys._autoT > 0.1) {
+        keys._autoT = 0;
+        const placement = getPlacement();
+        if (placement.valid && placement.pos) {
+          createPlacedShape(
+            game.shapes.types[game.shapes.index],
+            game.shapes.colors[game.shapes.colorIndex],
+            placement.pos
+          );
+        }
+      }
+    }
+    
+    // 飞行模式
+    if (game.cheat.fly) {
+      let forward = 0, right = 0, up = 0;
+      
+      if (keys.KeyW) forward++;
+      if (keys.KeyS) forward--;
+      if (keys.KeyA) right--;
+      if (keys.KeyD) right++;
+      if (keys.Space) up++;
+      if (keys.ShiftLeft || keys.ShiftRight) up--;
+      
+      const fwd = new THREE.Vector3();
+      game.camera.getWorldDirection(fwd);
+      fwd.y = 0;
+      
+      if (fwd.length() > 0.001) fwd.normalize();
+      
+      const rightVec = new THREE.Vector3()
+        .crossVectors(fwd, new THREE.Vector3(0, 1, 0))
+        .normalize();
+      
+      const move = new THREE.Vector3()
+        .addScaledVector(fwd, forward)
+        .addScaledVector(rightVec, right);
+      move.y += up;
+      
+      if (move.length() > 0.001) {
+        move.normalize().multiplyScalar(game.config.moveSpeed * dt);
+        game.playerBody.position.x += move.x;
+        game.playerBody.position.y += move.y;
+        game.playerBody.position.z += move.z;
+      }
+      
+      game.camera.position.copy(game.playerBody.position);
+      game.camera.position.y += 0.6;
+    } 
+    // 正常移动
+    else {
+      let forward = 0, right = 0;
+      
+      if (keys.KeyW) forward++;
+      if (keys.KeyS) forward--;
+      if (keys.KeyA) right--;
+      if (keys.KeyD) right++;
+      
+      const fwd = new THREE.Vector3();
+      game.camera.getWorldDirection(fwd);
+      fwd.y = 0;
+      
+      if (fwd.length() > 0.001) fwd.normalize();
+      
+      const rightVec = new THREE.Vector3()
+        .crossVectors(fwd, new THREE.Vector3(0, 1, 0))
+        .normalize();
+      
+      const dir = new THREE.Vector3()
+        .addScaledVector(fwd, forward)
+        .addScaledVector(rightVec, right);
+      
+      if (dir.length() > 0.001) {
+        dir.normalize();
+        game.playerBody.velocity.x = dir.x * game.config.moveSpeed;
+        game.playerBody.velocity.z = dir.z * game.config.moveSpeed;
+      }
+    }
+    
+    // 更新预览
+    game.previewTimer = (game.previewTimer || 0) + dt;
+    if (game.previewTimer > game.config.previewUpdateRate) {
+      game.previewTimer = 0;
+      const placement = getPlacement();
+      
+      if (placement.valid && placement.pos) {
+        game.cache.previewMesh.position.copy(placement.pos);
+        game.cache.previewMesh.visible = true;
+        game.cache.previewMaterial.color.set(game.shapes.colors[game.shapes.colorIndex]);
+      } else {
+        game.cache.previewMesh.visible = false;
+      }
+    }
+  }
+  
+  // 物理步进
+  if (!game.timeFreeze) {
+    const physicsStart = performance.now();
+    game.physics.step(dt);
+    game.physicsTime = performance.now() - physicsStart;
+  }
+  
+  // 更新物体位置
+  game.cache.placedShapes.forEach(({ mesh, body }) => {
+    if (!body.isStatic) mesh.position.copy(body.position);
+  });
+  
+  // 更新相机位置
+  if (!game.cheat.fly && game.isLocked) {
+    game.camera.position.set(
+      game.playerBody.position.x,
+      game.playerBody.position.y + 0.6,
+      game.playerBody.position.z
+    );
+  }
+  
+  // 死亡检测
+  if (!game.isDead && !game.cheat.god && game.playerBody.position.y < -15) {
+    die();
+  }
+  
+  // 更新性能统计（每500ms更新一次）
+  if (now - game.statsTime >= 500) {
+    const fps = Math.round(game.statsFrames / ((now - game.statsTime) / 1000));
+    game.statsFrames = 0;
+    game.statsTime = now;
+    
+    document.getElementById('obj-count').textContent = game.cache.placedShapes.length;
+    document.getElementById('fps-val').textContent = fps;
+    document.getElementById('physics-time').textContent = game.physicsTime.toFixed(1);
+  }
+  
+  // 渲染场景
+  game.renderer.render(game.scene, game.camera);
+  
+  // 按需更新阴影
+  if (game.renderer.shadowMap.needsUpdate) {
+    game.renderer.shadowMap.needsUpdate = false;
+    game.renderer.shadowMap.update();
+  }
+}
+
+// 初始化游戏
+async function initGame() {
+  try {
+    // 初始化核心组件
+    initRenderer();
+    initScene();
+    initGeometries();
+    initPlayer();
+    initEvents();
+    
+    // 初始化示例形状
+    initDemoShapes();
+    
+    // 更新HUD
+    updateHUD();
+    refreshPreview();
+    
+    // 隐藏加载界面
+    setTimeout(() => {
+      game.ui.loadingOverlay.style.opacity = 0;
+      setTimeout(() => {
+        game.ui.loadingOverlay.style.display = 'none';
+      }, 500);
+    }, 800);
+    
+    // 启动动画循环
+    animate();
+    
+    console.log('3D物理沙盒初始化完成');
+  } catch (error) {
+    console.error('初始化失败:', error);
+    game.ui.loadingOverlay.innerHTML = `<div style="color: #ff6b6b;">加载失败: ${error.message}</div>`;
+  }
+}
+
+// 启动游戏
+initGame();
+</script>
+</body>
+</html>

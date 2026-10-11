@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>3D 物理沙盒 - 外挂面板 | 坐标追踪 | 全快捷键</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+        body {
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            background: #000;
+        }
+        canvas {
+            display: block;
+            cursor: crosshair;
+        }
+        /* 外挂面板样式 */
+        .hud-panel {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(8px);
+            border-radius: 12px;
+            padding: 10px 16px;
+            color: #0f0;
+            font-weight: bold;
+            border: 1px solid #0f0;
+            box-shadow: 0 0 12px rgba(0, 255, 0, 0.3);
+            pointer-events: none;
+            z-index: 100;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+        .coords-panel {
+            bottom: 20px;
+            left: 20px;
+            border-left: 4px solid #0f0;
+        }
+        .coords-panel .title {
+            font-size: 11px;
+            color: #8f8;
+            margin-bottom: 5px;
+        }
+        .coords-values {
+            display: flex;
+            gap: 20px;
+        }
+        .coord-item span {
+            color: #ffaa66;
+        }
+        .aim-coord {
+            bottom: 20px;
+            right: 20px;
+            text-align: right;
+            border-right: 3px solid #ffaa44;
+        }
+        .stats-panel {
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            min-width: 180px;
+        }
+        .controls-info {
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.85);
+            font-size: 12px;
+            white-space: nowrap;
+            border-color: #ffaa44;
+        }
+        .freeze-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: #1e2a3a;
+            color: #0f0;
+            border: 1px solid #0f0;
+            border-radius: 30px;
+            padding: 6px 18px;
+            cursor: pointer;
+            font-weight: bold;
+            font-family: monospace;
+            z-index: 200;
+            pointer-events: auto;
+            transition: 0.2s;
+        }
+        .freeze-btn.active {
+            background: #e67e22;
+            border-color: #f39c12;
+            color: white;
+            box-shadow: 0 0 12px orange;
+        }
+        .crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 22px;
+            height: 22px;
+            transform: translate(-50%, -50%);
+            border: 2px solid #0f0;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 200;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: #0f0;
+        }
+        .crosshair::before {
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 1px;
+        }
+        .crosshair::after {
+            top: 0;
+            left: 50%;
+            width: 1px;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div class="hud-panel coords-panel">
+    <div class="title">📍 玩家坐标 (XYZ)</div>
+    <div class="coords-values">
+        <div class="coord-item">X: <span id="player-pos-x">0.00</span></div>
+        <div class="coord-item">Y: <span id="player-pos-y">0.00</span></div>
+        <div class="coord-item">Z: <span id="player-pos-z">0.00</span></div>
+    </div>
+</div>
+
+<div class="hud-panel aim-coord">
+    <div class="title">🎯 瞄准点坐标</div>
+    <div class="coord-item">X: <span id="aim-pos-x">—</span> &nbsp; Y: <span id="aim-pos-y">—</span> &nbsp; Z: <span id="aim-pos-z">—</span></div>
+</div>
+
+<div class="hud-panel stats-panel">
+    <div>📦 物体数量: <span id="obj-count">0</span></div>
+    <div>⚡ FPS: <span id="fps-val">60</span></div>
+    <div>🔮 当前形状: <span id="curr-shape">立方体</span></div>
+    <div>❄️ 物理: <span id="freeze-status">运行中</span></div>
+</div>
+
+<div class="hud-panel controls-info">
+    🖱️ WASD移动 | 🖱️ 鼠标拖拽环顾 | 左键放置 | 右键删除 | 1️⃣立方体 2️⃣球体 3️⃣圆柱体 | 🔒 冻结/解冻 [F]
+</div>
+
+<button id="freeze-toggle" class="freeze-btn">⏸️ 冻结物理</button>
+<div class="crosshair"></div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    // ---------- 物理引擎封装 ----------
+    class OptimizedPhysics {
+        constructor() {
+            this.world = new CANNON.World();
+            this.world.gravity = new CANNON.Vec3(0, -14.0, 0);
+            this.world.broadphase = new CANNON.NaiveBroadphase();
+            this.world.defaultContactMaterial.restitution = 0.55;
+            
+            const groundMat = new CANNON.Material("ground");
+            const defaultMat = new CANNON.Material("default");
+            this.world.addContactMaterial(new CANNON.ContactMaterial(groundMat, defaultMat, {
+                friction: 0.6, restitution: 0.65, contactEquationStiffness: 1e8
+            }));
+            this.world.addContactMaterial(new CANNON.ContactMaterial(defaultMat, defaultMat, {
+                friction: 0.45, restitution: 0.7
+            }));
+            this.world.defaultContactMaterial.material1 = defaultMat;
+            this.world.defaultContactMaterial.material2 = defaultMat;
+            
+            this.bodies = new Map();
+            this.createGround();
+        }
+        createGround() {
+            const groundShape = new CANNON.Box(new CANNON.Vec3(55, 0.5, 55));
+            const groundBody = new CANNON.Body({ mass: 0, material: new CANNON.Material("ground") });
+            groundBody.addShape(groundShape);
+            groundBody.position.set(0, -0.9, 0);
+            this.world.addBody(groundBody);
+            this.groundBody = groundBody;
+        }
+        createBody(x, y, z, mass = 1, radiusOrSize = 0.48, shapeType = 'box') {
+            let shape;
+            if (shapeType === 'sphere') shape = new CANNON.Sphere(radiusOrSize);
+            else if (shapeType === 'cylinder') shape = new CANNON.Cylinder(radiusOrSize, radiusOrSize, radiusOrSize * 1.2, 12);
+            else shape = new CANNON.Box(new CANNON.Vec3(radiusOrSize, radiusOrSize, radiusOrSize));
+            
+            const body = new CANNON.Body({ mass, material: new CANNON.Material("default") });
+            body.addShape(shape);
+            body.position.set(x, y, z);
+            if (mass !== 0) { body.linearDamping = 0.12; body.angularDamping = 0.08; }
+            this.world.addBody(body);
+            this.bodies.set(body, { type: shapeType });
+            return body;
+        }
+        removeBody(body) { if(body) { this.world.removeBody(body); this.bodies.delete(body); } }
+        step(deltaTime) { this.world.step(1 / 60, deltaTime, 3); }
+        setGravity(enabled) { this.world.gravity.set(0, enabled ? -14.0 : 0, 0); }
+    }
+
+    // ---------- 游戏核心 ----------
+    const SIZE = 0.96;
+    const game = {
+        physics: null, scene: null, camera: null, renderer: null, raycaster: new THREE.Raycaster(), clock: new THREE.Clock(),
+        moveForward: false, moveBack: false, moveLeft: false, moveRight: false, canJump: false, playerBody: null,
+        cameraPitch: 0, cameraYaw: -Math.PI / 4, mouseLocked: false,
+        currentShapeType: 'cube', previewMesh: null, timeFreeze: false, isDead: false,
+        cache: { geometries: {}, placedShapes: [], allPlaceables: [] }
+    };
+
+    function initGeometries() {
+        game.cache.geometries.cube = new THREE.BoxGeometry(SIZE, SIZE, SIZE);
+        game.cache.geometries.sphere = new THREE.SphereGeometry(SIZE/2, 32, 32);
+        game.cache.geometries.cylinder = new THREE.CylinderGeometry(SIZE/2, SIZE/2, SIZE*0.9, 32);
+    }
+
+    function createPlacedShape(type, color, position, isStatic = false) {
+        const geo = game.cache.geometries[type] || game.cache.geometries.cube;
+        const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.25 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.copy(position);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        
+        let cannonType = 'box';
+        if (type === 'sphere') cannonType = 'sphere';
+        if (type === 'cylinder') cannonType = 'cylinder';
+        const body = game.physics.createBody(position.x, position.y, position.z, isStatic ? 0 : 1.2, SIZE/2, cannonType);
+        mesh.userData.body = body;
+        body.userData = { mesh, type };
+        game.scene.add(mesh);
+        const entry = { mesh, body, type };
+        game.cache.placedShapes.push(entry);
+        game.cache.allPlaceables.push(mesh);
+        return entry;
+    }
+
+    function deleteShapeAt(intersect) {
+        if (!intersect) return false;
+        let hitMesh = intersect.object;
+        if (hitMesh.name === 'ground') return false;
+        const entry = game.cache.placedShapes.find(e => e.mesh === hitMesh);
+        if (entry) {
+            game.scene.remove(entry.mesh);
+            game.physics.removeBody(entry.body);
+            const idx = game.cache.placedShapes.indexOf(entry);
+            if (idx !== -1) game.cache.placedShapes.splice(idx, 1);
+            const idx2 = game.cache.allPlaceables.indexOf(entry.mesh);
+            if (idx2 !== -1) game.cache.allPlaceables.splice(idx2, 1);
+            return true;
+        }
+        return false;
+    }
+
+    function getPlacement() {
+        const center = new THREE.Vector2(0, 0);
+        game.raycaster.setFromCamera(center, game.camera);
+        const intersects = game.raycaster.intersectObjects([...game.cache.allPlaceables, game.scene.getObjectByName('ground')], true);
+        if (intersects.length) {
+            const hit = intersects[0];
+            let point = hit.point.clone();
+            const normal = hit.face?.normal.clone();
+            if (normal) {
+                normal.transformDirection(hit.object.matrixWorld);
+                normal.normalize();
+                point.addScaledVector(normal, 0.52);
+            } else point.y += 0.52;
+            point.y = Math.max(0.2, point.y);
+            let valid = true;
+            for (let e of game.cache.placedShapes) {
+                if (e.mesh.position.distanceTo(point) < 0.92) { valid = false; break; }
+            }
+            return { pos: point, valid };
+        }
+        return null;
+    }
+
+    function initPlayerPhysics() {
+        const radius = 0.45;
+        const shape = new CANNON.Sphere(radius);
+        const body = new CANNON.Body({ mass: 75, material: new CANNON.Material("default") });
+        body.addShape(shape);
+        body.position.set(0, 1.3, 0);
+        body.linearDamping = 0.2;
+        body.fixedRotation = true;
+        game.physics.world.addBody(body);
+        game.playerBody = body;
+        game.canJump = false;
+        body.addEventListener('collide', (e) => {
+            if (e.contact.ni.y > 0.5) game.canJump = true;
+        });
+    }
+
+    function updatePlayerMovement(delta) {
+        if (game.timeFreeze || game.isDead) return;
+        const body = game.playerBody;
+        if (!body) return;
+        const moveSpeed = 15.0;
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(game.camera.quaternion);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(game.camera.quaternion);
+        forward.y = 0; forward.normalize();
+        right.y = 0; right.normalize();
+        let mx = 0, mz = 0;
+        if (game.moveForward) { mx -= forward.x; mz -= forward.z; }
+        if (game.moveBack) { mx += forward.x; mz += forward.z; }
+        if (game.moveRight) { mx += right.x; mz += right.z; }
+        if (game.moveLeft) { mx -= right.x; mz -= right.z; }
+        const len = Math.hypot(mx, mz);
+        if (len > 0) { mx /= len; mz /= len; }
+        body.velocity.x = mx * moveSpeed;
+        body.velocity.z = mz * moveSpeed;
+        if (game.canJump && window.keyJump) {
+            body.velocity.y = 6.8;
+            game.canJump = false;
+            window.keyJump = false;
+        }
+        game.camera.position.copy(body.position);
+        game.camera.position.y += 0.75;
+        if (body.position.y < -5) { body.position.set(0, 2.5, 0); body.velocity.set(0, 0, 0); }
+    }
+
+    function updatePreview() {
+        if (!game.mouseLocked || game.timeFreeze) { if(game.previewMesh) game.previewMesh.visible = false; return; }
+        const placement = getPlacement();
+        if (placement && placement.pos) {
+            game.previewMesh.position.copy(placement.pos);
+            game.previewMesh.visible = placement.valid;
+            game.previewMesh.material.emissiveIntensity = placement.valid ? 0.35 : 0.8;
+            game.previewMesh.material.color.setHex(placement.valid ? 0xaaffaa : 0xff8888);
+        } else { game.previewMesh.visible = false; }
+    }
+
+    function updateUI() {
+        if (game.playerBody) {
+            const p = game.playerBody.position;
+            document.getElementById('player-pos-x').innerText = p.x.toFixed(2);
+            document.getElementById('player-pos-y').innerText = p.y.toFixed(2);
+            document.getElementById('player-pos-z').innerText = p.z.toFixed(2);
+        }
+        const center = new THREE.Vector2(0,0);
+        game.raycaster.setFromCamera(center, game.camera);
+        const hits = game.raycaster.intersectObjects([...game.cache.allPlaceables, game.scene.getObjectByName('ground')], true);
+        if (hits.length) {
+            const hp = hits[0].point;
+            document.getElementById('aim-pos-x').innerText = hp.x.toFixed(2);
+            document.getElementById('aim-pos-y').innerText = hp.y.toFixed(2);
+            document.getElementById('aim-pos-z').innerText = hp.z.toFixed(2);
+        } else {
+            document.getElementById('aim-pos-x').innerText = '—';
+            document.getElementById('aim-pos-y').innerText = '—';
+            document.getElementById('aim-pos-z').innerText = '—';
+        }
+        document.getElementById('obj-count').innerText = game.cache.placedShapes.length;
+    }
+
+    let fpsCounter = 0, lastFpsTime = performance.now();
+    function updateFPS() {
+        const now = performance.now();
+        if (now - lastFpsTime >= 1000) {
+            document.getElementById('fps-val').innerText = Math.round((fpsCounter * 1000) / (now - lastFpsTime));
+            fpsCounter = 0;
+            lastFpsTime = now;
+        }
+        fpsCounter++;
+    }
+
+    function toggleFreeze() {
+        game.timeFreeze = !game.timeFreeze;
+        const btn = document.getElementById('freeze-toggle');
+        const span = document.getElementById('freeze-status');
+        if (game.timeFreeze) {
+            game.physics.setGravity(false);
+            btn.innerText = '▶️ 解冻物理';
+            btn.classList.add('active');
+            span.innerText = '冻结❄️';
+        } else {
+            game.physics.setGravity(true);
+            btn.innerText = '⏸️ 冻结物理';
+            btn.classList.remove('active');
+            span.innerText = '运行中';
+        }
+    }
+
+    function initScene() {
+        const scene = game.scene;
+        scene.background = new THREE.Color('#0a1030');
+        scene.fog = new THREE.FogExp2('#0a1030', 0.008);
+        const ambient = new THREE.AmbientLight(0x404060, 0.65);
+        scene.add(ambient);
+        const mainLight = new THREE.DirectionalLight(0xfff5e0, 1.3);
+        mainLight.position.set(18, 32, 12);
+        mainLight.castShadow = true;
+        mainLight.shadow.mapSize.width = 2048;
+        mainLight.shadow.mapSize.height = 2048;
+        mainLight.shadow.camera.near = 0.5;
+        mainLight.shadow.camera.far = 80;
+        mainLight.shadow.camera.left = -30;
+        mainLight.shadow.camera.right = 30;
+        mainLight.shadow.camera.top = 30;
+        mainLight.shadow.camera.bottom = -30;
+        scene.add(mainLight);
+        const fillLight = new THREE.PointLight(0x5566aa, 0.45);
+        fillLight.position.set(3,5,4);
+        scene.add(fillLight);
+        const groundVis = new THREE.Mesh(new THREE.PlaneGeometry(120,120), new THREE.MeshStandardMaterial({ color: 0x3a4a6e, roughness: 0.85 }));
+        groundVis.rotation.x = -Math.PI/2;
+        groundVis.position.y = -0.75;
+        groundVis.receiveShadow = true;
+        groundVis.name = 'ground';
+        scene.add(groundVis);
+        const gridHelper = new THREE.GridHelper(100,40,0x88aaff,0x335588);
+        gridHelper.position.y = -0.65;
+        scene.add(gridHelper);
+        game.cache.allPlaceables.push(groundVis);
+    }
+
+    function initEvents() {
+        window.addEventListener('keydown', (e) => {
+            const code = e.code;
+            if (code === 'KeyW') game.moveForward = true;
+            if (code === 'KeyS') game.moveBack = true;
+            if (code === 'KeyA') game.moveLeft = true;
+            if (code === 'KeyD') game.moveRight = true;
+            if (code === 'Space') { window.keyJump = true; e.preventDefault(); }
+            if (code === 'Digit1') { game.currentShapeType = 'cube'; document.getElementById('curr-shape').innerText = '立方体'; if(game.previewMesh) game.previewMesh.geometry = game.cache.geometries.cube; e.preventDefault(); }
+            if (code === 'Digit2') { game.currentShapeType = 'sphere'; document.getElementById('curr-shape').innerText = '球体'; if(game.previewMesh) game.previewMesh.geometry = game.cache.geometries.sphere; e.preventDefault(); }
+            if (code === 'Digit3') { game.currentShapeType = 'cylinder'; document.getElementById('curr-shape').innerText = '圆柱体'; if(game.previewMesh) game.previewMesh.geometry = game.cache.geometries.cylinder; e.preventDefault(); }
+            if (code === 'KeyF') { toggleFreeze(); e.preventDefault(); }
+            if (['KeyW','KeyS','KeyA','KeyD','Space','Digit1','Digit2','Digit3','KeyF'].includes(code)) e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'KeyW') game.moveForward = false;
+            if (e.code === 'KeyS') game.moveBack = false;
+            if (e.code === 'KeyA') game.moveLeft = false;
+            if (e.code === 'KeyD') game.moveRight = false;
+            if (e.code === 'Space') window.keyJump = false;
+        });
+        const canvas = game.renderer.domElement;
+        canvas.addEventListener('click', () => canvas.requestPointerLock());
+        document.addEventListener('pointerlockchange', () => {
+            game.mouseLocked = document.pointerLockElement === canvas;
+            if (game.mouseLocked) document.addEventListener('mousemove', onMouseMove);
+            else document.removeEventListener('mousemove', onMouseMove);
+        });
+        function onMouseMove(e) {
+            if (!game.mouseLocked) return;
+            const sens = 0.0022;
+            game.cameraYaw -= e.movementX * sens;
+            game.cameraPitch -= e.movementY * sens;
+            game.cameraPitch = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, game.cameraPitch));
+            game.camera.quaternion.setFromEuler(new THREE.Euler(game.cameraPitch, game.cameraYaw, 0, 'YXZ'));
+        }
+        canvas.addEventListener('mousedown', (e) => {
+            if (!game.mouseLocked) return;
+            e.preventDefault();
+            if (e.button === 0) {
+                const placement = getPlacement();
+                if (placement && placement.valid) {
+                    let color = 0x6c9eff;
+                    if (game.currentShapeType === 'cube') color = 0x6c9eff;
+                    else if (game.currentShapeType === 'sphere') color = 0xff6c6c;
+                    else color = 0x6cff9e;
+                    createPlacedShape(game.currentShapeType, color, placement.pos, false);
+                }
+            } else if (e.button === 2) {
+                const center = new THREE.Vector2(0,0);
+                game.raycaster.setFromCamera(center, game.camera);
+                const intersects = game.raycaster.intersectObjects(game.cache.placedShapes.map(s => s.mesh));
+                if (intersects.length) deleteShapeAt(intersects[0]);
+            }
+        });
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const delta = Math.min(game.clock.getDelta(), 0.033);
+        if (!game.timeFreeze && !game.isDead) {
+            game.physics.step(delta);
+            for (let entry of game.cache.placedShapes) {
+                entry.mesh.position.copy(entry.body.position);
+                entry.mesh.quaternion.copy(entry.body.quaternion);
+            }
+            updatePlayerMovement(delta);
+        }
+        updatePreview();
+        updateUI();
+        updateFPS();
+        game.renderer.render(game.scene, game.camera);
+    }
+
+    function init() {
+        game.physics = new OptimizedPhysics();
+        game.scene = new THREE.Scene();
+        game.camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.08, 250);
+        game.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        game.renderer.setSize(innerWidth, innerHeight);
+        game.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+        game.renderer.shadowMap.enabled = true;
+        game.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        game.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        game.renderer.physicallyCorrectLights = true;
+        document.body.appendChild(game.renderer.domElement);
+        
+        initGeometries();
+        initScene();
+        initPlayerPhysics();
+        
+        const previewMat = new THREE.MeshStandardMaterial({ color: 0x88ff88, emissive: 0x226622, transparent: true, opacity: 0.7 });
+        game.previewMesh = new THREE.Mesh(game.cache.geometries.cube, previewMat);
+        game.previewMesh.castShadow = false;
+        game.scene.add(game.previewMesh);
+        
+        game.cameraYaw = -0.6;
+        game.cameraPitch = 0.15;
+        game.camera.quaternion.setFromEuler(new THREE.Euler(game.cameraPitch, game.cameraYaw, 0, 'YXZ'));
+        
+        initEvents();
+        document.getElementById('freeze-toggle').addEventListener('click', toggleFreeze);
+        
+        // 演示物体
+        createPlacedShape('cube', 0x66aaff, new THREE.Vector3(2.2, 0.55, 1.8), false);
+        createPlacedShape('sphere', 0xff8866, new THREE.Vector3(-1.6, 0.55, 2.0), false);
+        createPlacedShape('cylinder', 0x88ffaa, new THREE.Vector3(0.4, 0.6, -2.2), false);
+        
+        window.addEventListener('resize', () => {
+            game.camera.aspect = innerWidth/innerHeight;
+            game.camera.updateProjectionMatrix();
+            game.renderer.setSize(innerWidth, innerHeight);
+        });
+        
+        animate();
+    }
+    
+    init();
+</script>
+</body>
+</html>
