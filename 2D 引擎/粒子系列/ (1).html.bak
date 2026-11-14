@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>粒子系统 · Particle System</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #05070c; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    touch-action: none;
+  }
+  #stage { display: block; position: fixed; inset: 0; }
+
+  /* ================= 控制面板 ================= */
+  #panel {
+    position: fixed; top: 16px; right: 16px;
+    width: 272px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 14px;
+    border-radius: 16px;
+    background: rgba(13, 16, 23, 0.74);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+    backdrop-filter: blur(22px) saturate(170%);
+    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: 0 18px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
+    color: #cbd3e3;
+    font-size: 12px;
+    user-select: none;
+    -webkit-user-select: none;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,.14) transparent;
+  }
+  #panel::-webkit-scrollbar { width: 4px; }
+  #panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 2px; }
+  #panel::-webkit-scrollbar-track { background: transparent; }
+
+  .panel-head {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 12px; margin-bottom: 14px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .panel-head svg { width: 16px; height: 16px; color: #6ea8ff; flex: none; }
+  .panel-head span { font-size: 13px; font-weight: 600; color: #e9eef8; letter-spacing: .4px; }
+  .panel-head em {
+    margin-left: auto; font-style: normal; font-size: 10px;
+    color: #5d6b82; letter-spacing: .5px; font-variant-numeric: tabular-nums;
+  }
+
+  .ctrl { margin-bottom: 11px; }
+  .ctrl-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .ctrl-head label { font-size: 11px; color: #8592a8; }
+  .ctrl-head b {
+    font-size: 11px; font-weight: 500; color: #a9b9d6;
+    font-variant-numeric: tabular-nums;
+  }
+
+  input[type=range] {
+    --p: 50%;
+    -webkit-appearance: none; appearance: none;
+    display: block; width: 100%; height: 3px;
+    border-radius: 3px; outline: none; cursor: pointer;
+    background: linear-gradient(to right,
+      #4a7fe0 0%, #7fb4ff var(--p),
+      rgba(255,255,255,.09) var(--p), rgba(255,255,255,.09) 100%);
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+    background: #eaf1ff;
+    box-shadow: 0 0 0 3px rgba(110,168,255,.16), 0 0 10px rgba(110,168,255,.65);
+    transition: transform .12s ease;
+  }
+  input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.22); }
+  input[type=range]::-moz-range-thumb {
+    width: 12px; height: 12px; border: none; border-radius: 50%;
+    background: #eaf1ff;
+    box-shadow: 0 0 0 3px rgba(110,168,255,.16), 0 0 10px rgba(110,168,255,.65);
+  }
+
+  .divider { height: 1px; margin: 14px 0 12px; background: rgba(255,255,255,.06); }
+  .section-title {
+    font-size: 10px; color: #5d6b82; letter-spacing: 1.1px;
+    text-transform: uppercase; margin-bottom: 8px;
+  }
+
+  /* ---- 形状选择 ---- */
+  .shapes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .shape-btn {
+    aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+    border-radius: 9px; cursor: pointer;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.07);
+    color: #6b7893;
+    transition: color .15s, background .15s, border-color .15s, transform .1s;
+  }
+  .shape-btn svg { width: 15px; height: 15px; }
+  .shape-btn:hover { background: rgba(255,255,255,.08); color: #9fb0cc; }
+  .shape-btn:active { transform: scale(.93); }
+  .shape-btn.on {
+    color: #7fb4ff;
+    border-color: rgba(110,168,255,.5);
+    background: rgba(110,168,255,.13);
+    box-shadow: 0 0 14px rgba(110,168,255,.18) inset;
+  }
+
+  /* ---- 按钮 ---- */
+  .btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 8px 4px; border-radius: 9px; cursor: pointer;
+    font-size: 11px; color: #b6c2d8; font-family: inherit;
+    background: rgba(255,255,255,.045);
+    border: 1px solid rgba(255,255,255,.07);
+    transition: background .15s, color .15s, transform .1s;
+  }
+  .btn svg { width: 13px; height: 13px; flex: none; }
+  .btn:hover { background: rgba(255,255,255,.1); color: #e6eefa; }
+  .btn:active { transform: scale(.96); }
+  .btn.accent { color: #8fc0ff; border-color: rgba(110,168,255,.32); background: rgba(110,168,255,.1); }
+  .btn.accent:hover { background: rgba(110,168,255,.2); }
+
+  .foot {
+    display: flex; justify-content: space-between;
+    margin-top: 13px; padding-top: 11px;
+    border-top: 1px solid rgba(255,255,255,.06);
+    font-size: 10px; color: #55637a;
+    font-variant-numeric: tabular-nums;
+  }
+  .foot b { color: #8fa4c6; font-weight: 500; }
+
+  @media (max-width: 560px) {
+    #panel { width: calc(100vw - 24px); right: 12px; top: 12px; max-height: 46vh; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<aside id="panel">
+  <div class="panel-head">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <circle cx="12" cy="12" r="2.4"/>
+      <ellipse cx="12" cy="12" rx="10" ry="4.4" transform="rotate(-30 12 12)"/>
+      <ellipse cx="12" cy="12" rx="10" ry="4.4" transform="rotate(30 12 12)"/>
+    </svg>
+    <span>粒子系统</span>
+    <em id="fps">-- FPS</em>
+  </div>
+
+  <div id="controls"></div>
+
+  <div class="divider"></div>
+  <div class="section-title">粒子形态</div>
+  <div class="shapes" id="shapes"></div>
+
+  <div class="divider"></div>
+  <div class="btns">
+    <button class="btn accent" id="btn-burst">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 2v5M12 17v5M2 12h5M17 12h5M5 5l3.5 3.5M15.5 15.5L19 19M19 5l-3.5 3.5M8.5 15.5L5 19"/>
+      </svg>爆发
+    </button>
+    <button class="btn" id="btn-pause">
+      <svg viewBox="0 0 24 24" fill="currentColor" id="pause-icon">
+        <rect x="7" y="5" width="3.6" height="14" rx="1.2"/>
+        <rect x="13.4" y="5" width="3.6" height="14" rx="1.2"/>
+      </svg><span id="pause-text">暂停</span>
+    </button>
+    <button class="btn" id="btn-clear">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3.5 6.5h17M9 6.5V4.4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2.1"/>
+        <path d="M5.8 6.5l1 13a1.5 1.5 0 0 0 1.5 1.4h7.4a1.5 1.5 0 0 0 1.5-1.4l1-13"/>
+      </svg>清空
+    </button>
+  </div>
+
+  <div class="foot">
+    <span><b id="pc">0</b> 粒子</span>
+    <span>移动指针 · 点击爆发</span>
+  </div>
+</aside>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ═══════════════════════════════════════════
+     1. 画布 / 尺寸
+     ═══════════════════════════════════════════ */
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  let W = 0, H = 0, DPR = 1;
+
+  const CELL = 56;            // 流场网格尺寸
+  let GW = 1, GH = 1;
+  let fieldX = new Float32Array(1);
+  let fieldY = new Float32Array(1);
+  let cellInvX = 1, cellInvY = 1;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width  = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    GW = Math.max(2, Math.ceil(W / CELL) + 1);
+    GH = Math.max(2, Math.ceil(H / CELL) + 1);
+    cellInvX = GW / W;
+    cellInvY = GH / H;
+    fieldX = new Float32Array(GW * GH);
+    fieldY = new Float32Array(GW * GH);
+
+    ctx.fillStyle = '#05070c';
+    ctx.fillRect(0, 0, W, H);
+  }
+  window.addEventListener('resize', resize);
+
+  /* ═══════════════════════════════════════════
+     2. 可调参数
+     ═══════════════════════════════════════════ */
+  const P = {
+    maxParticles: 6000,
+    rate:         700,
+    speed:        110,
+    size:         14,
+    life:         2.0,
+    gravity:      0,
+    drag:         0.8,
+    turb:         0.5,
+    hue:          205,
+    hueSpread:    70,
+    hueSpeed:     25,
+    trail:        0.45,
+    glow:         0.9,
+  };
+
+  /* ═══════════════════════════════════════════
+     3. 粒子数据 —— 结构化数组 (SoA)
+        全部使用 TypedArray，零 GC 压力
+     ═══════════════════════════════════════════ */
+  const MAX = 20000;
+  const px     = new Float32Array(MAX);
+  const py     = new Float32Array(MAX);
+  const pvx    = new Float32Array(MAX);
+  const pvy    = new Float32Array(MAX);
+  const plife  = new Float32Array(MAX);
+  const pmax   = new Float32Array(MAX);
+  const psize  = new Float32Array(MAX);
+  const phue   = new Float32Array(MAX);
+  const pshape = new Uint8Array(MAX);
+  let count = 0;
+
+  /** 交换删除：O(1) 移除，不产生空洞 */
+  function swapRemove(i) {
+    const j = --count;
+    if (i !== j) {
+      px[i] = px[j]; py[i] = py[j];
+      pvx[i] = pvx[j]; pvy[i] = pvy[j];
+      plife[i] = plife[j]; pmax[i] = pmax[j];
+      psize[i] = psize[j]; phue[i] = phue[j];
+      pshape[i] = pshape[j];
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     4. 精灵图预渲染
+        每种 (形态 × 色相档位) 预生成一张位图，
+        运行时只需 drawImage，避免逐帧路径绘制
+     ═══════════════════════════════════════════ */
+  const SS = 64;            // 精灵尺寸
+  const HUE_STEPS = 24;     // 色相量化档位
+  const HUE_INV = HUE_STEPS / 360;
+
+  let sprites = [];         // sprites[shape][hueIndex]
+
+  function starPath(g, cx, cy, R, points, inner) {
+    const total = points * 2;
+    g.beginPath();
+    for (let i = 0; i < total; i++) {
+      const r = (i & 1) ? inner : R;
+      const a = (i / total) * Math.PI * 2 - Math.PI / 2;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.closePath();
+  }
+
+  function polyPath(g, cx, cy, R, n, rot) {
+    g.beginPath();
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rot;
+      const x = cx + Math.cos(a) * R;
+      const y = cy + Math.sin(a) * R;
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.closePath();
+  }
+
+  function makeSprite(shape, hue) {
+    const c = document.createElement('canvas');
+    c.width = c.height = SS;
+    const g = c.getContext('2d');
+    const cx = SS / 2, cy = SS / 2, R = SS / 2 - 1;
+
+    /* ---- 形态 0：柔和光斑（直接径向渐变） ---- */
+    if (shape === 0) {
+      const grd = g.createRadialGradient(cx, cy, 0, cx, cy, R);
+      grd.addColorStop(0.00, `hsla(${hue},100%,90%,1)`);
+      grd.addColorStop(0.18, `hsla(${hue},100%,68%,0.82)`);
+      grd.addColorStop(0.42, `hsla(${hue},100%,56%,0.28)`);
+      grd.addColorStop(0.72, `hsla(${hue},100%,50%,0.07)`);
+      grd.addColorStop(1.00, `hsla(${hue},100%,50%,0)`);
+      g.fillStyle = grd;
+      g.fillRect(0, 0, SS, SS);
+      return c;
+    }
+
+    /* ---- 其它形态：先画白色剪影 ---- */
+    const r = R * 0.74;
+    g.fillStyle = '#fff';
+
+    switch (shape) {
+      case 1: starPath(g, cx, cy, r, 4, r * 0.24); g.fill(); break;
+      case 2: polyPath(g, cx, cy, r, 3, -Math.PI / 2); g.fill(); break;
+      case 3: polyPath(g, cx, cy, r, 4, -Math.PI / 2); g.fill(); break;
+      case 4:
+        g.beginPath();
+        g.arc(cx, cy, r, 0, Math.PI * 2);
+        g.arc(cx, cy, r * 0.48, 0, Math.PI * 2, true);
+        g.fill();
+        break;
+      case 5: polyPath(g, cx, cy, r, 6, -Math.PI / 2); g.fill(); break;
+    }
+
+    /* ---- 用 source-in 上色（保留剪影 alpha） ---- */
+    g.globalCompositeOperation = 'source-in';
+    const cg = g.createRadialGradient(cx, cy, 0, cx, cy, R);
+    cg.addColorStop(0.00, `hsla(${hue},100%,94%,1)`);
+    cg.addColorStop(0.35, `hsla(${hue},100%,66%,0.94)`);
+    cg.addColorStop(0.68, `hsla(${hue},100%,55%,0.62)`);
+    cg.addColorStop(1.00, `hsla(${hue},100%,50%,0)`);
+    g.fillStyle = cg;
+    g.fillRect(0, 0, SS, SS);
+
+    return c;
+  }
+
+  function buildSprites() {
+    sprites = [];
+    for (let s = 0; s < 6; s++) {
+      const row = new Array(HUE_STEPS);
+      for (let h = 0; h < HUE_STEPS; h++) {
+        row[h] = makeSprite(s, (h * 360) / HUE_STEPS);
+      }
+      sprites.push(row);
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     5. 发射器 / 交互状态
+     ═══════════════════════════════════════════ */
+  let mouseX = 0, mouseY = 0;
+  let lastMove = -9999;
+  let ex = 0, ey = 0;            // 发射器平滑位置
+  let targetX = 0, targetY = 0;
+  let driftPhase = 0;
+  let emitAcc = 0;
+  let hueShift = 0;
+  let time = 0;
+  let paused = false;
+
+  let activeShapes = [0, 1, 2, 3, 4, 5];
+
+  function pickShape() {
+    return activeShapes[(Math.random() * activeShapes.length) | 0];
+  }
+
+  /** 生成单个粒子 */
+  function emit(x, y, power) {
+    if (count >= P.maxParticles) return;
+    const i = count++;
+
+    const a = Math.random() * Math.PI * 2;
+    const sp = P.speed * (0.18 + Math.random() * 0.82) * power;
+
+    px[i] = x + (Math.random() - 0.5) * 10;
+    py[i] = y + (Math.random() - 0.5) * 10;
+    pvx[i] = Math.cos(a) * sp;
+    pvy[i] = Math.sin(a) * sp;
+
+    const life = P.life * (0.45 + Math.random() * 0.9);
+    plife[i] = life;
+    pmax[i]  = life;
+
+    psize[i]  = P.size * (0.3 + Math.random() * 0.95);
+    phue[i]   = (P.hue + (Math.random() - 0.5) * P.hueSpread + hueShift + 360) % 360;
+    pshape[i] = pickShape();
+  }
+
+  /* ═══════════════════════════════════════════
+     6. 更新
+     ═══════════════════════════════════════════ */
+  const FPS_MIN_DT = 1 / 240;
+  const FPS_MAX_DT = 1 / 20;
+
+  /** 每帧重算一次流场（网格数量少，开销极低） */
+  function updateField(t) {
+    let idx = 0;
+    for (let gy = 0; gy < GH; gy++) {
+      const ny = gy * 0.62;
+      for (let gx = 0; gx < GW; gx++) {
+        const nx = gx * 0.62;
+        fieldX[idx] = (Math.sin(nx + t * 0.85) + Math.cos(ny * 1.3 - t * 0.62)) * 0.5;
+        fieldY[idx] = (Math.cos(ny * 0.92 + t * 1.05) + Math.sin(nx * 1.18 + t * 0.48)) * 0.5;
+        idx++;
+      }
+    }
+  }
+
+  function update(dt) {
+    time += dt;
+    hueShift = (hueShift + P.hueSpeed * dt) % 360;
+
+    if (count > P.maxParticles) count = P.maxParticles;
+
+    /* --- 发射器跟随 --- */
+    if (performance.now() - lastMove > 2400) {
+      driftPhase += dt * 0.55;
+      targetX = W * 0.5 + Math.cos(driftPhase) * W * 0.23;
+      targetY = H * 0.5 + Math.sin(driftPhase * 1.37) * H * 0.23;
+    } else {
+      targetX = mouseX;
+      targetY = mouseY;
+    }
+    const follow = 1 - Math.exp(-9 * dt);
+    ex += (targetX - ex) * follow;
+    ey += (targetY - ey) * follow;
+
+    /* --- 持续发射 --- */
+    if (!paused && P.rate > 0) {
+      emitAcc += P.rate * dt;
+      let n = emitAcc | 0;
+      if (n > 0) {
+        emitAcc -= n;
+        if (n > 400) n = 400;          // 防止卡顿帧瞬间爆量
+        for (let k = 0; k < n; k++) emit(ex, ey, 1);
+      }
+    } else if (emitAcc > 0) {
+      emitAcc = 0;
+    }
+
+    updateField(time);
+
+    /* --- 物理积分 --- */
+    const drag = Math.exp(-P.drag * dt);
+    const turbForce = P.turb * 420;
+    const gravForce = P.gravity * 320;
+    const mx = mouseX, my = mouseY;
+
+    for (let i = 0; i < count; i++) {
+      // 生命
+      plife[i] -= dt;
+      if (plife[i] <= 0) { swapRemove(i); i--; continue; }
+
+      let fx = 0, fy = 0;
+
+      // 流场（网格采样，避免逐粒子三角函数）
+      let gx = (px[i] * cellInvX) | 0;
+      let gy = (py[i] * cellInvY) | 0;
+      if (gx < 0) gx = 0; else if (gx >= GW) gx = GW - 1;
+      if (gy < 0) gy = 0; else if (gy >= GH) gy = GH - 1;
+      const gi = gy * GW + gx;
+      fx += fieldX[gi] * turbForce;
+      fy += fieldY[gi] * turbForce;
+
+      // 重力
+      fy += gravForce;
+
+      // 指针斥力
+      const dx = px[i] - mx;
+      const dy = py[i] - my;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 19600 && d2 > 64) {
+        const d = Math.sqrt(d2);
+        const f = (1 - d * 0.00714) * 620;   // 140px 内衰减
+        const inv = f / d;
+        fx += dx * inv;
+        fy += dy * inv;
+      }
+
+      // 速度积分 + 阻尼
+      const nvx = (pvx[i] + fx * dt) * drag;
+      const nvy = (pvy[i] + fy * dt) * drag;
+      pvx[i] = nvx;
+      pvy[i] = nvy;
+      px[i] += nvx * dt;
+      py[i] += nvy * dt;
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     7. 渲染
+     ═══════════════════════════════════════════ */
+  let fadeAlpha = 0.5;
+
+  function render() {
+    // 拖尾淡出（source-over 逐帧压暗）
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(5,7,12,' + fadeAlpha.toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+
+    // 加色混合：粒子相互叠加即产生辉光
+    ctx.globalCompositeOperation = 'lighter';
+
+    const glow = P.glow;
+    const minX = -80, maxX = W + 80, minY = -80, maxY = H + 80;
+
+    for (let i = 0; i < count; i++) {
+      const x = px[i], y = py[i];
+      if (x < minX || x > maxX || y < minY || y > maxY) continue;
+
+      const t = plife[i] / pmax[i];              // 1 → 0
+      const a = t * glow;
+      if (a < 0.012) continue;
+
+      const sz = psize[i] * (0.45 + 0.55 * t);
+      const img = sprites[pshape[i]][(phue[i] * HUE_INV) | 0];
+
+      ctx.globalAlpha = a;
+      ctx.drawImage(img, x - sz * 0.5, y - sz * 0.5, sz, sz);
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  /* ═══════════════════════════════════════════
+     8. 主循环
+     ═══════════════════════════════════════════ */
+  let lastTime = 0;
+  let fpsAcc = 0, fpsFrames = 0;
+  const fpsEl = document.getElementById('fps');
+  const pcEl  = document.getElementById('pc');
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+
+    if (!lastTime) lastTime = now;
+    let dt = (now - lastTime) / 1000;
+    lastTime = now;
+    if (dt < FPS_MIN_DT) dt = FPS_MIN_DT;
+    if (dt > FPS_MAX_DT) dt = FPS_MAX_DT;
+
+    // 拖尾 → 淡出系数
+    fadeAlpha = 1 - P.trail * 0.94;
+
+    update(dt);
+    render();
+
+    // 状态显示
+    fpsAcc += dt; fpsFrames++;
+    if (fpsAcc >= 0.4) {
+      fpsEl.textContent = Math.round(fpsFrames / fpsAcc) + ' FPS';
+      pcEl.textContent = count;
+      fpsAcc = 0; fpsFrames = 0;
+    }
+  }
+
+  /* ═══════════════════════════════════════════
+     9. 控制面板
+     ═══════════════════════════════════════════ */
+  const CONTROLS = [
+    { key: 'maxParticles', label: '粒子上限', min: 500, max: 20000, step: 500, fmt: v => v },
+    { key: 'rate',         label: '发射速率', min: 0,   max: 3000,  step: 10,  fmt: v => v + '/s' },
+    { key: 'speed',        label: '初始速度', min: 0,   max: 400,   step: 5,   fmt: v => v },
+    { key: 'size',         label: '粒子尺寸', min: 2,   max: 44,    step: 1,   fmt: v => v },
+    { key: 'life',         label: '生命时长', min: 0.3, max: 6,     step: 0.1, fmt: v => v.toFixed(1) + 's' },
+    { key: 'gravity',      label: '重力',     min: -1,  max: 1,     step: 0.05,fmt: v => v.toFixed(2) },
+    { key: 'drag',         label: '阻尼',     min: 0,   max: 3,     step: 0.05,fmt: v => v.toFixed(2) },
+    { key: 'turb',         label: '湍流强度', min: 0,   max: 2,     step: 0.05,fmt: v => v.toFixed(2) },
+    { key: 'hue',          label: '主色相',   min: 0,   max: 360,   step: 1,   fmt: v => v + '°' },
+    { key: 'hueSpread',    label: '色相扩散', min: 0,   max: 360,   step: 1,   fmt: v => v + '°' },
+    { key: 'hueSpeed',     label: '色相流速', min: 0,   max: 180,   step: 1,   fmt: v => v + '°/s' },
+    { key: 'trail',        label: '拖尾长度', min: 0,   max: 0.97,  step: 0.01,fmt: v => Math.round(v * 100) + '%' },
+    { key: 'glow',         label: '发光强度', min: 0.1, max: 1,     step: 0.01,fmt: v => Math.round(v * 100) + '%' },
+  ];
+
+  const controlsHost = document.getElementById('controls');
+
+  CONTROLS.forEach(cfg => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ctrl';
+
+    const head = document.createElement('div');
+    head.className = 'ctrl-head';
+    const lab = document.createElement('label');
+    lab.textContent = cfg.label;
+    const val = document.createElement('b');
+    head.appendChild(lab);
+    head.appendChild(val);
+
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = cfg.min;
+    input.max = cfg.max;
+    input.step = cfg.step;
+    input.value = P[cfg.key];
+
+    const sync = () => {
+      const v = parseFloat(input.value);
+      P[cfg.key] = v;
+      val.textContent = cfg.fmt(v);
+      const pct = ((v - cfg.min) / (cfg.max - cfg.min)) * 100;
+      input.style.setProperty('--p', pct.toFixed(1) + '%');
+    };
+    input.addEventListener('input', sync);
+    sync();
+
+    wrap.appendChild(head);
+    wrap.appendChild(input);
+    controlsHost.appendChild(wrap);
+  });
+
+  /* ---------- 形态切换 ---------- */
+  const SHAPE_ICONS = [
+    // 0 光斑
+    '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="8.4" opacity=".38"/></svg>',
+    // 1 四角星
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.4l2.2 7.4 7.4 2.2-7.4 2.2-2.2 7.4-2.2-7.4L2.4 12l7.4-2.2z"/></svg>',
+    // 2 三角
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.6l8.4 16.2H3.6z"/></svg>',
+    // 3 菱形
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6L21.4 12 12 21.4 2.6 12z"/></svg>',
+    // 4 圆环
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2"><circle cx="12" cy="12" r="7.2"/></svg>',
+    // 5 六边形
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l8.2 4.7v9.4L12 21.4 3.8 16.7V7.3z"/></svg>',
+  ];
+
+  const shapesHost = document.getElementById('shapes');
+  const shapeBtns = [];
+
+  function rebuildActive() {
+    activeShapes = [];
+    shapeBtns.forEach((b, i) => { if (b.classList.contains('on')) activeShapes.push(i); });
+    if (activeShapes.length === 0) {
+      activeShapes = [0];
+      shapeBtns[0].classList.add('on');
+    }
+  }
+
+  SHAPE_ICONS.forEach((svg, i) => {
+    const b = document.createElement('button');
+    b.className = 'shape-btn on';
+    b.type = 'button';
+    b.innerHTML = svg;
+    b.addEventListener('click', () => {
+      b.classList.toggle('on');
+      rebuildActive();
+    });
+    shapeBtns.push(b);
+    shapesHost.appendChild(b);
+  });
+
+  /* ---------- 操作按钮 ---------- */
+  const pauseIcon = document.getElementById('pause-icon');
+  const pauseText = document.getElementById('pause-text');
+
+  const PLAY_SVG = '<path d="M8 5.2v13.6L19.2 12z"/>';
+  const PAUSE_SVG =
+    '<rect x="7" y="5" width="3.6" height="14" rx="1.2"/>' +
+    '<rect x="13.4" y="5" width="3.6" height="14" rx="1.2"/>';
+
+  document.getElementById('btn-pause').addEventListener('click', () => {
+    paused = !paused;
+    pauseIcon.innerHTML = paused ? PLAY_SVG : PAUSE_SVG;
+    pauseText.textContent = paused ? '继续' : '暂停';
+  });
+
+  document.getElementById('btn-burst').addEventListener('click', () => {
+    const n = Math.min(900, P.maxParticles - count);
+    for (let i = 0; i < n; i++) emit(ex, ey, 2.2);
+  });
+
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    count = 0;
+    emitAcc = 0;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#05070c';
+    ctx.fillRect(0, 0, W, H);
+  });
+
+  /* ═══════════════════════════════════════════
+     10. 指针交互
+     ═══════════════════════════════════════════ */
+  window.addEventListener('pointermove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    lastMove = performance.now();
+  }, { passive: true });
+
+  window.addEventListener('pointerdown', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    lastMove = performance.now();
+    ex = mouseX; ey = mouseY;
+
+    const n = Math.min(500, P.maxParticles - count);
+    for (let i = 0; i < n; i++) emit(mouseX, mouseY, 2.4);
+  }, { passive: true });
+
+  /* ═══════════════════════════════════════════
+     11. 启动
+     ═══════════════════════════════════════════ */
+  resize();
+  buildSprites();
+
+  mouseX = W * 0.5;
+  mouseY = H * 0.5;
+  ex = targetX = mouseX;
+  ey = targetY = mouseY;
+
+  // 开场爆发
+  for (let i = 0; i < 420; i++) emit(mouseX, mouseY, 2);
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

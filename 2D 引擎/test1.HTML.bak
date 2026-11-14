@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>火柴人 · 布娃娃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #ffffff;
+    overflow: hidden;
+    font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+  }
+  #world {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    touch-action: none;
+  }
+  /* 每个身体部件：黑色胶囊 */
+  .part {
+    position: absolute;
+    background: #111;
+    border-radius: 999px;
+    will-change: transform;
+    pointer-events: none;
+  }
+  /* 头：空心圆 */
+  .part.head {
+    background: #ffffff;
+    border: 4px solid #111;
+    border-radius: 50%;
+  }
+  /* 地面线 */
+  #ground {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: 60px;
+    height: 2px;
+    background: #111;
+    pointer-events: none;
+  }
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    color: #999;
+    font-size: 13px;
+    letter-spacing: 1px;
+    pointer-events: none;
+    user-select: none;
+  }
+  #reset {
+    position: fixed;
+    right: 18px;
+    top: 18px;
+    background: #fff;
+    border: 2px solid #111;
+    color: #111;
+    padding: 7px 18px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    letter-spacing: 2px;
+    transition: background .15s, color .15s;
+  }
+  #reset:hover { background: #111; color: #fff; }
+</style>
+</head>
+<body>
+<div id="world"></div>
+<div id="ground"></div>
+<div class="hint">拖动火柴人 · 空格重置</div>
+<button id="reset">重 置</button>
+
+<script src="https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js"></script>
+<script>
+const { Engine, Runner, Bodies, Body, Composite, Constraint,
+        Mouse, MouseConstraint, Events } = Matter;
+
+// ================= 引擎 =================
+const engine = Engine.create();
+engine.gravity.y = 1;
+engine.positionIterations = 12;
+engine.velocityIterations = 10;
+const world = engine.world;
+
+// ================= 布局尺寸 =================
+const W = window.innerWidth;
+const H = window.innerHeight;
+const GROUND_Y = H - 60;
+
+// 火柴人部件尺寸
+const headD  = 56;
+const neckW  = 10, neckH  = 12;
+const torsoW = 12, torsoH = 96;
+const uArmW  = 9,  uArmH  = 48;   // 上臂
+const fArmW  = 8,  fArmH  = 44;   // 前臂
+const hipW   = 10, hipH   = 12;
+const thighW = 11, thighH = 58;   // 大腿
+const shinW  = 9,  shinH  = 54;   // 小腿
+const footW  = 24, footH  = 9;
+
+// 从地面往上堆叠，算各部件中心 Y
+const footY  = GROUND_Y - footH / 2;
+const shinY  = footY  - footH / 2 - shinH  / 2;
+const thighY = shinY  - shinH / 2 - thighH / 2;
+const hipY   = thighY - thighH / 2 - hipH  / 2;
+const torsoY = hipY   - hipH / 2 - torsoH  / 2;
+const neckY  = torsoY - torsoH / 2 - neckH / 2;
+const headY  = neckY  - neckH / 2 - headD / 2;
+
+const cx   = W / 2;
+const legX = 10;
+const armX = torsoW / 2 + uArmW / 2 + 1;
+
+const shoulderY = torsoY - torsoH / 2 + 12;
+const uArmY = shoulderY + uArmH / 2;
+const fArmY = uArmY + uArmH / 2 + fArmH / 2;
+
+// ================= 地面 & 墙 =================
+const ground = Bodies.rectangle(W / 2, H - 30, W * 2, 60, {
+  isStatic: true, friction: 0.9, render: { visible: false }
+});
+const wallL = Bodies.rectangle(-30, H / 2, 60, H * 2, { isStatic: true, render: { visible: false } });
+const wallR = Bodies.rectangle(W + 30, H / 2, 60, H * 2, { isStatic: true, render: { visible: false } });
+Composite.add(world, [ground, wallL, wallR]);
+
+// ================= 部件定义 =================
+const parts = [
+  { name: 'head',      w: headD,  h: headD,  x: cx,         y: headY  },
+  { name: 'neck',      w: neckW,  h: neckH,  x: cx,         y: neckY  },
+  { name: 'torso',     w: torsoW, h: torsoH, x: cx,         y: torsoY },
+  { name: 'upperArmL', w: uArmW,  h: uArmH,  x: cx - armX,  y: uArmY  },
+  { name: 'forearmL',  w: fArmW,  h: fArmH,  x: cx - armX,  y: fArmY  },
+  { name: 'upperArmR', w: uArmW,  h: uArmH,  x: cx + armX,  y: uArmY  },
+  { name: 'forearmR',  w: fArmW,  h: fArmH,  x: cx + armX,  y: fArmY  },
+  { name: 'hip',       w: hipW,   h: hipH,   x: cx,         y: hipY   },
+  { name: 'thighL',    w: thighW, h: thighH, x: cx - legX,  y: thighY },
+  { name: 'shinL',     w: shinW,  h: shinH,  x: cx - legX,  y: shinY  },
+  { name: 'thighR',    w: thighW, h: thighH, x: cx + legX,  y: thighY },
+  { name: 'shinR',     w: shinW,  h: shinH,  x: cx + legX,  y: shinY  },
+  { name: 'footL',     w: footW,  h: footH,  x: cx - legX,  y: footY  },
+  { name: 'footR',     w: footW,  h: footH,  x: cx + legX,  y: footY  },
+];
+
+// ================= 创建刚体 + DOM =================
+const worldEl = document.getElementById('world');
+const bodyMap = {};
+const domMap  = {};
+
+parts.forEach(p => {
+  const opts = {
+    friction: 0.7,
+    frictionStatic: 1,
+    frictionAir: 0.01,
+    restitution: 0.05,
+    density: 0.0015,
+    chamfer: { radius: 3 },
+  };
+  const body = p.name === 'head'
+    ? Bodies.circle(p.x, p.y, p.w / 2, opts)
+    : Bodies.rectangle(p.x, p.y, p.w, p.h, opts);
+
+  bodyMap[p.name] = body;
+  Composite.add(world, body);
+
+  const el = document.createElement('div');
+  el.className = 'part ' + p.name;
+  el.style.width  = p.w + 'px';
+  el.style.height = p.h + 'px';
+  worldEl.appendChild(el);
+  domMap[p.name] = el;
+});
+
+// ================= 关节约束 =================
+const joints = [
+  // 头 - 脖子（两点，防止头乱转）
+  { a: 'head', b: 'neck', pa: { x: -9, y: 22 }, pb: { x: -3, y: -neckH / 2 }, stiff: 0.9 },
+  { a: 'head', b: 'neck', pa: { x:  9, y: 22 }, pb: { x:  3, y: -neckH / 2 }, stiff: 0.9 },
+
+  // 脖子 - 躯干（两点）
+  { a: 'neck', b: 'torso', pa: { x: -3, y: neckH / 2 }, pb: { x: -3, y: -torsoH / 2 }, stiff: 0.95 },
+  { a: 'neck', b: 'torso', pa: { x:  3, y: neckH / 2 }, pb: { x:  3, y: -torsoH / 2 }, stiff: 0.95 },
+
+  // 肩（单点，可摆动）
+  { a: 'torso', b: 'upperArmL', pa: { x: -torsoW / 2, y: -torsoH / 2 + 12 }, pb: { x: 0, y: -uArmH / 2 }, stiff: 0.6 },
+  { a: 'torso', b: 'upperArmR', pa: { x:  torsoW / 2, y: -torsoH / 2 + 12 }, pb: { x: 0, y: -uArmH / 2 }, stiff: 0.6 },
+
+  // 肘（单点）
+  { a: 'upperArmL', b: 'forearmL', pa: { x: 0, y: uArmH / 2 }, pb: { x: 0, y: -fArmH / 2 }, stiff: 0.7 },
+  { a: 'upperArmR', b: 'forearmR', pa: { x: 0, y: uArmH / 2 }, pb: { x: 0, y: -fArmH / 2 }, stiff: 0.7 },
+
+  // 腰（两点）
+  { a: 'torso', b: 'hip', pa: { x: -3, y: torsoH / 2 }, pb: { x: -3, y: -hipH / 2 }, stiff: 0.9 },
+  { a: 'torso', b: 'hip', pa: { x:  3, y: torsoH / 2 }, pb: { x:  3, y: -hipH / 2 }, stiff: 0.9 },
+
+  // 髋（单点）
+  { a: 'hip', b: 'thighL', pa: { x: -legX, y: hipH / 2 }, pb: { x: 0, y: -thighH / 2 }, stiff: 0.7 },
+  { a: 'hip', b: 'thighR', pa: { x:  legX, y: hipH / 2 }, pb: { x: 0, y: -thighH / 2 }, stiff: 0.7 },
+
+  // 膝（单点）
+  { a: 'thighL', b: 'shinL', pa: { x: 0, y: thighH / 2 }, pb: { x: 0, y: -shinH / 2 }, stiff: 0.8 },
+  { a: 'thighR', b: 'shinR', pa: { x: 0, y: thighH / 2 }, pb: { x: 0, y: -shinH / 2 }, stiff: 0.8 },
+
+  // 踝（两点，让脚保持水平）
+  { a: 'shinL', b: 'footL', pa: { x: 0, y: shinH / 2 }, pb: { x: -7, y: -footH / 2 }, stiff: 0.85 },
+  { a: 'shinL', b: 'footL', pa: { x: 0, y: shinH / 2 }, pb: { x:  7, y: -footH / 2 }, stiff: 0.85 },
+  { a: 'shinR', b: 'footR', pa: { x: 0, y: shinH / 2 }, pb: { x: -7, y: -footH / 2 }, stiff: 0.85 },
+  { a: 'shinR', b: 'footR', pa: { x: 0, y: shinH / 2 }, pb: { x:  7, y: -footH / 2 }, stiff: 0.85 },
+];
+
+joints.forEach(j => {
+  Composite.add(world, Constraint.create({
+    bodyA: bodyMap[j.a],
+    bodyB: bodyMap[j.b],
+    pointA: j.pa,
+    pointB: j.pb,
+    length: 0,
+    stiffness: j.stiff,
+    damping: 0.15,
+    render: { visible: false }
+  }));
+});
+
+// ================= 鼠标拖拽 =================
+const mouse = Mouse.create(worldEl);
+const mouseConstraint = MouseConstraint.create(engine, {
+  mouse,
+  constraint: { stiffness: 0.2, damping: 0.1, render: { visible: false } }
+});
+Composite.add(world, mouseConstraint);
+
+// 禁止滚轮缩放
+mouse.element.removeEventListener('wheel', mouse.mousewheel);
+mouse.element.addEventListener('wheel', e => e.preventDefault(), { passive: false });
+
+// ================= DOM 同步 =================
+function syncDOM() {
+  for (const p of parts) {
+    const b = bodyMap[p.name];
+    const el = domMap[p.name];
+    const x = b.position.x - p.w / 2;
+    const y = b.position.y - p.h / 2;
+    el.style.transform = `translate(${x}px, ${y}px) rotate(${b.angle}rad)`;
+  }
+}
+Events.on(engine, 'afterUpdate', syncDOM);
+
+// ================= 重置 =================
+const initialState = parts.map(p => ({ name: p.name, x: p.x, y: p.y }));
+
+function reset() {
+  for (const { name, x, y } of initialState) {
+    const b = bodyMap[name];
+    Body.setVelocity(b, { x: 0, y: 0 });
+    Body.setAngularVelocity(b, 0);
+    Body.setAngle(b, 0);
+    Body.setPosition(b, { x, y });
+    b.force.x = 0; b.force.y = 0; b.torque = 0;
+  }
+  syncDOM();
+}
+
+document.getElementById('reset').addEventListener('click', reset);
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); reset(); }
+});
+
+// ================= 启动 =================
+Runner.run(Runner.create(), engine);
+syncDOM();
+
+// ================= resize =================
+window.addEventListener('resize', () => {
+  const nw = window.innerWidth;
+  const nh = window.innerHeight;
+  Body.setPosition(ground, { x: nw / 2, y: nh - 30 });
+  Body.setPosition(wallR, { x: nw + 30, y: nh / 2 });
+});
+</script>
+</body>
+</html>
