@@ -1,4 +1,4 @@
-var debugmode = false;
+var debugmode = true;
 
 var states = Object.freeze({
    SplashScreen: 0,
@@ -15,8 +15,8 @@ var rotation = 0;
 var jump = -4.6;
 var flyArea = $("#flyarea").height();
 
-var score = 0;
-var highscore = 0;
+var score = 9999999999;
+var highscore = 9999999999;
 
 var pipeheight = 90;
 var pipewidth = 52;
@@ -169,13 +169,32 @@ function gameloop() {
       boundingbox.css('width', boxwidth);
    }
 
-   //did we hit the ground?
-   if(box.bottom >= $("#land").offset().top)
+   //have we gotten inside the pipe yet?
+if(boxright > pipeleft)
+{
+   //we're within the pipe, have we passed between upper and lower pipes?
+   if(boxtop > pipetop && boxbottom < pipebottom)
    {
-      playerDead();
-      return;
+      //yeah! we're within bounds
    }
-
+   else
+   {
+      // 无敌：撞管道不死，也不掉进虚空
+      // 直接推到管道的安全位置（管道内空间的上方或下方）
+      if(boxtop <= pipetop)
+      {
+         // 撞到上管道：把鸟顶到管道口下面
+         position = pipetop - $("#flyarea").offset().top + 2;
+      }
+      else
+      {
+         // 撞到下管道：把鸟推到管道口上面
+         position = pipebottom - $("#flyarea").offset().top - 40;
+      }
+      velocity = 0;
+      updatePlayer($("#player"));
+   }
+}
    //have they tried to escape through the ceiling? :o
    var ceiling = $("#ceiling");
    if(boxtop <= (ceiling.offset().top + ceiling.height()))
@@ -215,8 +234,8 @@ function gameloop() {
       else
       {
          //no! we touched the pipe
-         playerDead();
-         return;
+         //playerDead();
+         //return;
       }
    }
 
