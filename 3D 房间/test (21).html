@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>系统视界</title>
+<script>
+// 配置优先
+var CONFIG = {
+  panelOpen: false,
+  sw1: true,
+  accOpen: false
+};
+
+var canvas, ctx;
+var camera = { pos: [0, 1.6, 4.5], yaw: 0, pitch: -0.08, fov: Math.PI / 3 };
+var hx = 4, hz = 5, top = 3.2;
+var objects = [];
+var colliders = [];
+var CELL_SIZE = 12, FONT_SIZE = 10, PLACEHOLDER = '·';
+var cols = 0, rows = 0, offsetX = 0, offsetY = 0;
+var joystick = { active: false, originX: 0, originY: 0, knobX: 0, knobY: 0, nx: 0, ny: 0, maxR: 50, outerR: 72, knobR: 22 };
+var dpr = Math.min(window.devicePixelRatio || 1, 2);
+var cssW = 0, cssH = 0;
+var keys = {};
+var last = performance.now();
+var lastRender = 0;
+
+function init3D() {
+  canvas = document.getElementById('scene');
+  ctx = canvas.getContext('2d', { alpha: false });
+
+  objects.push({ type: 'aabb', name: '桌', min: [-0.9, 0, -0.55], max: [0.9, 0.78, 0.55] });
+
+  function addChair(cx, cz, facing) {
+    var sh = 0.24, seatH = 0.45, backT = 0.08, backH = 0.95;
+    objects.push({ type: 'aabb', name: '椅', min: [cx - sh, 0, cz - sh], max: [cx + sh, seatH, cz + sh] });
+    if (facing === 'N') objects.push({ type: 'aabb', name: '椅', min: [cx - sh, seatH, cz - sh - backT], max: [cx + sh, backH, cz - sh] });
+    else if (facing === 'S') objects.push({ type: 'aabb', name: '椅', min: [cx - sh, seatH, cz + sh], max: [cx + sh, backH, cz + sh + backT] });
+    else if (facing === 'W') objects.push({ type: 'aabb', name: '椅', min: [cx - sh - backT, seatH, cz - sh], max: [cx - sh, backH, cz + sh] });
+    else if (facing === 'E') objects.push({ type: 'aabb', name: '椅', min: [cx + sh, seatH, cz - sh], max: [cx + sh + backT, backH, cz + sh] });
+  }
+  addChair(0, -1.15, 'N'); addChair(0, 1.15, 'S'); addChair(-1.35, 0, 'W'); addChair(1.35, 0, 'E');
+
+  objects.push({ type: 'sphere', name: '苹', center: [0, 0.88, 0], radius: 0.1, color: [255, 255, 255] });
+  objects.push({ type: 'aabb', name: '柄', min: [-0.015, 0.97, -0.015], max: [0.015, 1.05, 0.015], color: [200, 200, 200] });
+
+  colliders.push({ minX: -0.9, maxX: 0.9, minZ: -0.55, maxZ: 0.55 });
+  colliders.push({ minX: -0.24, maxX: 0.24, minZ: -1.39, maxZ: -0.91 });
+  colliders.push({ minX: -0.24, maxX: 0.24, minZ: 0.91, maxZ: 1.39 });
+  colliders.push({ minX: -1.59, maxX: -1.11, minZ: -0.24, maxZ: 0.24 });
+  colliders.push({ minX: 1.11, maxX: 1.59, minZ: -0.24, maxZ: 0.24 });
+
+  window.addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(frame);
+  requestAnimationFrame(update);
+}
+
+function resize() {
+  cssW = window.innerWidth; cssH = window.innerHeight;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
+  cols = Math.ceil(cssW / CELL_SIZE);
+  rows = Math.ceil(cssH / CELL_SIZE);
+  offsetX = (cssW - cols * CELL_SIZE) / 2 + CELL_SIZE / 2;
+  offsetY = (cssH - rows * CELL_SIZE) / 2 + CELL_SIZE / 2;
+}
+
+function render() {
+  var cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  var cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  
+  var fwX = sy*cp, fwY = sp, fwZ = -cy*cp;
+  var fwL = Math.sqrt(fwX*fwX + fwY*fwY + fwZ*fwZ);
+  fwX /= fwL; fwY /= fwL; fwZ /= fwL;
+
+  var rtX = fwY*0 - fwZ*1, rtY = fwZ*0 - fwX*0, rtZ = fwX*1 - fwY*0;
+  var rtL = Math.sqrt(rtX*rtX + rtY*rtY + rtZ*rtZ);
+  if (rtL < 1e-6) { rtX = 1; rtY = 0; rtZ = 0; } else { rtX /= rtL; rtY /= rtL; rtZ /= rtL; }
+
+  var upX = rtY*fwZ - rtZ*fwY, upY = rtZ*fwX - rtX*fwZ, upZ = rtX*fwY - rtY*fwX;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  var f = (cssH / 2) / Math.tan(camera.fov / 2);
+  var cx = cssW / 2, cyScreen = cssH / 2;
+  var ox = camera.pos[0], oy = camera.pos[1], oz = camera.pos[2];
+
+  ctx.font = 'bold ' + FONT_SIZE + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.imageSmoothingEnabled = false;
+
+  var objLen = objects.length;
+
+  for (var r = 0; r < rows; r++) {
+    var syScreen = offsetY + r * CELL_SIZE;
+    var camY = -(syScreen - cyScreen) / f;
+    
+    for (var c = 0; c < cols; c++) {
+      var sx = offsetX + c * CELL_SIZE;
+      var camX = (sx - cx) / f;
+      
+      var dx = rtX*camX + upX*camY + fwX;
+      var dy = rtY*camX + upY*camY + fwY;
+      var dz = rtZ*camX + upZ*camY + fwZ;
+      var dLen = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      dx /= dLen; dy /= dLen; dz /= dLen;
+
+      var bestT = 1e9, bestName = null, nX = 0, nY = 0, nZ = 0, isColor = false, colR = 0, colG = 0, colB = 0;
+
+      if (dz !== 0) {
+        var t = (-hz - oz) / dz;
+        var tx = ox + dx*t, ty = oy + dy*t;
+        if (t > 0.001 && t < bestT && tx>=-hx && tx<=hx && ty>=0 && ty<=top) { bestT = t; bestName = '墙'; nX=0; nY=0; nZ=1; isColor = false; }
+        t = (hz - oz) / dz;
+        tx = ox + dx*t; ty = oy + dy*t;
+        if (t > 0.001 && t < bestT && tx>=-hx && tx<=hx && ty>=0 && ty<=top) { bestT = t; bestName = '墙'; nX=0; nY=0; nZ=-1; isColor = false; }
+      }
+      if (dx !== 0) {
+        var t = (-hx - ox) / dx;
+        var ty = oy + dy*t, tz = oz + dz*t;
+        if (t > 0.001 && t < bestT && tz>=-hz && tz<=hz && ty>=0 && ty<=top) { bestT = t; bestName = '墙'; nX=1; nY=0; nZ=0; isColor = false; }
+        t = (hx - ox) / dx;
+        ty = oy + dy*t; tz = oz + dz*t;
+        if (t > 0.001 && t < bestT && tz>=-hz && tz<=hz && ty>=0 && ty<=top) { bestT = t; bestName = '墙'; nX=-1; nY=0; nZ=0; isColor = false; }
+      }
+      if (dy !== 0) {
+        var t = (0 - oy) / dy;
+        var tx = ox + dx*t, tz = oz + dz*t;
+        if (t > 0.001 && t < bestT && tx>=-hx && tx<=hx && tz>=-hz && tz<=hz) { bestT = t; bestName = '地'; nX=0; nY=1; nZ=0; isColor = false; }
+      }
+
+      for (var i = 0; i < objLen; i++) {
+        var obj = objects[i];
+        if (obj.type === 'aabb') {
+          var tmin = -1e9, tmax = 1e9, tnx = 0, tny = 0, tnz = 0;
+          if (Math.abs(dx) < 1e-6) { if (ox < obj.min[0] || ox > obj.max[0]) continue; }
+          else {
+            var t1 = (obj.min[0] - ox) / dx, t2 = (obj.max[0] - ox) / dx, n1 = -1;
+            if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; n1 = 1; }
+            if (t1 > tmin) { tmin = t1; tnx = n1; tny = 0; tnz = 0; }
+            if (t2 < tmax) tmax = t2;
+            if (tmin > tmax) continue;
+          }
+          if (Math.abs(dy) < 1e-6) { if (oy < obj.min[1] || oy > obj.max[1]) continue; }
+          else {
+            var t1 = (obj.min[1] - oy) / dy, t2 = (obj.max[1] - oy) / dy, n1 = -1;
+            if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; n1 = 1; }
+            if (t1 > tmin) { tmin = t1; tnx = 0; tny = n1; tnz = 0; }
+            if (t2 < tmax) tmax = t2;
+            if (tmin > tmax) continue;
+          }
+          if (Math.abs(dz) < 1e-6) { if (oz < obj.min[2] || oz > obj.max[2]) continue; }
+          else {
+            var t1 = (obj.min[2] - oz) / dz, t2 = (obj.max[2] - oz) / dz, n1 = -1;
+            if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; n1 = 1; }
+            if (t1 > tmin) { tmin = t1; tnx = 0; tny = 0; tnz = n1; }
+            if (t2 < tmax) tmax = t2;
+            if (tmin > tmax) continue;
+          }
+          if (tmax < 0) continue;
+          var tHit = tmin > 0.001 ? tmin : tmax;
+          if (tHit <= 0.001) continue;
+          
+          if (tHit < bestT) {
+            bestT = tHit; bestName = obj.name;
+            nX = tnx; nY = tny; nZ = tnz;
+            if (obj.color) { isColor = true; colR = obj.color[0]; colG = obj.color[1]; colB = obj.color[2]; }
+            else { isColor = false; }
+          }
+        } else if (obj.type === 'sphere') {
+          var ocX = ox - obj.center[0], ocY = oy - obj.center[1], ocZ = oz - obj.center[2];
+          var b = ocX*dx + ocY*dy + ocZ*dz;
+          var c2 = ocX*ocX + ocY*ocY + ocZ*ocZ - obj.radius*obj.radius;
+          var disc = b*b - c2;
+          if (disc > 0) {
+            var sqrtDisc = Math.sqrt(disc);
+            var t1 = -b - sqrtDisc;
+            var t2 = -b + sqrtDisc;
+            var tHit = t1 > 0.001 ? t1 : (t2 > 0.001 ? t2 : -1);
+            if (tHit > 0.001 && tHit < bestT) {
+              bestT = tHit; bestName = obj.name;
+              var hitX = ox + dx*tHit - obj.center[0];
+              var hitY = oy + dy*tHit - obj.center[1];
+              var hitZ = oz + dz*tHit - obj.center[2];
+              var invLen = 1 / obj.radius;
+              nX = hitX * invLen; nY = hitY * invLen; nZ = hitZ * invLen;
+              if (obj.color) { isColor = true; colR = obj.color[0]; colG = obj.color[1]; colB = obj.color[2]; }
+              else { isColor = false; }
+            }
+          }
+        }
+      }
+
+      if (bestName === null) {
+        ctx.fillStyle = '#444';
+        ctx.fillText(PLACEHOLDER, sx, syScreen);
+      } else {
+        var facing = -(nX*dx + nY*dy + nZ*dz);
+        if (facing < 0) facing = 0;
+        var fog = 1 / (1 + bestT * 0.06);
+        var lum = Math.pow(facing, 0.7) * fog;
+        
+        if (isColor) {
+          var step = Math.floor(lum * 8) / 8; 
+          var rr = Math.floor(colR * step);
+          var gg = Math.floor(colG * step);
+          var bb = Math.floor(colB * step);
+          ctx.fillStyle = 'rgb(' + rr + ',' + gg + ',' + bb + ')';
+        } else {
+          var step = Math.floor(lum * 8) / 8; 
+          var gray = Math.floor(40 + step * 215);
+          ctx.fillStyle = 'rgb(' + gray + ',' + gray + ',' + gray + ')';
+        }
+        ctx.fillText(bestName, sx, syScreen);
+      }
+    }
+  }
+
+  if (joystick.active) {
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    var px = 8;
+    ctx.fillStyle = '#FFF';
+    var n = Math.ceil(joystick.outerR / px);
+    var jx = Math.round(joystick.originX / px) * px;
+    var jy = Math.round(joystick.originY / px) * px;
+    for (var gy = -n; gy <= n; gy++) {
+      for (var gx = -n; gx <= n; gx++) {
+        var d = Math.sqrt(gx*gx + gy*gy);
+        if (d <= joystick.outerR/px && d > (joystick.outerR-12)/px) {
+          ctx.fillRect(jx + gx*px - px/2, jy + gy*px - px/2, px, px);
+        }
+      }
+    }
+    var kx = Math.round(joystick.knobX / px) * px;
+    var ky = Math.round(joystick.knobY / px) * px;
+    ctx.fillStyle = '#000';
+    n = Math.ceil(joystick.knobR / px);
+    for (var gy = -n; gy <= n; gy++) {
+      for (var gx = -n; gx <= n; gx++) {
+        if (Math.sqrt(gx*gx + gy*gy) <= joystick.knobR/px) {
+          ctx.fillRect(kx + gx*px - px/2, ky + gy*px - px/2, px, px);
+        }
+      }
+    }
+    ctx.strokeStyle = '#FFF';
+    ctx.lineWidth = px;
+    ctx.strokeRect(kx - joystick.knobR, ky - joystick.knobR, joystick.knobR*2, joystick.knobR*2);
+    ctx.restore();
+  }
+}
+
+function frame(now) {
+  if (now - lastRender > 30) {
+    render();
+    lastRender = now;
+  }
+  requestAnimationFrame(frame);
+}
+
+function update(now) {
+  var dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  var speed = 3.0;
+  var cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  var fwdX = sy, fwdZ = -cy;
+  var rgtX = cy, rgtZ = sy;
+
+  var mx = 0, mz = 0;
+  if (keys['w']) { mx += fwdX; mz += fwdZ; }
+  if (keys['s']) { mx -= fwdX; mz -= fwdZ; }
+  if (keys['a']) { mx -= rgtX; mz -= rgtZ; }
+  if (keys['d']) { mx += rgtX; mz += rgtZ; }
+
+  if (joystick.active) {
+    mx += fwdX * (-joystick.ny) + rgtX * joystick.nx;
+    mz += fwdZ * (-joystick.ny) + rgtZ * joystick.nx;
+  }
+
+  var mLen = Math.sqrt(mx*mx + mz*mz);
+  if (mLen > 1) { mx /= mLen; mz /= mLen; }
+
+  var newX = camera.pos[0] + mx * speed * dt;
+  var newZ = camera.pos[2] + mz * speed * dt;
+  var radius = 0.35;
+
+  newX = Math.max(-hx + radius, Math.min(hx - radius, newX));
+  newZ = Math.max(-hz + radius, Math.min(hz - radius, newZ));
+
+  for (var i = 0; i < colliders.length; i++) {
+    var col = colliders[i];
+    var closestX = Math.max(col.minX, Math.min(newX, col.maxX));
+    var closestZ = Math.max(col.minZ, Math.min(newZ, col.maxZ));
+    var distX = newX - closestX;
+    var distZ = newZ - closestZ;
+    var distSq = distX*distX + distZ*distZ;
+
+    if (distSq < radius * radius) {
+      var dist = Math.sqrt(distSq);
+      if (dist > 0.0001) {
+        newX = closestX + (distX / dist) * radius;
+        newZ = closestZ + (distZ / dist) * radius;
+      } else {
+        var centerX = (col.minX + col.maxX) / 2;
+        var centerZ = (col.minZ + col.maxZ) / 2;
+        var diffX = newX - centerX;
+        var diffZ = newZ - centerZ;
+        var dLen = Math.sqrt(diffX*diffX + diffZ*diffZ);
+        if (dLen > 0.0001) {
+          newX = centerX + (diffX / dLen) * (Math.max(col.maxX - centerX, col.maxZ - centerZ) + radius);
+          newZ = centerZ + (diffZ / dLen) * (Math.max(col.maxX - centerX, col.maxZ - centerZ) + radius);
+        }
+      }
+    }
+  }
+  camera.pos[0] = newX;
+  camera.pos[2] = newZ;
+  requestAnimationFrame(update);
+}
+
+function bindUI() {
+  var fab = document.getElementById('fab');
+  var panel = document.getElementById('panel');
+  var closeBtn = document.getElementById('closeBtn');
+  var menuPath = document.getElementById('menuPath');
+  var row1 = document.getElementById('row1');
+  var row2 = document.getElementById('row2');
+  var accordion = document.getElementById('accordion');
+
+  if (CONFIG.sw1) row1.classList.add('switch-on');
+  if (CONFIG.accOpen) accordion.classList.add('open');
+
+  fab.addEventListener('click', function() {
+    CONFIG.panelOpen = !CONFIG.panelOpen;
+    if (CONFIG.panelOpen) {
+      panel.classList.add('open');
+      menuPath.setAttribute('d', 'M6 18L18 6M6 6l12 12');
+    } else {
+      panel.classList.remove('open');
+      menuPath.setAttribute('d', 'M3 6h18M3 12h18M3 18h18');
+    }
+  });
+
+  closeBtn.addEventListener('click', function() {
+    CONFIG.panelOpen = false;
+    panel.classList.remove('open');
+    menuPath.setAttribute('d', 'M3 6h18M3 12h18M3 18h18');
+  });
+
+  row1.addEventListener('click', function() {
+    CONFIG.sw1 = !CONFIG.sw1;
+    if (CONFIG.sw1) row1.classList.add('switch-on');
+    else row1.classList.remove('switch-on');
+  });
+
+  row2.addEventListener('click', function() {
+    CONFIG.accOpen = !CONFIG.accOpen;
+    if (CONFIG.accOpen) accordion.classList.add('open');
+    else accordion.classList.remove('open');
+  });
+
+  var sc = document.getElementById('scene');
+  var dragging = false, lastX = 0, lastY = 0;
+  sc.addEventListener('mousedown', function(e) { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+  window.addEventListener('mouseup', function() { dragging = false; });
+  window.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    var dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+    camera.yaw += dx * 0.005; camera.pitch -= dy * 0.005;
+    camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+  });
+
+  var joyTouchId = null, rotateActive = false, rotateLastMX = 0, rotateLastMY = 0;
+  sc.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      var t = e.touches[0];
+      joyTouchId = t.identifier; joystick.active = true;
+      joystick.originX = t.clientX; joystick.originY = t.clientY;
+      joystick.knobX = t.clientX; joystick.knobY = t.clientY;
+      joystick.nx = 0; joystick.ny = 0;
+    } else if (e.touches.length === 2) {
+      joystick.active = false; joyTouchId = null; rotateActive = true;
+      var mx = 0, my = 0;
+      for (var i = 0; i < e.touches.length; i++) { mx += e.touches[i].clientX; my += e.touches[i].clientY; }
+      mx /= e.touches.length; my /= e.touches.length;
+      rotateLastMX = mx; rotateLastMY = my;
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  sc.addEventListener('touchmove', function(e) {
+    if (rotateActive && e.touches.length >= 2) {
+      var mx = 0, my = 0;
+      for (var i = 0; i < e.touches.length; i++) { mx += e.touches[i].clientX; my += e.touches[i].clientY; }
+      mx /= e.touches.length; my /= e.touches.length;
+      var dx = mx - rotateLastMX, dy = my - rotateLastMY;
+      rotateLastMX = mx; rotateLastMY = my;
+      camera.yaw += dx * 0.005; camera.pitch -= dy * 0.005;
+      camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+    } else if (joystick.active && joyTouchId !== null) {
+      var t = null;
+      for (var i = 0; i < e.touches.length; i++) { if (e.touches[i].identifier === joyTouchId) { t = e.touches[i]; break; } }
+      if (t) {
+        var dx = t.clientX - joystick.originX, dy = t.clientY - joystick.originY;
+        var len = Math.sqrt(dx*dx + dy*dy), maxR = joystick.maxR;
+        if (len > 0.001) {
+          var cl = Math.min(len, maxR);
+          joystick.nx = (dx / len) * (cl / maxR); joystick.ny = (dy / len) * (cl / maxR);
+          joystick.knobX = joystick.originX + (dx / len) * cl;
+          joystick.knobY = joystick.originY + (dy / len) * cl;
+        }
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  sc.addEventListener('touchend', function(e) {
+    if (joyTouchId !== null) {
+      var still = false;
+      for (var i = 0; i < e.touches.length; i++) { if (e.touches[i].identifier === joyTouchId) { still = true; break; } }
+      if (!still) { joyTouchId = null; joystick.active = false; joystick.nx = 0; joystick.ny = 0; }
+    }
+    if (rotateActive && e.touches.length < 2) rotateActive = false;
+    e.preventDefault();
+  }, { passive: false });
+
+  sc.addEventListener('touchcancel', function() {
+    joystick.active = false; joyTouchId = null; rotateActive = false;
+    joystick.nx = 0; joystick.ny = 0;
+  }, { passive: false });
+
+  window.addEventListener('keydown', function(e) { keys[e.key.toLowerCase()] = true; });
+  window.addEventListener('keyup', function(e) { keys[e.key.toLowerCase()] = false; });
+
+  init3D();
+}
+
+window.addEventListener('DOMContentLoaded', bindUI);
+</script>
+<style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #000;
+    color: #FFF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #app {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    z-index: 1;
+  }
+  canvas {
+    display: block; width: 100%; height: 100%;
+    image-rendering: pixelated;
+    touch-action: none;
+  }
+  
+  .ui-layer {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    z-index: 10;
+    pointer-events: none;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 30px;
+  }
+  
+  .panel {
+    background-color: #111;
+    border: 1px solid #333;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    border-radius: 16px;
+    padding: 24px;
+    pointer-events: auto;
+    transform: translateY(120%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .panel.open {
+    transform: translateY(0);
+  }
+  
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    letter-spacing: 0.5px;
+  }
+  
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  
+  .row {
+    background-color: #222;
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-appearance: none;
+    touch-action: manipulation;
+    outline: none;
+  }
+  
+  .panel.open .row {
+    animation: fadeInUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+  
+  .panel.open .row:nth-child(1) { animation-delay: 0.1s; }
+  .panel.open .row:nth-child(2) { animation-delay: 0.15s; }
+  
+  .row:active {
+    transform: scale(0.96) !important;
+    background-color: #333;
+  }
+  
+  @keyframes fadeInUp {
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  .btn-primary {
+    background-color: #FFF;
+    color: #000;
+    border: none;
+    border-radius: 50px;
+    padding: 14px 24px;
+    font-size: 16px;
+    font-weight: 600;
+    width: 100%;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    -webkit-appearance: none;
+    touch-action: manipulation;
+    outline: none;
+  }
+  .btn-primary:active {
+    background-color: #000;
+    color: #FFF;
+    transform: scale(0.96);
+  }
+  .btn-primary:focus-visible {
+    outline: 2px solid #FFF;
+    outline-offset: 2px;
+  }
+  
+  .fab {
+    position: absolute;
+    bottom: 30px;
+    right: 30px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background-color: #FFF;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    -webkit-appearance: none;
+    touch-action: manipulation;
+    outline: none;
+  }
+  .fab:active {
+    transform: scale(0.96);
+    background-color: #000;
+  }
+  .fab:active .svg-menu path {
+    stroke: #FFF;
+  }
+  .fab:focus-visible {
+    outline: 2px solid #FFF;
+  }
+  
+  .svg-menu {
+    width: 24px;
+    height: 24px;
+  }
+  .svg-menu path {
+    stroke: #000;
+    stroke-width: 2;
+    stroke-linecap: round;
+    transition: d 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .svg-switch {
+    width: 44px;
+    height: 24px;
+  }
+  .svg-switch .track {
+    fill: #555;
+    transition: fill 0.25s ease;
+  }
+  .svg-switch .thumb {
+    fill: #FFF;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  
+  .switch-on .track {
+    fill: #FFF;
+  }
+  .switch-on .thumb {
+    transform: translateX(20px);
+    fill: #000;
+  }
+  
+  .accordion-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+  }
+  .accordion-content.open {
+    grid-template-rows: 1fr;
+  }
+  .accordion-inner {
+    min-height: 0;
+    padding-top: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <canvas id="scene"></canvas>
+</div>
+
+<div class="ui-layer">
+  <button class="fab" id="fab">
+    <svg class="svg-menu" viewBox="0 0 24 24" fill="none">
+      <path id="menuPath" d="M3 6h18M3 12h18M3 18h18" />
+    </svg>
+  </button>
+  
+  <div class="panel" id="panel">
+    <h1>系统视界</h1>
+    <div class="list">
+      <div class="row" id="row1">
+        <span>渲染模式</span>
+        <svg class="svg-switch" viewBox="0 0 44 24">
+          <rect class="track" x="0" y="0" width="44" height="24" rx="12" />
+          <circle class="thumb" cx="12" cy="12" r="8" />
+        </svg>
+      </div>
+      <div class="row" id="row2">
+        <span>高级设置</span>
+        <span style="color:#666">展开</span>
+      </div>
+      <div class="accordion-content" id="accordion">
+        <div class="accordion-inner">
+          <div class="row">
+            <span>深度采样</span>
+            <span style="color:#666">已启用</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <button class="btn-primary" id="closeBtn">确定</button>
+  </div>
+</div>
+
+</body>
+</html>

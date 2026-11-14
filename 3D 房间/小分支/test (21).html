@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 房间 - 纯正 3D 文字贴图</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: relative; width: 100%; height: 100%; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+</div>
+
+<script>
+var canvas = document.getElementById('scene');
+var ctx = canvas.getContext('2d', { alpha: false });
+
+var camera = { pos: [0, 1.6, 4.5], yaw: 0, pitch: -0.08, fov: Math.PI / 3 };
+var hx = 4, hz = 5, top = 3.2;
+
+// 预生成文字纹理（高清，供 3D 面映射用）
+function createTextTexture(char, colorRGB, bgRGB) {
+  var size = 256;
+  var oc = document.createElement('canvas');
+  oc.width = size; oc.height = size;
+  var octx = oc.getContext('2d');
+  
+  // 背景色
+  octx.fillStyle = 'rgb(' + bgRGB[0] + ',' + bgRGB[1] + ',' + bgRGB[2] + ')';
+  octx.fillRect(0, 0, size, size);
+  
+  // 文字
+  octx.fillStyle = 'rgb(' + colorRGB[0] + ',' + colorRGB[1] + ',' + colorRGB[2] + ')';
+  octx.font = 'bold 120px sans-serif';
+  octx.textAlign = 'center';
+  octx.textBaseline = 'middle';
+  octx.fillText(char, size / 2, size / 2);
+  
+  return oc;
+}
+
+// 准备所有材质的纹理
+var textures = {
+  '墙': createTextTexture('墙', [255, 255, 255], [80, 80, 80]),
+  '地': createTextTexture('地', [255, 255, 255], [100, 100, 100]),
+  '桌': createTextTexture('桌', [255, 255, 255], [70, 70, 70]),
+  '椅': createTextTexture('椅', [255, 255, 255], [110, 110, 110]),
+  '苹': createTextTexture('苹', [255, 255, 255], [200, 30, 30]),
+  '柄': createTextTexture('柄', [255, 255, 255], [50, 150, 50])
+};
+
+var faces = [];
+
+// ===== 墙壁 =====
+faces.push({ pts: [[-hx, 0, -hz], [hx, 0, -hz], [hx, top, -hz], [-hx, top, -hz]], tex: '墙' });
+faces.push({ pts: [[-hx, 0, hz], [hx, 0, hz], [hx, top, hz], [-hx, top, hz]], tex: '墙' });
+faces.push({ pts: [[-hx, 0, -hz], [-hx, 0, hz], [-hx, top, hz], [-hx, top, -hz]], tex: '墙' });
+faces.push({ pts: [[hx, 0, -hz], [hx, 0, hz], [hx, top, hz], [hx, top, -hz]], tex: '墙' });
+
+// ===== 地面 =====
+var gridSize = 16;
+var stepX = (hx * 2) / gridSize;
+var stepZ = (hz * 2) / gridSize;
+for (var ix = 0; ix < gridSize; ix++) {
+  for (var iz = 0; iz < gridSize; iz++) {
+    var x0 = -hx + ix * stepX;
+    var x1 = x0 + stepX;
+    var z0 = -hz + iz * stepZ;
+    var z1 = z0 + stepZ;
+    faces.push({
+      pts: [[x0, 0, z0], [x1, 0, z0], [x1, 0, z1], [x0, 0, z1]],
+      tex: '地'
+    });
+  }
+}
+
+// ===== 辅助：长方体 (使用文字贴图) =====
+function addBox(cx, cy, cz, sx, sy, sz, texName) {
+  var min = [cx - sx/2, cy - sy/2, cz - sz/2];
+  var max = [cx + sx/2, cy + sy/2, cz + sz/2];
+  var p = [
+    [min[0], min[1], min[2]], [max[0], min[1], min[2]], [max[0], max[1], min[2]], [min[0], max[1], min[2]],
+    [min[0], min[1], max[2]], [max[0], min[1], max[2]], [max[0], max[1], max[2]], [min[0], max[1], max[2]]
+  ];
+  // 6个面，并赋予纹理
+  faces.push({ pts: [p[0], p[1], p[2], p[3]], tex: texName });
+  faces.push({ pts: [p[5], p[4], p[7], p[6]], tex: texName });
+  faces.push({ pts: [p[4], p[0], p[3], p[7]], tex: texName });
+  faces.push({ pts: [p[1], p[5], p[6], p[2]], tex: texName });
+  faces.push({ pts: [p[3], p[2], p[6], p[7]], tex: texName });
+  faces.push({ pts: [p[4], p[5], p[1], p[0]], tex: texName });
+}
+
+// 桌子
+addBox(0, 0.39, 0, 1.8, 0.78, 1.1, '桌');
+// 椅子
+addBox(0, 0.225, -1.15, 0.48, 0.45, 0.48, '椅');
+addBox(0, 0.225,  1.15, 0.48, 0.45, 0.48, '椅');
+addBox(-1.35, 0.225, 0, 0.48, 0.45, 0.48, '椅');
+addBox( 1.35, 0.225, 0, 0.48, 0.45, 0.48, '椅');
+// 靠背
+addBox(0, 0.7, -1.43, 0.48, 0.5, 0.08, '椅');
+addBox(0, 0.7,  1.43, 0.48, 0.5, 0.08, '椅');
+addBox(-1.63, 0.7, 0, 0.08, 0.5, 0.48, '椅');
+addBox( 1.63, 0.7, 0, 0.08, 0.5, 0.48, '椅');
+
+// ===== 苹果 =====
+function addSphere(cx, cy, cz, radius, segments, rings, texName) {
+  for (var r = 0; r < rings; r++) {
+    var phi1 = (r / rings) * Math.PI;
+    var phi2 = ((r + 1) / rings) * Math.PI;
+    var y1 = cy + radius * Math.cos(phi1);
+    var y2 = cy + radius * Math.cos(phi2);
+    var r1 = radius * Math.sin(phi1);
+    var r2 = radius * Math.sin(phi2);
+    
+    for (var s = 0; s < segments; s++) {
+      var theta1 = (s / segments) * Math.PI * 2;
+      var theta2 = ((s + 1) / segments) * Math.PI * 2;
+      
+      var p1 = [cx + r1 * Math.sin(theta1), y1, cz + r1 * Math.cos(theta1)];
+      var p2 = [cx + r1 * Math.sin(theta2), y1, cz + r1 * Math.cos(theta2)];
+      var p3 = [cx + r2 * Math.sin(theta2), y2, cz + r2 * Math.cos(theta2)];
+      var p4 = [cx + r2 * Math.sin(theta1), y2, cz + r2 * Math.cos(theta1)];
+      
+      faces.push({ pts: [p1, p2, p3, p4], tex: texName });
+    }
+  }
+}
+addSphere(0, 0.9, 0, 0.13, 16, 12, '苹');
+// 苹果柄
+addBox(0, 1.05, 0, 0.03, 0.1, 0.03, '柄');
+
+// ===== 物理碰撞 =====
+var colliders = [];
+colliders.push({ minX: -0.9, maxX: 0.9, minZ: -0.55, maxZ: 0.55 });
+colliders.push({ minX: -0.24, maxX: 0.24, minZ: -1.39, maxZ: -0.91 });
+colliders.push({ minX: -0.24, maxX: 0.24, minZ: 0.91, maxZ: 1.39 });
+colliders.push({ minX: -1.59, maxX: -1.11, minZ: -0.24, maxZ: 0.24 });
+colliders.push({ minX: 1.11, maxX: 1.59, minZ: -0.24, maxZ: 0.24 });
+
+// ===== 尺寸与摇杆 =====
+var dpr = Math.min(window.devicePixelRatio || 1, 2);
+var cssW = 0, cssH = 0;
+
+function resize() {
+  cssW = window.innerWidth;
+  cssH = window.innerHeight;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+var joystick = { active: false, originX: 0, originY: 0, knobX: 0, knobY: 0, nx: 0, ny: 0, maxR: 50, outerR: 72, knobR: 22 };
+
+// ===== 渲染主循环 (真正的 3D 贴图映射) =====
+function render() {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  var cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  var cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  
+  var fwX = sy * cp, fwY = sp, fwZ = -cy * cp;
+  var rtX = cy, rtY = 0, rtZ = sy; 
+  var upX = rtY * fwZ - rtZ * fwY;
+  var upY = rtZ * fwX - rtX * fwZ;
+  var upZ = rtX * fwY - rtY * fwX;
+
+  var f = (cssH / 2) / Math.tan(camera.fov / 2);
+  var cxScreen = cssW / 2, cyScreen = cssH / 2;
+  var ox = camera.pos[0], oy = camera.pos[1], oz = camera.pos[2];
+
+  var renderList = [];
+  for (var i = 0; i < faces.length; i++) {
+    var face = faces[i];
+    var pts = face.pts;
+    
+    var centX = 0, centY = 0, centZ = 0;
+    for (var j = 0; j < pts.length; j++) {
+      centX += pts[j][0]; centY += pts[j][1]; centZ += pts[j][2];
+    }
+    centX /= pts.length; centY /= pts.length; centZ /= pts.length;
+    
+    var vx = centX - ox, vy = centY - oy, vz = centZ - oz;
+    var dist = vx * fwX + vy * fwY + vz * fwZ;
+    
+    if (dist > 0.1) {
+      var proj = [];
+      var clipped = false;
+      for (var j = 0; j < pts.length; j++) {
+        var p = pts[j];
+        var px = p[0] - ox, py = p[1] - oy, pz = p[2] - oz;
+        
+        var pZ = px * fwX + py * fwY + pz * fwZ;
+        if (pZ < 0.1) { clipped = true; break; }
+        
+        var pX = px * rtX + py * rtY + pz * rtZ;
+        var pY = px * upX + py * upY + pz * upZ;
+        
+        proj.push([
+          cxScreen + (pX / pZ) * f,
+          cyScreen - (pY / pZ) * f
+        ]);
+      }
+      
+      if (!clipped) {
+        renderList.push({ dist: dist, pts: proj, tex: face.tex });
+      }
+    }
+  }
+
+  renderList.sort(function(a, b) { return b.dist - a.dist; });
+
+  // 绘制面片（使用图像映射）
+  for (var i = 0; i < renderList.length; i++) {
+    var item = renderList[i];
+    var texCanvas = textures[item.tex];
+    var pts = item.pts;
+    
+    // 为了把 2D 纹理正确贴到 3D 面上，我们利用 canvas 的变换矩阵来做近似映射
+    // 取三点计算仿射变换（对于四边形面，选前三个点近似）
+    if (pts.length >= 3) {
+      var x0 = pts[0][0], y0 = pts[0][1];
+      var x1 = pts[1][0], y1 = pts[1][1];
+      var x2 = pts[2][0], y2 = pts[2][1];
+      
+      // 构建基于三点仿射变换，映射纹理 256x256 到该四边形
+      var tx0 = 0, ty0 = 0;
+      var tx1 = 256, ty1 = 0;
+      var tx2 = 256, ty2 = 256;
+      
+      // 计算变换
+      var denom = (x0*(y1-y2) + x1*(y2-y0) + x2*(y0-y1));
+      if (Math.abs(denom) > 0.001) {
+        var a = (tx0*(y1-y2) + tx1*(y2-y0) + tx2*(y0-y1)) / denom;
+        var b = (ty0*(y1-y2) + ty1*(y2-y0) + ty2*(y0-y1)) / denom;
+        var c = (tx0*(x2-x1) + tx1*(x0-x2) + tx2*(x1-x0)) / denom;
+        var d = (ty0*(x2-x1) + ty1*(x0-x2) + ty2*(x1-x0)) / denom;
+        var e = (tx0*(x1*y2-x2*y1) + tx1*(x2*y0-x0*y2) + tx2*(x0*y1-x1*y0)) / denom;
+        var f2 = (ty0*(x1*y2-x2*y1) + ty1*(x2*y0-x0*y2) + ty2*(x0*y1-x1*y0)) / denom;
+        
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        for (var j = 1; j < pts.length; j++) {
+          ctx.lineTo(pts[j][0], pts[j][1]);
+        }
+        ctx.closePath();
+        ctx.clip(); // 裁剪到多边形
+        
+        ctx.transform(a, b, c, d, e, f2);
+        ctx.drawImage(texCanvas, 0, 0);
+        ctx.restore();
+      }
+    }
+    
+    // 极细的描边
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (var j = 1; j < pts.length; j++) {
+      ctx.lineTo(pts[j][0], pts[j][1]);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  // 摇杆
+  if (joystick.active) {
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    ctx.arc(joystick.originX, joystick.originY, joystick.outerR, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.arc(joystick.knobX, joystick.knobY, joystick.knobR, 0, Math.PI * 2);
+    ctx.fillStyle = '#000000';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+var lastRender = 0;
+function frame(now) {
+  if (now - lastRender > 16) {
+    render();
+    lastRender = now;
+  }
+  requestAnimationFrame(frame);
+}
+resize();
+requestAnimationFrame(frame);
+
+// ===== 输入控制 =====
+var keys = {};
+window.addEventListener('keydown', function(e) { keys[e.key.toLowerCase()] = true; });
+window.addEventListener('keyup', function(e) { keys[e.key.toLowerCase()] = false; });
+
+var dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', function(e) { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', function() { dragging = false; });
+window.addEventListener('mousemove', function(e) {
+  if (!dragging) return;
+  var dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+});
+
+var joyTouchId = null, rotateActive = false, rotateLastMX = 0, rotateLastMY = 0;
+canvas.addEventListener('touchstart', function(e) {
+  if (e.touches.length === 1) {
+    var t = e.touches[0];
+    joyTouchId = t.identifier;
+    joystick.active = true;
+    joystick.originX = t.clientX; joystick.originY = t.clientY;
+    joystick.knobX = t.clientX; joystick.knobY = t.clientY;
+    joystick.nx = 0; joystick.ny = 0;
+  } else if (e.touches.length === 2) {
+    joystick.active = false; joyTouchId = null; rotateActive = true;
+    var mx = 0, my = 0;
+    for (var i = 0; i < e.touches.length; i++) { mx += e.touches[i].clientX; my += e.touches[i].clientY; }
+    mx /= e.touches.length; my /= e.touches.length;
+    rotateLastMX = mx; rotateLastMY = my;
+  }
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchmove', function(e) {
+  if (rotateActive && e.touches.length >= 2) {
+    var mx = 0, my = 0;
+    for (var i = 0; i < e.touches.length; i++) { mx += e.touches[i].clientX; my += e.touches[i].clientY; }
+    mx /= e.touches.length; my /= e.touches.length;
+    var dx = mx - rotateLastMX, dy = my - rotateLastMY;
+    rotateLastMX = mx; rotateLastMY = my;
+    camera.yaw += dx * 0.005;
+    camera.pitch -= dy * 0.005;
+    camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+  } else if (joystick.active && joyTouchId !== null) {
+    var t = null;
+    for (var i = 0; i < e.touches.length; i++) { if (e.touches[i].identifier === joyTouchId) { t = e.touches[i]; break; } }
+    if (t) {
+      var dx = t.clientX - joystick.originX;
+      var dy = t.clientY - joystick.originY;
+      var len = Math.sqrt(dx*dx + dy*dy);
+      var maxR = joystick.maxR;
+      if (len > 0.001) {
+        var cl = Math.min(len, maxR);
+        joystick.nx = (dx / len) * (cl / maxR);
+        joystick.ny = (dy / len) * (cl / maxR);
+        joystick.knobX = joystick.originX + (dx / len) * cl;
+        joystick.knobY = joystick.originY + (dy / len) * cl;
+      }
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchend', function(e) {
+  if (joyTouchId !== null) {
+    var still = false;
+    for (var i = 0; i < e.touches.length; i++) { if (e.touches[i].identifier === joyTouchId) { still = true; break; } }
+    if (!still) { joyTouchId = null; joystick.active = false; joystick.nx = 0; joystick.ny = 0; }
+  }
+  if (rotateActive && e.touches.length < 2) rotateActive = false;
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', function() {
+  joystick.active = false; joyTouchId = null; rotateActive = false;
+  joystick.nx = 0; joystick.ny = 0;
+}, { passive: false });
+
+// ===== 移动与碰撞 =====
+var last = performance.now();
+function update(now) {
+  var dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  var speed = 3.0;
+  var cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  var fwdX = sy, fwdZ = -cy;
+  var rgtX = cy, rgtZ = sy;
+
+  var mx = 0, mz = 0;
+  if (keys['w']) { mx += fwdX; mz += fwdZ; }
+  if (keys['s']) { mx -= fwdX; mz -= fwdZ; }
+  if (keys['a']) { mx -= rgtX; mz -= rgtZ; }
+  if (keys['d']) { mx += rgtX; mz += rgtZ; }
+
+  if (joystick.active) {
+    mx += fwdX * (-joystick.ny) + rgtX * joystick.nx;
+    mz += fwdZ * (-joystick.ny) + rgtZ * joystick.nx;
+  }
+
+  var mLen = Math.sqrt(mx*mx + mz*mz);
+  if (mLen > 1) { mx /= mLen; mz /= mLen; }
+
+  var newX = camera.pos[0] + mx * speed * dt;
+  var newZ = camera.pos[2] + mz * speed * dt;
+  var radius = 0.35;
+
+  newX = Math.max(-hx + radius, Math.min(hx - radius, newX));
+  newZ = Math.max(-hz + radius, Math.min(hz - radius, newZ));
+
+  for (var i = 0; i < colliders.length; i++) {
+    var col = colliders[i];
+    var closestX = Math.max(col.minX, Math.min(newX, col.maxX));
+    var closestZ = Math.max(col.minZ, Math.min(newZ, col.maxZ));
+    var distX = newX - closestX;
+    var distZ = newZ - closestZ;
+    var distSq = distX*distX + distZ*distZ;
+
+    if (distSq < radius * radius) {
+      var dist = Math.sqrt(distSq);
+      if (dist > 0.0001) {
+        newX = closestX + (distX / dist) * radius;
+        newZ = closestZ + (distZ / dist) * radius;
+      }
+    }
+  }
+
+  camera.pos[0] = newX;
+  camera.pos[2] = newZ;
+
+  requestAnimationFrame(update);
+}
+requestAnimationFrame(update);
+</script>
+</body>
+</html>

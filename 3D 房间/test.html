@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D 房间测试</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+  #app {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #000;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  /* 屏幕空间文字层 */
+  #labels {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .label-wall {
+    color: #fff;
+  }
+  .label-ground {
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+  <div id="labels"></div>
+</div>
+
+<script>
+// ===== 基础 3D 数学 =====
+const V = {
+  add: (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
+  sub: (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]],
+  scale: (a, s) => [a[0]*s, a[1]*s, a[2]*s],
+  dot: (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
+  cross: (a, b) => [
+    a[1]*b[2] - a[2]*b[1],
+    a[2]*b[0] - a[0]*b[2],
+    a[0]*b[1] - a[1]*b[0]
+  ],
+  norm: (a) => {
+    const l = Math.hypot(a[0], a[1], a[2]) || 1;
+    return [a[0]/l, a[1]/l, a[2]/l];
+  }
+};
+
+// ===== 摄像机 =====
+const camera = {
+  pos: [0, 1.6, 4.5],
+  yaw: 0,
+  pitch: -0.05,
+  fov: Math.PI / 3,
+  near: 0.1
+};
+
+// ===== 房间尺寸 =====
+const ROOM = {
+  width: 8,    // x: -4 ~ 4
+  height: 3.2, // y: 0 ~ 3.2
+  depth: 10    // z: -5 ~ 5
+};
+
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+const labelsEl = document.getElementById('labels');
+
+// ===== 屏幕空间标签 =====
+// 每一面墙/地面用一条线段表示，在其屏幕投影上均匀放若干个“墙/地”字
+const labels = [];
+
+function addWallLabel(points, text, count) {
+  // points: 世界坐标折线（这里一般4个角），我们按线段两端处理
+  labels.push({ points, text, count });
+}
+
+// 四面墙：后、前、左、右
+addWallLabel([
+  [-ROOM.width/2, 0, -ROOM.depth/2],
+  [ ROOM.width/2, 0, -ROOM.depth/2],
+  [ ROOM.width/2, ROOM.height, -ROOM.depth/2],
+  [-ROOM.width/2, ROOM.height, -ROOM.depth/2]
+], '墙', 3);
+
+addWallLabel([
+  [-ROOM.width/2, 0, ROOM.depth/2],
+  [ ROOM.width/2, 0, ROOM.depth/2],
+  [ ROOM.width/2, ROOM.height, ROOM.depth/2],
+  [-ROOM.width/2, ROOM.height, ROOM.depth/2]
+], '墙', 3);
+
+addWallLabel([
+  [-ROOM.width/2, 0, -ROOM.depth/2],
+  [-ROOM.width/2, 0, ROOM.depth/2],
+  [-ROOM.width/2, ROOM.height, ROOM.depth/2],
+  [-ROOM.width/2, ROOM.height, -ROOM.depth/2]
+], '墙', 3);
+
+addWallLabel([
+  [ROOM.width/2, 0, -ROOM.depth/2],
+  [ROOM.width/2, 0, ROOM.depth/2],
+  [ROOM.width/2, ROOM.height, ROOM.depth/2],
+  [ROOM.width/2, ROOM.height, -ROOM.depth/2]
+], '墙', 3);
+
+// 地面
+addWallLabel([
+  [-ROOM.width/2, 0, -ROOM.depth/2],
+  [ ROOM.width/2, 0, -ROOM.depth/2],
+  [ ROOM.width/2, 0,  ROOM.depth/2],
+  [-ROOM.width/2, 0,  ROOM.depth/2]
+], '地', 6);
+
+// ===== 投影 =====
+function getViewBasis() {
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+
+  // 前方向（yaw + pitch）
+  const forward = V.norm([
+    sy * cp,
+    sp,
+    -cy * cp
+  ]);
+  const worldUp = [0, 1, 0];
+  let right = V.cross(forward, worldUp);
+  if (Math.hypot(right[0], right[1], right[2]) < 1e-6) right = [1, 0, 0];
+  right = V.norm(right);
+  const up = V.norm(V.cross(right, forward));
+
+  return { forward, right, up };
+}
+
+function projectPoint(p, basis) {
+  const rel = V.sub(p, camera.pos);
+  const x = V.dot(rel, basis.right);
+  const y = V.dot(rel, basis.up);
+  const z = V.dot(rel, basis.forward);
+
+  if (z <= camera.near) return null;
+
+  const f = (canvas.height / 2) / Math.tan(camera.fov / 2);
+  const sx = canvas.width / 2 + (x / z) * f;
+  const sy = canvas.height / 2 - (y / z) * f;
+  return { x: sx, y: sy, z };
+}
+
+// 在屏幕空间放置文字
+function renderLabels(basis) {
+  labelsEl.innerHTML = '';
+
+  for (const label of labels) {
+    // 用 quad 的对边中点来分布文字
+    const pts = label.points;
+    if (pts.length < 3) continue;
+
+    // 求屏幕空间投影
+    const projected = pts.map(p => projectPoint(p, basis));
+    // 有顶点在相机后面就跳过（测试版简单处理）
+    if (projected.some(p => p === null)) continue;
+
+    // 计算屏幕空间中心
+    let cx = 0, cy = 0;
+    for (const p of projected) { cx += p.x; cy += p.y; }
+    cx /= projected.length;
+    cy /= projected.length;
+
+    // 对于墙/地，我们直接把文字均匀放在屏幕空间的中心附近
+    // 根据投影的包围盒大小决定字号和数量
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of projected) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    const w = maxX - minX;
+    const h = maxY - minY;
+
+    // 数字号：根据屏幕投影面积粗略决定
+    const area = Math.max(0, w) * Math.max(0, h);
+    if (area < 400) continue;
+
+    const fontSize = Math.max(10, Math.min(72, Math.sqrt(area) * 0.12));
+
+    // 均匀铺一些字
+    const cols = Math.max(1, Math.round(w / (fontSize * 1.2)));
+    const rows = Math.max(1, Math.round(h / (fontSize * 1.2)));
+    const total = Math.min(label.count * 3, cols * rows);
+
+    for (let i = 0; i < total; i++) {
+      const t = (i + 0.5) / total;
+      // 在包围盒内均匀撒点（简单网格）
+      const gx = i % cols;
+      const gy = Math.floor(i / cols);
+      const nx = cols <= 1 ? 0.5 : gx / (cols - 1);
+      const ny = rows <= 1 ? 0.5 : gy / (rows - 1);
+      const px = minX + nx * w;
+      const py = minY + ny * h;
+
+      const span = document.createElement('span');
+      span.className = 'label ' + (label.text === '墙' ? 'label-wall' : 'label-ground');
+      span.textContent = label.text;
+      span.style.left = px + 'px';
+      span.style.top = py + 'px';
+      span.style.fontSize = fontSize + 'px';
+      // 远处的字小一点，近处大一点（用投影 z 粗略近似）
+      span.style.opacity = '1';
+      labelsEl.appendChild(span);
+    }
+  }
+}
+
+// ===== 渲染循环 =====
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function frame() {
+  // 黑色背景
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const basis = getViewBasis();
+  renderLabels(basis);
+
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ===== 简单键鼠控制（测试用，方便观察） =====
+let keys = {};
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+let dragging = false;
+let lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', e => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+});
+
+let last = performance.now();
+function update(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  const speed = 2.5;
+  const basis = getViewBasis();
+  const flatForward = V.norm([basis.forward[0], 0, basis.forward[2]]);
+  const flatRight = V.norm([basis.right[0], 0, basis.right[2]]);
+
+  if (keys['w']) camera.pos = V.add(camera.pos, V.scale(flatForward, speed * dt));
+  if (keys['s']) camera.pos = V.add(camera.pos, V.scale(flatForward, -speed * dt));
+  if (keys['a']) camera.pos = V.add(camera.pos, V.scale(flatRight, -speed * dt));
+  if (keys['d']) camera.pos = V.add(camera.pos, V.scale(flatRight, speed * dt));
+
+  // 限制在房间内
+  camera.pos[0] = Math.max(-ROOM.width/2 + 0.3, Math.min(ROOM.width/2 - 0.3, camera.pos[0]));
+  camera.pos[2] = Math.max(-ROOM.depth/2 + 0.3, Math.min(ROOM.depth/2 - 0.3, camera.pos[2]));
+
+  requestAnimationFrame(update);
+}
+requestAnimationFrame(update);
+</script>
+</body>
+</html>

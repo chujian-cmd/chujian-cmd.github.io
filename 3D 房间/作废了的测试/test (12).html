@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 房间测试 12</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: relative; width: 100%; height: 100%; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+</div>
+
+<script>
+// ===== 3D 向量工具 =====
+const V = {
+  norm: (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; },
+  dot: (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
+  cross: (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+};
+
+// ===== 摄像机 =====
+const camera = { pos: [0, 1.6, 4.5], yaw: 0, pitch: -0.05, fov: Math.PI / 3 };
+const ROOM = { width: 8, height: 3.2, depth: 10 };
+const hx = ROOM.width/2, hz = ROOM.depth/2, top = ROOM.height;
+
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+
+// ===== 家具（桌椅） =====
+const furniture = [
+  { name: '桌', min: [-0.8, 0, -0.45], max: [0.8, 0.75, 0.45] },
+  { name: '椅', min: [-0.25, 0, 0.85], max: [0.25, 0.9, 1.35] },
+  { name: '椅', min: [-0.25, 0, -1.35], max: [0.25, 0.9, -0.85] },
+  { name: '椅', min: [-1.55, 0, -0.25], max: [-1.05, 0.9, 0.25] },
+  { name: '椅', min: [1.05, 0, -0.25], max: [1.55, 0.9, 0.25] }
+];
+
+function rayAABB(origin, dir, min, max) {
+  let tmin = -Infinity, tmax = Infinity;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(dir[i]) < 1e-8) {
+      if (origin[i] < min[i] || origin[i] > max[i]) return null;
+    } else {
+      let t1 = (min[i]-origin[i])/dir[i], t2 = (max[i]-origin[i])/dir[i];
+      if (t1 > t2) { let tmp=t1; t1=t2; t2=tmp; }
+      tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return null;
+    }
+  }
+  const t = tmin > 1e-4 ? tmin : tmax;
+  if (t < 1e-4) return null;
+  return { t };
+}
+
+function raycastRoom(origin, dir) {
+  let bestT = Infinity, bestName = null;
+  function test(t, name, ok) {
+    if (t > 1e-4 && t < bestT && ok) { bestT = t; bestName = name; }
+  }
+  
+  if (dir[2] !== 0) {
+    let t = (-hz - origin[2]) / dir[2], x = origin[0] + dir[0]*t, y = origin[1] + dir[1]*t;
+    test(t, '墙', x>=-hx && x<=hx && y>=0 && y<=top);
+    t = (hz - origin[2]) / dir[2]; x = origin[0] + dir[0]*t; y = origin[1] + dir[1]*t;
+    test(t, '墙', x>=-hx && x<=hx && y>=0 && y<=top);
+  }
+  if (dir[0] !== 0) {
+    let t = (-hx - origin[0]) / dir[0], y = origin[1] + dir[1]*t, z = origin[2] + dir[2]*t;
+    test(t, '墙', z>=-hz && z<=hz && y>=0 && y<=top);
+    t = (hx - origin[0]) / dir[0]; y = origin[1] + dir[1]*t; z = origin[2] + dir[2]*t;
+    test(t, '墙', z>=-hz && z<=hz && y>=0 && y<=top);
+  }
+  if (dir[1] !== 0) {
+    const t = (0 - origin[1]) / dir[1], x = origin[0] + dir[0]*t, z = origin[2] + dir[2]*t;
+    test(t, '地', x>=-hx && x<=hx && z>=-hz && z<=hz);
+  }
+  
+  for (const f of furniture) {
+    const hit = rayAABB(origin, dir, f.min, f.max);
+    if (hit && hit.t < bestT) { bestT = hit.t; bestName = f.name; }
+  }
+  
+  return bestName ? { name: bestName } : null;
+}
+
+function getViewBasis() {
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const forward = V.norm([sy*cp, sp, -cy*cp]);
+  const right = V.norm(V.cross(forward, [0,1,0]));
+  const up = V.norm(V.cross(right, forward));
+  return { forward, right, up };
+}
+
+// ===== 渲染 =====
+const CELL_SIZE = 24; // 测试 3 的尺寸
+const PLACEHOLDER = '·';
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+let cssW = 0, cssH = 0;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cssW = window.innerWidth;
+  cssH = window.innerHeight;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+function render() {
+  const basis = getViewBasis();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const f = (cssH / 2) / Math.tan(camera.fov / 2);
+  const cols = Math.ceil(cssW / CELL_SIZE);
+  const rows = Math.ceil(cssH / CELL_SIZE);
+  const offsetX = (cssW - cols * CELL_SIZE) / 2 + CELL_SIZE / 2;
+  const offsetY = (cssH - rows * CELL_SIZE) / 2 + CELL_SIZE / 2;
+
+  ctx.font = `bold ${CELL_SIZE * 0.8}px monospace, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sx = offsetX + c * CELL_SIZE;
+      const sy = offsetY + r * CELL_SIZE;
+      const camX = (sx - cssW / 2) / f;
+      const camY = -(sy - cssH / 2) / f;
+
+      const dir = V.norm([
+        basis.right[0]*camX + basis.up[0]*camY + basis.forward[0],
+        basis.right[1]*camX + basis.up[1]*camY + basis.forward[1],
+        basis.right[2]*camX + basis.up[2]*camY + basis.forward[2]
+      ]);
+
+      const hit = raycastRoom(camera.pos, dir);
+
+      // 强制纯白输出！
+      if (!hit) {
+        ctx.fillStyle = '#444'; // 占位符稍微暗一点，区分一下
+        ctx.fillText(PLACEHOLDER, sx, sy);
+      } else {
+        ctx.fillStyle = '#ffffff'; // 只要是物体，全都纯白
+        ctx.fillText(hit.name, sx, sy);
+      }
+    }
+  }
+}
+
+// 无脑循环
+function frame() {
+  render();
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ===== 交互 =====
+let touchId = null, touchLastX = 0, touchLastY = 0;
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  touchId = t.identifier; touchLastX = t.clientX; touchLastY = t.clientY;
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  if (touchId === null) return;
+  let t = null;
+  for (const touch of e.touches) if (touch.identifier === touchId) { t = touch; break; }
+  if (!t) return;
+  const dx = t.clientX - touchLastX, dy = t.clientY - touchLastY;
+  touchLastX = t.clientX; touchLastY = t.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  for (const touch of e.changedTouches) if (touch.identifier === touchId) { touchId = null; break; }
+}, { passive: false });
+
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+});
+</script>
+</body>
+</html>

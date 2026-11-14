@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 房间测试 11</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: relative; width: 100%; height: 100%; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+</div>
+
+<script>
+// ===== 3D 向量工具 =====
+const V = {
+  add: (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
+  scale: (a, s) => [a[0]*s, a[1]*s, a[2]*s],
+  dot: (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
+  cross: (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+  norm: (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+};
+
+// ===== 摄像机 =====
+const camera = { pos: [0, 1.6, 4.5], yaw: 0, pitch: -0.05, fov: Math.PI / 3 };
+
+// ===== 房间 =====
+const ROOM = { width: 8, height: 3.2, depth: 10 };
+const hx = ROOM.width/2, hz = ROOM.depth/2, top = ROOM.height;
+
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+
+// ===== 射线与房间求交 =====
+function raycastRoom(origin, dir) {
+  let bestT = Infinity, bestName = null, bestNormal = null;
+  function test(t, name, normal, ok) {
+    if (t > 1e-4 && t < bestT && ok) { bestT = t; bestName = name; bestNormal = normal; }
+  }
+  
+  if (dir[2] !== 0) {
+    let t = (-hz - origin[2]) / dir[2], x = origin[0] + dir[0]*t, y = origin[1] + dir[1]*t;
+    test(t, '墙', [0,0,1], x>=-hx && x<=hx && y>=0 && y<=top);
+    t = (hz - origin[2]) / dir[2]; x = origin[0] + dir[0]*t; y = origin[1] + dir[1]*t;
+    test(t, '墙', [0,0,-1], x>=-hx && x<=hx && y>=0 && y<=top);
+  }
+  if (dir[0] !== 0) {
+    let t = (-hx - origin[0]) / dir[0], y = origin[1] + dir[1]*t, z = origin[2] + dir[2]*t;
+    test(t, '墙', [1,0,0], z>=-hz && z<=hz && y>=0 && y<=top);
+    t = (hx - origin[0]) / dir[0]; y = origin[1] + dir[1]*t; z = origin[2] + dir[2]*t;
+    test(t, '墙', [-1,0,0], z>=-hz && z<=hz && y>=0 && y<=top);
+  }
+  if (dir[1] !== 0) {
+    const t = (0 - origin[1]) / dir[1], x = origin[0] + dir[0]*t, z = origin[2] + dir[2]*t;
+    test(t, '地', [0,1,0], x>=-hx && x<=hx && z>=-hz && z<=hz);
+  }
+
+  return bestName ? { name: bestName, normal: bestNormal, t: bestT } : null;
+}
+
+function getViewBasis() {
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const forward = V.norm([sy*cp, sp, -cy*cp]);
+  const worldUp = [0,1,0];
+  let right = V.cross(forward, worldUp);
+  if (Math.hypot(right[0],right[1],right[2]) < 1e-6) right = [1,0,0];
+  right = V.norm(right);
+  const up = V.norm(V.cross(right, forward));
+  return { forward, right, up };
+}
+
+// ===== 渲染 =====
+// 把格子调大，减轻手机负担
+const CELL_SIZE = 40; 
+const PLACEHOLDER = '·';
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+let cssW = 0, cssH = 0;
+let needsRender = true;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cssW = window.innerWidth;
+  cssH = window.innerHeight;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  needsRender = true;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function grayStr(g) {
+  const v = Math.max(0, Math.min(255, Math.round(g)));
+  return `rgb(${v},${v},${v})`;
+}
+
+function render() {
+  if (!needsRender) return;
+  needsRender = false;
+
+  const basis = getViewBasis();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const f = (cssH / 2) / Math.tan(camera.fov / 2);
+  const cols = Math.ceil(cssW / CELL_SIZE);
+  const rows = Math.ceil(cssH / CELL_SIZE);
+  const offsetX = (cssW - cols * CELL_SIZE) / 2 + CELL_SIZE / 2;
+  const offsetY = (cssH - rows * CELL_SIZE) / 2 + CELL_SIZE / 2;
+
+  ctx.font = `bold ${CELL_SIZE * 0.7}px monospace, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sx = offsetX + c * CELL_SIZE;
+      const sy = offsetY + r * CELL_SIZE;
+      const camX = (sx - cssW / 2) / f;
+      const camY = -(sy - cssH / 2) / f;
+
+      const dir = V.norm([
+        basis.right[0]*camX + basis.up[0]*camY + basis.forward[0],
+        basis.right[1]*camX + basis.up[1]*camY + basis.forward[1],
+        basis.right[2]*camX + basis.up[2]*camY + basis.forward[2]
+      ]);
+
+      const hit = raycastRoom(camera.pos, dir);
+
+      if (!hit) {
+        ctx.fillStyle = grayStr(60);
+        ctx.fillText(PLACEHOLDER, sx, sy);
+        continue;
+      }
+
+      // 简单计算朝向灰度
+      const facing = Math.max(0, -V.dot(hit.normal, dir));
+      const lum = Math.pow(facing, 0.7);
+      const textGray = 40 + lum * 215;
+
+      ctx.fillStyle = grayStr(textGray);
+      ctx.fillText(hit.name, sx, sy);
+    }
+  }
+}
+
+function loop() {
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// ===== 交互 =====
+let touchId = null, touchLastX = 0, touchLastY = 0;
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  touchId = t.identifier; touchLastX = t.clientX; touchLastY = t.clientY;
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  if (touchId === null) return;
+  let t = null;
+  for (const touch of e.touches) if (touch.identifier === touchId) { t = touch; break; }
+  if (!t) return;
+  const dx = t.clientX - touchLastX, dy = t.clientY - touchLastY;
+  touchLastX = t.clientX; touchLastY = t.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+  needsRender = true;
+  e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  for (const touch of e.changedTouches) if (touch.identifier === touchId) { touchId = null; break; }
+}, { passive: false });
+
+// 鼠标支持
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+  needsRender = true;
+});
+</script>
+</body>
+</html>

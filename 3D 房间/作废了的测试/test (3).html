@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 房间测试 4</title>
+<link href="https://cdn.jsdelivr.net/npm/@fontsource/fusion-pixel-12px-monospaced-sc@5.3.0/index.min.css" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: relative; width: 100%; height: 100%; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* 像素风动态摇杆 */
+  #joystick {
+    position: fixed;
+    width: 120px; height: 120px;
+    pointer-events: none;
+    display: none;
+    z-index: 10;
+    opacity: 0.75;
+  }
+  #joystick.active { display: block; }
+  #joystick .base {
+    position: absolute;
+    inset: 0;
+    border: 3px solid #fff;
+    background: #000;
+    image-rendering: pixelated;
+    /* 像素角效果：用 box-shadow 模拟 */
+    box-shadow:
+      0 -3px 0 0 #fff,
+      0 3px 0 0 #fff,
+      -3px 0 0 0 #fff,
+      3px 0 0 0 #fff;
+  }
+  #joystick .knob {
+    position: absolute;
+    width: 44px; height: 44px;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    border: 3px solid #000;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+  <div id="joystick">
+    <div class="base"></div>
+    <div class="knob" id="knob"></div>
+  </div>
+</div>
+
+<script>
+// ===== 3D 向量 =====
+const V = {
+  add: (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
+  sub: (a, b) => [a[0]-b[0], a[1]-b[1], a[2]-b[2]],
+  scale: (a, s) => [a[0]*s, a[1]*s, a[2]*s],
+  dot: (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
+  cross: (a, b) => [
+    a[1]*b[2] - a[2]*b[1],
+    a[2]*b[0] - a[0]*b[2],
+    a[0]*b[1] - a[1]*b[0]
+  ],
+  norm: (a) => {
+    const l = Math.hypot(a[0], a[1], a[2]) || 1;
+    return [a[0]/l, a[1]/l, a[2]/l];
+  }
+};
+
+// ===== 摄像机 =====
+const camera = {
+  pos: [0, 1.6, 4.5],
+  yaw: 0,
+  pitch: -0.05,
+  fov: Math.PI / 3
+};
+
+// ===== 房间 =====
+const ROOM = { width: 8, height: 3.2, depth: 10 };
+const hx = ROOM.width / 2;
+const hz = ROOM.depth / 2;
+const top = ROOM.height;
+
+// ===== 桌子与椅子（AABB 盒子，用于射线求交）=====
+// 每个物体: { name, min:[x,y,z], max:[x,y,z] }
+const furniture = [];
+
+// 桌子：中心原点，尺寸 1.6 x 0.75 x 0.9
+furniture.push({
+  name: '桌',
+  min: [-0.8, 0, -0.45],
+  max: [ 0.8, 0.75, 0.45]
+});
+
+// 4 把椅子：围绕桌子
+// 前椅（+z），后椅（-z），左椅（-x），右椅（+x）
+const chairSize = { w: 0.5, h: 0.9, d: 0.5 };
+function addChair(cx, cz) {
+  furniture.push({
+    name: '椅',
+    min: [cx - chairSize.w/2, 0, cz - chairSize.d/2],
+    max: [cx + chairSize.w/2, chairSize.h, cz + chairSize.d/2]
+  });
+}
+addChair(0,  1.1);   // 前
+addChair(0, -1.1);   // 后
+addChair(-1.3, 0);   // 左
+addChair( 1.3, 0);   // 右
+
+// ===== 射线与盒子求交（slab 方法）=====
+function rayAABB(origin, dir, min, max) {
+  let tmin = -Infinity, tmax = Infinity;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(dir[i]) < 1e-8) {
+      if (origin[i] < min[i] || origin[i] > max[i]) return null;
+    } else {
+      let t1 = (min[i] - origin[i]) / dir[i];
+      let t2 = (max[i] - origin[i]) / dir[i];
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+      tmin = Math.max(tmin, t1);
+      tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return null;
+    }
+  }
+  if (tmax < 0) return null;
+  const t = tmin > 0 ? tmin : tmax;
+  if (t < 0) return null;
+
+  // 计算命中面的法线（简化：根据命中点判断哪个轴接近边界）
+  const hit = [
+    origin[0] + dir[0] * t,
+    origin[1] + dir[1] * t,
+    origin[2] + dir[2] * t
+  ];
+  const eps = 1e-3;
+  let normal = [0, 0, 0];
+  if (Math.abs(hit[0] - min[0]) < eps) normal = [-1, 0, 0];
+  else if (Math.abs(hit[0] - max[0]) < eps) normal = [1, 0, 0];
+  else if (Math.abs(hit[1] - min[1]) < eps) normal = [0, -1, 0];
+  else if (Math.abs(hit[1] - max[1]) < eps) normal = [0, 1, 0];
+  else if (Math.abs(hit[2] - min[2]) < eps) normal = [0, 0, -1];
+  else if (Math.abs(hit[2] - max[2]) < eps) normal = [0, 0, 1];
+
+  return { t, normal };
+}
+
+// ===== 射线与房间求交 =====
+function raycastRoom(origin, dir) {
+  let bestT = Infinity;
+  let bestName = null;
+  let bestNormal = null;
+
+  function testPlane(t, name, normal, inBounds) {
+    if (t > 1e-4 && t < bestT && inBounds) {
+      bestT = t;
+      bestName = name;
+      bestNormal = normal;
+    }
+  }
+
+  if (dir[2] !== 0) {
+    let t = (-hz - origin[2]) / dir[2];
+    let x = origin[0] + dir[0] * t, y = origin[1] + dir[1] * t;
+    testPlane(t, '墙', [0, 0, 1], x >= -hx && x <= hx && y >= 0 && y <= top);
+    t = (hz - origin[2]) / dir[2];
+    x = origin[0] + dir[0] * t; y = origin[1] + dir[1] * t;
+    testPlane(t, '墙', [0, 0, -1], x >= -hx && x <= hx && y >= 0 && y <= top);
+  }
+  if (dir[0] !== 0) {
+    let t = (-hx - origin[0]) / dir[0];
+    let y = origin[1] + dir[1] * t, z = origin[2] + dir[2] * t;
+    testPlane(t, '墙', [1, 0, 0], z >= -hz && z <= hz && y >= 0 && y <= top);
+    t = (hx - origin[0]) / dir[0];
+    y = origin[1] + dir[1] * t; z = origin[2] + dir[2] * t;
+    testPlane(t, '墙', [-1, 0, 0], z >= -hz && z <= hz && y >= 0 && y <= top);
+  }
+  if (dir[1] !== 0) {
+    const t = (0 - origin[1]) / dir[1];
+    const x = origin[0] + dir[0] * t, z = origin[2] + dir[2] * t;
+    testPlane(t, '地', [0, 1, 0], x >= -hx && x <= hx && z >= -hz && z <= hz);
+  }
+
+  // 检查家具
+  for (const f of furniture) {
+    const hit = rayAABB(origin, dir, f.min, f.max);
+    if (hit && hit.t < bestT) {
+      bestT = hit.t;
+      bestName = f.name;
+      bestNormal = hit.normal;
+    }
+  }
+
+  if (bestName === null) return null;
+  return { name: bestName, normal: bestNormal, t: bestT };
+}
+
+// ===== 视图基向量 =====
+function getViewBasis() {
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const forward = V.norm([sy * cp, sp, -cy * cp]);
+  const worldUp = [0, 1, 0];
+  let right = V.cross(forward, worldUp);
+  if (Math.hypot(right[0], right[1], right[2]) < 1e-6) right = [1, 0, 0];
+  right = V.norm(right);
+  const up = V.norm(V.cross(right, forward));
+  return { forward, right, up };
+}
+
+// ===== 渲染 =====
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+
+const CELL_SIZE = 24;   // 24px = 12px 的 2 倍，像素字体清晰
+const PLACEHOLDER = '·';
+
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+let cssW = 0, cssH = 0;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cssW = window.innerWidth;
+  cssH = window.innerHeight;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+resize();
+
+function grayStr(g) {
+  const v = Math.max(0, Math.min(255, Math.round(g)));
+  return `rgb(${v},${v},${v})`;
+}
+
+function render() {
+  const basis = getViewBasis();
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const f = (cssH / 2) / Math.tan(camera.fov / 2);
+  const cols = Math.ceil(cssW / CELL_SIZE) + 1;
+  const rows = Math.ceil(cssH / CELL_SIZE) + 1;
+  const offsetX = (cssW - cols * CELL_SIZE) / 2 + CELL_SIZE / 2;
+  const offsetY = (cssH - rows * CELL_SIZE) / 2 + CELL_SIZE / 2;
+
+  // 像素字体，字号 24px（12 的整数倍）
+  ctx.font = `400 ${CELL_SIZE}px "Fusion Pixel 12px Monospaced SC", "Courier New", monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sx = offsetX + c * CELL_SIZE;
+      const sy = offsetY + r * CELL_SIZE;
+
+      const camX = (sx - cssW / 2) / f;
+      const camY = -(sy - cssH / 2) / f;
+      const camZ = 1;
+
+      const dir = V.norm([
+        basis.right[0] * camX + basis.up[0] * camY + basis.forward[0] * camZ,
+        basis.right[1] * camX + basis.up[1] * camY + basis.forward[1] * camZ,
+        basis.right[2] * camX + basis.up[2] * camY + basis.forward[2] * camZ
+      ]);
+
+      const hit = raycastRoom(camera.pos, dir);
+
+      if (!hit) {
+        ctx.fillStyle = grayStr(55);
+        ctx.fillText(PLACEHOLDER, sx, sy);
+        continue;
+      }
+
+      const facing = Math.max(0, -V.dot(hit.normal, dir));
+      const fog = 1 / (1 + hit.t * 0.06);
+      const lum = Math.pow(facing, 0.7) * fog;
+      const textGray = 35 + lum * 220;
+
+      ctx.fillStyle = grayStr(textGray);
+      ctx.fillText(hit.name, sx, sy);
+    }
+  }
+}
+
+function frame() {
+  render();
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ===== 键盘 =====
+let keys = {};
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// ===== 鼠标拖动旋转 =====
+let dragging = false;
+let lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', e => {
+  // 如果点到摇杆区域，不触发旋转
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+});
+
+// ===== 动态虚拟摇杆（触摸）=====
+const joystickEl = document.getElementById('joystick');
+const knobEl = document.getElementById('knob');
+const JOY_RADIUS = 60;       // 底座半径
+const KNOB_MAX = 36;         // 摇杆头最大偏移
+let joyActive = false;
+let joyTouchId = null;
+let joyCenterX = 0, joyCenterY = 0;
+let joyDX = 0, joyDY = 0;    // 归一化 -1..1
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+
+  // 动态摇杆：触摸位置即摇杆中心
+  joyTouchId = t.identifier;
+  joyCenterX = t.clientX;
+  joyCenterY = t.clientY;
+  joyActive = true;
+  joyDX = 0; joyDY = 0;
+
+  // 定位摇杆
+  joystickEl.style.left = (joyCenterX - JOY_RADIUS) + 'px';
+  joystickEl.style.top = (joyCenterY - JOY_RADIUS) + 'px';
+  joystickEl.classList.add('active');
+  knobEl.style.transform = 'translate(-50%, -50%)';
+
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (!joyActive || joyTouchId === null) return;
+  let t = null;
+  for (const touch of e.touches) if (touch.identifier === joyTouchId) { t = touch; break; }
+  if (!t) return;
+
+  let dx = t.clientX - joyCenterX;
+  let dy = t.clientY - joyCenterY;
+  const dist = Math.hypot(dx, dy);
+  const maxDist = KNOB_MAX;
+  if (dist > maxDist) {
+    dx = dx / dist * maxDist;
+    dy = dy / dist * maxDist;
+  }
+  joyDX = dx / maxDist;
+  joyDY = dy / maxDist;
+
+  knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+  e.preventDefault();
+}, { passive: false });
+
+function endJoystick(e) {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joyTouchId) {
+      joyActive = false;
+      joyTouchId = null;
+      joyDX = 0; joyDY = 0;
+      joystickEl.classList.remove('active');
+      break;
+    }
+  }
+}
+canvas.addEventListener('touchend', endJoystick, { passive: false });
+canvas.addEventListener('touchcancel', endJoystick, { passive: false });
+
+// ===== 更新 =====
+let last = performance.now();
+function update(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  const speed = 2.5;
+  const basis = getViewBasis();
+  const flatForward = V.norm([basis.forward[0], 0, basis.forward[2]]);
+  const flatRight = V.norm([basis.right[0], 0, basis.right[2]]);
+
+  // 键盘移动
+  if (keys['w']) camera.pos = V.add(camera.pos, V.scale(flatForward, speed * dt));
+  if (keys['s']) camera.pos = V.add(camera.pos, V.scale(flatForward, -speed * dt));
+  if (keys['a']) camera.pos = V.add(camera.pos, V.scale(flatRight, -speed * dt));
+  if (keys['d']) camera.pos = V.add(camera.pos, V.scale(flatRight, speed * dt));
+
+  // 摇杆移动
+  if (joyActive) {
+    const move = V.add(
+      V.scale(flatRight, joyDX * speed * dt),
+      V.scale(flatForward, -joyDY * speed * dt)
+    );
+    camera.pos = V.add(camera.pos, move);
+  }
+
+  // 边界限制（不进入家具内部）
+  camera.pos[0] = Math.max(-hx + 0.3, Math.min(hx - 0.3, camera.pos[0]));
+  camera.pos[2] = Math.max(-hz + 0.3, Math.min(hz - 0.3, camera.pos[2]));
+
+  // 简单避障：如果摄像机在某个家具 AABB 内，推出去
+  for (const fu of furniture) {
+    const p = camera.pos;
+    if (p[0] > fu.min[0] - 0.25 && p[0] < fu.max[0] + 0.25 &&
+        p[2] > fu.min[2] - 0.25 && p[2] < fu.max[2] + 0.25 &&
+        p[1] < fu.max[1] + 0.1) {
+      // 推到最近的边
+      const dxL = Math.abs(p[0] - (fu.min[0] - 0.25));
+      const dxR = Math.abs(p[0] - (fu.max[0] + 0.25));
+      const dzL = Math.abs(p[2] - (fu.min[2] - 0.25));
+      const dzR = Math.abs(p[2] - (fu.max[2] + 0.25));
+      const m = Math.min(dxL, dxR, dzL, dzR);
+      if (m === dxL) p[0] = fu.min[0] - 0.25;
+      else if (m === dxR) p[0] = fu.max[0] + 0.25;
+      else if (m === dzL) p[2] = fu.min[2] - 0.25;
+      else p[2] = fu.max[2] + 0.25;
+    }
+  }
+
+  requestAnimationFrame(update);
+}
+requestAnimationFrame(update);
+</script>
+</body>
+</html>
