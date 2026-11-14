@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>^_^ · Three.js Overkill Edition</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #020208; cursor: crosshair;
+  }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed; left: 20px; bottom: 18px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px; letter-spacing: .18em; text-transform: uppercase;
+    color: rgba(140, 200, 255, .45); pointer-events: none;
+    user-select: none; line-height: 1.95;
+    text-shadow: 0 0 12px rgba(80, 170, 255, .35);
+  }
+  #hud b { color: #7ee7ff; font-weight: 600; }
+  #hud .sep { color: rgba(120, 90, 255, .5); }
+
+  #loading {
+    position: fixed; inset: 0; z-index: 10;
+    display: grid; place-items: center;
+    background: #020208;
+    font-family: ui-monospace, monospace;
+    font-size: 12px; letter-spacing: .45em; color: #4fd0ff;
+    transition: opacity .9s ease;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+
+  .corner {
+    position: fixed; width: 26px; height: 26px;
+    border: 1px solid rgba(110, 190, 255, .3);
+    pointer-events: none;
+  }
+  .corner.tl { top: 18px; left: 18px; border-right: 0; border-bottom: 0; }
+  .corner.tr { top: 18px; right: 18px; border-left: 0; border-bottom: 0; }
+  .corner.bl { bottom: 18px; left: 18px; border-right: 0; border-top: 0; }
+  .corner.br { bottom: 18px; right: 18px; border-left: 0; border-top: 0; }
+
+  #title {
+    position: fixed; top: 22px; left: 50%; transform: translateX(-50%);
+    font-family: ui-monospace, monospace;
+    font-size: 10px; letter-spacing: .55em;
+    color: rgba(120, 190, 255, .35);
+    pointer-events: none; user-select: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="title">^_^ &nbsp; E M O T I C O N &nbsp; C O R E</div>
+
+<div id="hud">
+  <div>EMOTICON <b>^_^</b> <span class="sep">//</span> WEBGL2</div>
+  <div><span class="sep">›</span> 拖拽旋转 <span class="sep">·</span> 滚轮缩放 <span class="sep">·</span> 点击引爆</div>
+  <div><span class="sep">›</span> FPS <b id="fps">--</b> <span class="sep">·</span> PARTICLES <b id="pcount">--</b></div>
+</div>
+
+<div class="corner tl"></div>
+<div class="corner tr"></div>
+<div class="corner bl"></div>
+<div class="corner br"></div>
+
+<div id="loading">BOOTING EMOTICON…</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }   from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
+
+/* ══════════════════════════════════════════════════════════════
+   0. 设备探测 & 参数
+   ══════════════════════════════════════════════════════════════ */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || innerWidth < 760;
+
+const PIPE_SEGMENTS      = IS_MOBILE ? 90 : 150;
+const PIPE_RADIAL        = IS_MOBILE ? 10 : 16;
+const GLOW_RADIAL        = IS_MOBILE ? 8  : 12;
+const PARTICLES_PER_PART = IS_MOBILE ? 800  : 2200;
+const STAR_COUNT         = IS_MOBILE ? 1800 : 4500;
+const GALAXY_COUNT       = IS_MOBILE ? 5000 : 16000;
+const SHARD_COUNT        = IS_MOBILE ? 140  : 400;
+
+const timeUniforms = [];
+
+/* ══════════════════════════════════════════════════════════════
+   1. 渲染器 / 场景 / 相机
+   ══════════════════════════════════════════════════════════════ */
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  powerPreference: 'high-performance',
+  alpha: false,
+});
+renderer.setPixelRatio(Math.min(devicePixelRatio, IS_MOBILE ? 1.5 : 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.82;          // ← 从 1.2 降到 0.82
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 1500);
+camera.position.set(0, 0.5, 6.4);
+
+/* ══════════════════════════════════════════════════════════════
+   2. 轨道控制
+   ══════════════════════════════════════════════════════════════ */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping   = true;
+controls.dampingFactor   = 0.05;
+controls.rotateSpeed     = 0.55;
+controls.zoomSpeed       = 0.8;
+controls.autoRotate      = true;
+controls.autoRotateSpeed = 0.28;
+controls.minDistance     = 2.8;
+controls.maxDistance     = 18;
+controls.target.set(0, 0, 0);
+
+/* ══════════════════════════════════════════════════════════════
+   3. 灯光（大幅降低能量）
+   ══════════════════════════════════════════════════════════════ */
+scene.add(new THREE.AmbientLight(0x223366, 0.45));
+
+const keyLight = new THREE.PointLight(0x66aaff, 26, 60, 2);
+keyLight.position.set(6, 8, 6);
+scene.add(keyLight);
+
+const rimLight = new THREE.PointLight(0xff44cc, 14, 60, 2);
+rimLight.position.set(-7, -4, -6);
+scene.add(rimLight);
+
+const fillLight = new THREE.PointLight(0x00ffcc, 9, 50, 2);
+fillLight.position.set(0, -9, 4);
+scene.add(fillLight);
+
+/* ══════════════════════════════════════════════════════════════
+   4. 背景渐变球
+   ══════════════════════════════════════════════════════════════ */
+const bgSphere = new THREE.Mesh(
+  new THREE.SphereGeometry(500, 32, 24),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    uniforms: {
+      uTop:    { value: new THREE.Color('#0a0820') },
+      uBottom: { value: new THREE.Color('#010108') },
+      uAccent: { value: new THREE.Color('#140a2a') },
+    },
+    vertexShader: /* glsl */`
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform vec3 uTop, uBottom, uAccent;
+      varying vec3 vDir;
+      void main() {
+        float h = vDir.y * 0.5 + 0.5;
+        vec3 col = mix(uBottom, uTop, pow(h, 1.4));
+        float band = exp(-pow((vDir.y - 0.05) * 4.0, 2.0));
+        col += uAccent * band * 0.4;
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  })
+);
+bgSphere.frustumCulled = false;
+scene.add(bgSphere);
+
+/* ══════════════════════════════════════════════════════════════
+   5. GLSL 公共噪声
+   ══════════════════════════════════════════════════════════════ */
+const NOISE_GLSL = /* glsl */`
+  float hash31(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  float vnoise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash31(i + vec3(0.0,0.0,0.0)), hash31(i + vec3(1.0,0.0,0.0)), f.x),
+          mix(hash31(i + vec3(0.0,1.0,0.0)), hash31(i + vec3(1.0,1.0,0.0)), f.x), f.y),
+      mix(mix(hash31(i + vec3(0.0,0.0,1.0)), hash31(i + vec3(1.0,0.0,1.0)), f.x),
+          mix(hash31(i + vec3(0.0,1.0,1.0)), hash31(i + vec3(1.0,1.0,1.0)), f.x), f.y),
+      f.z
+    );
+  }
+  float fbm(vec3 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 3; i++) {
+      v += a * vnoise(p);
+      p = p * 2.03 + vec3(1.7, 9.2, 3.1);
+      a *= 0.5;
+    }
+    return v;
+  }
+`;
+
+/* ══════════════════════════════════════════════════════════════
+   6. 星空
+   ══════════════════════════════════════════════════════════════ */
+{
+  const pos = new Float32Array(STAR_COUNT * 3);
+  const col = new Float32Array(STAR_COUNT * 3);
+  const tmp = new THREE.Color();
+
+  for (let i = 0; i < STAR_COUNT; i++) {
+    const r = 60 + Math.random() * 220;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+
+    pos[i * 3 + 0] = Math.sin(phi) * Math.cos(theta) * r;
+    pos[i * 3 + 1] = Math.cos(phi) * r * 0.75;
+    pos[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * r;
+
+    tmp.setHSL(0.55 + Math.random() * 0.16, 0.5 + Math.random() * 0.3, 0.45 + Math.random() * 0.3);
+    col[i * 3 + 0] = tmp.r;
+    col[i * 3 + 1] = tmp.g;
+    col[i * 3 + 2] = tmp.b;
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+
+  const stars = new THREE.Points(g, new THREE.PointsMaterial({
+    size: 0.85,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.75,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  }));
+  stars.frustumCulled = false;
+  scene.add(stars);
+  scene.userData.stars = stars;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   7. ^_^ 表情核心
+   ══════════════════════════════════════════════════════════════ */
+const faceGroup = new THREE.Group();
+scene.add(faceGroup);
+
+const eyeL   = new THREE.Group();
+const eyeR   = new THREE.Group();
+const mouthG = new THREE.Group();
+faceGroup.add(eyeL, eyeR, mouthG);
+
+const pulseUniform = { value: 0 };
+
+// ── 7.1 曲线定义 ──────────────────────────────────────────────
+function caretCurve(cx) {
+  return new THREE.CatmullRomCurve3([
+    new THREE.Vector3(cx - 0.44, -0.12, 0),
+    new THREE.Vector3(cx - 0.30,  0.14, 0),
+    new THREE.Vector3(cx - 0.16,  0.38, 0),
+    new THREE.Vector3(cx,         0.54, 0),
+    new THREE.Vector3(cx + 0.16,  0.38, 0),
+    new THREE.Vector3(cx + 0.30,  0.14, 0),
+    new THREE.Vector3(cx + 0.44, -0.12, 0),
+  ], false, 'catmullrom', 0.25);
+}
+
+const mouthCurve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(-0.58, -0.42, 0),
+  new THREE.Vector3(-0.29, -0.47, 0),
+  new THREE.Vector3( 0.00, -0.49, 0),
+  new THREE.Vector3( 0.29, -0.47, 0),
+  new THREE.Vector3( 0.58, -0.42, 0),
+], false, 'catmullrom', 0.5);
+
+// ── 7.2 管道主材质（压暗） ──────────────────────────────────
+function createPipeMaterial(cA, cB, cC) {
+  const uniforms = {
+    uTime:   { value: 0 },
+    uColorA: { value: new THREE.Color(cA) },
+    uColorB: { value: new THREE.Color(cB) },
+    uColorC: { value: new THREE.Color(cC) },
+    uPulse:  pulseUniform,
+  };
+  timeUniforms.push(uniforms.uTime);
+
+  return new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: /* glsl */`
+      uniform float uTime;
+      uniform float uPulse;
+      varying vec2 vUv;
+      varying vec3 vNormalW;
+      varying vec3 vPosW;
+
+      ${NOISE_GLSL}
+
+      void main() {
+        vUv = uv;
+        vec3 pos = position;
+        float n = vnoise(pos * 7.0 + vec3(0.0, uTime * 0.6, uTime * 0.3));
+        float amp = 0.012 + uPulse * 0.06;
+        pos += normal * (n - 0.5) * amp;
+
+        vec4 wp = modelMatrix * vec4(pos, 1.0);
+        vPosW = wp.xyz;
+        vNormalW = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform float uTime;
+      uniform vec3  uColorA;
+      uniform vec3  uColorB;
+      uniform vec3  uColorC;
+      uniform float uPulse;
+      varying vec2  vUv;
+      varying vec3  vNormalW;
+      varying vec3  vPosW;
+
+      void main() {
+        vec3 viewDir = normalize(cameraPosition - vPosW);
+        float fres = pow(1.0 - clamp(dot(viewDir, vNormalW), 0.0, 1.0), 2.2);
+
+        float flow  = 0.5 + 0.5 * sin(vUv.x * 36.0 - uTime * 5.5);
+        float flow2 = 0.5 + 0.5 * sin(vUv.x * 12.0 + uTime * 2.3);
+
+        vec3 col = mix(uColorA, uColorB, flow2);
+        col = mix(col, uColorC, pow(flow, 3.0) * 0.45);   // ← 高光减弱
+        col += uColorC * fres * 0.75;                     // ← 边缘光减弱
+        col *= 0.68 + uPulse * 0.9;                       // ← 整体压暗
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  });
+}
+
+// ── 7.3 辉光壳材质（压暗 + 降低透明度） ────────────────────
+function createGlowMaterial(cA, cB) {
+  const uniforms = {
+    uTime:   { value: 0 },
+    uColorA: { value: new THREE.Color(cA) },
+    uColorB: { value: new THREE.Color(cB) },
+    uPulse:  pulseUniform,
+  };
+  timeUniforms.push(uniforms.uTime);
+
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    uniforms,
+    vertexShader: /* glsl */`
+      uniform float uTime;
+      uniform float uPulse;
+      varying vec2 vUv;
+      varying vec3 vNormalW;
+      varying vec3 vPosW;
+
+      ${NOISE_GLSL}
+
+      void main() {
+        vUv = uv;
+        vec3 pos = position;
+        float n = vnoise(pos * 4.0 + vec3(uTime * 0.4));
+        pos += normal * (n - 0.5) * (0.03 + uPulse * 0.09);
+
+        vec4 wp = modelMatrix * vec4(pos, 1.0);
+        vPosW = wp.xyz;
+        vNormalW = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform float uTime;
+      uniform vec3  uColorA;
+      uniform vec3  uColorB;
+      uniform float uPulse;
+      varying vec2  vUv;
+      varying vec3  vNormalW;
+      varying vec3  vPosW;
+
+      void main() {
+        vec3 viewDir = normalize(cameraPosition - vPosW);
+        float fres = pow(1.0 - abs(dot(viewDir, vNormalW)), 3.0);
+        float flow = 0.5 + 0.5 * sin(vUv.x * 24.0 - uTime * 4.0);
+
+        vec3 col = uColorA * 0.30 + uColorB * fres * 0.7;   // ← 减弱
+        float alpha = fres * 0.14 + flow * 0.05 + uPulse * 0.12;  // ← 透明很多
+
+        gl_FragColor = vec4(col, alpha);
+      }
+    `,
+  });
+}
+
+// ── 7.4 管道粒子材质 ────────────────────────────────────────
+const particleUniforms = {
+  uTime:       { value: 0 },
+  uPulse:      pulseUniform,
+  uPixelRatio: { value: renderer.getPixelRatio() },
+};
+timeUniforms.push(particleUniforms.uTime);
+
+const particleMaterial = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms: particleUniforms,
+  vertexShader: /* glsl */`
+    uniform float uTime;
+    uniform float uPulse;
+    uniform float uPixelRatio;
+
+    attribute float aSize;
+    attribute float aPhase;
+    attribute vec3  aColor;
+
+    varying vec3  vColor;
+    varying float vAlpha;
+
+    void main() {
+      vec3 pos = position;
+      float wob = sin(uTime * 2.0 + aPhase) * 0.035;
+      pos += normalize(pos + vec3(0.001)) * wob;
+
+      vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+      gl_Position = projectionMatrix * mv;
+
+      gl_PointSize = aSize * uPixelRatio * (62.0 / max(-mv.z, 0.001)) * (1.0 + uPulse * 1.8);
+
+      vColor = aColor;
+      vAlpha = 0.25 + 0.5 * (0.5 + 0.5 * sin(uTime * 3.0 + aPhase * 2.0));  // ← 降低
+    }
+  `,
+  fragmentShader: /* glsl */`
+    varying vec3  vColor;
+    varying float vAlpha;
+    void main() {
+      vec2 c = gl_PointCoord - 0.5;
+      float d = length(c);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.0, d);
+      a *= a;
+      gl_FragColor = vec4(vColor, a * vAlpha);
+    }
+  `,
+});
+
+// ── 7.5 管道粒子生成 ────────────────────────────────────────
+function createPipeParticles(curve, radius, cA, cB) {
+  const count = PARTICLES_PER_PART;
+  const pos   = new Float32Array(count * 3);
+  const col   = new Float32Array(count * 3);
+  const size  = new Float32Array(count);
+  const phase = new Float32Array(count);
+
+  const ca = new THREE.Color(cA);
+  const cb = new THREE.Color(cB);
+  const tmp = new THREE.Color();
+  const up = new THREE.Vector3(0, 1, 0);
+  const white = new THREE.Color('#ffffff');
+
+  for (let i = 0; i < count; i++) {
+    const t   = Math.random();
+    const p   = curve.getPointAt(t);
+    const tan = curve.getTangentAt(t).normalize();
+
+    const u = Math.abs(tan.dot(up)) > 0.95 ? new THREE.Vector3(1, 0, 0) : up.clone();
+    const n1 = new THREE.Vector3().crossVectors(tan, u).normalize();
+    const n2 = new THREE.Vector3().crossVectors(tan, n1).normalize();
+
+    const ang = Math.random() * Math.PI * 2;
+    const rad = radius * (1.4 + Math.pow(Math.random(), 1.5) * 4.5);
+
+    pos[i * 3 + 0] = p.x + n1.x * Math.cos(ang) * rad + n2.x * Math.sin(ang) * rad;
+    pos[i * 3 + 1] = p.y + n1.y * Math.cos(ang) * rad + n2.y * Math.sin(ang) * rad;
+    pos[i * 3 + 2] = p.z + n1.z * Math.cos(ang) * rad + n2.z * Math.sin(ang) * rad;
+
+    tmp.copy(ca).lerp(cb, t);
+    if (Math.random() < 0.15) tmp.lerp(white, 0.35);  // ← 降低白芯
+
+    col[i * 3 + 0] = tmp.r;
+    col[i * 3 + 1] = tmp.g;
+    col[i * 3 + 2] = tmp.b;
+
+    size[i]  = 0.4 + Math.pow(Math.random(), 2.0) * 2.0;
+    phase[i] = Math.random() * Math.PI * 2;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aColor',   new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aSize',    new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('aPhase',   new THREE.BufferAttribute(phase, 1));
+
+  const pts = new THREE.Points(geo, particleMaterial);
+  pts.frustumCulled = false;
+  return pts;
+}
+
+// ── 7.6 构建单个部件 ────────────────────────────────────────
+function buildPart(curve, radius, cA, cB, cC, parent) {
+  const mainGeo = new THREE.TubeGeometry(curve, PIPE_SEGMENTS, radius, PIPE_RADIAL, false);
+  const mainMesh = new THREE.Mesh(mainGeo, createPipeMaterial(cA, cB, cC));
+  mainMesh.frustumCulled = false;
+  parent.add(mainMesh);
+
+  const glowGeo = new THREE.TubeGeometry(curve, PIPE_SEGMENTS, radius * 2.7, GLOW_RADIAL, false);
+  const glowMesh = new THREE.Mesh(glowGeo, createGlowMaterial(cA, cB));
+  glowMesh.frustumCulled = false;
+  parent.add(glowMesh);
+
+  parent.add(createPipeParticles(curve, radius, cA, cB));
+}
+
+// ── 7.7 组装 ^_^（配色整体压暗） ───────────────────────────
+buildPart(caretCurve(-0.95), 0.085, '#00a896', '#4a3a99', '#7a6af0', eyeL);
+buildPart(caretCurve( 0.95), 0.085, '#a82284', '#8a5a1e', '#c04a8a', eyeR);
+buildPart(mouthCurve,        0.075, '#3850b0', '#a0308a', '#6a5ad0', mouthG);
+
+/* ══════════════════════════════════════════════════════════════
+   8. 装饰光环
+   ══════════════════════════════════════════════════════════════ */
+const ringGroup = new THREE.Group();
+scene.add(ringGroup);
+
+function makeRing(radius, tube, color, opacity) {
+  return new THREE.Mesh(
+    new THREE.TorusGeometry(radius, tube, 8, 220),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+}
+
+const ring1 = makeRing(2.55, 0.010, 0x44aaee, 0.32);
+ring1.rotation.x = Math.PI / 2.15;
+ringGroup.add(ring1);
+
+const ring2 = makeRing(3.05, 0.008, 0xcc44aa, 0.22);
+ring2.rotation.set(Math.PI / 3.2, 0.6, 0.2);
+ringGroup.add(ring2);
+
+const ring3 = makeRing(3.75, 0.006, 0x3366cc, 0.15);
+ring3.rotation.set(Math.PI / 1.7, -0.4, 0.8);
+ringGroup.add(ring3);
+
+/* ══════════════════════════════════════════════════════════════
+   9. 星系粒子（压暗）
+   ══════════════════════════════════════════════════════════════ */
+{
+  const pos   = new Float32Array(GALAXY_COUNT * 3);
+  const col   = new Float32Array(GALAXY_COUNT * 3);
+  const size  = new Float32Array(GALAXY_COUNT);
+  const phase = new Float32Array(GALAXY_COUNT);
+
+  const ARMS   = 4;
+  const RADIUS = 7.6;
+
+  const cInner = new THREE.Color('#3d8a96');
+  const cMid   = new THREE.Color('#44308f');
+  const cOuter = new THREE.Color('#942d75');
+  const tmp    = new THREE.Color();
+
+  for (let i = 0; i < GALAXY_COUNT; i++) {
+    const r = Math.pow(Math.random(), 0.62) * RADIUS;
+    const armIdx = Math.floor(Math.random() * ARMS);
+    const armAngle = (armIdx / ARMS) * Math.PI * 2;
+
+    const spin   = r * 0.95;
+    const spread = (1.0 - r / RADIUS) * 0.55 + 0.10;
+    const angle  = armAngle + spin + (Math.random() - 0.5) * spread * 2.8;
+    const jitter = (1.0 - r / RADIUS) * 0.45 + 0.12;
+
+    pos[i * 3 + 0] = Math.cos(angle) * r + (Math.random() - 0.5) * jitter;
+    pos[i * 3 + 1] = (Math.random() - 0.5) * (0.55 + 1.15 * (1.0 - r / RADIUS)) +
+                     Math.sin(r * 1.6) * 0.18;
+    pos[i * 3 + 2] = Math.sin(angle) * r + (Math.random() - 0.5) * jitter;
+
+    const t = Math.min(r / RADIUS, 1.0);
+    if (t < 0.5) tmp.copy(cInner).lerp(cMid, t * 2.0);
+    else         tmp.copy(cMid).lerp(cOuter, (t - 0.5) * 2.0);
+    if (Math.random() < 0.04) tmp.lerp(new THREE.Color('#ffffff'), 0.45);
+
+    col[i * 3 + 0] = tmp.r;
+    col[i * 3 + 1] = tmp.g;
+    col[i * 3 + 2] = tmp.b;
+
+    size[i]  = 0.55 + Math.pow(Math.random(), 2.2) * 1.9;
+    phase[i] = Math.random() * Math.PI * 2;
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aColor',   new THREE.BufferAttribute(col, 3));
+  g.setAttribute('aSize',    new THREE.BufferAttribute(size, 1));
+  g.setAttribute('aPhase',   new THREE.BufferAttribute(phase, 1));
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), RADIUS * 1.6);
+
+  const galaxyMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime:       { value: 0 },
+      uPixelRatio: { value: renderer.getPixelRatio() },
+      uSizeScale:  { value: IS_MOBILE ? 50.0 : 44.0 },
+    },
+    vertexShader: /* glsl */`
+      uniform float uTime;
+      uniform float uPixelRatio;
+      uniform float uSizeScale;
+
+      attribute float aSize;
+      attribute float aPhase;
+      attribute vec3  aColor;
+
+      varying vec3  vColor;
+      varying float vAlpha;
+
+      void main() {
+        vec3 pos = position;
+
+        float r   = length(pos.xz);
+        float ang = atan(pos.z, pos.x);
+        ang += uTime * (0.62 / (r + 0.75));
+        pos.x = cos(ang) * r;
+        pos.z = sin(ang) * r;
+
+        pos.y += sin(uTime * 1.7 + aPhase + r * 0.5) * 0.14;
+
+        vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mv;
+
+        gl_PointSize = aSize * uPixelRatio * (uSizeScale / max(-mv.z, 0.001));
+
+        vColor = aColor;
+        vAlpha = 0.20 + 0.45 * (0.5 + 0.5 * sin(uTime * 2.6 + aPhase));  // ← 降低
+      }
+    `,
+    fragmentShader: /* glsl */`
+      varying vec3  vColor;
+      varying float vAlpha;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5;
+        float d2 = dot(c, c);
+        if (d2 > 0.25) discard;
+        float a = smoothstep(0.25, 0.0, d2);
+        a *= a;
+        float core = smoothstep(0.09, 0.0, d2);
+        gl_FragColor = vec4(vColor * (1.0 + core * 0.8), a * vAlpha);  // ← 核心高光降低
+      }
+    `,
+  });
+  timeUniforms.push(galaxyMat.uniforms.uTime);
+
+  const galaxy = new THREE.Points(g, galaxyMat);
+  galaxy.frustumCulled = false;
+  scene.add(galaxy);
+  scene.userData.galaxy = galaxy;
+  scene.userData.galaxyMat = galaxyMat;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   10. 环绕碎片（压暗）
+   ══════════════════════════════════════════════════════════════ */
+const shards = new THREE.InstancedMesh(
+  new THREE.OctahedronGeometry(0.06, 0),
+  new THREE.MeshStandardMaterial({
+    color: 0x8ab4cc,
+    emissive: 0x1a3a99,
+    emissiveIntensity: 1.1,
+    roughness: 0.25,
+    metalness: 0.9,
+  }),
+  SHARD_COUNT
+);
+shards.frustumCulled = false;
+shards.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+scene.add(shards);
+
+const shardData = [];
+for (let i = 0; i < SHARD_COUNT; i++) {
+  shardData.push({
+    radius: 3.0 + Math.random() * 3.8,
+    theta:  Math.random() * Math.PI * 2,
+    phi:    Math.acos(2 * Math.random() - 1),
+    speed:  (0.12 + Math.random() * 0.42) * (Math.random() > 0.5 ? 1 : -1),
+    spin:   new THREE.Vector3(
+      (Math.random() - 0.5) * 3.0,
+      (Math.random() - 0.5) * 3.0,
+      (Math.random() - 0.5) * 3.0
+    ),
+    scale:  0.45 + Math.random() * 1.6,
+    bob:    Math.random() * Math.PI * 2,
+  });
+}
+
+const dummy = new THREE.Object3D();
+
+/* ══════════════════════════════════════════════════════════════
+   11. 后期处理（大幅降低泛光）
+   ══════════════════════════════════════════════════════════════ */
+const composer = new EffectComposer(renderer);
+
+composer.addPass(new RenderPass(scene, camera));
+
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.48,   // strength ← 从 0.95 降到 0.48
+  0.45,   // radius
+  0.32    // threshold ← 提高，只让最亮的发光
+);
+composer.addPass(bloomPass);
+
+const FXShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uTime:    { value: 0 },
+    uAmount:  { value: 1.0 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform float uTime;
+    uniform float uAmount;
+    varying vec2 vUv;
+
+    void main() {
+      vec2 uv  = vUv;
+      vec2 dir = uv - 0.5;
+      float d  = length(dir);
+
+      // 径向色差
+      vec2 off = dir * d * 0.035 * uAmount;
+      vec3 col;
+      col.r = texture2D(tDiffuse, uv + off).r;
+      col.g = texture2D(tDiffuse, uv).g;
+      col.b = texture2D(tDiffuse, uv - off).b;
+
+      // 扫描线（减弱）
+      col += sin(uv.y * 900.0 + uTime * 7.0) * 0.0035;
+
+      // 暗角（稍微更紧一点）
+      col *= smoothstep(1.10, 0.22, d);
+
+      // 胶片噪点（减弱）
+      float n = fract(sin(dot(uv * 137.0 + uTime, vec2(12.9898, 78.233))) * 43758.5453);
+      col += (n - 0.5) * 0.010;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+};
+
+const fxPass = new ShaderPass(FXShader);
+composer.addPass(fxPass);
+
+composer.addPass(new OutputPass());
+
+/* ══════════════════════════════════════════════════════════════
+   12. 交互
+   ══════════════════════════════════════════════════════════════ */
+let pulse = 0;
+const pointer = new THREE.Vector2(0, 0);
+let pointerDown = null;
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  pointer.x = (e.clientX / innerWidth)  * 2 - 1;
+  pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+});
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  pointerDown = { x: e.clientX, y: e.clientY };
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!pointerDown) return;
+  const dx = e.clientX - pointerDown.x;
+  const dy = e.clientY - pointerDown.y;
+  if (dx * dx + dy * dy < 120) pulse = 1.0;
+  pointerDown = null;
+});
+
+addEventListener('resize', () => {
+  const w = innerWidth, h = innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+  composer.setSize(w, h);
+  bloomPass.setSize(w, h);
+  particleUniforms.uPixelRatio.value = renderer.getPixelRatio();
+  scene.userData.galaxyMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+});
+
+/* ══════════════════════════════════════════════════════════════
+   13. 眨眼状态
+   ══════════════════════════════════════════════════════════════ */
+let blinkTimer = 0;
+let blinkPhase = 0;
+
+/* ══════════════════════════════════════════════════════════════
+   14. 主循环
+   ══════════════════════════════════════════════════════════════ */
+const clock = new THREE.Clock();
+let elapsed = 0;
+let fpsAcc = 0, fpsFrames = 0;
+
+const fpsEl    = document.getElementById('fps');
+const pcountEl = document.getElementById('pcount');
+pcountEl.textContent = (PARTICLES_PER_PART * 3 + GALAXY_COUNT).toLocaleString();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  pulse *= Math.exp(-3.5 * dt);
+  if (pulse < 0.001) pulse = 0;
+  pulseUniform.value = pulse;
+
+  for (let i = 0; i < timeUniforms.length; i++) timeUniforms[i].value = elapsed;
+
+  /* ── 表情整体运动 ────────────────────────────────────────── */
+  faceGroup.position.y = Math.sin(elapsed * 0.8) * 0.06;
+  faceGroup.rotation.y = Math.sin(elapsed * 0.5) * 0.08 + pointer.x * 0.16;
+  faceGroup.rotation.x = Math.cos(elapsed * 0.6) * 0.06 + pointer.y * 0.11;
+  faceGroup.rotation.z = Math.sin(elapsed * 0.35) * 0.02;
+
+  const faceScale = 1.0 + pulse * 0.10 + Math.sin(elapsed * 1.2) * 0.012;
+  faceGroup.scale.setScalar(faceScale);
+
+  /* ── 眨眼 ────────────────────────────────────────────────── */
+  blinkTimer += dt;
+  if (blinkTimer > 3.2 && blinkPhase === 0) {
+    blinkPhase = 0.0001;
+    blinkTimer = 0;
+  }
+  if (blinkPhase > 0) {
+    blinkPhase += dt * 7.5;
+    let s = 1.0;
+    if (blinkPhase < Math.PI) {
+      s = 1.0 - Math.sin(blinkPhase) * 0.94;
+    } else {
+      blinkPhase = 0;
+    }
+    eyeL.scale.y = s;
+    eyeR.scale.y = s;
+  }
+
+  /* ── 嘴巴微动 ────────────────────────────────────────────── */
+  mouthG.position.y = Math.sin(elapsed * 1.3) * 0.018;
+  mouthG.scale.y    = 1.0 + Math.sin(elapsed * 2.1) * 0.04;
+
+  /* ── 光环旋转 ────────────────────────────────────────────── */
+  ring1.rotation.z += dt * 0.22;
+  ring2.rotation.z -= dt * 0.16;
+  ring2.rotation.x += dt * 0.08;
+  ring3.rotation.z += dt * 0.10;
+  ringGroup.rotation.y = elapsed * 0.05;
+  const ringPulse = 1.0 + pulse * 0.18;
+  ringGroup.scale.setScalar(ringPulse);
+
+  /* ── 星系旋转 ────────────────────────────────────────────── */
+  if (scene.userData.galaxy) {
+    scene.userData.galaxy.rotation.y = elapsed * 0.035;
+  }
+
+  /* ── 星空缓慢自转 ────────────────────────────────────────── */
+  if (scene.userData.stars) {
+    scene.userData.stars.rotation.y = elapsed * 0.006;
+  }
+
+  /* ── 碎片运动 ────────────────────────────────────────────── */
+  for (let i = 0; i < SHARD_COUNT; i++) {
+    const d = shardData[i];
+    d.theta += d.speed * dt;
+
+    const sinPhi = Math.sin(d.phi);
+    const rr = d.radius * (1.0 + pulse * 0.25);
+
+    dummy.position.set(
+      Math.cos(d.theta) * sinPhi * rr,
+      Math.cos(d.phi) * rr * 0.55 + Math.sin(elapsed * 1.1 + d.bob) * 0.22,
+      Math.sin(d.theta) * sinPhi * rr
+    );
+
+    dummy.rotation.x += d.spin.x * dt;
+    dummy.rotation.y += d.spin.y * dt;
+    dummy.rotation.z += d.spin.z * dt;
+
+    dummy.scale.setScalar(d.scale * (1.0 + pulse * 0.6));
+    dummy.updateMatrix();
+    shards.setMatrixAt(i, dummy.matrix);
+  }
+  shards.instanceMatrix.needsUpdate = true;
+
+  /* ── 灯光跟随 ────────────────────────────────────────────── */
+  keyLight.position.set(
+    Math.cos(elapsed * 0.5) * 7,
+    6 + Math.sin(elapsed * 0.7) * 2.5,
+    Math.sin(elapsed * 0.5) * 7
+  );
+  rimLight.position.set(
+    Math.cos(elapsed * 0.5 + Math.PI) * 8,
+    -4 + Math.cos(elapsed * 0.9) * 2,
+    Math.sin(elapsed * 0.5 + Math.PI) * 8
+  );
+
+  /* ── 后期参数（脉冲时也不再过曝） ─────────────────────────── */
+  fxPass.uniforms.uTime.value   = elapsed;
+  fxPass.uniforms.uAmount.value = 1.0 + pulse * 2.0;
+  bloomPass.strength            = 0.48 + pulse * 0.5;   // ← 从 0.95 + 1.2 降低
+
+  controls.update();
+  composer.render();
+
+  fpsAcc += dt;
+  fpsFrames++;
+  if (fpsAcc >= 0.5) {
+    fpsEl.textContent = Math.round(fpsFrames / fpsAcc);
+    fpsAcc = 0;
+    fpsFrames = 0;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   15. 启动
+   ══════════════════════════════════════════════════════════════ */
+animate();
+
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const el = document.getElementById('loading');
+    el.classList.add('hide');
+    setTimeout(() => el.remove(), 1000);
+  });
+});
+</script>
+</body>
+</html>
