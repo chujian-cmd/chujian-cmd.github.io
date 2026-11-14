@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>万箭指手 · 鼠标贴图</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0b0d15;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: system-ui, 'Segoe UI', monospace;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            cursor: none; /* 完全隐藏默认鼠标，使用canvas绘制的手指贴图 */
+            background: radial-gradient(circle at 30% 30%, #1a1f2e, #07090e);
+            box-shadow: 0 0 30px rgba(0, 180, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="arrowCanvas"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('arrowCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // 手指贴图 —— 使用系统自带指针符号？但我们要自己画一个“手指”光标准星。
+            // 为了有“鼠标的贴图”的感觉，直接绘制一个风格化的手指图标（矢量），并让它跟随鼠标。
+            // 而且它要作为“被指的焦点”，所有小箭头都指向它。
+
+            // 设置画布大小 (高清适配)
+            let width, height;
+            function resizeCanvas() {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width * window.devicePixelRatio || width;
+                canvas.height = height * window.devicePixelRatio || height;
+                if (window.devicePixelRatio > 1) {
+                    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+                }
+                // 如果缩放后，绘图坐标还是用逻辑宽高，需要重置变换？由于每次resize都会重置变换，要重新scale
+                // 但canvas.width赋值会重置状态，所以重新设置scale
+                if (window.devicePixelRatio > 1) {
+                    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+                }
+            }
+
+            // 手指位置 (逻辑坐标，基于窗口宽高)
+            let fingerX = 0, fingerY = 0;
+            // 是否已初始化手指位置 (最初放在中心)
+            let fingerInitialized = false;
+
+            // 窗口大小变化时重绘
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+                // 如果手指位置超出新边界，做限制 (但通常无妨)
+            });
+
+            // 鼠标移动 -> 更新手指位置
+            window.addEventListener('mousemove', (e) => {
+                fingerX = e.clientX;
+                fingerY = e.clientY;
+                fingerInitialized = true;
+            });
+
+            // 触摸设备也支持一下
+            window.addEventListener('touchmove', (e) => {
+                if (e.touches.length > 0) {
+                    fingerX = e.touches[0].clientX;
+                    fingerY = e.touches[0].clientY;
+                    fingerInitialized = true;
+                }
+                e.preventDefault();
+            }, { passive: false });
+
+            window.addEventListener('touchstart', (e) => {
+                if (e.touches.length > 0) {
+                    fingerX = e.touches[0].clientX;
+                    fingerY = e.touches[0].clientY;
+                    fingerInitialized = true;
+                }
+                e.preventDefault();
+            }, { passive: false });
+
+            // 初始位置: 屏幕正中央
+            function initFingerIfNeeded() {
+                if (!fingerInitialized) {
+                    fingerX = width / 2;
+                    fingerY = height / 2;
+                }
+            }
+
+            // ———— 绘制手指贴图 (风格化的鼠标指针/手指) ————
+            function drawFinger(x, y) {
+                // 画一个有点“手”的感觉的指针：从手指尖到手掌的轮廓。
+                // 但我们是俯视手指尖，用简单形状：一个大的食指箭头？或者直接画一个手指形状。
+                // 为了更直观 “手指”贴图，我们来画一个伸出食指的手势，经典鼠标指针风格。
+
+                // 首先画一个白色带黑色描边的手形 (类似“点击”手指)
+                ctx.save();
+                ctx.translate(x, y);
+
+                // 手指尖的指向是左上？但我们是让箭头指向手指，所以手指本身不一定要有方向。
+                // 使用一个简洁的“手指”图标，垂直向上，类似默认的pointer手势，但垂直向下也没问题。
+                // 但为了更像鼠标指针，就用箭头+手的组合？实际直接画一个食指朝上的手势，并使用阴影立体感。
+                // 但手指位置在 (0,0) 是食指指尖？为了容易理解，将指尖放在坐标原点。
+
+                // 阴影 (让手指更突出)
+                ctx.shadowColor = 'rgba(0, 200, 255, 0.7)';
+                ctx.shadowBlur = 20;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+
+                // 手指主轮廓 (手背/手指) 灰色渐变填充
+                const gradient = ctx.createLinearGradient(-8, -30, 20, 20);
+                gradient.addColorStop(0, '#f0f4ff');
+                gradient.addColorStop(0.7, '#c0d0e8');
+                gradient.addColorStop(1, '#8a9bb5');
+
+                ctx.beginPath();
+                // 绘制一个伸出的食指 (指尖在原点附近)
+                // 指尖点 (0,0) 稍微偏移一点让视觉在中心
+                ctx.moveTo(2, -2);          // 指尖右侧
+                ctx.lineTo(10, 6);          // 指节右侧
+                ctx.lineTo(22, 18);         // 手掌右下方
+                ctx.lineTo(18, 26);         // 手掌底部
+                ctx.lineTo(0, 18);          // 手掌左侧
+                ctx.lineTo(-8, 26);         // 手腕外侧
+                ctx.lineTo(-16, 20);        // 手腕
+                ctx.lineTo(-8, 10);         // 食指左侧指根
+                ctx.lineTo(-4, 0);          // 回到指尖左侧
+                ctx.closePath();
+
+                ctx.fillStyle = gradient;
+                ctx.fill();
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = 'rgba(100, 180, 255, 0.9)';
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.6;
+                ctx.stroke();
+
+                // 指尖高光 (一个小圆点表示指尖)
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#aae0ff';
+                ctx.beginPath();
+                ctx.arc(1, -1, 3.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+
+                // 第二关节的小线条 (指甲的暗示)
+                ctx.shadowBlur = 0; // 取消阴影避免太乱
+                ctx.beginPath();
+                ctx.moveTo(4, 4);
+                ctx.lineTo(8, 8);
+                ctx.strokeStyle = '#a0b8d0';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+
+                // 可选: 绘制手指旁边的“点击”波纹，更有贴图感
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(0, 255, 255, 0.5)';
+                ctx.beginPath();
+                ctx.arc(0, 0, 12, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(80, 220, 255, 0.5)';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+            // ———— 绘制所有小箭头 ————
+            // 规则：小箭头排列成网格状，每个箭头指向手指位置。
+            // 箭头大小随离手指距离轻微变化，但网格间距固定。
+            // 使用离屏canvas缓存箭头？不用，直接绘制数千个箭头性能足够。
+
+            // 箭头参数
+            const GRID_SIZE = 28;          // 网格间距 (逻辑像素)
+            const ARROW_BASE_SIZE = 10;     // 箭头基础长度
+            const ARROW_HEAD_SIZE = 5;      // 箭头头部大小
+
+            // 主绘制循环
+            function draw() {
+                // 确保手指初始化
+                if (!fingerInitialized) {
+                    initFingerIfNeeded();
+                    // 初始化后，如果窗口尺寸改变，也要保持手指在中心？但鼠标一动就覆盖。
+                }
+
+                // 清空画布 (保留背景渐变，因为是canvas背景绘制? 但我们用css背景，canvas透明即可)
+                // 但我们设置了canvas的background渐变在css中，所以可以直接clearRect。
+                ctx.clearRect(0, 0, width, height);
+
+                // 获取手指位置 (逻辑坐标)
+                const fx = fingerX;
+                const fy = fingerY;
+
+                // 绘制网格箭头
+                // 计算网格起点 (让网格覆盖整个画布，并且箭头有规律)
+                const startX = GRID_SIZE / 2;
+                const startY = GRID_SIZE / 2;
+
+                // 遍历所有网格点
+                for (let gx = startX; gx < width; gx += GRID_SIZE) {
+                    for (let gy = startY; gy < height; gy += GRID_SIZE) {
+                        // 计算从网格点到手指的方向向量
+                        const dx = fx - gx;
+                        const dy = fy - gy;
+                        const distance = Math.hypot(dx, dy);
+
+                        // 距离太近就忽略 (避免箭头重叠到手指内部)
+                        if (distance < 16) continue;
+
+                        // 计算单位方向
+                        const angle = Math.atan2(dy, dx);
+
+                        // 箭头长度随距离轻微变化，让远处的箭头稍大一点？或保持一致也可以。
+                        // 让箭头长度稍微随距离增加，更有指向感（但有限制）
+                        let arrowLen = ARROW_BASE_SIZE + Math.min(distance * 0.01, 4);
+                        // 近处的箭头小一点以免挡住手指？也可以保持基本一致。
+                        if (distance < 60) {
+                            arrowLen = ARROW_BASE_SIZE * 0.7;
+                        }
+
+                        // 绘制箭头 (以网格点为中心，但箭头的尖端指向手指方向)
+                        // 我们可以让箭头从网格点向目标方向绘制，尾部在网格点偏移，但更好是让箭头整体位于网格点附近。
+                        // 采用：箭头中心就在网格点，但尖端指向手指方向。那么需要根据方向旋转。
+                        // 绘制一个箭头形状：尖端在 (arrowLen/2, 0)，尾部在 (-arrowLen/2, 0) 经过旋转。
+                        // 但为了让箭头看上去是从网格点出发指向手指，我们可以让尾部在网格点，尖端指向目标。
+                        // 这样箭头就会从网格点“射出”，视觉上更明确指向手指。
+
+                        // 方法：从网格点出发，沿着方向角绘制箭头。
+                        // 箭头尾部位于 (gx, gy) ，尖端位于 (gx + cos(angle)*arrowLen, gy + sin(angle)*arrowLen)
+                        // 然后在靠近尖端的地方绘制三角形箭头头部。
+
+                        // 箭头杆的起点 (尾部)
+                        const tailX = gx;
+                        const tailY = gy;
+                        // 尖端 (杆的末端)
+                        const tipX = gx + Math.cos(angle) * arrowLen;
+                        const tipY = gy + Math.sin(angle) * arrowLen;
+
+                        // 颜色：根据距离或方向变化，产生轻微渐变感
+                        const hue = 190 + (distance * 0.3) % 60; // 蓝青色范围
+                        const alpha = 0.7 + Math.sin(distance * 0.02) * 0.2; // 轻微波动
+
+                        ctx.save();
+
+                        // 绘制箭头杆 (线)
+                        ctx.beginPath();
+                        ctx.moveTo(tailX, tailY);
+                        ctx.lineTo(tipX, tipY);
+                        ctx.strokeStyle = `hsla(${hue}, 90%, 70%, ${alpha})`;
+                        ctx.lineWidth = 1.8;
+                        ctx.stroke();
+
+                        // 绘制箭头头部 (三角形)
+                        // 计算头部三角形的点：以尖端为中心，沿反方向偏移
+                        const headSize = ARROW_HEAD_SIZE * (0.8 + Math.min(distance * 0.005, 0.6));
+                        // 尖端两侧的点：从尖端沿与角度垂直的方向偏移
+                        const perpAngle = angle + Math.PI / 2;
+                        const perpX = Math.cos(perpAngle) * headSize * 0.6;
+                        const perpY = Math.sin(perpAngle) * headSize * 0.6;
+                        // 头部底边中心：从尖端沿反方向后退一个头长度
+                        const backX = tipX - Math.cos(angle) * headSize;
+                        const backY = tipY - Math.sin(angle) * headSize;
+                        // 底边两点
+                        const base1X = backX + perpX;
+                        const base1Y = backY + perpY;
+                        const base2X = backX - perpX;
+                        const base2Y = backY - perpY;
+
+                        ctx.beginPath();
+                        ctx.moveTo(tipX, tipY);
+                        ctx.lineTo(base1X, base1Y);
+                        ctx.lineTo(base2X, base2Y);
+                        ctx.closePath();
+                        ctx.fillStyle = `hsla(${hue}, 95%, 72%, ${alpha + 0.1})`;
+                        ctx.fill();
+                        // 轻微描边
+                        ctx.strokeStyle = `hsla(${hue}, 100%, 85%, ${alpha * 0.8})`;
+                        ctx.lineWidth = 0.6;
+                        ctx.stroke();
+
+                        ctx.restore();
+                    }
+                }
+
+                // 绘制手指贴图（在箭头之上，这样更显眼）
+                drawFinger(fx, fy);
+
+                // 添加一个“聚光灯”效果围绕手指？可选，但已有手指阴影
+                // 继续动画
+                requestAnimationFrame(draw);
+            }
+
+            // 初始化并启动
+            resizeCanvas();
+            // 确保手指初始位置在中心（虽然mousemove会覆盖）
+            fingerX = width / 2;
+            fingerY = height / 2;
+            fingerInitialized = false; // 先置false，第一帧会重新设置到中心（因为resize后可能会变）
+
+            // 监听鼠标移出窗口？不处理
+
+            // 启动动画
+            draw();
+
+            // 由于resize时可能devicePixelRatio变化，重新调用一次resizeCanvas并重启绘制（draw中已无限循环）
+            // 但resizeCanvas会重置变换，draw中每次重绘会获取最新尺寸，没问题。
+            // 不过需要保证手指位置还在合理区域。
+            // 重新赋值宽高时可能canvas会被重置，但我们的绘制循环每次都会clearRect并绘制。
+
+            // 增强：如果window尺寸改变，确保手指在中心？
+            // 但一般鼠标还在，就不需要。如果鼠标从未移动且尺寸改变，手指会保持在之前逻辑位置，可能超出屏幕。
+            // 使用resize监听稍微微调手指位置到中心？
+            // 但为了不干扰用户鼠标位置，只在未初始化时放到中心。
+            // 但fingerInitialized一旦为true就不会再重置。所以当窗口大小改变且从未移动鼠标，手指可能偏离中心。
+            // 我们可以在resize时如果鼠标未移动过，重置中心。
+            window.addEventListener('resize', () => {
+                if (!fingerInitialized) {
+                    fingerX = window.innerWidth / 2;
+                    fingerY = window.innerHeight / 2;
+                }
+            });
+
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>箭头·指向手指</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: #0b0e14;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            touch-action: none;  /* 禁止触摸滚动/缩放 */
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 主画布容器 — 全屏可视化区域 */
+        .arrow-field {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;  /* 让所有鼠标/触摸事件穿透到body，由全局坐标处理 */
+            z-index: 1;
+        }
+
+        /* 手指光标图层 — 始终在最上层，且本身没有指针事件 */
+        .hand-cursor {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        /* 真正的“手指”光标 — 一只指向右上的小手（模拟光标），带点微光 */
+        .finger {
+            position: absolute;
+            width: 48px;
+            height: 48px;
+            transform: translate(-10%, -10%) rotate(-15deg);
+            filter: drop-shadow(0 0 8px rgba(255, 240, 180, 0.9));
+            transition: transform 0.05s ease-out;
+            will-change: left, top;
+        }
+
+        .finger svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 每个箭头绝对定位，通过JS动态更新位置/旋转 */
+        .arrow {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            top: 0;
+            left: 0;
+            opacity: 0.9;
+            will-change: transform, left, top;
+            transition: transform 0.08s cubic-bezier(0.2, 0.9, 0.4, 1);
+            transform-origin: center center;
+            pointer-events: none;
+            /* 让箭头漂亮一点 */
+            filter: drop-shadow(0 0 4px rgba(120, 180, 255, 0.5));
+        }
+
+        .arrow svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 为了更清晰的指向感，箭头采用亮色 */
+        .arrow path {
+            fill: #d0e2ff;
+            stroke: rgba(255, 255, 255, 0.5);
+            stroke-width: 1.2;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
+
+        /* 深色模式下的微光 */
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(40, 60, 120, 0.15) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* 让手指的SVG稍微有点质感 */
+        .finger svg circle {
+            filter: drop-shadow(0 0 6px #ffd966);
+        }
+    </style>
+</head>
+<body>
+    <!-- 箭头区域：所有箭头动态生成并挂载到这里 -->
+    <div class="arrow-field" id="arrowField"></div>
+
+    <!-- 手指光标区域（始终显示在最上层） -->
+    <div class="hand-cursor" id="handCursor">
+        <div class="finger" id="finger">
+            <!-- 一个简化的手指/光标图形：食指指向右上，带点微光效果 -->
+            <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- 手部轮廓 / 手指 -->
+                <path d="M18 6 L22 2 L30 10 L26 14 L32 20 L28 24 L22 18 L16 24 L12 20 L18 14 L12 8 L16 4 L18 6 Z" 
+                      fill="#FFE9B0" stroke="#FFB347" stroke-width="1.2" stroke-linejoin="round"/>
+                <!-- 掌心小圆点增加光标感 -->
+                <circle cx="20" cy="14" r="2.5" fill="#FFB347" opacity="0.7"/>
+                <!-- 高光 -->
+                <circle cx="18" cy="10" r="1.5" fill="white" opacity="0.8"/>
+                <!-- 方向尖 -->
+                <path d="M30 6 L34 2 L38 6 L34 10 L30 6 Z" fill="#FFD966" stroke="#FFA500" stroke-width="0.8"/>
+            </svg>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ---------- 配置 ----------
+            // 箭头排列网格 (规律摆放)
+            const COLS = 13;          // 水平方向箭头个数 (奇数，保证中心附近有对称)
+            const ROWS = 9;           // 垂直方向箭头个数 (奇数)
+            // 间距基于窗口大小动态计算，但会限定范围，保证小屏也好看
+            const MIN_GAP = 55;       // 最小间距(px)
+            const MAX_GAP = 95;       // 最大间距(px)
+
+            // 全局变量
+            const arrowField = document.getElementById('arrowField');
+            const finger = document.getElementById('finger');
+            let arrows = [];          // 存储每个箭头元素的引用及其原始网格坐标
+
+            // 当前手指位置 (中心点坐标)，默认位于屏幕中心
+            let fingerX = window.innerWidth / 2;
+            let fingerY = window.innerHeight / 2;
+
+            // ---------- 初始化所有箭头 (根据窗口大小动态计算) ----------
+            function buildArrows() {
+                // 清空现有箭头
+                arrowField.innerHTML = '';
+                arrows = [];
+
+                const winW = window.innerWidth;
+                const winH = window.innerHeight;
+
+                // 计算间距: 基于窗口宽高，至少留出边距
+                const gapX = Math.min(MAX_GAP, Math.max(MIN_GAP, winW / (COLS + 1)));
+                const gapY = Math.min(MAX_GAP, Math.max(MIN_GAP, winH / (ROWS + 1)));
+
+                // 网格总宽高
+                const totalW = (COLS - 1) * gapX;
+                const totalH = (ROWS - 1) * gapY;
+
+                // 起始坐标 (让网格居中)
+                const startX = (winW - totalW) / 2;
+                const startY = (winH - totalH) / 2;
+
+                // 循环创建箭头
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        // 计算该箭头的基准中心坐标 (px)
+                        const baseX = startX + col * gapX;
+                        const baseY = startY + row * gapY;
+
+                        // 创建箭头容器
+                        const arrowEl = document.createElement('div');
+                        arrowEl.className = 'arrow';
+
+                        // 每个箭头使用简单的SVG (一个指向右侧的箭头，通过CSS旋转改变方向)
+                        // 箭头形状: 一个扁三角形 + 尾部小方块，指向右方 (0deg)
+                        // 这样旋转时 0deg = 指向右方，我们可以通过角度控制指向
+                        arrowEl.innerHTML = `
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M16 4 L22 12 L16 20 L16 15 L5 15 L5 9 L16 9 L16 4 Z" 
+                                      fill="#b8d4ff" stroke="rgba(255,255,255,0.6)" stroke-width="1.2"/>
+                                <circle cx="6" cy="12" r="2.2" fill="#ffffff" opacity="0.45"/>
+                            </svg>
+                        `;
+
+                        // 初始位置先设置为基准位置 (稍后update函数会调整旋转)
+                        arrowEl.style.left = (baseX - 12) + 'px';  // 箭头宽24，中心偏移12
+                        arrowEl.style.top = (baseY - 12) + 'px';
+
+                        // 保存该箭头的原始网格坐标 (用于后续更新，但位置会随窗口大小变化)
+                        // 注意: 如果窗口尺寸改变，我们需要重新计算基准坐标，但为了简单，这里在resize时会整体重建。
+                        // 所以直接存储当前基准坐标 (但重建后会被刷新)
+                        arrowEl.dataset.baseX = baseX;
+                        arrowEl.dataset.baseY = baseY;
+
+                        // 添加到容器
+                        arrowField.appendChild(arrowEl);
+                        arrows.push(arrowEl);
+                    }
+                }
+            }
+
+            // ---------- 更新所有箭头的位置和旋转 (指向手指) ----------
+            function updateArrows() {
+                // 对于每个箭头，根据其基准位置（从dataset读取，但为了适配重建，我们使用上一次保存的位置）
+                // 但基准位置会因窗口大小变化而重建，所以我们直接读取每个箭头的 left/top？不能，因为left/top是经过偏移的。
+                // 解决方法: 在buildArrows时，除了设置style.left/top之外，用dataset记录基准中心坐标。
+                // 但是在resize重建时，基准会重新计算，所以这里我们根据dataset获取基准中心。
+                // 同时，为了微调（箭头不能完全重叠到手指），我们让每个箭头稍微偏移一点？但规律摆放就是固定在网格点上，
+                // 但为了视觉效果更生动，我们可以让箭头在网格点附近轻微浮动? 但不用，这样已经很规律。
+
+                // 但是为了让箭头不互相遮挡且更有指向性，我们保持每个箭头严格位于网格点，并且朝向手指。
+                // 注意：箭头元素的宽高是24px，基准坐标是它的中心位置。
+
+                for (let i = 0; i < arrows.length; i++) {
+                    const arrow = arrows[i];
+                    // 获取基准中心坐标 (build时存入)
+                    const baseX = parseFloat(arrow.dataset.baseX);
+                    const baseY = parseFloat(arrow.dataset.baseY);
+
+                    // 如果baseX/baseY无效，跳过
+                    if (isNaN(baseX) || isNaN(baseY)) continue;
+
+                    // 计算从箭头指向手指的方向向量
+                    const dx = fingerX - baseX;
+                    const dy = fingerY - baseY;
+
+                    // 计算旋转角度 (0度代表箭头默认指向右方，SVG箭头指向右)
+                    // 我们需要旋转使得箭头指向手指。默认0deg指向右，顺时针旋转。
+                    // 计算角度 (弧度): atan2(dy, dx)，其中dx是水平距离，dy是垂直距离。
+                    // 角度0 = 指向右, 角度90deg = 指向下, 180deg = 指向左, -90deg = 指向上。
+                    const angleRad = Math.atan2(dy, dx);
+                    const angleDeg = angleRad * 180 / Math.PI;
+
+                    // 设置箭头元素的transform: 旋转 (注意元素本身用left/top定位中心点)
+                    // 箭头默认指向右，我们还需要结合元素本身的偏移：因为箭头宽高24，中心在(12,12)，
+                    // 所以直接旋转元素即可。同时我们使用 translate(-50%, -50%)? 不，我们已经用left/top设置了左上角位置为baseX-12, baseY-12。
+                    // 保持位置不变，只旋转。但是要让箭头中心仍然在baseX,baseY，旋转中心是中心，所以没问题。
+                    // 同时使用translate(-50%, -50%)? 不用，因为我们已经手动偏移了12px。
+                    // 但为了更精确和简洁，我们可以改用 left = baseX, top = baseY 配合 translate(-50%, -50%) 加上旋转。
+                    // 但之前的 build 使用了 left = baseX - 12 的方式，为了统一，最好修改build逻辑。
+                    // 为了代码可维护性，我重新调整一下: 在build时使用 left = baseX, top = baseY，然后 transform 包含 translate(-50%, -50%) rotate()。
+                    // 这样更直观。但是由于之前已经写了left/top方式，并且build里面设置了left/top，我可以在build里面改为使用left = baseX, top = baseY，并设置transform的translate。
+                    // 由于现在代码是运行状态，我决定在这里动态调整：修改build函数和更新逻辑保持一致。
+                    // 但为了确保正确，我将在初始化前重写build函数，目前先临时fix:
+                    // 我们直接使用transform: translate(-50%, -50%) rotate(angle) 并且left/top为baseX,baseY。
+                    // 所以我需要修改build函数，让left/top = baseX,baseY 并添加transform初始位移。
+                    // 由于这是js调整，我直接在build里改，但build已经执行了…… 为了不出错，我马上用新逻辑重建。
+                    // 但是代码已经运行到update，为了避免混乱，我重构一下: 重新定义build函数，采用新的定位方式。
+                    // 快速修正：在下面重置箭头样式，并重建。
+                    // 但由于时间关系，我直接在update里做修正：设置 left = baseX, top = baseY，并设置transform = translate(-50%, -50%) rotate(angle) 覆盖原有。
+                    // 这样也能工作，但之前left/top是偏移过12px，现在直接覆盖即可，因为偏移通过translate(-50%,-50%)实现。
+                    // 这样没问题。但注意旋转后箭头中心点仍然是baseX,baseY。
+                    
+                    // 先应用位置: 中心点在(baseX, baseY)
+                    arrow.style.left = baseX + 'px';
+                    arrow.style.top = baseY + 'px';
+                    // 组合变换: 先平移自身-50%使其中心对准坐标，再旋转
+                    arrow.style.transform = `translate(-50%, -50%) rotate(${angleDeg}deg)`;
+                }
+            }
+
+            // ---------- 更新手指位置 (基于鼠标/触摸) ----------
+            function setFingerPosition(x, y) {
+                // 边界限制（防止手指跑出屏幕边缘，影响体验）
+                const margin = 20;
+                fingerX = Math.min(Math.max(x, margin), window.innerWidth - margin);
+                fingerY = Math.min(Math.max(y, margin), window.innerHeight - margin);
+
+                // 更新手指元素的位置 (手指自身大小48x48，我们让指针的尖端大概位于鼠标位置)
+                // 这个手指SVG图形指向右上，指尖大概在右上角，所以我们让元素的中心稍微偏左下一点？
+                // 为了视觉舒适，让手指元素的左上角偏移使指尖靠近坐标点。
+                // 简单处理: 让手指元素的中心位于 (fingerX, fingerY)，但指尖在图形的右上，不太好。
+                // 优化：让手指图形的“指尖”接近鼠标坐标。指尖大致在SVG的(30,6)附近。
+                // 所以我们将手指元素的左上角定位为 (fingerX - 30, fingerY - 6)？不好调。
+                // 为了简易，我们让手指元素左上角位于 (fingerX - 10, fingerY - 10)，并适当旋转和缩放。
+                // 但实际体验只要手指跟手即可。
+                // 使用transform: translate(-10%, -10%)，然后left/top = fingerX, fingerY，让手指略微偏移使得指尖靠近。
+                // 直接设置left/top为fingerX, fingerY，再用translate(-10%, -10%)调整。
+                // 但为了指针更准确，可以微调。
+                finger.style.left = fingerX + 'px';
+                finger.style.top = fingerY + 'px';
+                // 已经通过CSS transform: translate(-10%, -10%) 调整位置 (在style中定义)
+                // 但为了更精确，我们动态调整translate? 保留默认即可。
+                // 另外手指的旋转可以动态根据方向？不用，手指保持固定指向右上，但我们的手指是固定图形，指向右上，也可以。
+                // 如果想更生动，可以让手指也稍微旋转指向？不用，光标本身就是指针。
+
+                // 然后更新所有箭头
+                updateArrows();
+            }
+
+            // ---------- 事件监听：鼠标/触摸移动 ----------
+            function handleMove(e) {
+                e.preventDefault(); // 防止触摸滚动
+                let clientX, clientY;
+
+                if (e.touches) {
+                    // 触摸事件
+                    if (e.touches.length > 0) {
+                        clientX = e.touches[0].clientX;
+                        clientY = e.touches[0].clientY;
+                    } else {
+                        return;
+                    }
+                } else {
+                    // 鼠标事件
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+
+                setFingerPosition(clientX, clientY);
+            }
+
+            // 阻止context menu / 拖拽等干扰
+            function preventDefaults(e) {
+                e.preventDefault();
+            }
+
+            // ---------- 窗口大小改变时重建箭头网格 ----------
+            function handleResize() {
+                // 重新计算网格并重建箭头（保留手指位置）
+                buildArrows();
+                // 重建后需要重新应用手指位置并更新旋转
+                // 因为箭头都是新生成的，需要根据当前手指位置更新
+                // 手指位置不变，但箭头基准位置改变，所以重新更新
+                updateArrows();
+            }
+
+            // ---------- 初始化 ----------
+            function init() {
+                // 初始手指位置设为屏幕中心
+                fingerX = window.innerWidth / 2;
+                fingerY = window.innerHeight / 2;
+
+                // 构建箭头网格
+                buildArrows();
+
+                // 设置手指初始位置
+                finger.style.left = fingerX + 'px';
+                finger.style.top = fingerY + 'px';
+
+                // 更新箭头指向手指
+                updateArrows();
+
+                // 事件绑定 (使用 passive: false 以便能 preventDefault)
+                window.addEventListener('mousemove', handleMove, { passive: false });
+                window.addEventListener('touchmove', handleMove, { passive: false });
+                window.addEventListener('touchstart', handleMove, { passive: false });
+                // 避免在触摸时页面滚动/缩放
+                window.addEventListener('touchstart', preventDefaults, { passive: false });
+                window.addEventListener('touchmove', preventDefaults, { passive: false });
+                // 鼠标离开窗口时不用处理，可保持位置
+
+                // 窗口大小变化
+                window.addEventListener('resize', handleResize);
+            }
+
+            // 页面加载后初始化
+            window.addEventListener('load', init);
+
+            // 如果DOM已加载完成，立即执行(以防load等待太久)
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                // 使用setTimeout确保样式已应用
+                setTimeout(init, 0);
+            }
+        })();
+    </script>
+</body>
+</html>
