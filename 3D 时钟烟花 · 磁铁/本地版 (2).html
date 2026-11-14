@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>3D 时钟烟花 · 磁铁</title>
+  <style>
+    html, body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
+    canvas { display: block; }
+    #info {
+      position: fixed; left: 12px; top: 12px;
+      color: #0f0; font-size: 13px;
+      font-family: monospace;
+      z-index: 1000;
+      background: rgba(0,0,0,0.7);
+      padding: 6px 10px;
+      border-radius: 6px;
+      line-height: 1.5;
+      pointer-events: none;
+    }
+    #hint {
+      position: fixed; left: 50%; bottom: 20px;
+      transform: translateX(-50%);
+      color: #fff; font-size: 14px;
+      opacity: 0.6;
+      z-index: 1000;
+      pointer-events: none;
+      text-align: center;
+      max-width: 90vw;
+    }
+
+    /* ---------- 设置面板 ---------- */
+    #settingsBtn {
+      position: fixed; right: 12px; top: 12px;
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.72);
+      border: 1px solid rgba(0,255,0,0.55);
+      color: #0f0;
+      font-size: 21px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      z-index: 2000;
+      user-select: none; -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      transition: transform .25s ease, background .2s ease, box-shadow .2s ease;
+      box-shadow: 0 0 12px rgba(0,255,0,0.25);
+    }
+    #settingsBtn:hover { background: rgba(0,255,0,0.15); }
+    #settingsBtn.active { transform: rotate(90deg); background: rgba(0,255,0,0.18); }
+
+    #settingsPanel {
+      position: fixed; right: 0; top: 0;
+      width: 306px; max-width: 88vw; height: 100%;
+      background: rgba(6,10,6,0.94);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      border-left: 1px solid rgba(0,255,0,0.32);
+      box-shadow: -8px 0 28px rgba(0,0,0,0.75);
+      color: #b9d9c4;
+      font-family: monospace; font-size: 12px;
+      z-index: 1900;
+      display: flex; flex-direction: column;
+      transform: translateX(105%);
+      transition: transform .28s cubic-bezier(.4,0,.2,1);
+      touch-action: pan-y;
+      overscroll-behavior: contain;
+    }
+    #settingsPanel.open { transform: translateX(0); }
+
+    .sp-head {
+      flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid rgba(0,255,0,0.18);
+      color: #0f0; font-size: 14px; letter-spacing: 1px;
+    }
+    .sp-close {
+      cursor: pointer; padding: 2px 8px; border-radius: 4px;
+      color: #6d9; font-size: 15px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .sp-close:hover { background: rgba(0,255,0,0.15); color: #0f0; }
+
+    .sp-body {
+      flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
+      padding: 12px 16px 18px;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+    }
+    .sp-body::-webkit-scrollbar { width: 6px; }
+    .sp-body::-webkit-scrollbar-thumb { background: rgba(0,255,0,0.3); border-radius: 3px; }
+
+    .sp-group { margin-bottom: 18px; }
+    .sp-title {
+      color: #0f0; font-size: 12px; letter-spacing: 1px;
+      padding-bottom: 6px; margin-bottom: 10px;
+      border-bottom: 1px dashed rgba(0,255,0,0.22);
+      opacity: .9;
+    }
+    .sp-row { margin-bottom: 12px; }
+    .sp-row label {
+      display: flex; justify-content: space-between; align-items: baseline;
+      color: #9fc0ab; margin-bottom: 5px;
+      user-select: none; -webkit-user-select: none;
+    }
+    .sp-val { color: #0f0; font-weight: bold; }
+
+    .sp-row input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 4px; margin: 0;
+      background: rgba(0,255,0,0.18);
+      border-radius: 2px; outline: none; cursor: pointer;
+    }
+    .sp-row input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 15px; height: 15px; border-radius: 50%;
+      background: #0f0; border: none; cursor: pointer;
+      box-shadow: 0 0 8px rgba(0,255,0,0.85);
+    }
+    .sp-row input[type=range]::-moz-range-thumb {
+      width: 15px; height: 15px; border: none; border-radius: 50%;
+      background: #0f0; cursor: pointer;
+      box-shadow: 0 0 8px rgba(0,255,0,0.85);
+    }
+    .sp-row input[type=range]::-moz-range-track {
+      height: 4px; background: rgba(0,255,0,0.18); border-radius: 2px;
+    }
+
+    .sp-foot {
+      flex: 0 0 auto;
+      display: flex; gap: 10px;
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+      border-top: 1px solid rgba(0,255,0,0.18);
+    }
+    .sp-foot button {
+      flex: 1 1 0;
+      padding: 9px 0;
+      background: rgba(0,255,0,0.08);
+      border: 1px solid rgba(0,255,0,0.45);
+      border-radius: 6px;
+      color: #0f0; font-family: monospace; font-size: 12px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: background .18s ease;
+    }
+    .sp-foot button:hover { background: rgba(0,255,0,0.22); }
+    .sp-foot button:active { background: rgba(0,255,0,0.32); }
+  </style>
+</head>
+<body>
+
+<div id="info">
+  目标点: <span id="cnt">?</span> · 已填: <span id="filled">0</span><br>
+  火箭: <span id="rk">0</span> · 火星: <span id="sh">0</span> · 爆炸: <span id="ex">0</span> · 秒球: <span id="sb">0</span>
+</div>
+<div id="hint">双指捏合 → 缩放 · 双指拖动 → 旋转 · 手指划过 → 推开球 · 右上角 ⚙ → 设置</div>
+
+<div id="settingsBtn" title="设置">⚙</div>
+
+<div id="settingsPanel">
+  <div class="sp-head">
+    <span>⚙ 设置</span>
+    <span class="sp-close" id="spClose">✕</span>
+  </div>
+  <div class="sp-body"></div>
+  <div class="sp-foot">
+    <button id="btnRebuild">重新拼合</button>
+    <button id="btnReset">恢复默认</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+  import * as THREE from 'three';
+
+  // ============================================================
+  // ★★★ 所有可调参数都在这里（可在右上角 ⚙ 设置面板中实时调整）★★★
+  // ============================================================
+
+  // ---- 文字内容 ----
+  const ROWS = [
+    { kind: 'fixed', text: '✡' },
+    { kind: 'fixed', text: '❤中国万岁❤' },
+    { kind: 'fixed', text: '🎉国庆快乐🎉' },
+    { kind: 'date' },
+    { kind: 'time' }
+  ];
+
+  // ---- 字体 / 采样 ----
+  let FONT_SIZE   = 110;   // 字号（像素）
+  let FONT_FAMILY = 'monospace';  // 字体
+  let FIDELITY    = 5;     // 采样间隔，越小点越密
+  let LINE_GAP    = 24;    // 行间距
+
+  // ---- 相机 ----
+  let FOV        = 750;    // 视野角度
+  let CAM_MARGIN = 1.3;    // 整体缩放，越大越远
+  let CAM_MIN_R  = 0.3;    // 最近缩放比例
+  let CAM_MAX_R  = 10;     // 最远缩放比例
+  let ROT_SPEED  = 0.008;  // 双指旋转灵敏度
+  const PHI_MIN  = 0.2;
+  const PHI_MAX  = Math.PI - 0.2;
+
+  // ---- 3D 深度 ----
+  let DEPTH = 30;          // 字在 z 方向的厚度
+
+  // ---- 动画速度（帧数，越小越快）----
+  let SHARD_LIFE       = 30;  // 火星飞行总帧数
+  let BLAST_FRAMES     = 10;  // 火星前段扩散帧数
+  let SEC_LIFE         = 30;  // 秒球炸开重生总帧数
+  let SEC_BLAST_FRAMES = 8;   // 秒球前段炸开帧数
+
+  // ---- 火箭 ----
+  let ROCKET_FRAMES_MIN = 0;
+  let ROCKET_FRAMES_MAX = 1;
+  let ROCKET_SHARDS     = 5000;
+  let ROCKET_REFILL_MS  = 20;
+  const SHARD_MAX        = 1000000;
+  const SHARD_REFILL_MAX = 9999999;
+
+  // ---- 球 ----
+  const BALL_R      = 2;
+  const BALL_SEGS   = 8;
+  const BALL_RINGS  = 6;
+  const MAX_STATIC  = 5000;
+  const MAX_DYNAMIC = 5000;
+  let SEC_SCALE   = 0.9;
+
+  // ---- 渐变颜色：左上红 → 右下黄 ----
+  let HUE_START  = 0;
+  let HUE_END    = 1000;
+  let LIGHTNESS  = 0.6;
+  let SATURATION = 1.0;
+
+  // ---- ★ 磁铁效果 ----
+  let MAGNET_RADIUS = 175.5;   // 屏幕像素半径
+  let MAGNET_FORCE  = 97.5;    // 推开距离（世界单位）
+  let MAGNET_EASE   = 0.25;    // 回位速度
+
+  // ============================================================
+  // 以下代码不用改
+  // ============================================================
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+
+  const camera = new THREE.PerspectiveCamera(
+    FOV, window.innerWidth / window.innerHeight, 0.1, 5000
+  );
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  document.body.appendChild(renderer.domElement);
+
+  const off = document.createElement('canvas');
+  const offCtx = off.getContext('2d', { willReadFrequently: true });
+  let fontStr = `900 ${FONT_SIZE}px ${FONT_FAMILY}`;
+  offCtx.font = fontStr;
+
+  let W = window.innerWidth;
+  let H = window.innerHeight;
+
+  let BASE_DIST = (H * CAM_MARGIN) / (2 * Math.tan((FOV * Math.PI) / 360));
+
+  let camDist  = BASE_DIST;
+  let camTheta = 0;
+  let camPhi   = Math.PI / 2;
+
+  let CAM_MIN = BASE_DIST * CAM_MIN_R;
+  let CAM_MAX = BASE_DIST * CAM_MAX_R;
+
+  let targets = [];
+  const shards = [];
+  const rockets = [];
+  let explodeCount = 0;
+  const secBalls = [];
+
+  let currentValues = { date: '', hour: '', min: '', sec: '' };
+
+  function gradHue(x, y) {
+    const tx = (x + W / 2) / W;
+    const ty = (H / 2 - y) / H;
+    const t = Math.max(0, Math.min(1, (tx + ty) / 2));
+    return HUE_START + t * (HUE_END - HUE_START);
+  }
+
+  function textToTargets(text, row, part) {
+    offCtx.font = fontStr;
+    let w = offCtx.measureText(text).width;
+    if (w < 10) w = FONT_SIZE * 4;
+
+    const pad = 20;
+    const offW = Math.ceil(w) + pad * 2;
+    const offH = FONT_SIZE + pad * 2;
+
+    off.width = offW;
+    off.height = offH;
+    offCtx.font = fontStr;
+    offCtx.fillStyle = '#fff';
+    offCtx.textBaseline = 'top';
+    offCtx.textAlign = 'center';
+    offCtx.fillText(text, offW / 2, pad);
+
+    const imgData = offCtx.getImageData(0, 0, offW, offH);
+    const data = imgData.data;
+
+    const totalH = ROWS.length * FONT_SIZE + (ROWS.length - 1) * LINE_GAP;
+    const rowY = -totalH / 2 + row * (FONT_SIZE + LINE_GAP) + FONT_SIZE / 2;
+
+    const offsetX = -offW / 2;
+    const offsetY = rowY - offH / 2;
+
+    const list = [];
+    for (let y = 0; y < offH; y += FIDELITY) {
+      for (let x = 0; x < offW; x += FIDELITY) {
+        const idx = (y * offW + x) * 4;
+        if (data[idx + 3] > 128) {
+          const wx = x + offsetX;
+          const wy = -(y + offsetY);
+          list.push({
+            x: wx, y: wy,
+            z: (Math.random() - 0.5) * DEPTH,
+            hue: gradHue(wx, wy),
+            row, part,
+            taken: false, filled: false,
+            ox: 0, oy: 0
+          });
+        }
+      }
+    }
+    return list;
+  }
+
+  function getTimePart(part) {
+    const hourStr = currentValues.hour + ':';
+    const minStr  = currentValues.min + ':';
+    const secStr  = currentValues.sec;
+    const full = hourStr + minStr + secStr;
+
+    offCtx.font = fontStr;
+    let w = offCtx.measureText(full).width;
+    if (w < 10) w = FONT_SIZE * 4;
+
+    const pad = 20;
+    const offW = Math.ceil(w) + pad * 2;
+    const offH = FONT_SIZE + pad * 2;
+
+    off.width = offW;
+    off.height = offH;
+    offCtx.font = fontStr;
+    offCtx.fillStyle = '#fff';
+    offCtx.textBaseline = 'top';
+    offCtx.textAlign = 'center';
+    offCtx.fillText(full, offW / 2, pad);
+
+    const imgData = offCtx.getImageData(0, 0, offW, offH);
+    const data = imgData.data;
+
+    const totalH = ROWS.length * FONT_SIZE + (ROWS.length - 1) * LINE_GAP;
+    const timeRowIndex = ROWS.length - 1;
+    const rowY = -totalH / 2 + timeRowIndex * (FONT_SIZE + LINE_GAP) + FONT_SIZE / 2;
+
+    const offsetX = -offW / 2;
+    const offsetY = rowY - offH / 2;
+
+    const wHour = offCtx.measureText(hourStr).width;
+    const wMin  = offCtx.measureText(minStr).width;
+
+    const startX = offW / 2 - w / 2;
+    const hourEnd = startX + wHour;
+    const minEnd  = hourEnd + wMin;
+
+    const list = [];
+    for (let y = 0; y < offH; y += FIDELITY) {
+      for (let x = 0; x < offW; x += FIDELITY) {
+        const idx = (y * offW + x) * 4;
+        if (data[idx + 3] > 128) {
+          let p;
+          if (x < hourEnd) p = 'hour';
+          else if (x < minEnd) p = 'min';
+          else p = 'sec';
+          if (p !== part) continue;
+
+          const wx = x + offsetX;
+          const wy = -(y + offsetY);
+          list.push({
+            x: wx, y: wy,
+            z: (Math.random() - 0.5) * DEPTH,
+            hue: gradHue(wx, wy),
+            row: timeRowIndex, part,
+            taken: false, filled: false,
+            ox: 0, oy: 0
+          });
+        }
+      }
+    }
+    return list;
+  }
+
+  function buildStaticTargets() {
+    targets = [];
+
+    let row = 0;
+    for (const r of ROWS) {
+      if (r.kind === 'fixed') {
+        targets = targets.concat(textToTargets(r.text, row, 'fixed'));
+      } else if (r.kind === 'date') {
+        const now = new Date();
+        currentValues.date =
+          now.getFullYear() + '-' +
+          String(now.getMonth() + 1).padStart(2, '0') + '-' +
+          String(now.getDate()).padStart(2, '0');
+        targets = targets.concat(textToTargets(currentValues.date, row, 'date'));
+      } else if (r.kind === 'time') {
+        const now = new Date();
+        currentValues.hour = String(now.getHours()).padStart(2, '0');
+        currentValues.min  = String(now.getMinutes()).padStart(2, '0');
+        currentValues.sec  = String(now.getSeconds()).padStart(2, '0');
+        targets = targets.concat(getTimePart('hour'));
+        targets = targets.concat(getTimePart('min'));
+      }
+      row++;
+    }
+
+    document.getElementById('cnt').textContent = targets.length;
+  }
+
+  function buildSecBalls() {
+    const secTargets = getTimePart('sec');
+    secBalls.length = 0;
+
+    for (let i = 0; i < secTargets.length; i++) {
+      const t = secTargets[i];
+      secBalls.push({
+        x: t.x, y: t.y, z: t.z,
+        tx: t.x, ty: t.y, tz: t.z,
+        sx: t.x, sy: t.y, sz: t.z,
+        hue: t.hue,
+        vx: 0, vy: 0, vz: 0,
+        life: SEC_LIFE,
+        maxLife: SEC_LIFE * (0.6 + Math.random() * 0.8),
+        ox: 0, oy: 0
+      });
+    }
+  }
+
+  function resetSecBalls() {
+    const secTargets = getTimePart('sec');
+    if (secBalls.length !== secTargets.length) {
+      buildSecBalls();
+      return;
+    }
+    for (let i = 0; i < secTargets.length; i++) {
+      const t = secTargets[i];
+      const b = secBalls[i];
+      b.tx = t.x; b.ty = t.y; b.tz = t.z;
+      b.hue = t.hue;
+      b.sx = b.x; b.sy = b.y; b.sz = b.z;
+      const u = Math.random() * 2 - 1;
+      const theta = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(1 - u * u);
+      const sp = 2 + Math.random() * 4;
+      b.vx = r * Math.cos(theta) * sp;
+      b.vy = r * Math.sin(theta) * sp;
+      b.vz = u * sp;
+      b.life = 0;
+      b.maxLife = SEC_LIFE * (0.6 + Math.random() * 0.8);
+    }
+  }
+
+  function tick() {
+    const now = new Date();
+    const newDate =
+      now.getFullYear() + '-' +
+      String(now.getMonth() + 1).padStart(2, '0') + '-' +
+      String(now.getDate()).padStart(2, '0');
+    const newHour = String(now.getHours()).padStart(2, '0');
+    const newMin  = String(now.getMinutes()).padStart(2, '0');
+    const newSec  = String(now.getSeconds()).padStart(2, '0');
+
+    let staticChanged = false;
+    if (newDate !== currentValues.date) {
+      currentValues.date = newDate; rebuildDateRow(); staticChanged = true;
+    }
+    if (newHour !== currentValues.hour) {
+      currentValues.hour = newHour; rebuildTimePart('hour'); staticChanged = true;
+    }
+    if (newMin !== currentValues.min) {
+      currentValues.min = newMin; rebuildTimePart('min'); staticChanged = true;
+    }
+    if (newSec !== currentValues.sec) {
+      currentValues.sec = newSec;
+      if (secBalls.length > 0) {
+        resetSecBalls();
+      }
+    }
+    if (staticChanged) {
+      document.getElementById('cnt').textContent = targets.length;
+    }
+  }
+
+  function findDateRowIndex() {
+    for (let i = 0; i < ROWS.length; i++) if (ROWS[i].kind === 'date') return i;
+    return -1;
+  }
+
+  function rebuildDateRow() {
+    const idx = findDateRowIndex();
+    if (idx < 0) return;
+    targets = targets.filter(t => t.part !== 'date');
+    for (let i = shards.length - 1; i >= 0; i--) {
+      if (shards[i].target && shards[i].target.part === 'date') shards.splice(i, 1);
+    }
+    targets = targets.concat(textToTargets(currentValues.date, idx, 'date'));
+    for (let i = 0; i < 4; i++) spawnRocket('date');
+  }
+
+  function rebuildTimePart(part) {
+    targets = targets.filter(t => t.part !== part);
+    for (let i = shards.length - 1; i >= 0; i--) {
+      if (shards[i].target && shards[i].target.part === part) shards.splice(i, 1);
+    }
+    targets = targets.concat(getTimePart(part));
+    for (let i = 0; i < 3; i++) spawnRocket(part);
+  }
+
+  function claimTarget(partFilter) {
+    const N = targets.length;
+    if (N === 0) return null;
+    const start = Math.floor(Math.random() * N);
+    for (let k = 0; k < N; k++) {
+      const t = targets[(start + k) % N];
+      if (t.taken || t.filled) continue;
+      if (partFilter && t.part !== partFilter) continue;
+      t.taken = true;
+      return t;
+    }
+    return null;
+  }
+
+  function spawnShard(x, y, z, hue, partFilter) {
+    if (shards.length >= SHARD_MAX) return;
+    const target = claimTarget(partFilter);
+    if (!target) return;
+
+    const u = Math.random() * 2 - 1;
+    const theta = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(1 - u * u);
+    const blastSpeed = 3 + Math.random() * 6;
+
+    shards.push({
+      sx: x, sy: y, sz: z,
+      x, y, z,
+      vx: r * Math.cos(theta) * blastSpeed,
+      vy: r * Math.sin(theta) * blastSpeed,
+      vz: u * blastSpeed,
+      target, hue,
+      myHue: target.hue,
+      size: 1,
+      life: 0,
+      maxLife: SHARD_LIFE * (0.6 + Math.random() * 1.0)
+    });
+  }
+
+  function spawnRocket(partFilter) {
+    const startY = -H / 2 - 40;
+    const targetY = H * 0.1 + Math.random() * H * 0.25;
+    const frames = ROCKET_FRAMES_MIN
+      + Math.random() * (ROCKET_FRAMES_MAX - ROCKET_FRAMES_MIN);
+    const vy = (targetY - startY) / frames;
+
+    rockets.push({
+      x: (Math.random() - 0.5) * W * 0.7,
+      y: startY,
+      z: (Math.random() - 0.5) * DEPTH,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: vy,
+      vz: 0,
+      hue: Math.random() * 360,
+      explodeY: targetY,
+      exploded: false,
+      partFilter: partFilter || null
+    });
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  const ballGeo = new THREE.SphereGeometry(BALL_R, BALL_SEGS, BALL_RINGS);
+  const ballMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+  const instStatic = new THREE.InstancedMesh(ballGeo, ballMat, MAX_STATIC);
+  instStatic.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  instStatic.instanceColor = new THREE.InstancedBufferAttribute(
+    new Float32Array(MAX_STATIC * 3), 3
+  );
+  instStatic.frustumCulled = false;
+  scene.add(instStatic);
+
+  const instDynamic = new THREE.InstancedMesh(ballGeo, ballMat, MAX_DYNAMIC);
+  instDynamic.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  instDynamic.instanceColor = new THREE.InstancedBufferAttribute(
+    new Float32Array(MAX_DYNAMIC * 3), 3
+  );
+  instDynamic.frustumCulled = false;
+  scene.add(instDynamic);
+
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+
+  // ★ 磁铁状态 + 世界坐标→屏幕坐标
+  const magnet = { active: false, sx: 0, sy: 0, enabled: false };
+  const projVec = new THREE.Vector3();
+  const screenPos = { x: 0, y: 0 };
+  function worldToScreen(x, y, z, out) {
+    projVec.set(x, y, z);
+    projVec.project(camera);
+    out.x = (projVec.x * 0.5 + 0.5) * W;
+    out.y = (-projVec.y * 0.5 + 0.5) * H;
+  }
+
+  buildStaticTargets();
+
+  function respawnRockets() {
+    spawnRocket('fixed'); spawnRocket('fixed'); spawnRocket('fixed');
+    spawnRocket('date');
+    spawnRocket('hour');
+    spawnRocket('min');
+  }
+
+  respawnRockets();
+
+  setInterval(tick, 1000);
+
+  let frame = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    frame++;
+
+    if (secBalls.length === 0 && targets.length > 0) {
+      let filledCount = 0;
+      for (const t of targets) if (t.filled) filledCount++;
+      if (filledCount >= targets.length) {
+        buildSecBalls();
+        document.getElementById('sb').textContent = secBalls.length;
+      }
+    }
+
+    if (frame % ROCKET_REFILL_MS === 0 && shards.length < SHARD_REFILL_MAX) {
+      const partMap = {};
+      for (const t of targets) {
+        if (!t.filled && !t.taken) {
+          partMap[t.part] = (partMap[t.part] || 0) + 1;
+        }
+      }
+      const parts = Object.keys(partMap);
+      if (parts.length > 0) {
+        const p = parts[Math.floor(Math.random() * parts.length)];
+        spawnRocket(p);
+      }
+    }
+
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      const r = rockets[i];
+      r.x += r.vx; r.y += r.vy; r.z += r.vz;
+
+      if (r.y >= r.explodeY && !r.exploded) {
+        r.exploded = true;
+        explodeCount++;
+        document.getElementById('ex').textContent = explodeCount;
+        for (let k = 0; k < ROCKET_SHARDS; k++) {
+          spawnShard(r.x, r.y, r.z, r.hue, r.partFilter);
+        }
+        rockets.splice(i, 1);
+        continue;
+      }
+      if (r.y > H / 2 + 50) rockets.splice(i, 1);
+    }
+
+    for (let i = shards.length - 1; i >= 0; i--) {
+      const s = shards[i];
+      s.life++;
+
+      if (s.target) {
+        const t = Math.min(s.life / s.maxLife, 1);
+        const blastT = Math.min(s.life / BLAST_FRAMES, 1);
+        const bx = s.sx + s.vx * blastT;
+        const by = s.sy + s.vy * blastT;
+        const bz = s.sz + s.vz * blastT;
+
+        s.x = lerp(bx, s.target.x, t);
+        s.y = lerp(by, s.target.y, t);
+        s.z = lerp(bz, s.target.z, t);
+
+        s.size = lerp(1, 0.8, t);
+
+        if (t >= 1) {
+          s.target.filled = true;
+          s.target.taken = false;
+          shards.splice(i, 1);
+          continue;
+        }
+      } else {
+        s.vy -= 1.5;
+        s.size = lerp(s.size, 0.4, 0.06);
+        if (s.y < -H / 2 - 50) { shards.splice(i, 1); continue; }
+        s.x += s.vx; s.y += s.vy; s.z += s.vz;
+      }
+    }
+
+    for (const b of secBalls) {
+      if (b.life < b.maxLife) {
+        b.life++;
+        const t = Math.min(b.life / b.maxLife, 1);
+        const blastT = Math.min(b.life / SEC_BLAST_FRAMES, 1);
+        const bx = b.sx + b.vx * blastT;
+        const by = b.sy + b.vy * blastT;
+        const bz = b.sz + b.vz * blastT;
+        b.x = lerp(bx, b.tx, t);
+        b.y = lerp(by, b.ty, t);
+        b.z = lerp(bz, b.tz, t);
+      } else {
+        b.x = b.tx; b.y = b.ty; b.z = b.tz;
+      }
+    }
+
+    // ★ 拼完后启用磁铁
+    if (!magnet.enabled && targets.length > 0) {
+      let fc = 0;
+      for (const t of targets) if (t.filled) fc++;
+      if (fc >= targets.length) magnet.enabled = true;
+    }
+
+    // ★ 更新磁铁偏移（静态 + 秒球）
+    if (magnet.enabled) {
+      const active = magnet.active;
+      const mx = magnet.sx, my = magnet.sy;
+      const R = MAGNET_RADIUS;
+
+      // 静态目标
+      for (const tg of targets) {
+        if (!tg.filled) continue;
+        worldToScreen(tg.x, tg.y, tg.z, screenPos);
+        const dx = screenPos.x - mx;
+        const dy = screenPos.y - my;
+
+        if (active) {
+          const d = Math.hypot(dx, dy);
+          if (d < R) {
+            const ux = dx / (d + 0.001);
+            const uy = dy / (d + 0.001);
+            const k = 1 - d / R;
+            const tOx = ux * MAGNET_FORCE * k;
+            const tOy = -uy * MAGNET_FORCE * k;
+            tg.ox = lerp(tg.ox, tOx, MAGNET_EASE);
+            tg.oy = lerp(tg.oy, tOy, MAGNET_EASE);
+          } else {
+            tg.ox = lerp(tg.ox, 0, MAGNET_EASE);
+            tg.oy = lerp(tg.oy, 0, MAGNET_EASE);
+          }
+        } else {
+          tg.ox = lerp(tg.ox, 0, MAGNET_EASE);
+          tg.oy = lerp(tg.oy, 0, MAGNET_EASE);
+        }
+      }
+
+      // ★ 秒球
+      for (const b of secBalls) {
+        worldToScreen(b.tx, b.ty, b.tz, screenPos);
+        const dx = screenPos.x - mx;
+        const dy = screenPos.y - my;
+
+        if (active) {
+          const d = Math.hypot(dx, dy);
+          if (d < R) {
+            const ux = dx / (d + 0.001);
+            const uy = dy / (d + 0.001);
+            const k = 1 - d / R;
+            const tOx = ux * MAGNET_FORCE * k;
+            const tOy = -uy * MAGNET_FORCE * k;
+            b.ox = lerp(b.ox, tOx, MAGNET_EASE);
+            b.oy = lerp(b.oy, tOy, MAGNET_EASE);
+          } else {
+            b.ox = lerp(b.ox, 0, MAGNET_EASE);
+            b.oy = lerp(b.oy, 0, MAGNET_EASE);
+          }
+        } else {
+          b.ox = lerp(b.ox, 0, MAGNET_EASE);
+          b.oy = lerp(b.oy, 0, MAGNET_EASE);
+        }
+      }
+    }
+
+    let si = 0;
+    for (const tg of targets) {
+      if (tg.filled) {
+        if (si >= MAX_STATIC) break;
+        dummy.position.set(tg.x + tg.ox, tg.y + tg.oy, tg.z);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+        instStatic.setMatrixAt(si, dummy.matrix);
+        color.setHSL(tg.hue / 360, SATURATION, LIGHTNESS);
+        instStatic.setColorAt(si, color);
+        si++;
+      }
+    }
+    for (let k = si; k < MAX_STATIC; k++) {
+      dummy.position.set(0, 0, 0);
+      dummy.scale.setScalar(0);
+      dummy.updateMatrix();
+      instStatic.setMatrixAt(k, dummy.matrix);
+    }
+    instStatic.count = si;
+    instStatic.instanceMatrix.needsUpdate = true;
+    if (instStatic.instanceColor) instStatic.instanceColor.needsUpdate = true;
+
+    let di = 0;
+    for (const s of shards) {
+      if (di >= MAX_DYNAMIC) break;
+      dummy.position.set(s.x, s.y, s.z);
+      dummy.scale.setScalar(s.size);
+      dummy.updateMatrix();
+      instDynamic.setMatrixAt(di, dummy.matrix);
+      color.setHSL(s.myHue / 360, SATURATION, LIGHTNESS);
+      instDynamic.setColorAt(di, color);
+      di++;
+    }
+    for (const b of secBalls) {
+      if (di >= MAX_DYNAMIC) break;
+      // ★ 秒球渲染加偏移
+      dummy.position.set(b.x + b.ox, b.y + b.oy, b.z);
+      dummy.scale.setScalar(SEC_SCALE);
+      dummy.updateMatrix();
+      instDynamic.setMatrixAt(di, dummy.matrix);
+      color.setHSL(b.hue / 360, SATURATION, LIGHTNESS);
+      instDynamic.setColorAt(di, color);
+      di++;
+    }
+    for (let k = di; k < MAX_DYNAMIC; k++) {
+      dummy.position.set(0, 0, 0);
+      dummy.scale.setScalar(0);
+      dummy.updateMatrix();
+      instDynamic.setMatrixAt(k, dummy.matrix);
+    }
+    instDynamic.count = di;
+    instDynamic.instanceMatrix.needsUpdate = true;
+    if (instDynamic.instanceColor) instDynamic.instanceColor.needsUpdate = true;
+
+    const sinPhi = Math.sin(camPhi);
+    camera.position.set(
+      camDist * sinPhi * Math.sin(camTheta),
+      camDist * Math.cos(camPhi),
+      camDist * sinPhi * Math.cos(camTheta)
+    );
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, 0, 0);
+
+    renderer.render(scene, camera);
+
+    let filled = 0;
+    for (const t of targets) if (t.filled) filled++;
+    document.getElementById('filled').textContent = filled;
+    document.getElementById('rk').textContent = rockets.length;
+    document.getElementById('sh').textContent = shards.length;
+    document.getElementById('sb').textContent = secBalls.length;
+  }
+
+  animate();
+
+  const canvas = renderer.domElement;
+  let pinchActive = false;
+  let pinchStartDist = 0;
+  let pinchStartCam = 0;
+  let dragStartMid = { x: 0, y: 0 };
+  let dragStartTheta = 0;
+  let dragStartPhi = 0;
+
+  function touchDist(a, b) {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+  function touchMid(a, b) {
+    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+  }
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const [a, b] = [e.touches[0], e.touches[1]];
+      pinchActive = true;
+      pinchStartDist = touchDist(a, b);
+      pinchStartCam = camDist;
+      dragStartMid = touchMid(a, b);
+      dragStartTheta = camTheta;
+      dragStartPhi = camPhi;
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      magnet.active = true;
+      magnet.sx = t.clientX;
+      magnet.sy = t.clientY;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && pinchActive) {
+      e.preventDefault();
+      const [a, b] = [e.touches[0], e.touches[1]];
+      const d = touchDist(a, b);
+      if (pinchStartDist > 0) {
+        camDist = THREE.MathUtils.clamp(
+          pinchStartCam * (pinchStartDist / d), CAM_MIN, CAM_MAX
+        );
+      }
+      const mid = touchMid(a, b);
+      const dx = mid.x - dragStartMid.x;
+      const dy = mid.y - dragStartMid.y;
+      camTheta = dragStartTheta - dx * ROT_SPEED;
+      camPhi = THREE.MathUtils.clamp(
+        dragStartPhi - dy * ROT_SPEED, PHI_MIN, PHI_MAX
+      );
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      magnet.active = true;
+      magnet.sx = t.clientX;
+      magnet.sy = t.clientY;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) pinchActive = false;
+    if (e.touches.length === 0) magnet.active = false;
+  }, { passive: false });
+
+  canvas.addEventListener('touchcancel', () => {
+    pinchActive = false;
+    magnet.active = false;
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    magnet.active = true;
+    magnet.sx = e.clientX;
+    magnet.sy = e.clientY;
+  });
+  canvas.addEventListener('mouseleave', () => {
+    magnet.active = false;
+  });
+
+  window.addEventListener('resize', () => {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    camera.aspect = W / H;
+    camera.updateProjectionMatrix();
+    renderer.setSize(W, H);
+    applyCamera();
+  });
+
+  // ============================================================
+  // ★★★ 设置面板 ★★★
+  // ============================================================
+
+  // 变量读写表（把面板上的 key 映射到真正的参数变量）
+  const VARS = {
+    FONT_SIZE:         { get: () => FONT_SIZE,         set: v => { FONT_SIZE = v; } },
+    FIDELITY:          { get: () => FIDELITY,          set: v => { FIDELITY = v; } },
+    LINE_GAP:          { get: () => LINE_GAP,          set: v => { LINE_GAP = v; } },
+    DEPTH:             { get: () => DEPTH,             set: v => { DEPTH = v; } },
+
+    FOV:               { get: () => FOV,               set: v => { FOV = v; } },
+    CAM_MARGIN:        { get: () => CAM_MARGIN,        set: v => { CAM_MARGIN = v; } },
+    CAM_MIN_R:         { get: () => CAM_MIN_R,         set: v => { CAM_MIN_R = v; } },
+    CAM_MAX_R:         { get: () => CAM_MAX_R,         set: v => { CAM_MAX_R = v; } },
+    ROT_SPEED:         { get: () => ROT_SPEED,         set: v => { ROT_SPEED = v; } },
+
+    SHARD_LIFE:        { get: () => SHARD_LIFE,        set: v => { SHARD_LIFE = v; } },
+    BLAST_FRAMES:      { get: () => BLAST_FRAMES,      set: v => { BLAST_FRAMES = v; } },
+    SEC_LIFE:          { get: () => SEC_LIFE,          set: v => { SEC_LIFE = v; } },
+    SEC_BLAST_FRAMES:  { get: () => SEC_BLAST_FRAMES,  set: v => { SEC_BLAST_FRAMES = v; } },
+
+    ROCKET_SHARDS:     { get: () => ROCKET_SHARDS,     set: v => { ROCKET_SHARDS = v; } },
+    ROCKET_REFILL_MS:  { get: () => ROCKET_REFILL_MS,  set: v => { ROCKET_REFILL_MS = v; } },
+    ROCKET_FRAMES_MIN: { get: () => ROCKET_FRAMES_MIN, set: v => { ROCKET_FRAMES_MIN = v; } },
+    ROCKET_FRAMES_MAX: { get: () => ROCKET_FRAMES_MAX, set: v => { ROCKET_FRAMES_MAX = v; } },
+
+    SEC_SCALE:         { get: () => SEC_SCALE,         set: v => { SEC_SCALE = v; } },
+
+    HUE_START:         { get: () => HUE_START,         set: v => { HUE_START = v; } },
+    HUE_END:           { get: () => HUE_END,           set: v => { HUE_END = v; } },
+    LIGHTNESS:         { get: () => LIGHTNESS,         set: v => { LIGHTNESS = v; } },
+    SATURATION:        { get: () => SATURATION,        set: v => { SATURATION = v; } },
+
+    MAGNET_RADIUS:     { get: () => MAGNET_RADIUS,     set: v => { MAGNET_RADIUS = v; } },
+    MAGNET_FORCE:      { get: () => MAGNET_FORCE,      set: v => { MAGNET_FORCE = v; } },
+    MAGNET_EASE:       { get: () => MAGNET_EASE,       set: v => { MAGNET_EASE = v; } }
+  };
+
+  // 记录默认值，用于「恢复默认」
+  const DEFAULTS = {};
+  for (const k in VARS) DEFAULTS[k] = VARS[k].get();
+
+  // 面板结构定义
+  const SETTING_DEFS = [
+    {
+      title: '文字与采样',
+      items: [
+        { key: 'FONT_SIZE', label: '字号',           min: 40, max: 300,  step: 1,    rebuild: true },
+        { key: 'FIDELITY',  label: '采样间隔(小=密)', min: 2,  max: 16,   step: 1,    rebuild: true },
+        { key: 'LINE_GAP',  label: '行间距',         min: 0,  max: 120,  step: 1,    rebuild: true },
+        { key: 'DEPTH',     label: '3D 厚度',        min: 0,  max: 200,  step: 1,    rebuild: true }
+      ]
+    },
+    {
+      title: '相机',
+      items: [
+        { key: 'FOV',         label: '视野',         min: 730, max: 880, step: 1,     onChange: applyCamera },
+        { key: 'CAM_MARGIN',  label: '整体距离',     min: 0.3, max: 4,   step: 0.05,  onChange: applyCamera },
+        { key: 'CAM_MIN_R',   label: '最近缩放倍率', min: 0.05, max: 1,  step: 0.05,  onChange: applyCamera },
+        { key: 'CAM_MAX_R',   label: '最远缩放倍率', min: 1,   max: 20,  step: 0.5,   onChange: applyCamera },
+        { key: 'ROT_SPEED',   label: '旋转灵敏度',   min: 0.001, max: 0.04, step: 0.001 }
+      ]
+    },
+    {
+      title: '动画速度',
+      items: [
+        { key: 'SHARD_LIFE',       label: '火星寿命(帧)',   min: 5, max: 200, step: 1 },
+        { key: 'BLAST_FRAMES',     label: '爆炸扩散(帧)',   min: 1, max: 60,  step: 1 },
+        { key: 'SEC_LIFE',         label: '秒球寿命(帧)',   min: 5, max: 200, step: 1 },
+        { key: 'SEC_BLAST_FRAMES', label: '秒球炸开(帧)',   min: 1, max: 60,  step: 1 }
+      ]
+    },
+    {
+      title: '火箭',
+      items: [
+        { key: 'ROCKET_SHARDS',     label: '每次爆炸火星数', min: 100, max: 20000, step: 100 },
+        { key: 'ROCKET_REFILL_MS',  label: '补发间隔(帧)',   min: 1,   max: 200,   step: 1 },
+        { key: 'ROCKET_FRAMES_MIN', label: '飞行帧数下限',   min: 0,   max: 120,   step: 1 },
+        { key: 'ROCKET_FRAMES_MAX', label: '飞行帧数上限',   min: 0,   max: 120,   step: 1 }
+      ]
+    },
+    {
+      title: '颜色',
+      items: [
+        { key: 'HUE_START',  label: '起始色相', min: 0, max: 1500, step: 1 },
+        { key: 'HUE_END',    label: '结束色相', min: 0, max: 1500, step: 1 },
+        { key: 'LIGHTNESS',  label: '亮度',     min: 0, max: 1,    step: 0.01 },
+        { key: 'SATURATION', label: '饱和度',   min: 0, max: 1,    step: 0.01 }
+      ]
+    },
+    {
+      title: '球 / 磁铁',
+      items: [
+        { key: 'SEC_SCALE',     label: '秒球大小',       min: 0.1, max: 3,   step: 0.05 },
+        { key: 'MAGNET_RADIUS', label: '磁铁影响半径(px)', min: 0,   max: 800, step: 1 },
+        { key: 'MAGNET_FORCE',  label: '推开力度',       min: 0,   max: 500, step: 1 },
+        { key: 'MAGNET_EASE',   label: '回弹速度',       min: 0.01, max: 1,  step: 0.01 }
+      ]
+    }
+  ];
+
+  // ---- 工具 ----
+  function fmt(v) {
+    return String(Math.round(v * 1000) / 1000);
+  }
+
+  // ---- 相机参数应用 ----
+  function applyCamera() {
+    const ratio = camDist / BASE_DIST;
+    camera.fov = FOV;
+    camera.updateProjectionMatrix();
+
+    BASE_DIST = (H * CAM_MARGIN) / (2 * Math.tan((FOV * Math.PI) / 360));
+    CAM_MIN = BASE_DIST * CAM_MIN_R;
+    CAM_MAX = BASE_DIST * CAM_MAX_R;
+    camDist = THREE.MathUtils.clamp(BASE_DIST * ratio, CAM_MIN, CAM_MAX);
+  }
+
+  // ---- 重建（改字体/采样/厚度后需要）----
+  function refreshFont() {
+    fontStr = `900 ${FONT_SIZE}px ${FONT_FAMILY}`;
+    offCtx.font = fontStr;
+  }
+
+  function rebuildAll() {
+    refreshFont();
+
+    shards.length = 0;
+    rockets.length = 0;
+    secBalls.length = 0;
+    explodeCount = 0;
+
+    magnet.enabled = false;
+
+    buildStaticTargets();
+    respawnRockets();
+
+    document.getElementById('ex').textContent = '0';
+    document.getElementById('sb').textContent = '0';
+    document.getElementById('filled').textContent = '0';
+  }
+
+  let rebuildTimer = null;
+  function scheduleRebuild() {
+    if (rebuildTimer) clearTimeout(rebuildTimer);
+    rebuildTimer = setTimeout(() => {
+      rebuildTimer = null;
+      rebuildAll();
+    }, 160);
+  }
+  function doRebuildNow() {
+    if (rebuildTimer) { clearTimeout(rebuildTimer); rebuildTimer = null; }
+    rebuildAll();
+  }
+
+  // ---- 构建面板 ----
+  function buildSettingsUI() {
+    const body = document.querySelector('#settingsPanel .sp-body');
+
+    for (const grp of SETTING_DEFS) {
+      const g = document.createElement('div');
+      g.className = 'sp-group';
+
+      const title = document.createElement('div');
+      title.className = 'sp-title';
+      title.textContent = grp.title;
+      g.appendChild(title);
+
+      for (const item of grp.items) {
+        const ref = VARS[item.key];
+        if (!ref) continue;
+
+        const cur = ref.get();
+
+        const row = document.createElement('div');
+        row.className = 'sp-row';
+
+        const label = document.createElement('label');
+        label.textContent = item.label;
+
+        const valSpan = document.createElement('span');
+        valSpan.className = 'sp-val';
+        valSpan.textContent = fmt(cur);
+        label.appendChild(valSpan);
+
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.min = item.min;
+        input.max = item.max;
+        input.step = item.step;
+        input.value = cur;
+
+        input.addEventListener('input', () => {
+          const v = parseFloat(input.value);
+          ref.set(v);
+          valSpan.textContent = fmt(v);
+
+          if (item.rebuild) {
+            scheduleRebuild();
+          } else if (item.onChange) {
+            item.onChange();
+          }
+        });
+
+        input.addEventListener('change', () => {
+          if (item.rebuild) doRebuildNow();
+        });
+
+        row.appendChild(label);
+        row.appendChild(input);
+        g.appendChild(row);
+
+        item._input = input;
+        item._span = valSpan;
+      }
+
+      body.appendChild(g);
+    }
+  }
+
+  // ---- 恢复默认 ----
+  function resetAll() {
+    for (const grp of SETTING_DEFS) {
+      for (const item of grp.items) {
+        const def = DEFAULTS[item.key];
+        if (def === undefined) continue;
+        VARS[item.key].set(def);
+        if (item._input) item._input.value = def;
+        if (item._span) item._span.textContent = fmt(def);
+      }
+    }
+    applyCamera();
+    doRebuildNow();
+  }
+
+  // ---- 面板开关 ----
+  const panelEl = document.getElementById('settingsPanel');
+  const btnEl   = document.getElementById('settingsBtn');
+
+  btnEl.addEventListener('click', () => {
+    panelEl.classList.toggle('open');
+    btnEl.classList.toggle('active');
+  });
+
+  document.getElementById('spClose').addEventListener('click', () => {
+    panelEl.classList.remove('open');
+    btnEl.classList.remove('active');
+  });
+
+  document.getElementById('btnRebuild').addEventListener('click', () => {
+    doRebuildNow();
+  });
+
+  document.getElementById('btnReset').addEventListener('click', () => {
+    resetAll();
+  });
+
+  // 面板上的触摸/滚轮不要穿透到 canvas
+  panelEl.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+  panelEl.addEventListener('touchmove',  e => e.stopPropagation(), { passive: true });
+  btnEl.addEventListener('touchstart',   e => e.stopPropagation(), { passive: true });
+
+  buildSettingsUI();
+</script>
+
+</body>
+</html>
