@@ -1,0 +1,4031 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<title>踩踏游戏</title>
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, height=device-height, viewport-fit=cover" />
+	<style>
+		body {
+			--barh: 36px;
+			--yoff: 0px;
+			font-family: VT323, sans-serif;
+			background-color: #dae5d6;
+			overflow: hidden;
+			margin: 0;
+			user-select: none;
+			touch-action: pinch-zoom;
+		}
+		a {
+			position: relative;
+			z-index: 1;
+			color: blue;
+		}
+		@font-face {
+			font-family: VT323;
+			font-display: swap;
+			src: url(VT323-Regular.ttf);
+		}
+		.slider {
+			height: 12px;
+			position: relative;
+			top: 3px;
+		}
+		#screen {
+			position: absolute;
+			transform: translate(-50%, -50%);
+			top: 50%;
+			left: 50%;
+		}
+		#err {
+			display: none;
+			position: absolute;
+			transform: translate(-50%, -50%);
+			top: 50%;
+			left: 50%;
+			user-select: text;
+		}
+		#controls {
+			position: relative;
+			top: var(--yoff);
+			height: var(--barh);
+			text-align: center;
+			vertical-align: top;
+		}
+		#outcanvas {
+			position: relative;
+			top: var(--yoff);
+			display: block;
+			margin-left: auto;
+			margin-right: auto;
+		}
+		@media (max-aspect-ratio: 800/516) {
+			#outcanvas { width: min(800px, 100vw); }
+		}
+		@media (min-aspect-ratio: 800/516) {
+			#outcanvas { height: min(480px, calc(100dvh - var(--barh))); }
+		}
+		@media not (display-mode: browser) {
+			body { background-color: black; }
+			#controls { display: none; }
+			@media (max-aspect-ratio: 800/480) { #outcanvas { width: 100vw; } }
+			@media (min-aspect-ratio: 800/480) { #outcanvas { height: 100vh; } }
+		}
+		#stats {
+			position: absolute;
+			z-index: 1;
+			display: none;
+			width: 80%;
+			left: 50%;
+			transform: translate(-50%, 0);
+			height: calc(100% - var(--barh));
+			overflow-y: auto;
+			overflow-x: hidden;
+			user-select: text;
+			font-size: 24px;
+			text-align: left;
+			color: white;
+			padding: 0px 8px 0px 8px;
+			background-color: #00000088;
+			text-shadow: 1px 1px 2px black;
+			touch-action: manipulation;
+		}
+		.upload {
+			display: block;
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100%;
+			height: 100%;
+			box-sizing: border-box;
+			border-width: 2px;
+			border-style: dashed;
+		}
+		#upload {
+			position: absolute;
+			opacity: 0%;
+		}
+	#__dbg_fields{max-height:180px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+</style>
+</head>
+
+<body>
+<div id="screen">
+	<div id="outcanvasd">
+		<div id="stats"></div>
+		<canvas id="outcanvas" width="800" height="480"></canvas>
+	</div>
+	<div id="controls">
+		<a href="https://ikkimikka.net/">更多</a>
+		• <a href="javascript:void(0)" id="fullscreenlink">全屏</a>
+		• <a href="https://patreon.com/ikkimikka">赞助</a>
+		• <a href="https://ikkimikka.net/stompych.png">约稿?</a>
+		<br>
+		音量 <input type="range" min="0" max="100" value="30" class="slider" id="volume" title="音量">
+	</div>
+</div>
+<div id="err"></div>
+<noscript>需要启用 JavaScript。<br></noscript>
+<script src="jszip.min.js"></script>
+<script>
+"use strict";
+
+const url_params = new URLSearchParams(window.location.search);
+
+// #设置 —— 以下均可在角色 JSON 文件中覆盖！
+
+const images = {
+	giant: url_params.get("giant") || "mikka.png",
+	env: url_params.get("env") || "city.png",
+};
+
+const sound_urls = [
+	["sfx/impact1.ogg", "impact"],
+	["sfx/stompboom1.ogg", "stompboom"],
+	["sfx/crush1.ogg", "crush"],
+	["sfx/pop1.ogg", "pop"],
+	["sfx/bigcrush1.ogg", "bigcrush"],
+	["sfx/antscream1.ogg", "scream"],
+	["sfx/egobarUP.ogg", "ego_up"],
+	["sfx/squishy1.ogg", "squishy"],
+	["sfx/antjostle1.ogg", "jostle"],
+	["sfx/squishy2.ogg", "squishy"],
+	["sfx/stompboom2.ogg", "stompboom"],
+	["sfx/stompboom3.ogg", "stompboom"],
+	["sfx/antscream2.ogg", "scream"],
+	["sfx/antscream3.ogg", "scream"],
+	["sfx/antscream4.ogg", "scream"],
+	["sfx/antjostle2.ogg", "jostle"],
+	["sfx/antjostle3.ogg", "jostle"],
+	["sfx/antjostle4.ogg", "jostle"],
+	["sfx/antpanic.ogg", "panic"],
+	["sfx/antpanic2.ogg", "panic"],
+	["sfx/drop1.ogg", "drop"],
+	["sfx/drop2.ogg", "drop"],
+	["sfx/pop2.ogg", "pop"],
+	["sfx/pop3.ogg", "pop"],
+	["sfx/pop4.ogg", "pop"],
+	["sfx/pop5.ogg", "pop"],
+	["sfx/antscream5.ogg", "scream"],
+	["sfx/antscream6.ogg", "scream"],
+	["sfx/egobarDOWN.ogg", "ego_down"],
+	["sfx/impact2.ogg", "impact"],
+	["sfx/impact3.ogg", "impact"],
+	["sfx/beep3.ogg", "beep"],
+	["sfx/softslide.ogg", "slide"]
+];
+
+const giant = {
+	name: "米卡",
+	description: "一只平平无奇的小猫。\n不过挺爱笑的。\n\n-不难取悦\n-有点小害羞",
+	intro_flag_spr: ["giant", 640, 256, 128, 32],
+	congrats: "天啊，它们全都黏在我脚趾缝里了！好恶心。",
+	grades: [
+		["一击击杀", ">=", 100, "攒一大坨然后一脚踩下去！超爽。"],
+		["总逃脱数", "<=", 120, "等等，回来！别让这么多跑掉！"],
+		["总击杀", ">=", 500, "唉，我几乎没踩死几个。多踩点！"],
+		["用时", "<=", 300, "加快点节奏吧，慢吞吞的！"],
+		["团灭次数", "<=", 2, "我刚才居然喘不上气了，太丢人了。"]
+	]
+};
+
+const set = {
+	tiny_name: "蚂蚁",
+	tiny_name_plural: "蚂蚁们",
+	special_name: "特殊",
+	floor_name: "地面",
+	phrase_changes: { },
+	
+	ambience_url: "sfx/ambience.ogg",
+	bg_color: "#dae5d6",
+	seconds_in_day: 600,
+	day_night_cycle: true,
+	combo_duration: 1.5,
+	floor_pos: 12,
+	floor_depth: 8,
+	
+	closed_walls: null, // 最大虫子数量
+	starter_bugs: 100,
+	spawn_rng: 0.08,
+	spawn_ego_base: 0.08,
+	show_pressure: true,
+	show_time: true,
+	show_kills: true,
+	show_leaves: true,
+	small_score: false,
+	bug_love: false,
+	love_chance: 0.05,
+	attachment_dist: 10, // 像素
+	attachment_rng: 30,
+	foreground_shadow: false,
+	shadow_pos: [0, 0],
+	shadow_dist: 600,
+	
+	foreground_spr: false,
+	shadow_spr: false,
+	end_spr: ["giant", 0, 768, 256, 128],
+	bg_spr: ["env", 224, 0, 400, 240],
+	trans_spr: ["env", 32, 96, 64, 64],
+	pointer_spr: ["env", 144, 0, 16, 16],
+	fade_spr: ["env", 32, 32, 16, 16],
+	dark_spr: ["env", 32, 64, 16, 16],
+	heart_spr: ["env", 176, 224, 16, 16],
+	kills_spr: ["env", 0, 0, 32, 16, true],
+	left_spr: ["env", 0, 64, 32, 16, true],
+	timer_spr: ["env", 0, 32, 32, 16, true],
+	pressure_spr: ["env", 112, 64, 16, 112],
+	stat_button_spr: ["env", 160, 64, 64, 32, true],
+	replay_button_spr: ["env", 160, 128, 64, 32, true],
+	reward_button_spr: ["env", 96, 192, 64, 32, false],
+	grade_spr: ["env", 0, 160, 32, 32, false, 3],
+	return_spr: ["env", 0, 128, 32, 32],
+};
+
+const paw = {
+	friction: 2,
+	offset: 0,
+	strength: 1,
+	steamroller: false,
+	speed: [12, 4],
+	max_velocity: 2400,
+	exhaust_pressure: 1.0,
+	exhaust_paw_speed: 6,
+	shake_max: 3,
+	shake_factor: 0.3,
+	shake_reduce: 8,
+	strand_damp: 2,
+	wetness: 0,
+	width: 160,
+	left_limit: -48,
+	right_limit: 48,
+	push_droplets: true,
+	stomp_masks: [[1],[1],[1]],
+	push_y: [60, 60, 24, 0],
+	
+	back_spr: ["giant", 320, 0, 160, 256, true, 3],
+	front_spr: ["giant", 0, 0, 160, 256, true, 3],
+	shadow_end_spr: ["giant", 745, 998, 8, 21],
+	shadow_mid_spr: ["giant", 751, 998, 4, 21],
+	shadow_lattice: true,
+	
+	back_paw_x: 0.4,
+	back_paw_y: 0.85,
+	back_paw_shadow: true,
+	
+	show_stickers_on_upper_state: false,
+	
+	// 体力
+	stam_on: true,
+	stam_sway: 6,
+	stam_sway_amount: 16,
+	stam_loss: 0.6,
+	stam_gain: 8,
+	stam_max: 10,
+	stam_press_mul: 12,
+	stam_exhaust_gain_mul: 4,
+	stam_loss_spr: ["env", 112, 36, 16, 12],
+	stam_gain_spr: ["env", 112, 48, 16, 12],
+};
+
+const ego = {
+	on: true,
+	numbers_on: true,
+	gain_mul: 10,
+	loss_mul: 1,
+	step: 10000000,
+	levels: 6,
+	passive_loss: 2.5,
+	phase_boost: 50,
+	normal_spr: ["giant", 768, 0, 128, 128, true],
+	excite_spr: ["giant", 896, 0, 128, 128, true],
+	exhaust_spr: ["giant", 768, 896, 128, 128],
+	frame_spr: ["giant", 640, 0, 128, 128],
+	bg_spr: ["giant", 640, 128, 128, 128],
+	pipframe_spr: ["env", 64, 0, 16, 16],
+	pip_spr: ["env", 81, 0, 12, 12, true],
+	pip_loss_spr: ["env", 70, 0, 12, 12, true],
+	pip_gain_spr: ["env", 92, 0, 12, 12, true],
+};
+
+const ego_tiers = [
+	{ n: 5,  s: ["env", 0, 240, 32, 32],   c: [50,  50,  255], b: 255, p: 0.9 },
+	{ n: 10, s: ["env", 32, 240, 32, 32],  c: [50,  150, 255], b: 255, p: 1.0 },
+	{ n: 20, s: ["env", 64, 240, 32, 32],  c: [50,  255, 255], b: 0,   p: 1.1 },
+	{ n: 30, s: ["env", 96, 256, 32, 16],  c: [50,  255, 50 ], b: 0,   p: 1.2 },
+	{ n: 40, s: ["env", 128, 256, 32, 16], c: [255, 255, 50 ], b: 0,   p: 1.3 },
+	{ n: 50, s: ["env", 128, 304, 32, 16], c: [255, 50,  50 ], b: 255, p: 1.4 },
+];
+
+const demographics = [
+[
+	["男性", 50],
+	["女性", 100],
+],
+[
+	["CEO", 0.01],
+	["公务员", 2],
+	["保险代理", 12],
+	["小企业主", 1],
+	["医生", 5],
+	["研发人员", 2],
+	["安保人员", 8],
+	["行政人员", 8],
+	["人事经理", 10],
+	["学生", 25],
+	["房东", 0.8],
+	["保姆", 3],
+	["平面设计师", 2],
+	["音乐人", 3],
+	["作家", 5],
+	["家政", 5],
+	["零售店员", 25],
+	["军警", 12],
+	["程序员", 10],
+	["餐厅迎宾", 20],
+	["快餐店员", 30],
+	["游客", 14],
+	["急救人员", 18],
+	["网红", 10],
+	["零工", 25],
+	["技工", 8],
+	["数据录入员", 12],
+	["无业", 100]
+]
+];
+
+const bug = {
+	max_ego: 75,
+	width: 32,
+	ego_base: 5,
+	ego_rng: 2,
+	suffer_mul: 10,
+	strength_base: 0.3,
+	strength_rng: 0.7,
+	sticky_rand: 0.5,
+	roll_fr: 0.2,
+	friction: 32,
+	peel_rng: 0.025,
+	
+	// 变体
+	special_kill: false, // 被击杀时计为"特殊击杀"，用于评级
+	special: false,
+		// "特殊角色"：拥有该变体的虫子只会出现一次。
+		// 被击杀后不再出现。
+	chance: 100,
+	fits: [
+		// "off_x" 和 "off_y" 是每种虫子精灵的像素偏移。
+		// "chance" 是选中该变体的百分比。
+		
+		// 此外，所有虫子属性均可覆盖。
+		// 变体可以有不同的动画、精灵、尺寸、速度等。
+		{ off_x: 320, chance: 20 },
+	],
+
+	walk_spr: ["env", 0, 272, 32, 32, true],
+	walk_rate: 18,
+	walk_moves: [2, 1, 1, 1, 1, 0, 1, 2, 1, 1, 1, 1], 
+	walk_steps: [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0],
+	
+	shadow_spr: ["env", 0, 656, 32, 16],
+	shadow_crawl_spr: ["env", 0, 672, 32, 16],
+	
+	sprint_spr: ["env", 32, 240, 32, 32, true],
+	sprint_cry_spr: ["env", 32, 432, 32, 32, true],
+	sprint_moves: [11, 6, 7, 6, 8, 5],
+	sprint_steps: [0, 1, 0, 0, 1, 0],
+	
+	limp_rate: 6,
+	limp_spr: ["env", 64, 240, 32, 32, true],
+	limp_moves: [2, 2, 2],
+	limp_steps: [0, 0, 1],
+	
+	crawl_spr: ["env", 96, 240, 32, 32, true],
+	crawl_moves: [2, 2, 2],
+	
+	roll_frames: 8,
+	roll_ok_spr: ["env", 192, 240, 32, 32, true],
+	roll_mid_spr: ["env", 224, 240, 32, 32, true],
+	roll_low_spr: ["env", 256, 240, 32, 32, true],
+	
+	pin_height: [1, 1, 1, 4, 6, 8, 8],
+	knock_spr: ["env", 128, 240, 32, 16, true],
+	knock_back_spr: ["env", 128, 352, 32, 16, true],
+	
+	stain_spr: ["env", 0, 992, 32, 16],
+	sticker_high_spr: ["env", 0, 928, 32, 32],
+	sticker_low_spr: ["env", 0, 960, 32, 32],
+	
+	drop_on: true,
+	drop_spread: 6,
+	drop_grav: 500,
+	drop_pull_x: 20,
+	drop_pull_y: 60,
+	drop_splash_frames: 4,
+	drop_spr: ["env", 0, 1008, 16, 16],
+	drop_hit_spr: ["env", 112, 1008, 16, 16],
+	
+	faller_descent: 24,
+	faller_fr: 6,
+	faller_anim: [0, 1, 2, 3, 4, 4, 4, 3, 2, 1, 0, 0],
+	faller_spr: ["env", 160, 240, 32, 16, true],
+	
+	strand_hold: 32,
+	strand_init_frames: 2,
+	strand_frames: 10,
+	strand_fall_fr: 12,
+	strand_fall_speed: 80,
+	strand_spr: ["env", 288, 240, 32, 32, true],
+};
+
+const stain = {
+	buckets: 32,
+	buckets_max: 12,
+};
+
+const stickers = [
+	[ 1, 36, 71, 43, 89 ],
+	[ 5, 113, 18, 107, 22 ],
+	[ 8, 92, 27, 87, 36 ],
+	[ 7, 18, 55, 18, 81 ],
+	[ 5, 43, 23, 32, 49 ],
+	[ 4, 19, 65, 26, 91 ],
+	[ 2, 19, 71, 27, 99 ],
+	[ 0, 30, 55, 34, 77 ],
+	[ 0, 25, 53, 26, 79 ],
+	[ 9, 41, 77, 46, 99 ],
+	[ 6, 30, 39, 28, 65 ],
+	[ 4, 58, 31, 58, 48 ],
+	[ 3, 125, 26, 120, 28 ],
+	[ 1, 54, 40, 51, 58 ],
+	[ 2, 38, 41, 34, 62 ],
+	[ 4, 85, 43, 87, 56 ],
+	[ 9, 84, 40, 82, 54 ],
+	[ 0, 82, 23, 77, 38 ],
+	[ 4, 86, 23, 82, 35 ],
+	[ 4, 42, 18, 36, 39 ],
+	[ 3, 50, 30, 45, 47 ],
+	[ 1, 128, 24, 124, 23 ],
+	[ 9, 143, 28, 135, 25 ],
+	[ 7, 48, 70, 53, 86 ],
+	[ 4, 51, 46, 53, 61 ],
+	[ 0, 64, 21, 61, 40 ],
+	[ 5, 65, 49, 67, 63 ],
+	[ 6, 100, 28, 94, 37 ],
+	[ 7, 35, 30, 29, 58 ],
+	[ 3, 51, 37, 48, 56 ],
+	[ 5, 52, 23, 49, 46 ],
+	[ 6, 111, 26, 107, 32 ],
+	[ 1, 119, 21, 114, 25 ],
+	[ 2, 32, 50, 31, 71 ],
+	[ 8, 40, 65, 42, 80 ],
+	[ 9, 68, 28, 64, 46 ],
+	[ 9, 73, 28, 70, 46 ],
+	[ 9, 78, 28, 75, 45 ],
+	[ 9, 135, 22, 125, 22 ],
+	[ 5, 138, 31, 133, 30 ],
+	[ 1, 45, 49, 46, 65 ],
+	[ 4, 45, 55, 46, 69 ],
+	[ 1, 13, 55, 16, 82 ],
+	[ 0, 21, 41, 17, 68 ],
+	[ 0, 23, 80, 35, 105 ],
+	[ 5, 133, 19, 118, 18 ],
+	[ 9, 107, 27, 101, 32 ],
+	[ 0, 79, 55, 78, 67 ],
+	[ 7, 93, 51, 92, 61 ],
+	[ 2, 65, 48, 65, 64 ],
+	[ 3, 44, 49, 46, 66 ],
+	[ 3, 125, 34, 123, 35 ],
+	[ 7, 72, 54, 74, 68 ],
+	[ 4, 42, 75, 51, 92 ],
+	[ 4, 42, 79, 50, 94 ],
+	[ 9, 34, 79, 41, 99 ],
+	[ 7, 81, 31, 79, 44 ],
+	[ 8, 59, 38, 58, 56 ],
+	[ 2, 132, 31, 129, 31 ],
+	[ 4, 71, 47, 73, 62 ],
+	[ 6, 74, 57, 77, 71 ]
+];
+
+// 应用设置
+
+function apply_settings(o) {
+	const merge = (i, to) => Object.assign(to, o[i]||{});
+	const replace = (i, to) => o[i] && (to.length = 0, 1) && to.push(...o[i]);
+	
+	// 这些设置合并进默认值。
+	merge("images", images);
+	merge("set", set);
+	merge("giant", giant);
+	merge("bug", bug);
+	merge("paw", paw);
+	merge("ego", ego);
+	merge("stain", stain);
+	
+	// 这些若存在则完全替换。
+	replace("sound_urls", sound_urls);
+	replace("stickers", stickers);
+	replace("demographics", demographics);
+	replace("ego_tiers", ego_tiers);
+}
+
+// #初始化与工具
+
+const element  = id => document.getElementById(id);
+const sanitize = v  => String(v).replace(/<[^>]*>?/gm, '');
+const oc  = element("outcanvas");
+const ocd = element("outcanvasd");
+const c   = document.createElement("canvas");
+const sc  = 2;
+
+const sticker_ed = url_params.get("stickers");
+const
+	w = (sticker_ed ? 900/2 : oc.width/sc),
+	h = (sticker_ed ? 700/2 : oc.height/sc);
+
+c.width = w, c.height = h;
+if (sticker_ed) oc.width = 900, oc.height = 700;
+
+const floor = Math.floor, ceil = Math.ceil, rand = Math.random, round = Math.round;
+const pow = Math.pow, sqrt = Math.sqrt, abs = Math.abs, sign = Math.sign;
+const min = Math.min, max = Math.max;
+const clamp = (v,mn,mx) => min(max(v,mn),mx), norm = (v,cap) => max(0,min(v,cap)/cap);
+const pi = Math.PI, sin = Math.sin, cos = Math.cos;
+const dist = (x,y,x2,y2) => sqrt(pow(x2-x,2)+pow(y2-y,2));
+
+function show_error(e) {
+	element("err").style.display = "block";
+	element("err").style.color = "red";
+	element("err").style["background-color"] = "black";
+	element("err").innerHTML = sanitize(e);
+	return e;
+}
+
+const occ = oc.getContext("2d");
+if (!occ) throw show_error(new Error("你的浏览器不支持 canvas。哇哦！"));
+
+const gl = c.getContext("webgl", {antialias: false, alpha: false});
+if (!gl) throw show_error(new Error("你的浏览器必须支持 WebGL 才行！"));
+
+element("fullscreenlink")
+	.addEventListener("click", () => element("outcanvasd").requestFullscreen());
+
+// 屏幕 y 偏移
+var syoff = 0;
+function set_yoff(off) {
+	syoff = off;
+	element("screen").style.setProperty("--yoff", `${off}px`);
+}
+
+// #开发工具与形状
+
+var pause = false, slow = false;
+var hotvals = new Map(), watches = new Map(), shapes = [];
+function hot(name,val) {
+	var x = hotvals.get(name);
+	if (x == null) {
+		x = document.createElement("input");
+		x.setAttribute("type", "text");
+		x.setAttribute("size", "50");
+		x.setAttribute("value", val);
+		hotvals.set(name, x);
+		document.body.appendChild(x).insertAdjacentHTML("afterend", `${name}<br>`);
+	}
+	return x.value;
+}
+function text_color(r, g, b, a) { shapes.push([0, r, g, b, a]); }
+function line(x, y, x2, y2) { shapes.push([1, x, y, x2, y2]); }
+function rect(x, y, w, h) { shapes.push([2, x, y, w, h]); }
+function text(x, y, str) { shapes.push([3, x, y, str]); }
+function text_size(size) { shapes.push([4, size]); }
+function text_shadow(x, y, r, g, b, str) {
+	text_color(0, 0, 0, 1);
+	text(x, y, str);
+	text_color(r, g, b, 1);
+	text(x, y-1, str);
+}
+
+// #输入
+
+occ.imageSmoothingEnabled = false;
+oc.focus();
+
+var mx = w/2, my = h/2, mp = false, mr = false, moncanvas = false;
+var pause = false;
+var show_cursor = false, show_cursor_prev = false;
+
+var stats_opened = false;
+function show_stats() {
+	element("stats").style.display = "block";
+	stats_opened = true;
+}
+
+function hide_stats() {
+	element("stats").style.display = "none";
+	stats_opened = false;
+}
+
+function set_stats_str(str, noreturn) {
+	element("stats").innerHTML = str;
+	if (!noreturn)
+		element("statreturnlink").addEventListener("click", hide_stats);
+}
+
+// 触摸作为触控板
+var tx = 0, ty = 0, tdx = 0, tdy = 0, touchid = null;
+var touchmode = false;
+
+// '摇杆' 控制
+var jsleft, jsright, jsrun;
+
+// 用户激活
+var active = false, activated = false;
+
+function canvas_coords(event) {
+	const ocr = oc.getBoundingClientRect();
+	const sx = oc.width / ocr.width,
+	      sy = oc.height / ocr.height;
+	return [
+		(event.clientX - ocr.left       ) * sx / sc,
+		(event.clientY - ocr.top + syoff) * sy / sc,
+	];
+}
+
+onmousemove = event => {
+	const m = canvas_coords(event);
+	mx = m[0], my = m[1];
+	touchmode = false;
+};
+
+oc.onmouseenter = () => moncanvas = true;
+oc.onmouseleave = () => { moncanvas = false, mp = false; };
+oc.onmousemove = () => moncanvas = true;
+oc.onmouseout = oc.onmousemove;
+oc.onmousedown = event => { mp = true; moncanvas = true; touchmode = false; }
+oc.onmouseup = event => { mp = false, mr = true; }
+
+onkeydown = event => {
+	if (event.key == "ArrowLeft")  jsleft  = true, jsright = false;
+	if (event.key == "ArrowRight") jsright = true, jsleft  = false;
+	if (event.key == "Shift")      jsrun   = true;
+};
+
+onkeyup = event => {
+	if (event.key == "ArrowLeft")  jsleft  = false;
+	if (event.key == "ArrowRight") jsright = false;
+	if (event.key == "Shift")      jsrun   = false;
+};
+
+oc.ontouchstart = event => {
+	const ocr = oc.getBoundingClientRect();
+	if (touchid == null && event.changedTouches.length == 1) {
+		var touch = event.changedTouches[0];
+		touchid = touch.identifier;
+		const m = canvas_coords(touch);
+		tx  = m[0], ty  = m[1];
+		tdx = m[0], tdy = m[1];
+		touchmode = true;
+		moncanvas = true;
+		mp = true;
+	}
+};
+
+oc.ontouchmove = event => {
+	const ocr = oc.getBoundingClientRect();
+	for (let i=0; i<event.touches.length; i++) {
+		const touch = event.touches[i];
+		if (touch.identifier != touchid)
+			continue;
+		const m = canvas_coords(touch);
+		tdx = m[0], tdy = m[1];
+		touchmode = true;
+	}
+};
+
+oc.ontouchend = event => {
+	const ocr = oc.getBoundingClientRect();
+	for (let i=0; i<event.changedTouches.length; i++) {
+		const touch = event.changedTouches[i];
+		if (touch.identifier != touchid)
+			continue;
+		touchid = null;
+		mp = false, mr = true;
+	}
+};
+
+ocd.ontouchstart = oc.ontouchstart;
+ocd.ontouchmove  = oc.ontouchmove;
+ocd.ontouchend   = oc.ontouchend;
+
+function set_cursor_visible(val) {
+	oc.style.cursor = val? "auto" : "none";
+}
+
+// #时间 #主循环 #随机
+
+var update, draw;
+var tick = 0, ctime = 0, ptime = 0, delta = 0, gdelta = 0;
+var timescale = 1;
+function second_passed() {
+	return floor(ctime/1000) != floor(ptime/1000);
+}
+
+var rand_timer = 0, rand_ticks = 0;
+function randevent(p) {
+	for (let i=0; i<rand_ticks; i++)
+		if (p(rand()))
+		 return true;
+	return false;
+}
+
+var frame_id;
+function mainloop() {
+	ctime   = performance.now();
+	delta   = clamp(ctime - ptime, 1.0, 500) / 1000.0;
+	gdelta  = delta;
+	delta  *= slow ? 0.1 : timescale;
+	rand_timer += delta * 60.0;
+	
+	try {
+		if (!pause) update();
+		draw();
+	} catch (e) {
+		show_error(e);
+		throw e;
+	}
+
+	if (show_cursor != show_cursor_prev) {
+		set_cursor_visible(show_cursor);
+		show_cursor_prev = show_cursor;
+	}
+	if (touchmode && touchid != null) {
+		if (!show_cursor) {
+			mx = clamp(mx+(tdx-tx)*1.5, 0, w-1);
+			my = clamp(my+(tdy-ty)*1.5, 0, h-1);
+			tx = tdx, ty = tdy;
+		} else
+			mx = tdx, my = tdy;
+	}
+	activated = false;
+	if (!active && mr && moncanvas && navigator.userActivation.hasBeenActive && !stats_opened)
+		activated = true, active = true;
+	mr = false;
+	
+	if (active && document.hasFocus() && audio_ctx.state == "suspended")
+		audio_ctx.resume();
+	
+	rand_ticks = 0;
+	while (rand_timer >= 1) {
+		rand_timer -= 1;
+		rand_ticks ++;
+	}
+	
+	update_audio();
+	tick ++;
+	ptime = ctime;
+	frame_id = window.requestAnimationFrame(mainloop);
+}
+
+// #音频 #音效
+
+const audio_ctx = new AudioContext();
+
+const main_volume_node = audio_ctx.createGain();
+main_volume_node.connect(audio_ctx.destination);
+
+const tracks = [];
+const show_tracks = url_params.get("tracks");
+
+for (let i=0; i<32; i++) {
+	const volume_node = audio_ctx.createGain();
+	volume_node.connect(main_volume_node);
+	volume_node.gain.value = 1.0;
+	
+	tracks[i] = {
+		name: null,
+		paused: true,
+		source_node: null,
+		volume_node: volume_node,
+	};
+}
+
+function set_main_volume(v) {
+	v = clamp(v+0, 0, 1);
+	element("volume").value = v * 100;
+	main_volume_node.gain.value = v;
+	localStorage.setItem("volume", v);
+}
+
+window.onblur  = () => audio_ctx.suspend();
+window.onfocus = () => audio_ctx.resume();
+
+const saved_volume = localStorage.getItem("volume");
+if (saved_volume)
+	set_main_volume(saved_volume);
+
+// 音量控制
+element("volume").addEventListener("input", e => set_main_volume(e.target.value / 100));
+
+const sounds = new Map();
+
+function singlesound(name, volume, pitch, priority, loop, id, onend, name_lim) {
+	if (!active)
+		return null;
+	
+	const soundlist = sounds.get(name);
+	if (!soundlist)
+		return null;
+	
+	name_lim = name_lim || 8;
+	const source = soundlist[id==null?floor(rand()*soundlist.length):id];
+	var track = null, track_id = 0;
+	
+	// 寻找未播放的轨道
+	for (const t of tracks)
+		if (t.paused) { track = t; break; } else {
+			track_id++;
+			if (t.name == name && --name_lim == 0) return; // 达到同名上限
+		}
+	// 寻找优先级更低的轨道
+	if (!track) {
+		track_id = 0;
+		for (const t of tracks)
+			if (t.priority < priority) { track = t; break; } else track_id++;
+	}
+	
+	if (!track)
+		return null;
+	if (audio_ctx.state == "suspended")
+		audio_ctx.resume();
+	if (!track.paused)
+		stopsound(track);
+	
+	const node = audio_ctx.createBufferSource();
+	node.buffer = source;
+	node.onended = () => { onend && onend(); stopsound(track_id); };
+	node.start();
+	node.connect(track.volume_node);
+	node.loop = !!loop;
+	
+	node.playbackRate.value = clamp(pitch || 1.0, 0.5, 2.0);
+	track.volume_node.gain.value = clamp(volume || 1.0, 0.0, 1.0);
+	
+	track.name = name;
+	track.playtime = 0;
+	track.paused = false;
+	track.source_node = node;
+	track.priority = priority || 0;
+	return track_id;
+}
+
+function sound(name, ...args) {
+	if (Array.isArray(name))
+		return singlesound(name[floor(name.length*rand())], ...args);
+	return singlesound(name, ...args);
+}
+
+function trackbyid(track_id) {
+	if (isNaN(track_id)) return track_id; // 假定是轨道对象
+	
+	track_id = floor(track_id);
+	if (track_id < 0 || track_id >= tracks.length) return;
+	
+	const track = tracks[track_id];
+	return track;
+}
+
+function stopsound(track_id) {
+	const track = trackbyid(track_id);
+	if (!track) return;
+	if (!track.source_node) return;
+	
+	track.source_node.stop();
+	track.paused = true;
+	track.source_node = null;
+	track.name = null;
+}
+
+function stop_all_sounds() {
+	for (const t of tracks) stopsound(t);
+}
+
+function playtime(track_id) {
+	const track = trackbyid(track_id);
+	if (!track) return 0;
+	if (!track.source_node) return 0;
+	
+	return track.playtime;
+}
+
+function setsoundvolume(track_id, volume) {
+	const track = trackbyid(track_id);
+	if (!track) return;
+	track.volume_node.gain.value = clamp(volume, 0.0, 1.0);
+}
+
+function update_audio() {
+	for (const t of tracks)
+		if (t.source_node)
+			t.playtime += delta;
+	
+	// 群体恐慌系统
+	var screamers = 0;
+	for (const t of tracks) if (t.name == "scream" || t.name == "panic") screamers++;
+	for (const t of tracks) if (t.name == "scream" || t.name == "panic")
+		setsoundvolume(t, 1.0 - clamp(screamers/12, 0.0, 0.6));
+}
+
+function draw_audio_tracks() {
+	var xs=8, ys=100, x=xs, y=ys;
+	for (let i=0; i<tracks.length; i++) {
+		const track = tracks[i];
+		if (track.paused)
+			text_color(255, 0, 0, 255);
+		else
+			text_color(0, 255, 0, 255);
+		text(x+12, y, `${!track.paused&&track.priority}`);
+		text_color(0, 0, 0, 255);
+		text(x, y, `${i}`);
+		x += 48;
+		if (x > 200) x=xs, y+=12;
+	}
+}
+
+// #渲染
+
+function shader(n, k, sc) {
+	const s = gl.createShader(k);
+	gl.shaderSource(s, sc);
+	gl.compileShader(s);
+	if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+		const err = n + " 着色器错误：" + gl.getShaderInfoLog(s);
+		gl.deleteShader(s);
+		throw new Error(err);
+	}
+	return s;
+}
+
+const vert_shader = shader("vertex", gl.VERTEX_SHADER, `
+	attribute vec2 a_pos, a_uv;
+	attribute float a_alpha;
+	varying vec2 v_uv;
+	varying float v_alpha;
+	uniform vec2 u_screen_size;
+	uniform float u_texture_size;
+	void main() {
+		v_uv = floor(a_uv)/u_texture_size;
+		v_alpha = a_alpha;
+		gl_Position = vec4(vec2(-1.0,1.0)+(floor(a_pos)*u_screen_size),0.0,1.0);
+	}
+`);
+
+const frag_shader = shader("fragment", gl.FRAGMENT_SHADER, `
+	precision mediump float;
+	varying vec2 v_uv;
+	varying float v_alpha;
+	uniform sampler2D u_texture;
+	void main() {
+		gl_FragColor = texture2D(u_texture,v_uv)*v_alpha;
+	}
+`);
+
+const sprg = gl.createProgram();
+gl.attachShader(sprg, vert_shader);
+gl.attachShader(sprg, frag_shader);
+gl.linkProgram(sprg);
+if (!gl.getProgramParameter(sprg, gl.LINK_STATUS))
+	throw new Error("着色器链接错误：" + gl.getProgramInfoLog(sprg));
+gl.useProgram(sprg);
+
+const
+	a_pos   = gl.getAttribLocation(sprg, "a_pos"),
+	a_uv    = gl.getAttribLocation(sprg, "a_uv"),
+	a_alpha = gl.getAttribLocation(sprg, "a_alpha"),
+	u_screen_size  = gl.getUniformLocation(sprg, "u_screen_size"),
+	u_texture_size = gl.getUniformLocation(sprg, "u_texture_size"),
+	u_texture      = gl.getUniformLocation(sprg, "u_texture");
+
+const quads_per_draw = 16000;
+
+const ibufstride = 2;
+const ibuflen = quads_per_draw*6;
+const ibuf = new ArrayBuffer(ibuflen*ibufstride);
+const ibufv = new Uint16Array(ibuf);
+const ibufid = gl.createBuffer();
+gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibufid);
+gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ibuflen*ibufstride, gl.DYNAMIC_DRAW);
+
+const vbufstride = 5*4;
+const vbuflen = quads_per_draw*4;
+const vbuf = new ArrayBuffer(vbuflen*vbufstride);
+const vbufv = new Float32Array(vbuf);
+const vbufid = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbufid);
+gl.bufferData(gl.ARRAY_BUFFER, vbuflen*vbufstride, gl.DYNAMIC_DRAW);
+gl.enableVertexAttribArray(a_pos);
+gl.enableVertexAttribArray(a_uv);
+gl.enableVertexAttribArray(a_alpha);
+gl.vertexAttribPointer(a_pos,   2, gl.FLOAT, false, vbufstride, 0);
+gl.vertexAttribPointer(a_uv,    2, gl.FLOAT, false, vbufstride, 8);
+gl.vertexAttribPointer(a_alpha, 1, gl.FLOAT, false, vbufstride, 16);
+
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+const textures = new Map();
+function new_texture(bitmap) {
+	const gltex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, gltex);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+	return { size: bitmap.width, gltex: gltex };
+}
+
+var texture = null;
+function set_texture(to) {
+	if (texture == to)
+		return;
+	render();
+	texture = to;
+	gl.bindTexture(gl.TEXTURE_2D, to.gltex);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+var inds = 0, verts = 0, vertidx = 0;
+function clear(r, g, b, a) {
+	gl.clearColor(r/255, g/255, b/255, a/255);
+	gl.clear(gl.COLOR_BUFFER_BIT);
+}
+
+var renders = 0; // 绘制调用统计
+function render() {
+	if (inds == 0)
+		return;
+	gl.uniform1i(u_texture, 0);
+	gl.uniform2f(u_screen_size, 2/w, -2/h);
+	gl.uniform1f(u_texture_size, texture.size);
+	gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Float32Array(vbuf, 0, vertidx));
+	gl.bufferSubData(gl.ELEMENT_ARRAY_BUFFER, 0, new Uint16Array(ibuf, 0, inds));
+	gl.drawElements(gl.TRIANGLES, inds, gl.UNSIGNED_SHORT, 0);
+	inds = 0, verts = 0, vertidx = 0;
+	renders++;
+}
+
+var alpha = 1.0;
+function vert(x, y, ux, uy) {
+	vbufv[vertidx++] = x,  vbufv[vertidx++] = y;
+	vbufv[vertidx++] = ux, vbufv[vertidx++] = uy;
+	vbufv[vertidx++] = alpha;
+	verts++;
+}
+
+var hflip = false;
+function quad(x, y, w, h, ux, uy, uw, uh) {
+	x = floor(x), y = floor(y), uw = uw || w, uh = uh || h;
+	if(inds+6 >= ibuflen || verts+4 >= vbuflen)
+		render();
+	
+	ibufv[inds++] = verts,   ibufv[inds++] = verts+1, ibufv[inds++] = verts+2;
+	ibufv[inds++] = verts+2, ibufv[inds++] = verts+3, ibufv[inds++] = verts;
+	if (hflip) {
+		vert(x,   y,   ux+uw, uy  );
+		vert(x+w, y,   ux,    uy  );
+		vert(x+w, y+h, ux,    uy+uh);
+		vert(x,   y+h, ux+uw, uy+uh);
+		return;
+	}
+	vert(x,   y,   ux,    uy  );
+	vert(x+w, y,   ux+uw, uy  );
+	vert(x+w, y+h, ux+uw, uy+uh);
+	vert(x,   y+h, ux,    uy+uh);
+}
+
+var uxoff = 0, uyoff = 0;
+function sprite(s, x, y, f, cx, cy) {
+	const t = textures.get(s[0]);
+	if (!t) throw new Error(`缺少纹理 ${t}`);
+	set_texture(t);
+	const uw = s[3], uh = s[4];
+	var fx = 0, fy = 0, sp;
+	if (f && (f = floor(f)))
+		(sp = s[6]) ? (s[5] ? (fy = f % sp, fx = floor(f / sp)) : (fx = f % sp, fy = floor(f / sp)))
+		            : (s[5] ?  fy = f : fx = f);
+	quad(x-(cx||0)*uw, y-(cy||0)*uh, uw, uh, s[1]+uxoff+fx*uw, s[2]+uyoff+fy*uh);
+}
+
+function sprite_scaled(s, x, y, w, h) {
+	const t = textures.get(s[0]);
+	if (!t) throw new Error(`缺少纹理 ${t}`);
+	set_texture(t);
+	quad(x, y, w, h, s[1], s[2], s[3], s[4]);
+}
+
+// #自定义上传
+
+var zip_file = null, zip_name;
+var custom = url_params.get("character") == "custom";
+var custom_loaded = false;
+if (custom) {
+	function event(e) {
+		const files = e.target.files;
+		if (!files || !files[0]) return;
+		const file = files[0];
+		
+		show(`正在加载 ${file.name}...`);
+		
+		switch (file.type) {
+		case "image/png":
+			createImageBitmap(file)
+				.then(bmp => {
+					textures.set("giant", new_texture(bmp));
+					custom_loaded = true;
+					giant.grades = false;
+					giant.name = file.name.replace(".png", "");
+					giant.description = "";
+					if (sticker_ed)
+						stickers.length = 0;
+					hide_stats();
+					window.cancelAnimationFrame(frame_id);
+					return done_loading();
+				})
+				.catch(e => show(e));
+			break;
+		case "application/zip":
+		case "application/zip-compressed":
+		case "application/x-zip":
+		case "application/x-zip-compressed":
+		case "multipart/x-zip":
+			JSZip.loadAsync(file)
+				.then(zip => {
+					zip_file = zip;
+					zip_name = file.name.replace(".zip", "");
+					custom_loaded = true;
+					
+					hide_stats();
+					window.cancelAnimationFrame(frame_id);
+					return load_resources().catch(e => { show_error(e); throw e; });
+				})
+				.catch(e => show(e));
+			break;
+		default:
+			return show(`无效的文件类型 ${file.type}`);
+		}	
+	}
+	
+	function show(err) {
+		if (err != null) err = `<br><br><div style="color:red">${err}<br><br></div>`;
+		err = err || `
+			<p style="font-size:4;text-align:center">
+			请注意，没有任何东西被"上传"到网站。<br>
+			一切都在你自己的浏览器本地进行。
+			</p>
+		`;
+		set_stats_str(`
+			<br><br><br>
+			<div style="text-align:center;color:white;">
+			<b>自定义上传</b>
+			<br><br>
+			<label id="upload-label">
+				<div class="upload"></div>
+				<input id="upload" class="upload" type="file" accept=".png, .zip">
+			</label>
+			<u style="color:blue">选择文件</u> 或将文件拖入此框！
+			<br><br>
+			.png 用于自定义巨人外观
+			<br>
+			.zip 用于完全自定义会话
+			${err}
+			<div id="examples">
+			示例：<a download href="https://ikkimikka.net/stompgame/generic.png">PNG 图片</a> <a download href="https://ikkimikka.net/stompgame/generic.zip">ZIP 文件</a>
+			<br>
+			工具：<a href="https://ikkimikka.net/stompgame/?character=custom&stickers=true">贴纸编辑器</a>
+			</div>
+			<br>更多示例见 <a style="color:orange;" href="https://patreon.com/ikkimikka">Patreon</a>
+			</div>
+			`, true);
+		element("upload").addEventListener("change", event);
+	}
+	
+	show_stats();
+	show();
+}
+
+// #资源
+
+async function load_resources() {
+	async function load(n, url, i, l) {
+		element("err").innerHTML =
+			i ? `正在加载 ${sanitize(n)}... (${i}/${l})<br>来自 ${sanitize(url)}`
+			  : `正在加载 ${sanitize(n)}...<br>来自 ${sanitize(url)}`;
+		
+		// 先在 zip 文件中查找资源 url
+		var file;
+		if (zip_file && (file = zip_file.file(url))) {
+			console.log(`从 zip 加载：${url}`);
+			return {
+				json: async function() { return JSON.parse(await file.async("text")); },
+				blob: async function() { return await file.async("blob"); },
+				arrayBuffer: async function() { return await file.async("arraybuffer"); }
+			};
+		}
+		
+		try {
+			const response = await fetch(url, { cache: "no-cache" });
+			if (!response.ok)
+				throw new Error(`${url} 加载失败 (${response.status})`);
+			return response;
+		} catch (e) {
+			throw new Error(`加载 ${n} 时出错：${e}`);
+		}
+	}
+	
+	if (!custom || custom_loaded)
+		show_loading = setTimeout(() => element("err").style.display = "block", 250);
+	
+	// zip 文件中的角色 json（对于名为 mikka.zip 的 zip，必须包含 "mikka.json"）
+	if (zip_file)
+		apply_settings(await (await load("zip json", "settings.json")).json());
+	
+	// 角色
+	var char_url = url_params.get("character");
+	if (char_url && !custom) {
+		if (!char_url.includes('.'))
+			char_url += '.json';
+		apply_settings(await (await load("character", char_url)).json());
+	}
+	
+	// 角色附加
+	var extra_url = url_params.get("extra");
+	if (extra_url) {
+		if (!extra_url.includes('.'))
+			extra_url += '.json';
+		apply_settings(await (await load("角色附加", extra_url)).json());
+	}
+	
+	// json
+	const json_contents = url_params.get("json");
+	if (json_contents) {
+		var json;
+		try { json = JSON.parse(json_contents); } catch(e) {
+			try { json = JSON.parse(atob(json_contents)); } catch(e2) {
+				show_error(`解析 json 参数出错：${e}<br>${e2}`);
+			} }
+		apply_settings(json);
+	}
+	
+	// 图片
+	var i=0, count=Object.keys(images).length;
+	for (const [k, v] of Object.entries(images)) {
+		const bitmap = await createImageBitmap(await ((await load(k, v, i, count)).blob()), {});
+		if (!bitmap) throw new Error(`加载 ${k} 时出错："${v}" 不是图片文件！`);
+		textures.set(k, new_texture(bitmap));
+	}
+	
+	// 音频
+	async function load_audio(n, url, i, l) {
+		const audio = await audio_ctx.decodeAudioData(await ((await load(n, url, i, l)).arrayBuffer()));
+		if (!audio) throw new Error(`"${n}" 不是音频文件！`);
+		const list = sounds.get(n);
+		if (list) { list.push(audio); return; }
+		sounds.set(n, [audio]);
+	}
+	
+	sounds.clear();
+	if (sounds.get("ambience")) sounds.get("ambience").length = 0;
+	await load_audio("ambience", set.ambience_url);
+	
+	// 开始
+	done_loading();
+	
+	for (const [i, s] of sound_urls.entries())
+		load_audio(s[1], s[0], i, sound_urls.length);
+	
+	zip_file = null;
+}
+
+var show_loading;
+load_resources().catch(e => { show_error(e); throw e; });
+
+// 加载完成。现在初始化
+
+function done_loading() {
+window.__G = { set, paw, ego, bug, stain, giant, images, get stats(){return stats}, get game(){return game}, get ego_val(){return ego_val}, set ego_val(v){ego_val=v;ego_climb=v;} };
+
+window.__G = {
+  set, paw, ego, bug, stain, giant, images,
+  get stats(){ return stats },
+  get game(){ return game },
+  get ego_val(){ return ego_val },
+};
+element("err").style.display = "none";
+clearTimeout(show_loading);
+stop_all_sounds();
+
+// 终于，游戏开始！！
+
+const floor_y = h-set.floor_pos;
+const floor_depth = set.floor_depth;
+var shake = 0;
+
+// #贴纸
+
+const sticker_plane_granularity = 16;
+const sticker_planes_max = 32;
+const sticker_planes = [];
+
+// 相对于爪子
+function find_closest_sticker(x, y) {
+	var c, cd = Number.MAX_VALUE;
+	for (const s of stickers) {
+		const d = dist(clamp(x, 0, paw.width), y, s[1], s[2]);
+		if (d < cd) c = s, cd = d;
+	}
+	return c;
+}
+
+// 绝对坐标 & 使用游戏 z
+function get_sticker(x, z) {
+	const xs = x - (paw_x-paw.width/2);
+	const i = floor(clamp(xs/paw.width, 0, 1)*(sticker_planes_max-1));
+	const p = sticker_planes[i];
+	const ys = p.max-(z/floor_depth)*(p.max-p.min);
+	if (sticker_ed) sprite(set.pointer_spr, (paw_x-paw.width/2)+xs, paw_y-ys, 0, .5, .5);
+	return find_closest_sticker(xs, ys);
+}
+
+function get_sticker_pos(s) {
+	const p = { x: 0, y: 0 };
+	if (paw_state == 1 || (paw_state == 0 && paw.show_stickers_on_upper_state))
+		p.x = (paw_x-paw.width/2)+s[3], p.y = paw_y-s[4];
+	else
+		p.x = (paw_x-paw.width/2)+s[1], p.y = paw_y-s[2];
+	return p;
+}
+
+function add_sticker(x, z, fit) {
+	const s = get_sticker(x, z);
+	if (!fit.special && s.fits.length > 0 && s.fits[s.fits.length-1].special)
+		return;
+	s.fits.push(fit);
+	s.blood = rand()*0.6;
+	if (s.fits.length > 1) s.fits.splice(0, 1);
+	genstat("AZ.贴上的贴纸数", "贴纸粘附", x=>x+1);
+}
+
+function init_stickers() {
+	if (stickers.length == 0)
+		return;
+	
+	// 测量所有贴纸的高度并初始化
+	var max_y = Number.MIN_VALUE, min_y = Number.MAX_VALUE;
+	for (const s of stickers) {
+		if (s[2] > max_y) max_y = s[2];
+		if (s[2] < min_y) min_y = s[2];
+		s.blood = 0;
+		s.fits = [];
+	}
+	
+	// 构建贴纸平面。哈，可能有点过度设计
+	const x = paw.width/sticker_planes_max;
+	for (let i=0; i<sticker_planes_max; i++) {
+		const p = {max: Number.MIN_VALUE, min: Number.MAX_VALUE};
+		sticker_planes[i] = p;
+		for (let j=0; j<sticker_plane_granularity; j++) {
+			const s = find_closest_sticker(i*x,
+				min_y+(j/sticker_plane_granularity)*(max_y-min_y));
+			if (s[2] > p.max) p.max = s[2];
+			if (s[2] < p.min) p.min = s[2];
+		}
+	}
+}
+
+function update_stickers() {
+	for (const s of stickers) {
+		const p = get_sticker_pos(s);
+		if (paw_state != 3 && s.blood > 0) {
+			if (randevent(r=>r<0.2) && s.fits.length > 0)
+				add_droplet(p.x, p.y, s.fits[s.fits.length-1]);
+			s.blood -= delta*2;
+		}
+	}
+
+	for (let i=stickers.length; i-- > 0;) {
+		const s = stickers[i];
+		if (s.fits.length == 0) continue;
+		// 掉落
+		if (paw_state != prev_paw_state) {
+			const fit = s.fits[s.fits.length-1];
+			if (randevent(r=>r<fit.peel_rng)) {
+				if (fit.special) continue;
+				const p = get_sticker_pos(s);
+				genstat("B.从脚上剥落的贴纸数", "剥落的贴纸", x=>x+1);
+				add_faller(p.x, p.y, fit);
+				s.fits.pop();
+			}
+		}
+	}
+}
+
+function draw_stickers() {
+	if (paw_state == 0 && !paw.show_stickers_on_upper_state) return;
+	if (paw_state == 3) return;
+	
+	for (const s of stickers) {
+		const sl = s.fits;
+		const p = get_sticker_pos(s);
+		if (sl && sl.length > 0) {
+			const fit = set_fit(sl[sl.length-1]);
+			sprite(paw_state==2?fit.sticker_high_spr:fit.sticker_low_spr,
+				p.x, p.y, s[0], .5, .5);
+		}
+	}
+	unset_fit();
+}
+
+// #污渍
+
+var retain_stains = false;
+const stains = [];
+
+function init_stains(existing) {
+	for (let i=0; i<stain.buckets; i++)
+		stains[i] = [];
+}
+
+function add_stain(x, y, fit) {
+	if (x < 0 || x >= w) return;
+	
+	const b = stains[floor((x/w)*stain.buckets)];
+	if (b.length >= stain.buckets_max)
+		return;
+	
+	b.push({ x: x, y: y, f: floor(rand()*3), fit: fit });
+	
+	genstat("$P.$F被弄脏的百分比", "地面脏污", x=>{
+		var avg = 0;
+		for (const b of stains)
+			avg += b.length / stain.buckets_max;
+		avg /= stain.buckets;
+		return max(x, avg*100);
+	});
+}
+
+function draw_stains() {
+	var fit;
+	for (let i=0; i<stain.buckets; i++)
+		for (const s of stains[i])
+			fit = set_fit(s.fit), sprite(fit.stain_spr, s.x, s.y, s.f, .5, .5);
+	unset_fit();
+}
+
+// #坠落物
+
+const fallers = [];
+
+function add_faller(x, y, fit) {
+	fallers.push({ x: x, y: y, frame: rand()*fit.faller_anim.length, fit: fit });
+} 
+
+function update_fallers() {
+	for (const f of fallers) {
+		const fit = f.fit;
+		f.y += delta * fit.faller_descent;
+		f.frame += delta * fit.faller_fr;
+		clamp_under_paw(f);
+	}
+	for (let i=fallers.length; i-- > 0;) {
+		const f = fallers[i];
+		if (f.y >= floor_y-floor_depth) {
+			add_bug(
+				{ x: f.x, y: floor_y, health: 1, dir: -1, knocked: true, sticky: true },
+				Bug
+			);
+			fallers.splice(i, 1);
+		}
+	}
+}
+
+function draw_fallers() {
+	for (const f of fallers) {
+		const fit = set_fit(f.fit);
+		sprite(fit.faller_spr, f.x, f.y, fit.faller_anim[floor(f.frame)%fit.faller_anim.length], .5, 1);
+	}
+	unset_fit();
+}
+
+// #液滴
+
+const droplets = [];
+
+function add_droplet(x, y, fit) {
+	if (!fit.drop_on)
+		return;
+	
+	const ds = fit.drop_spread;
+	droplets.push({
+		x: x-ds+ds*2*rand(), y: y-ds+ds*2*rand(),
+		xv: paw_x_diff * fit.drop_pull_x,
+		yv: max(0, paw_y_diff * fit.drop_pull_y),
+		land_y: rand()*floor_depth,
+		landed: false,
+		sf: 0, // 溅射帧
+		fit: fit
+	});
+}
+
+function update_droplets() {
+	for (const d of droplets) {
+		if (d.landed)
+			continue;
+		const fit = d.fit;
+		d.yv += delta*fit.drop_grav;
+		d.x += d.xv * delta;
+		d.y += d.yv * delta;
+		clamp_under_paw(d);
+		if (!d.landed && d.y >= (floor_y-floor_depth)+d.land_y) {
+			sound("drop", null, 0.5+norm(d.yv, fit.drop_grav));
+			d.landed = true;
+			genstat("洒落的血滴数", "血滴洒落", x=>x+1);
+		}
+	}
+
+	for (let i=droplets.length; i-- > 0;) {
+		const d = droplets[i];
+		if (d.landed)
+			d.sf += delta * 8;
+		if (d.sf >= d.fit.drop_splash_frames)
+			droplets.splice(i, 1);
+	}
+}
+
+function draw_droplets() {
+	for (const d of droplets) {
+		const fit = set_fit(d.fit);
+		if (d.landed) {
+			sprite(fit.drop_hit_spr, d.x, d.y, d.sf, .5, .5);
+			continue;
+		}
+		
+		var drop_subimg = clamp(floor(d.yv/48), 0, 3);
+		if (drop_subimg >= 3 && abs(d.xv) > d.yv/2)
+			drop_subimg += 2;
+		hflip = d.xv < 0;
+		sprite(fit.drop_spr, d.x, d.y, drop_subimg, .5, .5);
+	}
+	hflip = false;
+	unset_fit();
+}
+
+// #丝线
+
+const strands = [];
+
+function add_strand(x, z, fit) {
+	const s = get_sticker(x, z);
+	if (!s) return;
+	
+	add_stain(x, floor_y-z, fit);
+	strands.push({
+		x: x, z: z, s: s,
+		attach: true,
+		frame: floor(rand()*fit.strand_init_frames),
+		top_x: 0, top_y: 0,
+		fit: fit,
+	});
+}
+
+function update_strands() {
+	attached_strands = 0;
+	
+	for (const s of strands) {
+		const fit = s.fit;
+		const sp = get_sticker_pos(s.s);
+		if (s.attach) {
+			attached_strands++;
+			if (paw_state == 2)
+				s.top_x = sp.x, s.top_y = sp.y;
+			if (paw_state == 3)
+				s.top_y = floor_y-s.z;
+			if (paw_state <= 1 || abs(sp.x-s.x)>fit.strand_hold ||
+			   (paw_state != 3  && randevent(r=>r<0.012+paw.wetness)))
+				s.attach = false;
+			continue;
+		} 
+		s.frame = max(fit.strand_init_frames, s.frame + delta * fit.strand_fall_fr);
+		s.top_y = min(floor_y-floor_depth, s.top_y + delta * fit.strand_fall_speed);
+	}
+	
+	for (let i=strands.length; i-- > 0;)
+		if (strands[i].frame >= strands[i].fit.strand_frames)
+			strands.splice(i, 1);
+}
+
+function draw_strand(s) {
+	const fit = set_fit(s.fit);
+	const spr = fit.strand_spr; 
+	if (!spr) return;
+	set_texture(textures.get(spr[0]));
+	
+	const uw = spr[3], uh = spr[4];
+	var uy = spr[2]+uyoff+floor(s.frame+1)*uh;
+	var y = floor_y-s.z;
+	
+	const inc = 1/(y - s.top_y);
+	if (inc < 0.001) return;
+	const xdiff = s.top_x - s.x;
+	for (let i=1.0; (i-=inc) > 0.0;)
+		quad(s.x + sqrt(1-i) * xdiff - uw/2, y--, uw, 1, spr[1]+uxoff, uy-=(inc*uh));
+}
+
+function draw_strands() {
+	strands.sort((a, b) => b.z - a.z);
+	for (const s of strands) {
+		if (paw_state == 3 && s.attach) continue;
+		draw_strand(s);
+	}
+	unset_fit();
+}
+
+// #虫子
+
+const bugs = [];
+const bug_max_hp = 6;
+var bug_count = 0;
+
+var kill_counter_heat = 0;
+var supports = 0;
+var alive_supports = 0;
+var pin_min_y = 0;
+var started_playing = false; // 虫子交互开始
+
+const special_bugs = new Map();
+const fit_lookup = [];
+var fit_lookup_max;
+
+function set_fit(fit) { uxoff = fit.off_x || 0, uyoff = fit.off_y || 0; return fit; }
+function unset_fit() { uxoff = 0, uyoff = 0; }
+function sort_bugs() { bugs.sort((a, b) => (b&&b.z)-(a&&a.z)); }
+
+class Bug {
+	create() { }
+	update() { }
+	alive() { return this.health > 3; }
+	weak() { return this.strength < this.fit.strength_base+this.fit.strength_rng/2; }
+	under_paw() {
+		const xl = paw_x - paw.width/2;
+		if (this.x <= xl || this.x >= paw_x + paw.width/2)
+			return false;
+		const pmask = paw.stomp_masks[stomp_frame].pmask;
+		return pmask[floor(clamp(this.x-xl, 0, pmask.length))] == 1;
+	}
+	touching_paw() { return paw_state == 3 && this.under_paw(); }
+	touching_wall() { return set.closed_walls && this.seen && (this.x <= 0 || this.x >= w-1); }
+	raise_ego(by) { this.ego_score = min(this.fit.max_ego, this.ego_score + by); }
+	knock() {
+		started_playing = true;
+		this.knocked = true;
+		this.starter = false;
+		this.get_up = 4 + floor(rand() * (1-this.strength) * 8);
+	}
+	hurt(dead) { }
+	excuse() { }
+	draw_under() { }
+};
+
+class LoveBug extends Bug {
+	create(bc) {
+		this.lost_t = 1;
+		this.run_t = 0;
+		this.attachment = rand(); // 0 = 亲近
+		this.disloyal = false;
+		this.sep = max(4, set.attachment_dist+set.attachment_rng*this.attachment);
+		if (this.loved) return;
+		const me = new WeakRef(this);
+		const offset = (this.sep-(this.dir)*this.sep*2);
+		this.lover = new WeakRef(add_bug({
+			x: this.x + offset, y: this.y,
+			dir: this.dir, tick: this.tick, timer: this.timer,
+			agitated: this.agitated,
+			loved: true,
+			lover: me,
+		}, LoveBug));
+	}
+	infatuated() { return this.attachment <= 0.2; }
+	update() {
+		if (this.disloyal) return;
+		if (this.lover == null) {
+			if (this.lost_t > 0) {
+				this.lost_t -= delta*2;
+				if (this.lost_t <= 0) {
+					this.raise_ego(this.fit.ego_base + this.fit.ego_base*this.attachment);
+					genstat("A.破碎的心", "心碎", x=>x+1, 2);
+				}
+			}
+			// '痴情'的虫子太过悲痛，无法站立……
+			if (this.infatuated() && this.get_up < 2) {
+				this.attachment += 0.02;
+				if (!this.infatuated())
+					genstat("C.$M被允许悲伤", "悲伤", x=>x+1, 2);
+				else
+					this.knock(),
+					this.onback = false;
+			}
+			return;
+		}
+		
+		const l = this.lover.deref();
+		if (!l) return;
+		if (!this.knocked && abs(this.x - l.x) > this.sep) { // 追赶被撞倒的爱人
+			const pdir = this.dir;
+			if (this.x > l.x) this.dir = -1;
+			if (this.x < l.x) this.dir =  1;
+			if (l.agitated && this.dir != pdir) { // 每次转身后愈发疏远……
+				this.raise_ego(1);
+				this.attachment += 0.01;
+				if (this.attachment > 0.7) {
+					l.lose_love();
+					this.lover = null;
+					this.lost_t = 0;
+					this.disloyal = true;
+					genstat("A.被抛弃的爱人", "爱人被弃", x=>x+1, 2);
+				}
+			}
+		}
+	}
+	lose_love() {
+		if (this.lover && this.infatuated())
+			this.raise_ego(this.fit.ego_base);
+		this.lover = null;
+		this.strength *= 0.5;
+		this.agitated = true;
+	}
+	excuse() {
+		if (!this.lover)
+			genstat("AN.$M仍在消化失去另一半的痛苦", "消化失去", x=>x+1);
+		else
+			genstat("AB.逃脱的情侣", "情侣逃脱", x=>x+1, 1);
+	}
+	hurt(dead) {
+		if (!this.lover) {
+			if (dead) genstat("AB.被压碎的情侣", "情侣被压", x=>x+1, 2);
+			return;
+		}
+		const l = this.lover.deref();
+		if (!l) return;
+		l.agitated = true;
+		if (dead)
+			l.lose_love();
+	}
+	draw_under() {
+		if (!this.alive()) return;
+		hflip = false;
+		unset_fit();
+		sprite(set.heart_spr, this.x, this.y - this.z - this.spr[4],
+			this.lover==null&&(1+(this.lost_t>.7&&tick%8>3)), .5, .5);
+	}
+};
+
+// 寻找一个变体，尊重特殊虫子（尝试耗尽则返回默认）
+// 若特殊虫子已被击杀则不再生成
+function gen_bug_fit() {
+	let fit, i = 0;
+	while (!fit || fit.special) {
+		const fit_rng = rand() * fit_lookup_max;
+		const l = fit_lookup.find(x => fit_rng>=x[0] && fit_rng<x[1]);
+		fit = l[2];
+		if (i++ == 25) return fit_lookup[fit_lookup.length-1][2];
+		if (fit.special) {
+			const s = special_bugs.get(fit.i);
+			if (!s.alive || s.numbers > 0) continue;
+			break;
+		}
+	}
+	return fit;
+}
+
+function add_bug(props, bclass, bfit) {
+	const fit = bfit || gen_bug_fit();
+	const BugClass = bclass || (
+		set.bug_love && rand() < set.love_chance ? LoveBug :
+		Bug
+	);
+	if (fit.special)
+		special_bugs.get(fit.i).numbers++;
+	
+	const b = new BugClass();
+	const strength = max(0, fit.strength_base + rand()*fit.strength_rng);
+	Object.assign(b, {
+		health: bug_max_hp,
+		x: 0, y: 0,
+		z: rand()*floor_depth,
+		dir: 1, // 左右方向
+		tick: floor(rand()*fit.walk_moves.length),
+		timer: 0,
+		get_up: 0,
+		agitated: false,
+		ego_score: fit.ego_base + floor(strength*fit.ego_rng),
+		knocked: false,
+		supporting: false,
+		buckling: false,
+		eliminated: false,
+		rolling: false,
+		seen: false,
+		starter: !started_playing, // 无负面 ego
+		roll_frame: 0,
+		roll_x_vel: 0, roll_y_vel: 0,
+		onback: rand() > 0.5,
+		strength: strength,
+		sticky: rand() > fit.sticky_rand || fit.special,
+		voice: null,
+		lifetime: 0,
+		rolled: 0,
+		fit: fit,
+		spr: fit.walk_spr,
+		...props
+	});
+	
+	// 放置虫子
+	for (let i=0; i<bugs.length+1; i++) {
+		if (bugs[i]) continue;
+		bugs[i] = b;
+		bug_count ++;
+		b.create();
+		sort_bugs();
+		return b;
+	}
+}
+
+function silence_bug(b, stat) {
+	if (b.voice != null) {
+		if (stat && playtime(b.voice) > 0.2)
+			genstat("C.被中断的临死尖叫", "临死尖叫被截", x=>x+1, 2);
+		const vname = trackbyid(b.voice).name;
+		if (vname == "scream" || vname == "panic")
+			stopsound(b.voice);
+		b.voice = null;
+	}
+}
+
+function hurt_bug(b, amount, id) {
+	const prev = floor(b.health);
+	const prev_alive = b.alive();
+	
+	b.health = max(0, b.health - amount);
+	const dead = !b.alive() && prev_alive;
+	
+	// 声音
+	if (
+		b.seen && b.weak() &&
+		prev > 3 &&
+		floor(prev) != floor(b.health) &&
+		rand() < 0.4
+	) {
+		if (rand() < 0.7 && !b.voice && !dead) {
+			if (rand() < 0.5) //singlesound(name, volume, pitch, priority, loop, id, onend)
+				b.voice = sound("scream", null, 1-0.2+rand()*0.4, 10, false, null,
+					() => b.voice = null);
+			else
+				b.voice = sound("panic", 0.8, 1-0.2+rand()*0.4, 10, false, null,
+					() => b.voice = null);
+		} else
+			sound("crush", null, 1+rand()*0.4, 2);
+	}
+	if (prev < 3 && rand() < 0.2)
+		sound("squishy", null, 1+rand()*0.4);
+	
+	// 死亡
+	if (dead) {
+		if (!b.seen) { // 不计入
+			b.eliminated = true;
+			return;
+		}
+		
+		new_kills ++;
+		stats.total_kills ++;
+		kill_counter_heat = set.combo_duration;
+		game.bug_killed(b, id);
+		b.strength = 0;
+		if (b.fit.special)
+			special_bugs.get(b.fit.i).alive = false;
+		
+		sound("pop", 0.4+rand()*0.3, 1+rand()*0.2, 4);
+		silence_bug(b, true);
+		
+		genstat("C$C.最长无击杀时间", "无击杀时长",
+			x=>max(x, stats.time_since_last_kill));
+		stats.time_since_last_kill = 0;
+		
+		genstat("C.最高连杀", "最高连杀", x=>max(x, new_kills), 4);
+		
+		if (b.fit.special_kill)
+			genstat("B.$S击杀数", "特殊击杀", x=>x+1, 3);
+		if (b.ego_score == b.fit.max_ego)
+			genstat("B.令人满足的击杀", "满足击杀", x=>x+1, 4);
+		if (pressure >= 0.99)
+			genstat("B.满压击杀", "满压击杀", x=>x+1, 2);
+		if (pressure < 0.3)
+			genstat("B.轻压击杀", "轻压击杀", x=>x+1, 2);
+		if (alive_supports == 1) {
+			let others=0;
+			bugs.forEach(ob=>ob&&b!=ob&&ob.alive()&&ob.under_paw()&&others++);
+			if (others==0)
+				genstat("B.孤独死去的$M", "孤独死去", x=>x+1, 2);
+		}
+		
+		if (exhausted) {
+			affect_ego(0, b.x, b.y-b.z);
+			genstat("B.干击杀", "干击杀", x=>x+1, 2);
+		} else
+			affect_ego(b.ego_score, b.x, b.y-b.z);
+		
+		const tier = ego_tiers.findLastIndex(t => b.ego_score >= t.n);
+		if (tier != -1)
+			stats.kills[tier] ++;
+	}
+	
+	if (b.health == 0) {
+		if (b.sticky) {
+			add_sticker(b.x, b.z, b.fit);
+			b.eliminated = true;
+		} else if (alive_supports == 0 || paw.steamroller) {
+			add_strand(b.x, b.z, b.fit);
+			b.eliminated = true;
+		}
+	}
+	
+	b.hurt(dead);
+}
+
+function excuse_bug(b, id) {
+	if (!b.seen || b.starter || finished)
+		return;
+	
+	if (b.health <= 4)
+		genstat("D.$M永久残疾", "永久残疾", x=>x+1, 2);
+	b.excuse();
+	if (ego.loss_mul > 0)
+		affect_ego(-b.ego_score, b.x<w/2?0:w, floor_y-32);
+	stats.bugs_left++;
+}
+
+function kick_bugs(x_diff) {
+	for (const b of bugs) if (b) {
+		if (paw_state == 3 && !b.supporting) {
+			const prev_under = b.under_paw();
+			b.x -= x_diff;
+			if (b.under_paw() && !prev_under) {
+				if (abs(x_diff/delta) > 40) {
+					b.rolling = true;
+					b.roll_x_vel = x_diff/delta;
+					b.knock();
+				} else
+					b.x += x_diff;
+			}
+			b.x += x_diff;
+		}
+	}
+}
+
+function update_bugs() {
+	stats.time_since_last_kill += delta;
+	
+	for (const b of bugs) if (b) {
+		const fit = b.fit;
+		
+		// 尝试被看见
+		if (!b.seen && b.x > 0 && b.x <= w)
+			b.seen = true;
+		
+		if (b.alive())
+			b.lifetime += delta;
+		
+		// 愤怒的虫子更令人满足
+		if (b.agitated)
+			b.raise_ego(delta * max(1, bug_max_hp - b.health) * fit.suffer_mul);
+		
+		// 翻滚动画与声音
+		if (b.rolling) {
+			b.roll_frame -= b.roll_x_vel * fit.roll_fr * delta * b.dir;
+			if (b.roll_frame < 0) {
+				b.roll_frame += fit.roll_frames;
+				rand()<0.1 && sound("roll", 0.2 + abs(b.roll_x_vel/800), 1-0.2+rand()*0.4);
+			}
+			b.roll_frame = b.roll_frame%fit.roll_frames;
+			b.onback = b.roll_frame<fit.roll_frames/2;
+		}
+		
+		// 自由翻滚物理
+		if (!b.supporting && b.rolling) {
+			b.y += b.roll_y_vel * delta;
+			b.y = min(floor_y, b.y);
+
+			b.x += b.roll_x_vel * delta;
+			b.rolled += abs(b.roll_x_vel * delta);
+			
+			// 摩擦与停止翻滚
+			if (b.y >= floor_y) {
+				const vel_sign = sign(b.roll_x_vel);
+				b.roll_x_vel -= vel_sign * delta * fit.friction;
+				if (sign(b.roll_x_vel) != vel_sign || vel_sign == 0) {
+					b.roll_x_vel = 0;
+					b.rolling = false;
+				}
+			}
+			
+			// 碰撞
+			if (b.touching_paw() || b.touching_wall()) {
+				b.roll_x_vel = -b.roll_x_vel*0.8;
+				b.x += (b.roll_x_vel * delta)*2;
+			}
+
+			// 翻滚时无法起身
+			b.knock();
+		}
+		
+		b.update();
+		
+		b.supporting = false;
+		b.buckling = false;
+		
+		// 被撞倒！
+		if (b.knocked) {
+			if (b.health <= 3)
+				continue;
+			
+			if (b.get_up > 2) {
+				if (randevent(r=>r<0.01)) b.get_up --;
+			} else {
+				if (second_passed()) b.get_up --;
+			}
+			if (b.get_up != 0)
+				continue;
+			b.knocked = false;
+		}
+		
+		// 限制在舞台内
+		if (b.seen && b.touching_wall())
+			b.x>w/2 ? b.x = w-1 : b.x = 1;
+
+		// 四处走动
+		b.timer += delta;
+		const rate = b.health==bug_max_hp ? 1/(fit.walk_rate+rand()) : 1/fit.limp_rate;
+		if (b.timer < rate) continue;
+		b.timer -= rate;
+		
+		const sprinting = b.health==bug_max_hp;
+		const limping = b.health==bug_max_hp-1;
+		const moves = b.agitated?(sprinting?fit.sprint_moves:limping?fit.limp_moves:fit.crawl_moves):fit.walk_moves;
+		const steps = b.agitated?(sprinting?fit.sprint_steps:limping?fit.limp_steps:fit.crawl_steps):fit.walk_steps;
+		
+		var movement = moves[b.tick % moves.length];
+		b.x += movement * b.dir;
+		b.tick ++;
+		
+		if (steps && steps[b.tick % steps.length] == 1)
+			genstat("CB.走过的$T步数", "小步数", x=>x+1);
+
+		// 在地面上从脚上弹开
+		if (!b.knocked) {
+			if (b.touching_paw() || b.touching_wall())
+				b.dir = -b.dir, b.x += b.dir * movement;
+			// 随机转身
+			else if (b.seen && b.agitated && b.weak() && rand()<0.02)
+				b.dir = -b.dir;
+		}
+	}
+	
+	supports = 0;
+	alive_supports = 0;
+	
+	if (paw_state == 3) {
+		// 获取虫子最高 y，造成踩踏伤害
+		pin_min_y = h;
+		for (const b of bugs) if (b) {
+			if (b.under_paw()) {
+				if (!b.agitated && rand()<0.3 && b.alive())
+					sound("jostle", 0.3, 1.0-rand()*0.4);
+				b.agitated = true;
+				b.knock();
+				pin_min_y = min(pin_min_y, b.y - b.fit.pin_height[b.health]);
+			}
+		}
+		for (const b of bugs) if (b) {
+			// 确定所有提供结构支撑的虫子
+			if (
+				b.touching_paw() &&
+				b.knocked &&
+				(paw.steamroller || b.y - b.fit.pin_height[b.health] == pin_min_y)
+			) {
+				supports += (b.alive?1:0.8);
+				b.supporting = true;
+				if (b.alive() && b.seen)
+					alive_supports ++;
+			}
+			
+			// 滑动，可能翻滚
+			if (b.supporting && !b.touching_wall()) {
+				const vel = paw_x_diff*.5;
+				b.x += vel;
+				b.rolled += abs(vel);
+				
+				var prev = b.rolling;
+				b.rolling = abs(paw_x_diff) > .2;
+				if (b.rolling) {
+					b.roll_x_vel = vel/delta;
+					if (!prev)
+						b.roll_frame = 0;
+				}
+			}
+		}
+
+		// 踩踏伤害
+		if (stomp_size != 0) {
+			const damage =
+				supports<=4 ?stomp_size*8 :
+				supports<=8 ?stomp_size*4 :
+				supports<=12?stomp_size*2 : stomp_size/2;
+			
+			for (let i=0; i<bugs.length; i++) {
+				const b = bugs[i];
+				if (b && b.under_paw() && b.knocked)
+					hurt_bug(b, floor(damage / (1+b.strength*2)), i);
+			}
+		}
+		
+		// 渐进伤害
+		if (pressure > 0) {
+			const support =
+				supports<4  ? 0.0  : 1.0;
+			const support_randomness =
+				supports<=4 ? 1.0 :
+				supports<=8 ? 0.1 :
+				supports<=20? 0.4 : 0.02;
+			
+			for (let i=0; i<bugs.length; i++) {
+				const b = bugs[i];
+				if (b == null || !b.supporting)
+					continue;
+				
+				var strength = b.strength*support/(paw.strength+finish_power);
+				strength = max(0.05, strength * min(32,supports)/40);
+				b.buckling = pressure >= strength;
+				
+				if (b.buckling && randevent(r=>r<support_randomness))
+					hurt_bug(b, 1, i);
+			}
+		}
+	}
+	
+	// 删除屏幕外或死亡
+	for (let i = bugs.length; i-- > 0;) {
+		const b = bugs[i];
+		if (b == null)
+			continue;
+		
+		// 尸体与翻滚者一旦离开屏幕立即移除
+		if (!b.alive() && (b.x < -16 || b.x > w+16)) {
+			if (b.rolling)
+				genstat("D.清理垃圾", "清理垃圾", x=>x+1, 1);
+			delete_bug(i);
+			continue;
+		}
+		
+		if (b.x < -paw.width || b.x > w+paw.width) {
+			excuse_bug(b, i);
+			delete_bug(i);
+			continue;
+		}
+		
+		if (b.eliminated)
+			delete_bug(i);
+	}
+}
+
+function delete_bug(i) {
+	const bug = bugs[i];
+	silence_bug(bug);
+	if (bug.fit.special)
+		special_bugs.get(bug.fit.i).numbers --;
+	bug_count--;
+	bugs[i] = null;
+}
+
+function draw_bug(b) {
+	b.draw_under();
+	
+	const fit = set_fit(b.fit);
+	hflip = b.dir < 0;
+	
+	if (b.rolling) {
+		const roll_sheet =
+			b.health<2? fit.roll_low_spr :
+			b.health<4? fit.roll_mid_spr : fit.roll_ok_spr;
+		var roll_frame = b.roll_frame;
+		if (roll_sheet == fit.roll_low_spr) {
+			hflip = b.roll_x_vel > 0;
+			if (!(hflip ^ (b.dir == 1))) // 真麻烦。
+				roll_frame = fit.roll_frames-roll_frame;
+		}
+		b.spr = roll_sheet;
+		sprite(fit.shadow_spr, b.x, b.y-b.z, 0, .5, .5);
+		sprite(b.spr, b.x, b.y-b.z, roll_frame, .5, 1);
+		return;
+	}
+	
+	if (b.knocked) {
+		// 压力下颤抖（或准备起身）
+		const x = b.x + (b.alive() && (b.buckling || (b.get_up == 1 || b.get_up == 2))) * (tick%4>1);
+		b.spr = b.onback ? fit.knock_back_spr : fit.knock_spr;
+		sprite(fit.shadow_spr, x, b.y-b.z, 0, .5, .5);
+		sprite(b.spr, x, b.y-b.z, bug_max_hp-b.health, .5, 1);
+		return;
+	}
+	
+	if (b.agitated) {
+		sprite(fit.shadow_spr, b.x, b.y-b.z, 0, .5, .5);
+		var lim;
+		if (b.health == bug_max_hp) {
+			b.spr = (b.weak() && !fit.special) ? fit.sprint_cry_spr : fit.sprint_spr;
+			lim = fit.sprint_moves.length;
+		} else if (b.health == bug_max_hp-1)
+			b.spr = fit.limp_spr, lim = fit.limp_moves.length;
+		else if (b.health == bug_max_hp-2)
+			b.spr = fit.crawl_spr, lim = fit.limp_moves.length;
+		sprite(b.spr, b.x, b.y-b.z, b.tick%lim, .5, 1);
+		return;
+	}
+	
+	sprite(fit.shadow_spr, b.x, b.y-b.z, 0, .5, .5);
+	sprite(fit.walk_spr, b.x, b.y-b.z, b.tick%fit.walk_moves.length, .5, 1);
+}
+
+function draw_bugs() {
+	for (const b of bugs)
+		if (b) draw_bug(b);
+	hflip = false;
+	unset_fit();
+}
+
+// #爪子
+
+var paw_x = 0, paw_y = 0;
+var paw_dest_x = 0, paw_dest_y = 0;
+var paw_final_x = 0; // 即：左、下
+var paw_state = 0, paw_strength = 0, prev_paw_state = 0;
+var paw_x_diff = 0, paw_y_diff = 0;
+var paw_y_velo = 0;
+var paw_slide_track = 0;
+var stomp_frame = 0;
+var stomp_size = 0;
+var pressure = 0;
+var attached_strands = 0;
+var fatigue = 0;
+var exhausted = false;
+var exhausting = false;
+var recovering = false;
+var finish_power = 0;
+var stomp_snap = new Map();
+
+const paw_min_y = 64;
+
+function init_stomp_masks() {
+	for (const mask of paw.stomp_masks) {
+		const pmask = []; // '像素'掩码
+		for (let x=0; x<paw.width; x++)
+			pmask[x] = mask[floor(x*(mask.length/paw.width))];
+		mask.pmask = pmask;
+	}
+}
+
+function update_paw() {
+	stomp_size = 0;
+	
+	const ft = paw.stam_sway*0.75;
+	var strain = 1;
+	if (fatigue >= ft && !exhausted)
+		strain *= (paw.stam_max-fatigue)/(paw.stam_max-ft);
+	if (exhausted)
+		strain = 0.2;
+	
+	// 垂直移动
+	var y_move = paw.speed[1];
+	
+	if (paw_follows_mouse)
+		paw_dest_y = clamp(my * 2, 0, h*2);
+	if (exhausted)
+		paw_dest_y = h*1.3, y_move = paw.exhaust_paw_speed;
+	else if (paw_dest_y > paw_y)
+		y_move = paw.speed[1] + (paw_dest_y - paw_y) / 48;
+	else
+		y_move *= 1/max(1,attached_strands*paw.strand_damp);
+	paw_y_velo = (paw_dest_y - paw_y) * y_move * strain;
+	paw_y_velo = min(paw.max_velocity, paw_y_velo);
+	paw_y_diff = paw_y_velo * delta;
+	paw_y += paw_y_diff;
+	paw_y = max(paw_min_y, paw_y);
+	
+	// 状态
+	prev_paw_state = paw_state;
+	pressure = 0;
+	paw_state = 0;
+	if (paw_y > h/2)
+		paw_state = 1;
+	if (paw_y > h/2 + h/4)
+		paw_state = 2;
+	if (paw_y >= floor_y) {
+		if (prev_paw_state != 3) {
+			stomp_size = paw_y_diff*paw.strength;
+			paw_slide_track = sound("slide", null, 0, 15, true);
+			genstat("C.走过的步数", "步数", x=>x+1);
+			for (const k of Object.keys(stats))
+				stomp_snap.set(k, stats[k]);
+		}
+		paw_state = 3;
+		paw_y = floor_y;
+		pressure = clamp((paw_dest_y - h) / h, 0, 1);
+		if (pressure < 0.1)
+			pressure = 0.0;
+		if (exhausted)
+			pressure = paw.exhaust_pressure;
+		
+		strain *= 0.4;
+		strain *= clamp(1-pressure*paw.friction, 0, 1);
+	} else if (prev_paw_state == 3) {
+		stomp_snap.clear();
+		mass_crushing_get = false;
+		if (paw_slide_track) stopsound(paw_slide_track);
+	}
+	
+	// 水平移动
+	if (!exhausted) {
+		strain *= 1/max(1,attached_strands*paw.strand_damp);
+		paw_dest_x = paw_follows_mouse?mx:paw_dest_x;
+		const sway = paw.stam_sway;
+		if (paw_state != 3 && fatigue >= sway)
+			paw_dest_x += sin((fatigue-sway)*pi)*(fatigue-sway)*paw.stam_sway_amount;
+	} else
+		strain = 0;
+	
+	// 防止终局卡死
+	if (finished) {
+		finish_power += delta*2;
+		strain = 0;
+	}
+	
+	var x_move = paw.speed[0];
+	const x_velo = (paw_dest_x - paw_x) * x_move * strain;
+	paw_x_diff = x_velo * delta;
+	
+	// 限制在边缘
+	const next_pos = paw_x + paw_x_diff;
+	if (next_pos <   paw.left_limit ) paw_x_diff += (  paw.left_limit ) - next_pos;
+	if (next_pos > w+paw.right_limit) paw_x_diff += (w+paw.right_limit) - next_pos;
+	
+	if (!paw.steamroller)
+		kick_bugs(paw_x_diff);
+	paw_x += paw_x_diff;
+	
+	// 滑动声音
+	if (paw_state == 3 && paw_slide_track)
+		setsoundvolume(paw_slide_track, (abs(paw_x_diff)>0.1) * clamp(abs(x_velo/1600), 0, 0.6));
+	
+	// 引发疲劳
+	recovering = false;
+	exhausting = false;
+	var f = fatigue;
+	if (!exhausted && started_playing) {
+		if (paw_state != 3) {
+			f += delta * paw.stam_loss;
+			exhausting = true;
+		} else {
+			if (supports == 0 || paw.steamroller) {
+				f = max(0, f - delta * paw.stam_gain);
+				recovering = true;
+			} else if (pressure > 0.5 && alive_supports > 5) {
+				f += delta * paw.stam_loss * min(2, pressure * paw.stam_press_mul);
+				exhausting = true;
+			}
+			if (f > paw.stam_max/1.5)
+				f += delta * pressure * 4 * paw.stam_loss;
+		}
+		if (f > paw.stam_max) {
+			f = paw.stam_max;
+			exhausted = true;
+			genstat("B.团灭次数", "团灭", x=>x+1, 3);
+		}
+	} else {
+		if (paw_y >= floor_y)
+			f -= delta * paw.stam_exhaust_gain_mul, recovering = true;
+		if (f <= 0)
+			f = 0, exhausted = false;
+	}
+	if (!paw.stam_on)
+		f = 0, exhausted = false, exhausting = false, recovering = false;
+	fatigue = f;
+
+	// 震动
+	if (stomp_size > 0) {
+		shake = stomp_size * paw.shake_factor;
+		const amount = norm(shake, paw.shake_max);
+		sound("stompboom", amount, 1+amount/2, 20);
+		sound("impact", amount*2, null, 20);
+	}
+	shake = clamp(shake - delta*paw.shake_reduce, 0, paw.shake_max);
+}
+
+function draw_paw_shadow(x, y, len) {
+	if (hide_paws)
+		return;
+	len /= 2;
+	if (paw.shadow_lattice) x = floor(x/2)*2;
+	const midw = paw.shadow_mid_spr[3];
+	const midc = max(1,floor((len-paw.shadow_end_spr[3]*2)/midw));
+	const xl = x-midc*midw, xr = x+midc*midw;
+	for (let x=xl; x<xr; x+=midw)
+		sprite(paw.shadow_mid_spr, x, y, 0, 0, .5);
+	sprite(paw.shadow_end_spr, xl, y, 0, 1, .5);
+	hflip = true;
+	sprite(paw.shadow_end_spr, xr-paw.shadow_lattice, y, 0, 0, .5);
+	hflip = false;
+}
+
+function draw_back_paw() {
+	if (hide_paws)
+		return;
+	
+	const frame = clamp(round(pressure*4), 0, 4);
+	const x = w*paw.back_paw_x, y = h*paw.back_paw_y;
+	alpha = 1-frame/4;
+	if (pressure<0.8 && paw.back_paw_shadow)
+		draw_paw_shadow(x+paw.width/2, y, paw.width-(frame/4)*paw.width);
+	alpha = 1;
+	
+	sprite(paw.back_spr, x, y, frame, 0, 1);
+}
+
+function draw_front_paw() {
+	if (hide_paws)
+		return;
+	
+	var y_off = 0;
+	if (paw_state == 3 && !paw.steamroller) {
+		if (supports > 0)
+			y_off = pin_min_y - floor_y;
+		else if (pressure > 0.2)
+			y_off = 4;
+	}
+	
+	var frame = paw_state;
+	stomp_frame = 0;
+	if (pin_min_y >= floor_y || paw.steamroller)
+		stomp_frame += clamp(ceil(pressure*4) - 1, 0, 2);
+	else
+		if (paw_state == 3 && pressure > 0.1)
+			frame = 4;
+	
+	sprite(paw.front_spr, paw_x-paw.width/2-paw.offset, paw_y+y_off, frame+stomp_frame, 0, 1);
+	draw_stickers();
+}
+
+// 将一个漂浮/飞行物体推入爪下
+function clamp_under_paw(obj) {
+	if (obj.x>paw_x-paw.width/2 && obj.x<paw_x+paw.width/2)
+		obj.y = clamp(obj.y, paw_y - paw.push_y[paw_state], floor_y);
+}
+
+// #ego 摄像机
+
+var ego_val = 0;
+var ego_climb = 0;
+var ego_excite = 0;
+var ego_status = 0; // -1、0 或 1
+var ego_blink = 0;
+
+var finished = false;
+var finish_timer = 0;
+var num_left = false;
+var total_val = 0;
+var mass_crushing_get = false;
+
+const ego_nums = [];
+
+function affect_ego(amount, num_x, num_y) {
+	if (!ego.on)
+		return;
+	
+	if (amount > 0) {
+		amount *= ego.gain_mul;
+		ego_excite = 0.5;
+	}
+	if (amount < 0) {
+		amount *= ego.loss_mul;
+		if (finished) return;
+	}
+	amount = floor(amount);
+	
+	const prev = ego_val, ego_max = ego.levels * ego.step;
+	ego_val = clamp(ego_val + amount, 0, ego_max-1);
+	
+	// 阶段变化
+	if (floor(prev/ego.step) != floor(ego_val/ego.step)) {
+		if (amount > 0) {
+			ego_val += ego.phase_boost;
+			sound("ego_up", null, null, 2);
+		} else
+			sound("ego_down", null, null, 2);
+	}
+	
+	if (ego_val >= ego_max-1)
+		finished = true;
+	if (amount < 0)
+		stats.ego_lost -= amount;
+	if (amount > 0) {
+		stats.ego_gained += amount;
+		total_val += amount;
+		
+		// '大碾压'时刻
+		const pego = stomp_snap.get("ego_gained");
+		if (pego != null && !mass_crushing_get && stats.ego_gained - pego >= ego.step/2) {
+			mass_crushing_get = true;
+			sound("bigcrush", null, 1.0-rand()*0.8, 10);
+			genstat("1.大规模碾压", "大规模碾压", x=>x+1, 6);
+		}
+		
+		if (finished)
+			stats.bonus_ego += amount;
+	}
+	
+	if (ego_nums.length > 1499)
+		return;
+	if (!ego.numbers_on)
+		return;
+	
+	// 推到其他数字上方
+	const str = amount>=0?'+'+amount:''+amount;
+	const width = str.length*(set.small_score?4.5:6);
+	var left = num_left = !num_left;
+	if (num_x > w-width) left = true,  num_x = w-width;
+	if (num_x <   width) left = false, num_x =   width;
+	ego_nums.push({
+		init: false,
+		x: num_x,
+		y: num_y,
+		val: amount,
+		str: str,
+		width: width,
+		life: 1,
+		push_y: 0,
+		push_t: 0,
+		released: false,
+		left: left,
+		blink: 1/6,
+		tier: ego_tiers.find(t => amount <= t.n) || ego_tiers[ego_tiers.length-1],
+	});
+}
+
+function init_num(num) {
+	const num_y = num.y;
+	const nw = num.width/2, nh = (set.small_score?8:13)/2;
+	const hb = set.small_score?4:8;
+	var repeat = true;
+	for (let i=0; i<256 && repeat; i++) {
+		repeat = false;
+		for (const on of ego_nums) {
+			if (!on.init) continue;
+			const oy = on.y + on.push_y;
+			if (
+				num.x-hb<on.x+on.width/2 &&
+				num.x+hb>on.x-on.width/2 &&
+				oy>(num.y+num.push_y)-nh &&
+				oy<(num.y+num.push_y)+nh
+			) {
+				if (num.val < 0 && on.val < 0) {
+					// 合并
+					on.blink = max(on.blink, 4);
+					on.val += num.val;
+					on.str = on.val>=0?'+'+on.val:''+on.val;
+					num.life = 0;
+					return;
+				}
+				if (num_y + num.push_y <= nh*2) {
+					num.x += num.left ? -num.width : num.width;
+					if (num.x > w-num.width) num.x -= num.width*2, num.left = true;
+					if (num.x <   num.width) num.x += num.width*2, num.left = false;
+					num.push_y = 0;
+				}
+				num.push_y -= nh;
+				repeat = true;
+			}
+		}
+	}
+	num.init = true;
+}
+
+function update_ego_cam() {
+	var inits = 0;
+	for (const num of ego_nums) {
+		if (!num.init) init_num(num), inits++;
+		if (inits > 25) break;
+	}
+	
+	ego_val = max(0, ego_val - ego.passive_loss*delta);
+	ego_excite = max(0, ego_excite - delta);
+	
+	const pc = ego_climb, es = sign(ego_val - ego_climb);
+	if (es != 0) {
+		ego_climb += delta * ego.step * 2 * es;
+		if (es != sign(ego_val - ego_climb)) ego_climb = ego_val;
+	}
+	if (floor(ego_climb / ego.step*4) != floor(pc / ego.step*4)) {
+		ego_blink = 1/10;
+		ego_status = sign(ego_val - ego_climb);
+	}
+	ego_blink = max(0, ego_blink - delta);
+	if (finished) ego_blink = true;
+	
+	// 漂浮数字
+	for (const num of ego_nums) {
+		if (!num.init) continue;
+		num.push_t = min(1, num.push_t + delta * 8);
+		if (num.push_t >= 1)
+			num.blink -= delta;
+		if (!num.released) {
+			if (alive_supports == 0)
+				num.released = true;
+			continue;
+		}
+		if (num.push_t >= 1)
+			num.y -= delta * 32;
+		num.life -= delta;
+	}
+	
+	for (let i=ego_nums.length; i-- > 0;)
+		if (ego_nums[i].life <= 0)
+			ego_nums.splice(i, 1);
+}
+
+function draw_ego_cam() {
+	// 漂浮数字
+	if (set.small_score) text_size(8);
+	const nh = (set.small_score?8:13)/2;
+	for (const num of ego_nums) {
+		if (!num.init) continue;
+		if (num.x < 0 || num.x > w) continue;
+		var white = false;
+		const a = norm(num.life, 0.25);
+		
+		if (num.val < 0) {
+			if (ctime%1 > 1/2)
+				text_color(10, 0, 0, a);
+			else
+				text_color(200, 0, 0, a);
+		} else if (num.val == 0 || num.tier == null)
+			text_color(0, 0, 0, a);
+		else if (num.push_t >= 1 && num.blink > 0 && tick%6 > 2)
+			text_color(num.tier.b, num.tier.b, num.tier.b, a);
+		else
+			text_color(...num.tier.c, a);
+		
+		text(num.x-num.width/2, num.y+nh/2+num.push_y*num.push_t, num.str);
+	}
+	text_color(0, 0, 0, 255);
+	text_size();
+	
+	if (hide_cam)
+		return;
+
+	const ego_level = floor(ego_climb / ego.step);
+	const bob = (ctime/1000) % 2 * active * !game_pause;
+	
+	sprite(ego.bg_spr, w, 0, 0, 1);
+	if (exhausted)
+		sprite(ego.exhaust_spr, w, -bob,
+			floor((paw.stam_max-fatigue) % 4) > 1, 1);
+	else
+		sprite((ego_excite || finished)?ego.excite_spr:ego.normal_spr, w, -bob, ego_level, 1);
+	sprite(ego.frame_spr, w, 0, 0, 1);
+	
+	if (!active || !started_playing)
+		return;
+
+	var ui_x = w - 2;
+	var ui_y = ego.frame_spr[4];
+
+	// 疲劳条
+	if (paw.stam_on) {
+		ui_x -= paw.stam_loss_spr[3] * 1.5;
+		var fatigue_vis = true, fatigue_frame = ceil(((paw.stam_max-fatigue)/paw.stam_max)*3);
+		if (exhausted)
+			fatigue_vis = floor(ctime*0.005)%2==0;
+		if (fatigue_vis) {
+			if (exhausting && fatigue >= paw.stam_max*.66)
+				fatigue_frame = max(0, fatigue_frame - (1-floor(fatigue*2.3)%2));
+			sprite(recovering?paw.stam_gain_spr:paw.stam_loss_spr, ui_x, ui_y, fatigue_frame);
+		}
+	}
+
+	// ego 条
+	if (ego.on) {
+		const sw = ego.pip_spr[3], sh = ego.pip_spr[4];
+		ui_x -= (ego.levels) * sw;
+		const spr =
+			ego_blink&&ego_status==-1?ego.pip_loss_spr:
+			ego_blink&&ego_status== 1?ego.pip_gain_spr:ego.pip_spr;
+		
+		for (let i=0; i<ego.levels; i++)
+			sprite(spr, ui_x+i*sw, ui_y);
+		for (let i=0; i<=ego_level; i++) {
+			const b = finished?1:clamp((ego_climb - i*ego.step) / ego.step, 0, 1);
+			sprite(spr, ui_x+i*sw, ui_y, floor(b*4));
+		}
+		
+		// 总计
+		if (kill_counter_heat > 0) {
+			const a = norm(kill_counter_heat, .5);
+			const str = `+${floor(total_val)}`;
+			const x = min(ui_x+ego_level*sw, w-str.length*6);
+			text_color(151, 195, 255, a);
+			text(x, ui_y+sh+10, str);
+			text_color(255, 255, 255, a);
+			text(x, ui_y+sh+10-1, str);
+		}
+	}
+}
+
+// #统计
+
+const stats = { };
+window.game_stats = stats;
+
+function init_stats() {
+	stats.time_elapsed = 0;
+	stats.total_kills = 0;
+	stats.kills = ego_tiers.map(_ => 0);
+	stats.bugs_left = 0;
+	
+	stats.ego_gained = 0;
+	stats.ego_lost = 0;
+	stats.bonus_ego = 0;
+	
+	stats.time_since_last_kill = 0;
+	stats.crush_time = 0;
+	
+	stats.gen = new Map();
+}
+
+function update_stats() {
+	if (!finished && active)
+		stats.time_elapsed += delta;
+	
+	var l = 0, r = 0, suf = 0;
+	for (const b of bugs) if (b) {
+		l = max(l, b.lifetime);
+		r = max(r, b.rolled);
+		if (b.health <= 5 && b.alive()) suf++;
+	}
+	genstat("C$C.$M受苦的总时长", "受苦时长", x=>x+suf*delta);
+	genstat("C$C.最长寿的$T", "最长寿", x=>max(x, l));
+	genstat("C.翻滚最远的$T（像素）", "翻滚最远", x=>max(x, r));
+	genstat("C.同时附着的丝线最多", "丝线最多", x=>max(x, strands.length));
+	
+	if (stomp_snap.size > 0) {
+		genstat("B.一脚踩死最多$M", "一脚踩死",
+			x=>max(x, stats.total_kills - stomp_snap.get("total_kills")), 4);
+		genstat("B.一脚获得最多 Ego", "一脚 Ego",
+			x=>max(x, stats.ego_gained - stomp_snap.get("ego_gained")), 4);
+		
+		if (alive_supports > 0 && pressure >= 0.35) {
+			stomp_snap.set("crush_time", stomp_snap.get("crush_time") + delta);
+			genstat("B.最长碾压时长（秒）", "最长碾压",
+				x=>max(x, floor(stomp_snap.get("crush_time"))), 2);
+		}
+	}
+}
+
+const new_stats = [];
+const stat_dur = 2;
+
+function genstat(name, tag, f, priority) {
+	var st = stats.gen.get(tag);
+	if (st == null) {
+		const sp = formatstat(name).split(".");
+		st = [0, sp[1]||sp[0], stat_dur, name];
+		stats.gen.set(tag, st);
+	}
+	
+	const cv = st[0], nv = f(cv); // '当前' / '新' 值
+	const vd = nv - cv; // 差值
+	st[0] = nv;
+	
+	// 放入中期列表
+	priority = priority || 0;
+	if (priority == 0 || vd == 0)
+		return;
+	
+	// 若已在列表中则更新
+	var ind;
+	if ((ind=new_stats.findIndex(([n,v])=>st[1]==n))!=-1) {
+		const nst = new_stats[ind];
+		nst[1] += vd, nst[2] = stat_dur, nst[3] = priority;
+		return;
+	}
+	// 找到空位或更低优先级；插在其上方
+	for (let i=0; i<=new_stats.length; i++) {
+		const s = new_stats[i];
+		if (s==null || s[3] < priority) {
+			new_stats.splice(i, 0, [st[1], vd, stat_dur, priority]);
+			break;
+		}
+	}
+}
+
+var rank = 0, rank_dialog;
+function query_rank(test) {
+	if (!giant.grades) return;
+	function get_stat_value(tag) { 
+		const si = simple_stats.get(tag);
+		if (si) { return si[1](); }
+		const st = stats.gen.get(tag);
+		if (st) { return st[0]; }
+		return null;
+	}
+	
+	rank = 0, rank_dialog = giant.congrats || "干得好！";
+	for (const g of giant.grades) {
+		const tag = g[0], op = g[1], val = g[2];
+		const cv = round(get_stat_value(tag));
+		
+		const prank = rank;
+		switch (op) {
+		case ">=": if (cv >= val) rank++; break;
+		case "<=": if (cv <= val) rank++; break;
+		case  "=": if (cv == val) rank++; break;
+		case "!=": if (cv != val) rank++; break;
+		case  ">": if (cv  > val) rank++; break;
+		case  "<": if (cv  < val) rank++; break;
+		default: throw new Error(`"${op}" 不是有效的统计比较操作！！`);
+		}
+		if (rank == prank)
+			rank_dialog = g[3];
+		test && test(rank != prank, tag, cv, op, val);
+	}
+}
+
+const ret_link = `
+<p style="text-align:center;user-select:none;">
+	<a href="javascript:void(0)" id="statreturnlink">点击此处返回</a>
+	<br>
+</p>
+`;
+
+const simple_stats = new Map(Object.entries({
+	"TIME SPENT":       ["$C.踩踏所花时间", ()=>stats.time_elapsed],
+	"TOTAL KILLS":      ["$T总击杀",      ()=>stats.total_kills],
+	"TOTAL ESCAPES":    ["$T总逃脱",    ()=>stats.bugs_left],
+	"TOTAL EGO GAINED": ["总获得 Ego",    ()=>stats.ego_gained],
+	"TOTAL EGO LOST":   ["总失去 Ego",      ()=>stats.ego_lost],
+	"BONUS EGO":        ["奖励 Ego（最后一踩的额外加成）", ()=>stats.bonus_ego],
+}));
+
+/*
+	统计格式：
+		$T - 替换为 set.tiny_name（蚂蚁）
+		$M - 替换为 set.tiny_name_plural（蚂蚁们）
+		$S - 替换为 set.special_name
+		$F - 替换为 set.floor_name
+		$C - 以时间表示统计（00:00:00 - 时钟）
+		$P - 以百分比表示统计
+		$Z - 若为零则不显示该统计
+	
+	第一个句点之前的内容会被移除；那是你
+	放置表示格式或字母排序辅助的地方。
+*/
+
+function formatstat(name) {
+	name = name
+		.replace("$M", set.tiny_name_plural)
+		.replace("$T", set.tiny_name)
+		.replace("$S", set.special_name)
+		.replace("$F", set.floor_name);
+	for (const [from, to] of set.phrase_changes_sorted)
+		name = name.replace(from, to);
+	return name;
+}
+
+function compile_stats_text() {
+	var str = ret_link;
+	
+	const good_tags = new Map();
+	query_rank((got, tag) => got && good_tags.set(tag, true));
+	
+	const push_stat = (name, value, good) => {
+		if (good) str += `<b style="color:#88FF88;">`;
+		str += `${formatstat(sanitize(name))}:`
+		if (good) str += `</b>`;
+		str += ` <b>${sanitize(value)}</b><br>`;
+	};
+	
+	const compile_stat = (k) => {
+		var name = null, value;
+		const si = simple_stats.get(k);
+		if (si) { name = si[0], value = si[1](); }
+		const gen = stats.gen.get(k);
+		if (gen) { name = gen[3], value = gen[0]; }
+		if (name == null) return;
+		
+		// 跳过 "." 之前及包括 "." 的内容；用于排序与属性
+		const a = name.split(".");
+		
+		// 特殊属性
+		const z = a[0].includes("$Z"); // 值为 0 则跳过
+		const v =
+			a[0].includes("$C") ? clockstr(value) :
+			a[0].includes("$P") ? `${round(value)}%` :
+			floor(value);
+		
+		if (z && v == 0) return;
+		push_stat(a.pop(), v, good_tags.get(k));
+	};
+	
+	str += '<u><b>统计</b></u><br>';
+	
+	if (giant.grades) {
+		const grade_chars = "SABCDF";
+		const rstr = grade_chars.charAt(giant.grades.length-rank);
+		str += `评级：<b>${rstr}</b><br>`;
+		str += `提示："${sanitize(rank_dialog)}"<br>`;
+	}
+	
+	for (const [k, v] of simple_stats)
+		compile_stat(k);
+	
+	str += '<br><b><u>详细数据</u></b><br>';
+	
+	if (set.day_night_cycle)
+		genstat("0$Z.踩踏过的天数", "踩踏天数", 
+			_=>floor(stats.time_elapsed / set.seconds_in_day));
+	
+	const keys = stats.gen.keys().toArray();
+	for (const k of keys.sort())
+		compile_stat(k);
+	
+	if (demographics.length > 0) {
+		// 从每个人口统计类别中为一只虫子分配一个身份
+		for (const demo of demographics) {
+			demo.forEach(c => c.count = 0);
+			for (let i=0, c; i<stats.total_kills; i++)
+				if (c = demo.find(c => rand()*100 < c[1]))
+					c.count++;
+		}
+		
+		// 输出
+		if (demographics.find(d => d.find(c => c.count > 0))) {
+			str += '<br><b><u>人口统计</u></b><br>';
+			
+			for (const demo of demographics)
+				for (const category of demo)
+					if (category.count > 0)
+						push_stat(category[0], category.count);
+		}
+	}
+	
+	set_stats_str(str + '<br>');
+}
+
+// #变量
+
+var wetness; // 0.5 = 丝线对 strain 影响减半
+var time_of_day; // 0 = 白天，1 = 夜晚
+var hide_cam;
+var hide_paws;
+var paw_follows_mouse;
+var game_pause;
+var kill_climb;
+var new_kills;
+
+function init_vars() {
+	paw_x = w/2, paw_y = 0;
+	paw_dest_x = w/2, paw_dest_y = 0;
+	paw_follows_mouse = true;
+	timescale = 1;
+	game_pause = false;
+	started_playing = false;
+	time_of_day = 0;
+	finish_power = 0;
+	new_kills = 0;
+	kill_climb = 0;
+	kill_counter_heat = 0;
+	bugs.length = 0;
+	bug_count = 0;
+	fallers.length = 0;
+	droplets.length = 0;
+	strands.length = 0;
+	fatigue = 0;
+	ego_val = 0;
+	ego_climb = 0;
+	ego_excite = 0;
+	ego_status = 0;
+	ego_blink = 0;
+	mass_crushing_get = false;
+	hide_cam = false;
+	stomp_size = 0;
+	hide_paws = false;
+	exhausted = false;
+	exhausting = false;
+	recovering = false;
+	finished = false;
+	finish_timer = 0;
+	ego_nums.length = 0;
+	new_stats.length = 0;
+	init_stickers();
+	init_stomp_masks();
+	if (!retain_stains) init_stains();
+	retain_stains = false;
+	
+	if (custom && !custom_loaded) {
+		hide_paws = true;
+		hide_cam = true;
+	}
+	
+	document.body.style.background = set.bg_color;
+	
+	for (const s of stickers) s.fits = [];
+	
+	// 虫子变体以主虫子设置为原型
+	special_bugs.clear();
+	for (const [i, f] of (bug.fits||[]).entries()) {
+		const nf = Object.create(bug);
+		Object.assign(nf, f);
+		bug.fits[i] = nf;
+		nf.i = i;
+		if (f.special)
+			special_bugs.set(i, { alive: true, numbers: 0 }); 
+	}
+	
+	// 虫子变体查找辅助
+	fit_lookup.length = 0;
+	let v = 0;
+	for (const f of bug.fits)
+		fit_lookup.push([v, v + f.chance, f]), v += f.chance;
+	fit_lookup.push([v, v + bug.chance, bug]), v += bug.chance;
+	fit_lookup_max = v;
+	
+	// 词语替换
+	set.phrase_changes_sorted = Object.entries(set.phrase_changes);
+	set.phrase_changes_sorted.sort(([k,v],[ok,ov]) => ok.length - k.length);
+}
+
+// #界面
+
+function draw_kill_counter(x, y, w) {
+	sprite(set.kills_spr, x, y-14);
+	text_color(0, 0, 0, 255);
+	if (kill_counter_heat > 0) {
+		alpha = kill_counter_heat;
+		sprite(set.kills_spr, x, y-14, 1);
+		text_color(alpha*255, 0, 0, 255);
+		alpha = 1.0;
+	}
+	const killstr = `${kill_climb}`;
+	text(x+30, y, killstr);
+	text_color(255, 255, 255, 1), text(x+30, y-1, killstr);
+	if (kill_counter_heat > 0) {
+		const a = norm(kill_counter_heat, .5);
+		text_color(255, 0, 0, a);
+		text(x+30+killstr.length*6, y-(1-a)*8, `+${new_kills}`);
+		text_color(255, 255, 255, a);
+		text(x+30+killstr.length*6, y-1-(1-a)*8, `+${new_kills}`);
+	}
+}
+
+function draw_left_counter(x, y, w) {
+	sprite(set.left_spr, x, y-14);
+	text_shadow(x+30, y, 255, 255, 255, `${stats.bugs_left}`);
+}
+
+function draw_timer(x, y, w) {
+	sprite(set.timer_spr, x, y-14);
+	const str = clockstr(stats.time_elapsed);
+	text_shadow(x+30, y, 255, 255, 255, clockstr(stats.time_elapsed));
+}
+
+// #游戏
+
+var game, next_game = null, next_game_args;
+var tr_t = 0, tr = false;
+function change_game(game_class, ...args) {
+	if (next_game != null || tr)
+		return;
+	tr_t = 0;
+	tr = true;
+	next_game = game_class;
+	next_game_args = args;
+}
+
+class Game {
+	constructor() { init_vars(); } // 新游戏应用时调用
+	on_activate() { }
+	on_change() { }
+	update_pre() { }
+	update_post() { }
+	bug_killed(b, id) { }
+	key_down(key) { }
+	draw_scene() { }
+	draw_ui() { }
+	stat_return() { }
+}
+
+function day_night_cycle() {
+	time_of_day = 0.5+sin((stats.time_elapsed/set.seconds_in_day*pi*2)-pi/2)*0.5;
+}
+
+class Endless extends Game {
+	constructor(endless) {
+		super();
+		this.endless = endless;
+		if (!endless) {
+			init_stats();
+			update_stats();
+			query_rank();
+		} else
+			started_playing = true;
+		kill_climb = stats.total_kills;
+		show_cursor = true;
+		paw_follows_mouse = false;
+		
+		this.end_timer = 0;
+		this.ambi = null;
+		this.psh = set.pressure_spr[4];
+		this.rankt = 0;
+		
+		for (let i=0; i<set.starter_bugs; i++)
+			add_bug({ x: w*rand(), y: floor_y, dir: rand()>0.5?-1:1 });
+	}
+	
+	on_activate() {
+		paw_follows_mouse = true;
+		show_cursor = false;
+		this.ambi = singlesound("ambience", 1.0, null, 100, true);
+	}
+	
+	on_change() {
+		stopsound(this.ambi);
+		update_stats();
+		console.log("你的评级结果……");
+		query_rank((got, tag, cv, op, val) =>
+			console.log(`${got?"达成":"未达"} ${tag} (${cv} ${op} ${val})！`));
+	}
+	
+	update_pre() {
+		// 结束状态
+		if (finished && abs(ego_climb - ego_val) < 100 && alive_supports == 0 && ego_nums.length == 0) {
+			if (this.ambi != null) stopsound(this.ambi);
+			this.end_timer += delta;
+			timescale = max(0.2, 1.0-this.end_timer);
+			if (this.end_timer >= 1) {
+				timescale = 1.0;
+				if (!this.endless) {
+					retain_stains = true;
+					game_pause = true;
+					change_game(EndScreen);
+				} else {
+					ego_val = 0;
+					ego_climb = 0;
+					ego_excite = 0;
+					ego_status = 0;
+					ego_blink = 0;
+					finished = false;
+					paw_follows_mouse = true;
+				}
+			}
+		}
+	}
+	
+	update_post() {
+		// 随机虫子
+		const a = clamp(ego_val/(ego.step*ego.levels), 0, 1);
+		if (
+			!(set.closed_walls && bug_count >= set.closed_walls) &&
+			randevent(r=>r<=set.spawn_rng+a*set.spawn_ego_base)
+		) {
+			const dir = rand()>0.5?-1:1;
+			const fit = gen_bug_fit();
+			const bw = fit.width;
+			const xs = dir==-1 ?
+				max(w+bw, (paw_x+paw.width/2)+bw) :
+				min( -bw, (paw_x-paw.width/2)-bw);
+			const xo = -dir*rand()*32;
+			add_bug({ x: xs+xo, y: floor_y, dir: dir, agitated: a > rand()/2 }, null, fit);
+		}
+		
+		day_night_cycle();
+		
+		if (finished) {
+			paw_follows_mouse = false;
+			paw_dest_y = h*2;
+		}
+		
+		update_stats();
+		
+		this.rankt = max(0, this.rankt-delta);
+		const prank = rank;
+		if (started_playing) query_rank();
+		if (rank != prank) this.rankt = 0.5;
+		if (!this.endless) {
+			if (rank > prank) genstat("A.评级提升！！", "评级提升", x=>x+1, 10);
+			if (rank < prank) genstat("A.评级下降！",    "评级下降", x=>x+1, 20);
+		}
+		
+		for (let i = new_stats.length; i-- > 0;) {
+			const s = new_stats[i];
+			s[2] -= gdelta*0.5;
+			if (s[2] < 0 && !finished)
+				new_stats.splice(i, 1);
+		}
+	}
+	
+	draw_ui() {
+		if (!started_playing) return;
+		
+		var y=20, x=0;
+		if (this.endless) {
+			sprite(set.return_spr, 4, 4);
+			if (mp && mx<36 && my<36) {
+				game_pause = true;
+				retain_stains = true;
+				change_game(EndScreen, true);
+			}
+			x+=28;
+		} else if (giant.grades) {
+			sprite(set.grade_spr, 4+sin(this.rankt*pi*2)*4, 4, giant.grades.length-rank);
+			x+=28;
+		}
+		if (set.show_time) draw_timer(x, y), x+=80;
+		if (set.show_kills) draw_kill_counter(x, y), x+=80;
+		if (set.show_leaves && !set.closed_walls) draw_left_counter(x, y);
+		
+		// 压力计
+		if (paw_state == 3 && set.show_pressure && !exhausted) {
+			y=70;
+			const pa = max(0.06, pressure);
+			set.pressure_spr[4] = this.psh * pa;
+			sprite(set.pressure_spr, 8, y+this.psh-(this.psh*pa), 2);
+			alpha=pa;
+			sprite(set.pressure_spr, 8, y+this.psh-(this.psh*pa), 1);
+			alpha=1.0;
+			set.pressure_spr[4] = this.psh;
+			sprite(set.pressure_spr, 8, y);
+		}
+		
+		// 新统计
+		y=40, x=30;
+		for (const s of new_stats) {
+			const fd = finished?1.0:s[2];
+			const a = norm(fd, 0.2)*0.8;
+			const str = `+${round(s[1])} ${s[0]}`;
+			if (s[2]>stat_dur-0.05 && tick%6>2)
+				text_color(255,255,255,a);
+			else
+				text_color(0,0,0,a);
+			text(x, y, str);
+			
+			if (s[3]>15) // 负面！！
+				text_color(255,0,0,a+0.3);
+			else if (s[3]>8)
+				text_color(255,255,0,a+0.4);
+			else if (s[3]>4)
+				text_color(255,200,100,a+0.2);
+			else if (s[3]>2)
+				text_color(200,255,255,a+0.1);
+			else
+				text_color(255,255,255,a);
+			text(x, y-1, str);
+			y+=15*norm(fd, 0.1);
+		}
+		alpha = 1.0;
+	}
+}
+
+var button_id = null;
+function button(id, spr, x, y) {
+	if (button_id == null && mp && mx>=x && my>=y && mx<x+64 && my<y+32)
+		button_id = id;
+	const focus = button_id == id;
+	sprite(spr, x, y, focus+0);
+	return mr && focus && mx>=x && my>=y && mx<x+64 && my<y+32;
+}
+
+function darkrect(x, y, w, h, a) {
+	alpha = a || 0.4;
+	sprite_scaled(set.dark_spr, x, y, w, h);
+	alpha = 1.0;
+}
+
+class EndScreen extends Game {
+	constructor(reward) {
+		super();
+		game_pause = true;
+		hide_paws = true;
+		hide_cam = true;
+		show_cursor = true;
+		
+		paw_dest_x = 10000;
+		paw_x = 10000;
+		
+		this.counting = true;
+		this.count = 0;
+		this.tvs = ego_tiers.map(_ => 0);
+		this.wait = 0;
+		this.ti = 0;
+		this.stats_compiled = false;
+		this.buttons = false;
+		this.skipped = false;
+		
+		this.pops = null;
+		this.beeps = null;
+		
+		this.dscroll = 0, this.dsf = true;
+		
+		kill_climb = stats.total_kills;
+		day_night_cycle();
+		this.reward =
+			reward != null ||
+			!giant.grades  || rank == giant.grades.length;
+	}
+	
+	next() {
+		this.ti ++;
+		if (this.ti == ego_tiers.length) {
+			this.counting = false, this.buttons = true;
+			if (this.beeps != null) stopsound(this.beeps);
+		}
+	}
+	skipall() { for (var i=0;i<8;i++) this.skip(); }
+	skip() {
+		this.tvs[this.ti] = stats.kills[this.ti];
+		if (!this.buttons)
+			button_id = -1;
+		this.buttons = true;
+		this.skipped = true;
+		this.wait = 0;
+		this.next();
+		if (this.beeps != null) stopsound(this.beeps);
+	}
+	
+	update_pre() {		
+		if (this.skipped && !mp) this.skipped = false;
+		if (this.counting && mp && !this.skipped)
+			this.skip();
+		
+		if (this.wait > 0) {
+			this.wait -= delta;
+			return;
+		}
+		
+		if (this.counting) {
+			if (this.tvs[this.ti] == 0) {
+				singlesound("impact", null, null, null, null, 1);
+				singlesound("stompboom", null, null, null, null, 1);
+				const s = sound("beep", 0.3, 0.9+this.ti/7, null, true);
+				stopsound(this.beeps);
+				this.beeps = s;
+				this.wait += 1/60;
+			}
+			
+			if (this.tvs[this.ti] < stats.kills[this.ti]) {
+				this.tvs[this.ti]++;
+				return;
+			}
+			this.wait += 0.2;
+			this.next();
+		}
+	}
+	
+	draw_ui() {
+		if (stats_opened)
+			return darkrect(0, 0, w, h);
+		else
+			bg_fill(0.7);
+		
+		var y = 8;
+		if (giant.grades && !this.reward) {
+			const s = max(0, giant.grades.length-rank-1);
+			alpha = s==0 ? 1 : 2/((s*2+1)*(s*2+1));
+			for (let xo=-s; xo<=s; xo++)
+			for (let yo=-s; yo<=s; yo++)
+				sprite(set.end_spr, w/2+xo, y+yo, 0, .5, 0);
+			alpha = 1.0;
+		} else
+			sprite(set.end_spr, w/2, 8, 0, .5, 0);
+		
+		y += set.end_spr[4];
+		
+		if (giant.grades) {
+			const spd = 5, lim = 25;
+			this.dsf ? this.dscroll += delta*spd : this.dscroll -= delta*spd;
+			if (this.dscroll > lim) this.dsf = false;
+			if (this.dscroll < 0)   this.dsf = true;
+			
+			const rank_str = this.reward ? `"${giant.congrats}"` : `"${rank_dialog}"`;
+			const pad = 8;
+			const sw = pad*3 + 32 + rank_str.length*6;
+			var x = w/2 - sw/2;
+			if (x < 0) x = floor(-(this.dscroll/lim)*-x*2);
+			sprite(set.grade_spr, x+pad, y, this.reward ? 0 : giant.grades.length-rank);
+			text_shadow(x+32+pad*2, y+22, 255, 255, 255, rank_str);
+		}
+		
+		var ys = h/2+64;
+		var xs = 8, x = xs, y = h-10;
+		for (const [i, v] of ego_tiers.entries()) {
+			if (this.ti < i) continue;
+			sprite(v.s, x+16, y, 0, .5, 1);
+			
+			const n = i==ego_tiers.length-1?v.n:v.n+"+";
+			text_shadow(x+32, y, ...v.c, n);
+			text_shadow(x+32, y-12, 255, 255, 255, this.tvs[i]);
+			x+=64;
+		}
+		
+		x=xs, y-=40;
+		draw_timer(x, y, true), x+=100;
+		draw_kill_counter(x, y, true), x+=80;
+		draw_left_counter(x, y, true);
+		
+		if (!this.buttons) return;
+		if (button(0, set.stat_button_spr, w-144, ys-16)) {
+			if (!this.stats_compiled)
+				compile_stats_text(), this.stats_compiled = true;
+			show_stats();
+			this.skipall();
+		}
+		const replay_spr = this.reward ? set.reward_button_spr : set.replay_button_spr;
+		if (button(1, replay_spr, w-76, ys-16)) {
+			change_game(Endless, this.reward);
+			this.skipall();
+		}
+		if (!mp) button_id = null;
+	}
+}
+
+function textbutton(id, x, y, label, width) {
+	if (button_id == null && mp && mx>=x && my>=y && mx<x+width && my<y+24)
+		button_id = id;
+	const focus = button_id == id;
+	text(x+8, y+16, label);
+	text_color(255, 255, 255, 255);
+	text(x+8, y+15, label);
+	text_color(0, 0, 0, 255);
+	darkrect(x, y, width, 24);
+	return mp && focus;
+}
+
+function compile_sticker_json(stickers) {
+	var str = ret_link;
+	str += '"stickers": [<br>';
+	
+	for (const [i, s] of stickers.entries()) {
+		const p = s.fits;
+		str += `&nbsp;&nbsp;&nbsp;&nbsp;${JSON.stringify(s, null, 4)}`;
+		if (i != stickers.length-1) str += ',';
+		str += '<br>';
+		s.fits = p;
+	}
+	
+	str += ']';
+	set_stats_str(str);
+}
+
+class StickerEditor extends Game {
+	constructor() {
+		super();
+		paw_follows_mouse = false;
+		show_cursor = true;
+		paw.speed = [8, 8];
+		paw_dest_x = w*.3;
+		paw.left_limit = 0;
+		set.bg_spr[3] = 0;
+		set.bg_spr[4] = 0;
+		set.foreground_spr = null;
+		set.shadow_spr = null;
+		
+		this.toggle_pos();
+		this.sel = 0;
+		this.mpx = 0;
+		this.test = false;
+		this.new_sticker = -1;
+		
+		this.fit_id = bug.fits.length;
+		this.fit = bug;
+	}
+	
+	test_mode() {
+		if (paw_state != 2) this.toggle_pos();
+		const px = paw_x - paw.width/2;
+		darkrect(px, floor_y, paw.width, -floor_depth);
+		if (!(mx > px && my < floor_y && mx < px+paw.width && my > floor_y-floor_depth))
+			return;
+		darkrect(mx, floor_y, 1, -floor_depth, 1);
+		
+		const z = floor_depth-(my-(floor_y-floor_depth));
+		init_stickers();
+		add_sticker(mx, z, this.fit);
+		draw_stickers();
+	}
+	
+	toggle_pos(down) {
+		const mid = h*0.75;
+		const dif = h/8;
+		if (paw_y <  mid-dif/2) paw_dest_y = mid+dif+2;
+		if (!down && paw_y >= mid+dif/2) paw_dest_y = mid-dif-2;
+	}
+	
+	edit_stickers() {
+		const ts = stickers[stickers.length-1]||{};
+		const px = paw_x - paw.width/2;
+		if (mr && this.new_sticker >= 0) {
+			this.new_sticker = -1;
+			this.toggle_pos();
+		}
+		if (my > h-32) {
+			if (mp) this.sel = min(9, floor(mx/32));
+			this.toggle_pos(true);
+		} else if (mp && button_id == null && mx > px && my < paw_y && mx < px + paw.width) {
+			const tx = floor(mx-px), ty = floor(paw_y-my);
+			if (paw_state == 2) {
+				if (this.new_sticker == -1) {
+					const s = [this.sel, tx, ty, tx, ty];
+					s.fits = [], s.blood = 0;
+					stickers.push(s);
+					this.new_sticker = stickers.length-1;
+				} else {
+					const s = stickers[this.new_sticker];
+					s[1] = tx, s[2] = ty;
+				}
+			} else {
+				const s = stickers[stickers.length-1];
+				if (s) s[3] = tx, s[4] = ty;
+			}
+		}
+		
+		for (const [i, s] of stickers.entries()) {
+			if (i == stickers.length-1 && tick%12>5)
+				continue;
+			const p = get_sticker_pos(s);
+			sprite(paw_state==2?this.fit.sticker_low_spr:this.fit.sticker_high_spr,
+				p.x, p.y, s[0], .5, .5);
+		}
+	}
+	
+	ed_ui() {
+		set_fit(this.fit);
+		if (!active) return;
+		
+		if (stats_opened) {
+			darkrect(0, 0, w, h, 0.8);
+			return;
+		}
+		
+		if (button_id != 4 && textbutton(4, 0, 0, "测试", 38))
+			this.test = !this.test;
+		
+		if (this.test) {
+			this.test_mode();
+			return;
+		}
+		
+		if (paw_state == 2) {
+			const hi = this.fit.sticker_high_spr;
+			const lo = this.fit.sticker_low_spr;
+			var y = h - lo[4];
+			for (let i=0; i<10; i++) sprite(lo, i*32, y, i);
+			darkrect(this.sel*32, h-32, 32, 32);
+		}
+		
+		if (textbutton(0, w-68, 148, "JSON", 60)) {
+			compile_sticker_json(stickers);
+			show_stats();
+		}
+		
+		if (this.drag_x) paw_dest_x += mx - this.mpx;
+		if (button_id != 2 && textbutton(2, 40*3, 0, "位置", 38)) {
+			this.toggle_pos();
+			this.drag_x = true;
+		}
+		if (button_id != 3 && textbutton(3, 40*2, 0, "撤销", 38))
+			stickers.pop();
+		if (button_id != 5 && textbutton(5, 40, 0, "变体", 38)) {
+			this.fit_id ++;
+			if (this.fit_id > bug.fits.length) this.fit_id = 0;
+		}
+		
+		// 编辑
+		if (button_id == null)
+			this.edit_stickers();
+	}
+	
+	draw_ui() {
+		this.fit = bug.fits ? bug.fits[this.fit_id] || bug : bug;
+		this.ed_ui();
+		if (!mp) button_id = null, this.drag_x = false;
+		this.mpx = mx;
+		unset_fit();
+	}
+}
+
+update = function() {
+	if (tr) { // 过渡
+		const prev = tr_t;
+		tr_t += delta;
+		if (next_game && tr_t > 0.5 && prev <= 0.5) {
+			stop_all_sounds();
+			game.on_change();
+			game = new next_game(...next_game_args);
+			next_game = null;
+			if (active)
+				game.on_activate();
+		}
+		if (tr_t >= 1.0)
+			tr = false;
+	}
+	
+	game.update_pre();
+	
+	if (game_pause)
+		return;
+	
+	if (activated)
+		game.on_activate();
+	
+	if (tick%2==0)
+		kill_climb += -sign(kill_climb-stats.total_kills);
+	kill_counter_heat = max(0, kill_counter_heat - delta);
+	if (kill_counter_heat == 0)
+		new_kills = 0, total_val = 0;
+	
+	update_paw();
+	update_bugs();
+	update_stickers();
+	update_fallers();
+	update_droplets();
+	update_strands();
+	update_ego_cam();
+
+	game.update_post();
+};
+
+const clocksubstr = (v, s) => (s = v + '', s.length > 1 ? s : '0' + s);
+function clockstr(v) {
+	const seconds = floor(v)        % 60;
+	const minutes = floor(v / 60)   % 60;
+	const hours   = floor(v / 3600);
+	return `${clocksubstr(hours)}:${clocksubstr(minutes)}:${clocksubstr(seconds)}`;
+}
+
+function bg_fill(a) {
+	alpha = a;
+	sprite_scaled(set.fade_spr, 0, 0, w, h);
+	alpha = 1.0;
+}
+
+function intro_screen() {
+	shapes.length = 0;
+	bg_fill(0.8);
+	
+	if (custom && !custom_loaded) return;
+	
+	var y=h/6;
+	text_color(0,0,0,255);
+	sprite(giant.intro_flag_spr, 0, y-22);
+	text(20, y, giant.name);
+	text_color(255,255,255,255);
+	text(20, y-1, giant.name);
+	text_color(0,0,0,255);
+	y += 12;
+	for (const s of giant.description.split("\n"))
+		text(30, y+=14, s);
+	
+	const x = w/2.5;
+	y = max(y+28, h*0.6);
+	text(x, y, "点击开始！");
+	text(x, y+12, "（注意音量）");
+	moncanvas ? text_color(240, 240, 240, 255) : text_color(100, 100, 100, 255);
+	text(x, y-!mp, "点击开始！");
+}
+
+draw = function() {
+	clear(255,255,255, 1);
+	sprite(set.bg_spr, 0, 0);
+	if (set.day_night_cycle) {
+		alpha = time_of_day;
+		sprite(set.bg_spr, 0, 0, 1);
+		alpha = 1.0;
+	}
+	
+	game.draw_scene();
+	var fg_shadow_alpha = 1.0;
+	if (set.shadow_spr) {
+		fg_shadow_alpha = 1-clamp(dist(paw_x, paw_y, set.shadow_pos[0]*w, set.shadow_pos[1]*h)/set.shadow_dist, 0, 1)
+		alpha = fg_shadow_alpha;
+		sprite(set.shadow_spr, 0, 0);
+		alpha = 1.0;
+	}
+	
+	draw_stains();
+	draw_back_paw();
+	if (paw_y > floor_y - 100) {
+		const len = paw.width-(floor_y-paw_y);
+		alpha = len/paw.width;
+		draw_paw_shadow(paw_x, floor_y-floor_depth/2, len);
+		alpha = 1.0;
+	}
+	if (paw_state < 3)
+		if (paw_state == 0)
+			draw_droplets(), draw_fallers(), draw_front_paw();
+		else
+			draw_front_paw(), draw_droplets(), draw_fallers();
+	
+	draw_bugs();
+	draw_strands();
+	
+	if (paw_state == 3)
+		draw_droplets(), draw_fallers(), draw_front_paw();
+	
+	if (set.foreground_spr) {
+		alpha = set.foreground_shadow ? fg_shadow_alpha : 1.0;
+		sprite(set.foreground_spr, 0, 0);
+		alpha = 1.0;
+	}
+	
+	if (!active)
+		intro_screen();
+	
+	draw_ego_cam();
+	
+	if (active)
+		game.draw_ui();
+	
+	if (show_tracks)
+		draw_audio_tracks();
+
+	// 过渡
+	var tr_y = 0;
+	if (tr) {
+		const t = tr_t<0.5?tr_t:1-tr_t;
+		tr_y = ((t**4)*16)*h;
+		for (let x=-24; x<w; x+=64) {
+			for (let y=tr_y-64; y>=0; y-=64)
+				sprite(set.trans_spr, x, floor(y/64)*64);
+			sprite(set.trans_spr, x, tr_y-64);
+		}
+	}
+	
+	if (!show_cursor && moncanvas)
+		sprite(set.pointer_spr, mx, my, 0, .5, .5);
+
+	// 最终渲染
+	render();
+	set_yoff(pause||slow?0:floor(shake-(shake*2*(-1+(tick%2)*2))) * sc);
+	occ.drawImage(c, 0, 0, w*sc, h*sc);
+
+	// 调试形状
+	occ.scale(sc,sc);
+	occ.font = "14px VT323";
+	occ.fillStyle = "black";
+	occ.strokeStyle = "black";
+	for (const s of shapes) {
+		switch (s[0]) {
+		case 0:
+			let c = `rgba(${s[1]},${s[2]},${s[3]},${s[4]})`;
+			occ.fillStyle = c;
+			occ.strokeStyle = c;
+			break;
+		case 1:
+			occ.beginPath();
+			occ.moveTo(s[1], s[2]);
+			occ.lineTo(s[3], s[4]);
+			occ.stroke();
+			break;
+		case 2:
+			occ.strokeRect(s[1], s[2], s[3], s[4]);
+			break;
+		case 3:
+			if (tr_y < s[2])
+				occ.fillText(s[3], s[1], s[2]);
+			break;
+		case 4:
+			occ.font = `${s[1]||14}px VT323`;
+			break;
+		}
+	}
+	shapes.length = 0;
+	occ.resetTransform();
+	renders = 0;
+};
+
+init_stats();
+
+if (sticker_ed)
+	game = new StickerEditor();
+else if (url_params.get("ending")) {
+	game = new Endless();
+	stats.kills = ego_tiers.map(_ => floor(rand()*400));
+	stats.total_kills = stats.kills.reduce((ps, a) => ps + a, 0);
+	change_game(EndScreen);
+}
+else
+	game = new Endless();
+
+ptime = performance.now();
+mainloop();
+
+} // done_loading
+
+</script>
+<div id="__dbg" style="
+  position:fixed;right:8px;top:8px;z-index:2147483647;display:block;visibility:visible;
+  font-family:VT323,monospace;font-size:18px;line-height:1.2;color:#000;
+  background:#dae5d6;border:2px solid #000;box-shadow:2px 2px 0 #000;
+  width:250px;user-select:text;touch-action:manipulation;">
+  <div id="__dbg_h" style="padding:3px 6px;cursor:move;background:#000;color:#dae5d6;display:flex;justify-content:space-between;align-items:center;touch-action:none;">
+    <span>调试面板</span><span id="__dbg_toggle" style="cursor:pointer;touch-action:manipulation;user-select:none;">-</span>
+  </div>
+  <div id="__dbg_b" style="padding:6px;overflow:visible;">
+    <div style="margin-bottom:4px;">
+      音量 <input id="__dbg_vol" type="range" min="0" max="100" style="width:120px;vertical-align:middle;">
+      <span id="__dbg_volv"></span>
+    </div>
+    <div style="margin-bottom:4px;">
+      <a href="javascript:void(0)" id="__dbg_stats">统计</a>
+      &middot; <a href="javascript:void(0)" id="__dbg_clear">清缓存</a>
+      &middot; <a href="javascript:void(0)" id="__dbg_shot">截图</a>
+      &middot; <a href="javascript:void(0)" id="__dbg_fs">全屏</a>
+    </div>
+    <div style="border-top:1px solid #000;margin-top:4px;padding-top:4px;">
+      <div style="margin-bottom:2px;">数值调整</div>
+      <div id="__dbg_fields" style="display:none;height:180px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;touch-action:pan-y;"></div>
+    </div>
+    <div id="__dbg_info" style="font-size:14px;max-height:140px;overflow:auto;border-top:1px solid #000;margin-top:4px;padding-top:4px;white-space:pre-wrap;"></div>
+  </div>
+</div>
+<script>
+(function(){
+  try{
+  var $ = function(id){ return document.getElementById(id); };
+  var panel = $("__dbg"), body = $("__dbg_b");
+
+  $("__dbg_toggle").addEventListener("click", function(e){
+    e.stopPropagation();
+    body.style.display = body.style.display === "none" ? "block" : "none";
+    $("__dbg_toggle").textContent = body.style.display === "none" ? "+" : "-";
+  });
+  $("__dbg_toggle").addEventListener("touchstart", function(e){ e.stopPropagation(); }, {passive:true});
+
+  var drag = false, dx = 0, dy = 0;
+  function startDrag(e){
+    var t = e.touches ? e.touches[0] : e;
+    var r = panel.getBoundingClientRect();
+    panel.style.left = r.left + "px";
+    panel.style.top  = r.top  + "px";
+    panel.style.right = "auto";
+    drag = true; dx = t.clientX - r.left; dy = t.clientY - r.top;
+    e.preventDefault();
+  }
+  function moveDrag(e){
+    if(!drag) return;
+    var t = e.touches ? e.touches[0] : e;
+    panel.style.left = (t.clientX - dx) + "px";
+    panel.style.top  = (t.clientY - dy) + "px";
+    e.preventDefault();
+  }
+  function endDrag(){ drag = false; }
+  var hh = $("__dbg_h");
+  hh.addEventListener("mousedown", startDrag);
+  hh.addEventListener("touchstart", startDrag, {passive:false});
+  document.addEventListener("mousemove", moveDrag);
+  document.addEventListener("touchmove", moveDrag, {passive:false});
+  document.addEventListener("mouseup", endDrag);
+  document.addEventListener("touchend", endDrag);
+
+  var vol = $("__dbg_vol"), volv = $("__dbg_volv");
+  var realVol = document.getElementById("volume");
+  function syncVol(){
+    var v = +(localStorage.getItem("volume") || 0.3) * 100;
+    vol.value = v; volv.textContent = Math.round(v) + "%";
+  }
+  syncVol();
+  vol.oninput = function(){
+    var v = +vol.value / 100;
+    localStorage.setItem("volume", v);
+    volv.textContent = vol.value + "%";
+    if (realVol) { realVol.value = vol.value; realVol.dispatchEvent(new Event("input")); }
+  };
+
+  $("__dbg_stats").onclick = function(){
+    var statsEl = document.getElementById("stats");
+    if (!statsEl) return;
+    statsEl.style.display = "block";
+    if (!statsEl.innerHTML.trim())
+      statsEl.innerHTML = "<br><br><div style='text-align:center;'>统计面板由游戏内逻辑填充，请在结束页点击统计按钮。</div>";
+  };
+  $("__dbg_clear").onclick = function(){
+    if (confirm("清空 localStorage 并刷新？")) { localStorage.clear(); location.reload(); }
+  };
+  $("__dbg_shot").onclick = function(){
+    var oc = document.getElementById("outcanvas");
+    if (!oc) return;
+    var a = document.createElement("a");
+    a.download = "stomp_" + Date.now() + ".png";
+    a.href = oc.toDataURL("image/png");
+    a.click();
+  };
+  $("__dbg_fs").onclick = function(){
+    var d = document.getElementById("outcanvasd");
+    if (d) d.requestFullscreen();
+  };
+
+  // 可调数值列表：路径, 标签, 最小值, 最大值, 步长
+  var FIELDS = [
+    ["paw.width","爪宽",40,400,1],
+    ["paw.strength","强度",0,20,0.5],
+    ["paw.speed.1","下移速度",0,60,0.5],
+    ["paw.friction","摩擦",0,10,0.5],
+    ["ego.gain_mul","Ego增益",0,100,1],
+    ["ego.passive_loss","Ego流失",0,50,0.5],
+    ["bug.max_ego","虫Ego上限",0,10000,5],
+    ["bug.strength_base","虫力量",0,5,0.1],
+    ["set.spawn_rng","生成概率",0,1,0.01],
+    ["set.combo_duration","连杀时长",0,10,0.1]
+  ];
+
+  function getPath(obj, path){
+    var parts = path.split(".");
+    for (var i=0;i<parts.length;i++){ if (obj == null) return undefined; obj = obj[parts[i]]; }
+    return obj;
+  }
+  function setPath(obj, path, val){
+    var parts = path.split(".");
+    for (var i=0;i<parts.length-1;i++){ if (obj == null) return; obj = obj[parts[i]]; }
+    if (obj != null) obj[parts[parts.length-1]] = val;
+  }
+
+  var fieldsEl = $("__dbg_fields");
+  var inputs = [];
+  function buildFields(){
+    var G = window.__G;
+    if (!G) return;
+    fieldsEl.innerHTML = "";
+    inputs = [];
+    FIELDS.forEach(function(f){
+      var path = f[0], label = f[1], mn = f[2], mx = f[3], stp = f[4];
+      var cur = getPath(G, path);
+      if (cur == null) return;
+      var row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:4px;margin-bottom:2px;";
+      var lab = document.createElement("span");
+      lab.textContent = label;
+      lab.style.cssText = "flex:1;font-size:14px;";
+      var inp = document.createElement("input");
+      inp.type = "number";
+      inp.min = mn; inp.max = mx; inp.step = stp; inp.value = cur;
+      inp.style.cssText = "width:70px;font-family:inherit;font-size:14px;";
+      inp.onchange = function(){
+        var v = parseFloat(inp.value);
+        if (isNaN(v)) return;
+        v = Math.min(mx, Math.max(mn, v));
+        setPath(window.__G, path, v);
+        inp.value = v;
+      };
+      row.appendChild(lab); row.appendChild(inp);
+      fieldsEl.appendChild(row);
+      inputs.push({ path: path, inp: inp });
+    });
+  }
+
+  // 面板载入后尝试构建，游戏可能还没 ready
+  var tries = 0;
+  var timer = setInterval(function(){
+    if (window.__G) { buildFields(); clearInterval(timer); return; }
+    if (++tries > 60) clearInterval(timer);
+  }, 250);
+
+  var info = $("__dbg_info"), prev = "";
+  setInterval(function(){
+    var s = window.game_stats;
+    if (!s) { info.textContent = "等待游戏载入..."; return; }
+    var txt = "击杀 " + s.total_kills +
+              "  逃脱 " + s.bugs_left +
+              "\nEgo+ " + Math.floor(s.ego_gained) +
+              "  Ego- " + Math.floor(s.ego_lost) +
+              "\n时间 " + Math.floor(s.time_elapsed) + "s";
+    if (txt !== prev) { info.textContent = txt; prev = txt; }
+  }, 250);
+  }catch(e){
+    var _d=document.getElementById("__dbg_info");
+    alert("面板错误: "+e.message); if(_d)_d.textContent="面板错误: "+e.message;
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
