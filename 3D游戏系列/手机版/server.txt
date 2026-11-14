@@ -1,0 +1,402 @@
+import asyncio
+import websockets
+import json
+import socket
+import re
+import os
+import glob
+import threading
+import sys
+import time
+import errno as _errno
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+
+# ================= 配置区 =================
+TARGET_DIR = "/storage/emulated/0/html存放地/3D游戏系列/手机版/"
+PORT_WS = 8765
+PORT_HTTP = 8080
+LOG_FILE = "/data/data/com.termux/files/home/server_logs.txt"
+
+ZEROTIER_IP = "10.102.142.39"
+SELECTED_HTML = ""
+CURRENT_IP = ""
+# =========================================
+
+clients = set()
+host_ws = None
+client_info = {}
+http_server = None
+http_thread = None
+ws_server = None
+shutdown_flag = False
+main_loop = None
+
+def write_log(msg):
+    timestamp = time.strftime("%H:%M:%S")
+    log_line = f"[{timestamp}] {msg}\n"
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except: pass
+
+async def broadcast_log(msg, level="info"):
+    payload = json.dumps({"type": "server_log", "time": time.strftime("%H:%M:%S"), "msg": msg, "level": level})
+    for c in clients.copy():
+        try: await c.send(payload)
+        except: pass
+
+async def send_to(sender, text, level="info"):
+    try: await sender.send(json.dumps({"type": "server_log", "time": time.strftime("%H:%M:%S"), "msg": text, "level": level}))
+    except: pass
+
+def get_wifi_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "127.0.0.1"
+
+def update_html_ip(file_path, new_ip):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        pattern = r'ws://[0-9a-zA-Z\.\-]+:8765'
+        new_url = f'ws://{new_ip}:{PORT_WS}'
+        if re.search(pattern, content):
+            new_content = re.sub(pattern, new_url, content)
+            if new_content != content:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+    except Exception: pass
+
+# ================= HTTP 服务 =================
+_IGNORED_CONN_ERRS = (_errno.EPIPE, _errno.ECONNABORTED, _errno.ECONNRESET, _errno.ECONNREFUSED, _errno.ETIMEDOUT)
+
+class QuietHTTPRequestHandler(SimpleHTTPRequestHandler):
+    def log_message(self, fmt, *args): pass
+    def log_error(self, fmt, *args): pass
+    def handle_one_request(self):
+        try: super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError): self.close_connection = True
+        except OSError as e:
+            if e.errno in _IGNORED_CONN_ERRS: self.close_connection = True
+            else: raise
+    def copyfile(self, source, outputfile):
+        try: super().copyfile(source, outputfile)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError): pass
+        except OSError as e:
+            if e.errno not in _IGNORED_CONN_ERRS: raise
+    def finish(self):
+        try: super().finish()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError): pass
+        except OSError as e:
+            if e.errno not in _IGNORED_CONN_ERRS: raise
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.path = '/' + SELECTED_HTML
+        super().do_GET()
+
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    def handle_error(self, request, client_address):
+        exc_type, exc_value, _ = sys.exc_info()
+        if exc_type is not None and issubclass(exc_type, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, ConnectionRefusedError)): return
+        if exc_type is not None and issubclass(exc_type, OSError):
+            if getattr(exc_value, "errno", None) in _IGNORED_CONN_ERRS: return
+        super().handle_error(request, client_address)
+
+def start_http_server():
+    global http_server
+    os.chdir(TARGET_DIR)
+    try:
+        http_server = QuietThreadingHTTPServer(("", PORT_HTTP), QuietHTTPRequestHandler)
+        http_server.serve_forever(poll_interval=0.3)
+    except Exception: pass
+
+def restart_http():
+    global http_server, http_thread
+    if http_server:
+        try: http_server.shutdown(); http_server.server_close()
+        except: pass
+        http_server = None
+    http_thread = threading.Thread(target=start_http_server, daemon=True)
+    http_thread.start()
+    time.sleep(0.5)
+
+# ================= 控制台逻辑 =================
+async def build_gp_payload():
+    stats = {"ip": CURRENT_IP, "wsPort": PORT_WS, "httpPort": PORT_HTTP, "count": len(client_info), "dir": TARGET_DIR, "current_html": SELECTED_HTML}
+    players = [{"name": info["name"], "role": info["role"], "id": cid} for cid, info in client_info.items()]
+    return {"type": "gp_stats", "stats": stats, "players": players}
+
+async def handle_console_cmd(sender, cmd):
+    cmd = cmd.strip()
+    if not cmd: return
+    parts = cmd.split(); op = parts[0].lower()
+    sender_role = client_info.get(id(sender), {}).get("role", "member")
+
+    if op == "gp_fetch":
+        try: await sender.send(json.dumps(await build_gp_payload()))
+        except: pass
+        return
+    if op in {"kick", "kickall", "stop", "http"} and sender_role != "host":
+        return await send_to(sender, "⚠ 只有房主可以执行该命令", "error")
+
+    if op == "help":
+        for l in ["===== 帮助 =====", "help | list | kick <ID> | kickall | status | say <msg> | http restart | stop"]: await send_to(sender, l)
+    elif op == "list":
+        if not client_info: await send_to(sender, "当前没有玩家在线")
+        else:
+            await send_to(sender, f"在线玩家 ({len(client_info)}):")
+            for i, (cid, info) in enumerate(client_info.items(), 1): await send_to(sender, f"  {i}. {info['name']} | {info['role']} | ID:{cid} | {info['addr']}")
+    elif op == "kick":
+        if len(parts) < 2: return await send_to(sender, "用法: kick <序号或ID>", "error")
+        arg = parts[1]; ids = list(client_info.keys()); target = None
+        if arg.isdigit():
+            n = int(arg)
+            if 1 <= n <= len(ids): target = ids[n - 1]
+            elif n in client_info: target = n
+        if target is None: return await send_to(sender, f"找不到玩家: {arg}", "error")
+        name = client_info[target]["name"]
+        await kick_client(target); await send_to(sender, f"已踢出玩家: {name}", "warn")
+    elif op == "kickall":
+        await kick_all(); await send_to(sender, "已踢出所有玩家", "warn")
+    elif op == "status":
+        await send_to(sender, "===== 服务器状态 =====")
+        await send_to(sender, f"当前 IP: {CURRENT_IP}")
+        await send_to(sender, f"运行版本: {SELECTED_HTML}")
+        await send_to(sender, f"在线玩家: {len(clients)}")
+    elif op == "say":
+        msg = " ".join(parts[1:]).strip()
+        if not msg: return await send_to(sender, "用法: say <消息>", "error")
+        payload = json.dumps({"type": "server_notice", "msg": msg})
+        for c in clients.copy():
+            try: await c.send(payload)
+            except: pass
+        await send_to(sender, f"已广播公告: {msg}")
+    elif op == "clear": await sender.send(json.dumps({"type": "console_clear"}))
+    elif op == "http" and len(parts) > 1 and parts[1].lower() == "restart":
+        await send_to(sender, "正在重启..."); restart_http(); await send_to(sender, "已重启")
+    elif op == "stop":
+        await send_to(sender, "即将关闭...", "warn"); asyncio.create_task(shutdown_server())
+    else: await send_to(sender, f"未知命令: {cmd}", "error")
+
+async def send_console_snapshot(sender):
+    await send_to(sender, "===== 服务器控制台 =====")
+    await send_to(sender, f"IP: {CURRENT_IP} | 页面: {SELECTED_HTML} | 在线: {len(client_info)}")
+    for i, (cid, info) in enumerate(client_info.items(), 1): await send_to(sender, f"  {i}. {info['name']} | {info['role']} | {info['addr']}")
+
+def print_menu():
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print(f"🌐 访问地址: http://{CURRENT_IP}:{PORT_HTTP}/  (自动跳转 {SELECTED_HTML})")
+    print("-" * 46)
+    print("🎛  服务器控制台")
+    print("=" * 46)
+    print("  1. 查看在线玩家")
+    print("  2. 踢出指定玩家")
+    print("  3. 踢出所有玩家")
+    print("  4. 打开浏览器")
+    print("  5. 查看完整后台日志")
+    print("  6. 清空后台日志")
+    print("  7. 重启 HTTP 服务")
+    print("  0. 停止服务器")
+    print("=" * 46)
+
+async def ws_handler(websocket):
+    global host_ws
+    clients.add(websocket)
+    role = "host" if host_ws is None else "member"
+    if host_ws is None: host_ws = websocket
+    client_id = id(websocket)
+    try: addr = websocket.remote_address; addr_str = f"{addr[0]}:{addr[1]}" if addr else "未知"
+    except: addr_str = "未知"
+    client_info[client_id] = {"ws": websocket, "role": role, "name": "玩家", "addr": addr_str}
+    try: await websocket.send(json.dumps({"type": "role", "role": role, "id": client_id}))
+    except: pass
+    if role == "member" and host_ws is not None:
+        try: await host_ws.send(json.dumps({"type": "request_profile"}))
+        except: pass
+    write_log(f"🎮 新客户端: {role} (在线:{len(clients)})")
+    await broadcast_log(f"🎮 {role} 加入 (在线:{len(clients)})")
+    try:
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+                if data.get("type") == "console_cmd": asyncio.create_task(handle_console_cmd(websocket, data.get("cmd", ""))); continue
+                if data.get("type") == "console_fetch": asyncio.create_task(send_console_snapshot(websocket)); continue
+                if data.get("type") == "profile":
+                    client_info[client_id]["name"] = data.get("name", "玩家"); data["role"] = client_info[client_id]["role"]
+                if data.get("type") == "chat_message":
+                    data["fromName"] = client_info[client_id]["name"]; data["text"] = str(data.get("text", ""))[:200]; data["time"] = time.strftime("%H:%M:%S")
+                # ★ 新增：编辑类消息附带发送者 ID
+                if data.get("type") in ("edit_transform", "edit_force"):
+                    data["fromName"] = client_info[client_id]["name"]
+                data["_from"] = client_id; message = json.dumps(data)
+            except: pass
+            for client in clients.copy():
+                if client != websocket:
+                    try: await client.send(message)
+                    except: pass
+    except (websockets.exceptions.ConnectionClosed, ConnectionResetError, BrokenPipeError): pass
+    finally:
+        name = client_info.get(client_id, {}).get("name", "玩家")
+        clients.discard(websocket); client_info.pop(client_id, None)
+        for client in clients.copy():
+            try: await client.send(json.dumps({"type": "player_leave", "id": client_id}))
+            except: pass
+        if websocket == host_ws:
+            host_ws = None
+            if clients:
+                host_ws = next(iter(clients))
+                try:
+                    await host_ws.send(json.dumps({"type": "role", "role": "host", "id": id(host_ws)}))
+                    client_info[id(host_ws)]["role"] = "host"
+                    for c in clients.copy():
+                        try: await c.send(json.dumps({"type": "request_profile"}))
+                        except: pass
+                except: pass
+                write_log("👑 房主断开，已提升新房主")
+                await broadcast_log("👑 房主断开，已提升新房主", "warn")
+        write_log(f"❌ {name} 断开，当前在线: {len(clients)}")
+        await broadcast_log(f"❌ {name} 断开，当前在线: {len(clients)}")
+
+async def kick_client(client_id):
+    if client_id not in client_info: return
+    ws = client_info[client_id]["ws"]; name = client_info[client_id]["name"]
+    try: await ws.send(json.dumps({"type": "kicked"})); await asyncio.sleep(0.1); await ws.close(code=4000, reason="Kicked by host")
+    except: pass
+    write_log(f"👢 已踢出 {name} (ID:{client_id})")
+
+async def kick_all():
+    for cid in list(client_info.keys()): await kick_client(cid)
+
+async def shutdown_server():
+    global shutdown_flag
+    shutdown_flag = True
+    await broadcast_log("🛑 服务器即将关闭", "warn"); await asyncio.sleep(0.3)
+    for cid in list(client_info.keys()):
+        try: await client_info[cid]["ws"].close()
+        except: pass
+    if http_server:
+        try: http_server.shutdown(); http_server.server_close()
+        except: pass
+    if ws_server:
+        try: ws_server.close(); await ws_server.wait_closed()
+        except: pass
+    os.system('clear'); print("🛑 服务器已彻底停止"); os._exit(0)
+
+def console_thread():
+    global main_loop
+    print("\n💡 按回车键打开控制面板")
+    while True:
+        try: cmd = input()
+        except: return
+        if shutdown_flag: return
+        while True:
+            print_menu()
+            try: choice = input("👉 选择 (q 返回): ").strip().lower()
+            except: return
+            if choice == 'q':
+                os.system('clear'); print("💡 已返回后台模式，按回车键再次打开面板。\n"); break
+            if choice == "1":
+                print("\n👥 玩家列表:")
+                if not client_info: print("  (空)")
+                else:
+                    for i, (cid, info) in enumerate(client_info.items(), 1): print(f"  {i}. {info['name']} | {info['role']} | ID: {cid} | {info['addr']}")
+                input("\n(按回车继续)")
+            elif choice == "2":
+                if not client_info: input("\n📭 无人在线 (按回车继续)"); continue
+                print("\n👥 玩家列表:"); ids = list(client_info.keys())
+                for i, cid in enumerate(ids, 1): print(f"  {i}. {client_info[cid]['name']}")
+                try:
+                    idx = input("\n👉 输入序号或 ID (回车取消): ").strip()
+                    if idx and idx.isdigit() and 1 <= int(idx) <= len(ids):
+                        asyncio.run_coroutine_threadsafe(kick_client(ids[int(idx) - 1]), main_loop)
+                        print("\n✅ 已发送踢出指令")
+                except: print("\n❌ 无效输入")
+                input("\n(按回车继续)")
+            elif choice == "3":
+                asyncio.run_coroutine_threadsafe(kick_all(), main_loop); print("\n✅ 已踢出所有玩家"); input("\n(按回车继续)")
+            elif choice == "4":
+                os.system(f"termux-open-url 'http://{CURRENT_IP}:{PORT_HTTP}/' 2>/dev/null")
+                print("\n🌐 已调用浏览器"); input("\n(按回车继续)")
+            elif choice == "5":
+                print("\n📜 后台日志:")
+                if os.path.exists(LOG_FILE):
+                    with open(LOG_FILE, "r", encoding="utf-8") as f: print(f.read())
+                else: print("(空)")
+                input("\n(按回车继续)")
+            elif choice == "6":
+                if os.path.exists(LOG_FILE): open(LOG_FILE, 'w').close()
+                print("\n✅ 已清空"); input("\n(按回车继续)")
+            elif choice == "7":
+                print("\n🔄 重启中..."); restart_http(); print("✅ 完成"); input("\n(按回车继续)")
+            elif choice == "0":
+                asyncio.run_coroutine_threadsafe(shutdown_server(), main_loop); return
+            else: input("\n❌ 无效选项 (按回车继续)")
+
+# ================= 启动流程 =================
+async def main():
+    global ws_server, main_loop, SELECTED_HTML, CURRENT_IP
+    main_loop = asyncio.get_event_loop()
+
+    os.system('clear' if os.name == 'posix' else 'cls')
+    print("🌟 请选择联机模式：\n")
+    print("  [1] 真实网络 (局域网WiFi) -> 自动忽略 68，运行最新版本")
+    print("  [2] 虚拟网络 (ZeroTier)   -> 强制运行 68 版本\n")
+    
+    mode = input("👉 请输入序号 (1 或 2): ").strip()
+    
+    files = glob.glob(os.path.join(TARGET_DIR, "*.html"))
+    file_dict = {}
+    for f in files:
+        m = re.search(r'\((\d+)\)\.html$', f)
+        if m: file_dict[int(m.group(1))] = f
+
+    if mode == '2':
+        CURRENT_IP = ZEROTIER_IP
+        if 68 not in file_dict:
+            print("\n❌ 错误：找不到 68 号文件！")
+            return
+        SELECTED_HTML = os.path.basename(file_dict[68])
+        target_file = file_dict[68]
+        print(f"\n✅ 已进入 [虚拟网络] 模式，锁定文件: {SELECTED_HTML}")
+    else:
+        CURRENT_IP = get_wifi_ip()
+        latest_file = None
+        max_num = -1
+        for num, path in file_dict.items():
+            if num != 68 and num > max_num:
+                max_num = num
+                latest_file = path
+        if not latest_file:
+            print("\n❌ 错误：找不到除 68 以外的真实版本文件！")
+            return
+        SELECTED_HTML = os.path.basename(latest_file)
+        target_file = latest_file
+        print(f"\n✅ 已进入 [真实网络] 模式，自动忽略 68，锁定最新版本: {SELECTED_HTML}")
+        print(f"📶 当前 WiFi IP: {CURRENT_IP}")
+
+    update_html_ip(target_file, CURRENT_IP)
+    restart_http()
+
+    print("\n" + "=" * 50)
+    print(f"🎉 所有服务已启动！(当前IP: {CURRENT_IP})")
+    print(f"👉 访问地址: http://{CURRENT_IP}:{PORT_HTTP}/")
+    print("=" * 50)
+    print("💡 按回车键打开控制面板")
+    print("=" * 50 + "\n")
+
+    threading.Thread(target=console_thread, daemon=True).start()
+
+    async with websockets.serve(ws_handler, "0.0.0.0", PORT_WS) as server:
+        ws_server = server
+        await asyncio.Future()
+
+if __name__ == "__main__":
+    try: asyncio.run(main())
+    except KeyboardInterrupt: print("\n🛑 已停止")
