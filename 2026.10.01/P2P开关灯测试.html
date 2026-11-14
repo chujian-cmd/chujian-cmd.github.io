@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>P2P 开关灯 · 扫码连接 · 无依赖</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    background:#0f172a;color:#e2e8f0;
+    min-height:100vh;display:flex;justify-content:center;align-items:center;padding:12px;
+  }
+  .card{
+    background:#1e293b;border-radius:32px;padding:24px 20px 28px;
+    max-width:560px;width:100%;
+    box-shadow:0 25px 50px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06) inset;
+  }
+  h1{font-size:1.5rem;font-weight:700;color:#f1f5f9;display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  h1 .badge{font-size:.7rem;font-weight:600;background:#3b82f6;color:#fff;padding:4px 10px;border-radius:40px;margin-left:auto}
+  .subhead{color:#94a3b8;font-size:.85rem;margin-bottom:20px;border-left:3px solid #3b82f6;padding-left:12px}
+
+  .step{
+    background:#0f172a;border-radius:20px;padding:16px 18px;margin-bottom:14px;
+    border:1px solid #334155;
+  }
+  .step-title{font-size:.78rem;text-transform:uppercase;letter-spacing:.8px;color:#64748b;font-weight:700;margin-bottom:10px}
+  .row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center}
+  .btn{
+    background:#3b82f6;border:none;color:#fff;padding:10px 18px;border-radius:40px;
+    font-weight:600;font-size:.85rem;cursor:pointer;transition:.15s;
+    display:inline-flex;align-items:center;gap:6px;
+  }
+  .btn:hover{background:#2563eb;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn.secondary{background:#1e293b;color:#93c5fd;border:1.5px solid #334155}
+  .btn.secondary:hover{background:#1e40af}
+  .btn.small{padding:7px 14px;font-size:.78rem}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .btn.success{background:#22c55e}
+  .btn.success:hover{background:#16a34a}
+
+  .status{
+    display:flex;align-items:center;gap:8px;padding:10px 14px;
+    background:#0f172a;border-radius:14px;font-size:.82rem;margin-bottom:14px;
+    border:1px solid #334155;
+  }
+  .dot{width:10px;height:10px;border-radius:50%;background:#64748b;flex-shrink:0}
+  .dot.on{background:#22c55e;box-shadow:0 0 8px #22c55e}
+  .dot.wait{background:#eab308;box-shadow:0 0 8px #eab308;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  .qr-box{
+    background:#fff;border-radius:16px;padding:14px;
+    display:flex;justify-content:center;align-items:center;margin:12px 0;
+  }
+  .qr-box canvas{
+    display:block;
+    width:100%;
+    height:auto;
+    aspect-ratio:1/1;
+    image-rendering:pixelated;
+  }
+
+  .scanner-wrap{
+    position:relative;width:100%;aspect-ratio:1/1;max-height:320px;
+    background:#000;border-radius:16px;overflow:hidden;margin:12px 0;
+  }
+  .scanner-wrap video{width:100%;height:100%;object-fit:cover}
+  .scanner-hint{
+    position:absolute;bottom:12px;left:0;right:0;text-align:center;
+    color:#fff;font-size:.8rem;background:rgba(0,0,0,.5);padding:6px;
+  }
+
+  textarea{
+    width:100%;background:#020617;border:1.5px solid #334155;border-radius:12px;
+    color:#e2e8f0;padding:10px;font-family:ui-monospace,monospace;font-size:.7rem;
+    min-height:70px;word-break:break-all;resize:vertical;
+  }
+  textarea:focus{outline:none;border-color:#3b82f6}
+
+  .lamp-wrap{display:flex;flex-direction:column;align-items:center;margin:20px 0 16px}
+  .lamp{
+    width:160px;height:160px;border-radius:50%;
+    background:#1e293b;border:4px solid #334155;
+    transition:all .12s;
+    cursor:pointer;user-select:none;
+    display:flex;justify-content:center;align-items:center;
+    font-size:3rem;
+    box-shadow:inset 0 4px 20px rgba(0,0,0,.5);
+  }
+  .lamp.on{
+    background:radial-gradient(circle,#fef08a 0%,#facc15 60%,#eab308 100%);
+    border-color:#fde047;
+    box-shadow:0 0 60px rgba(250,204,21,.8),0 0 100px rgba(250,204,21,.4),inset 0 4px 20px rgba(255,255,255,.4);
+  }
+  .lamp:active{transform:scale(.96)}
+  .lamp-label{margin-top:10px;font-size:.85rem;color:#94a3b8;text-align:center}
+
+  .footer-note{font-size:.72rem;color:#64748b;text-align:center;margin-top:18px;border-top:1px solid #334155;padding-top:14px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>💡 P2P 开关灯 <span class="badge">无依赖</span></h1>
+  <div class="subhead">扫码连接 · WebRTC 直连 · 一台点，另一台亮</div>
+
+  <div class="status">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">未连接</span>
+  </div>
+
+  <!-- 步骤1: 创建邀请 -->
+  <div class="step" id="step1">
+    <div class="step-title">① 创建房间（第一台手机）</div>
+    <button class="btn" id="createBtn">🔗 生成邀请二维码</button>
+    <div id="offerQrWrap" style="display:none">
+      <div class="qr-box"><canvas id="offerQr"></canvas></div>
+      <div class="row">
+        <button class="btn small secondary" id="showOfferTextBtn">📋 显示文本码</button>
+        <span style="font-size:.78rem;color:#64748b;">→ 让第二台手机扫码</span>
+      </div>
+      <textarea id="offerText" readonly style="display:none;margin-top:8px"></textarea>
+    </div>
+  </div>
+
+  <!-- 步骤2: 加入 -->
+  <div class="step" id="step2" style="display:none">
+    <div class="step-title">② 加入房间（第二台手机）</div>
+    <button class="btn" id="scanOfferBtn">📷 扫描邀请二维码</button>
+    <div class="scanner-wrap" id="scannerWrap1" style="display:none">
+      <video id="scanVideo1" playsinline></video>
+      <div class="scanner-hint">将二维码放入框内</div>
+      <button class="btn small secondary" id="closeScan1" style="position:absolute;top:8px;right:8px;">✕ 关闭</button>
+    </div>
+    <div class="row">
+      <button class="btn small secondary" id="showPaste1">📋 手动粘贴邀请码</button>
+    </div>
+    <textarea id="answerInput" placeholder="或在这里粘贴邀请码…" style="display:none;margin-top:8px"></textarea>
+    <div class="row">
+      <button class="btn" id="joinBtn">🔌 生成应答码</button>
+    </div>
+    <div id="answerQrWrap" style="display:none">
+      <div class="qr-box"><canvas id="answerQr"></canvas></div>
+      <div class="row">
+        <button class="btn small secondary" id="showAnswerTextBtn">📋 显示文本码</button>
+        <span style="font-size:.78rem;color:#64748b;">→ 让第一台手机扫码</span>
+      </div>
+      <textarea id="answerText" readonly style="display:none;margin-top:8px"></textarea>
+    </div>
+  </div>
+
+  <!-- 步骤3: 完成连接 -->
+  <div class="step" id="step3" style="display:none">
+    <div class="step-title">③ 完成连接（回到第一台手机）</div>
+    <button class="btn" id="scanAnswerBtn">📷 扫描应答二维码</button>
+    <div class="scanner-wrap" id="scannerWrap2" style="display:none">
+      <video id="scanVideo2" playsinline></video>
+      <div class="scanner-hint">将二维码放入框内</div>
+      <button class="btn small secondary" id="closeScan2" style="position:absolute;top:8px;right:8px;">✕ 关闭</button>
+    </div>
+    <div class="row">
+      <button class="btn small secondary" id="showPaste2">📋 手动粘贴应答码</button>
+    </div>
+    <textarea id="answerPaste" placeholder="或在这里粘贴应答码…" style="display:none;margin-top:8px"></textarea>
+    <div class="row">
+      <button class="btn success" id="finishBtn">✅ 建立连接</button>
+    </div>
+  </div>
+
+  <div class="lamp-wrap">
+    <div class="lamp" id="lamp">💡</div>
+    <div class="lamp-label" id="lampLabel">连接后点击灯，两台同步</div>
+  </div>
+
+  <div class="footer-note">🔒 连接建立后数据直连，不经过任何服务器</div>
+</div>
+
+<!-- ============ 1. 二维码生成器 (版本 1-20, 纠错 L, 最大 896 字节) ============ -->
+<script>
+(function(global){
+  // 版本1-20 字节模式容量 (纠错 L)
+  const VERSION_DATA_CAPACITY_L = {
+    1: 17, 2: 32, 3: 53, 4: 78, 5: 106, 6: 134, 7: 154, 8: 192, 9: 230, 10: 271,
+    11: 321, 12: 367, 13: 425, 14: 458, 15: 520, 16: 588, 17: 661, 18: 734, 19: 812, 20: 896
+  };
+  // 数据码字数 (纠错 L)
+  const VERSION_DATA_CODEWORDS_L = {
+    1: 19, 2: 34, 3: 55, 4: 80, 5: 108, 6: 136, 7: 156, 8: 194, 9: 232, 10: 274,
+    11: 324, 12: 370, 13: 428, 14: 461, 15: 523, 16: 589, 17: 647, 18: 721, 19: 795, 20: 861
+  };
+  // 纠错码字数 (纠错 L)
+  const VERSION_EC_CODEWORDS_L = {
+    1: 7, 2: 10, 3: 15, 4: 20, 5: 26, 6: 18, 7: 20, 8: 24, 9: 30, 10: 18,
+    11: 20, 12: 24, 13: 26, 14: 30, 15: 22, 16: 24, 17: 28, 18: 30, 19: 28, 20: 28
+  };
+  // 对齐图案中心 (版本1-20)
+  const ALIGNMENT_PATTERNS = {
+    1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34],
+    7: [6, 22, 38], 8: [6, 24, 42], 9: [6, 26, 46], 10: [6, 28, 50],
+    11: [6, 30, 54], 12: [6, 32, 58], 13: [6, 34, 62], 14: [6, 26, 46, 66],
+    15: [6, 26, 48, 70], 16: [6, 26, 50, 74], 17: [6, 30, 54, 78],
+    18: [6, 30, 56, 82], 19: [6, 30, 58, 86], 20: [6, 34, 62, 90]
+  };
+  // 格式信息 (纠错 L, 掩码 0-7)
+  const FORMAT_INFO_L = [0x77C4, 0x72F3, 0x7DAA, 0x789D, 0x662F, 0x6318, 0x6C41, 0x6976];
+  // 版本信息 (版本7+)
+  const VERSION_INFO = {
+    7: 0x07C94, 8: 0x085BC, 9: 0x09A99, 10: 0x0A4D3,
+    11: 0x0BBF6, 12: 0x0C762, 13: 0x0D847, 14: 0x0E60D, 15: 0x0F928,
+    16: 0x10B78, 17: 0x1145D, 18: 0x12A17, 19: 0x13532, 20: 0x149A6
+  };
+
+  // GF(256)
+  const GF_EXP = new Uint8Array(512);
+  const GF_LOG = new Uint8Array(256);
+  (function(){
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      GF_EXP[i] = x; GF_LOG[x] = i;
+      x = (x << 1) ^ (x & 0x80 ? 0x11D : 0);
+    }
+    for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
+  })();
+
+  function gfMul(a,b){ if(a===0||b===0)return 0; return GF_EXP[GF_LOG[a]+GF_LOG[b]]; }
+
+  function rsEncode(data, ecCount) {
+    let poly = [1];
+    for (let i = 0; i < ecCount; i++) {
+      const np = new Array(poly.length + 1).fill(0);
+      for (let j = 0; j < poly.length; j++) {
+        np[j] ^= poly[j];
+        np[j + 1] ^= gfMul(poly[j], GF_EXP[i]);
+      }
+      poly = np;
+    }
+    const rem = new Uint8Array(data.length + ecCount);
+    rem.set(data);
+    for (let i = 0; i < data.length; i++) {
+      const c = rem[i];
+      if (c !== 0) {
+        for (let j = 0; j < poly.length; j++) rem[i + j] ^= gfMul(poly[j], c);
+      }
+    }
+    return rem.slice(data.length);
+  }
+
+  function generateCodewords(dataBytes, version) {
+    const dataCapacity = VERSION_DATA_CODEWORDS_L[version];
+    const bits = [];
+    bits.push(0, 1, 0, 0);
+    const countBits = (version >= 10) ? 16 : 8;
+    for (let i = countBits - 1; i >= 0; i--) bits.push((dataBytes.length >> i) & 1);
+    for (const b of dataBytes) for (let i = 7; i >= 0; i--) bits.push((b >> i) & 1);
+    const totalBits = dataCapacity * 8;
+    for (let i = 0; i < 4 && bits.length < totalBits; i++) bits.push(0);
+    while (bits.length % 8 !== 0) bits.push(0);
+    const pad = [0xEC, 0x11];
+    let pi = 0;
+    while (bits.length < totalBits) {
+      for (let i = 7; i >= 0; i--) bits.push((pad[pi % 2] >> i) & 1);
+      pi++;
+    }
+    const dataCw = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let b = 0;
+      for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+      dataCw.push(b);
+    }
+    const ecCw = rsEncode(dataCw, VERSION_EC_CODEWORDS_L[version]);
+    return [...dataCw, ...ecCw];
+  }
+
+  function buildMatrix(codewords, version, mask) {
+    const size = version * 4 + 17;
+    const m = Array(size).fill().map(() => Array(size).fill(null));
+
+    function finder(row, col) {
+      for (let r = -1; r <= 7; r++) {
+        for (let c = -1; c <= 7; c++) {
+          const rr = row + r, cc = col + c;
+          if (rr < 0 || rr >= size || cc < 0 || cc >= size) continue;
+          if ((r>=0&&r<=6&&(c===0||c===6))||(c>=0&&c<=6&&(r===0||r===6))||(r>=2&&r<=4&&c>=2&&c<=4))
+            m[rr][cc] = 1;
+          else m[rr][cc] = 0;
+        }
+      }
+    }
+    finder(0,0); finder(0,size-7); finder(size-7,0);
+
+    for (let i = 0; i < 8; i++) {
+      if (7 < size) m[7][i] = 0;
+      if (7 < size) m[i][7] = 0;
+      if (size-8 >= 0) m[7][size-8+i] = 0;
+      if (size-8 >= 0) m[i][size-8] = 0;
+      if (size-8 >= 0) m[size-8][i] = 0;
+      if (size-8 >= 0) m[size-8+i][7] = 0;
+    }
+
+    const ap = ALIGNMENT_PATTERNS[version] || [];
+    for (const row of ap) {
+      for (const col of ap) {
+        if ((row===6&&col===6)||(row===6&&col===size-7)||(row===size-7&&col===6)) continue;
+        for (let r = -2; r <= 2; r++) {
+          for (let c = -2; c <= 2; c++) {
+            const rr = row+r, cc = col+c;
+            if (rr<0||rr>=size||cc<0||cc>=size) continue;
+            m[rr][cc] = (Math.abs(r)===2||Math.abs(c)===2||(r===0&&c===0)) ? 1 : 0;
+          }
+        }
+      }
+    }
+
+    for (let i = 8; i < size-8; i++) {
+      if (m[6][i] === null) m[6][i] = (i%2===0)?1:0;
+      if (m[i][6] === null) m[i][6] = (i%2===0)?1:0;
+    }
+
+    m[size-8][8] = 1;
+
+    if (version >= 7) {
+      const vi = VERSION_INFO[version];
+      const viPos = [
+        [size-11,0],[size-10,0],[size-9,0],[size-8,0],[size-7,0],[size-6,0],
+        [0,size-11],[0,size-10],[0,size-9],[0,size-8],[0,size-7],[0,size-6],
+        [1,size-11],[1,size-10],[1,size-9],[1,size-8],[1,size-7],[1,size-6],
+        [2,size-11],[2,size-10],[2,size-9],[2,size-8],[2,size-7],[2,size-6],
+        [3,size-11],[3,size-10],[3,size-9],[3,size-8],[3,size-7],[3,size-6],
+        [4,size-11],[4,size-10],[4,size-9],[4,size-8],[4,size-7],[4,size-6],
+        [5,size-11],[5,size-10],[5,size-9],[5,size-8],[5,size-7],[5,size-6]
+      ];
+      for (let i = 0; i < 18; i++) {
+        const bit = (vi >> i) & 1;
+        const p = viPos[i];
+        if (p && m[p[0]] && m[p[0]][p[1]] === null) m[p[0]][p[1]] = bit;
+        const p2 = viPos[i + 18];
+        if (p2 && m[p2[0]] && m[p2[0]][p2[1]] === null) m[p2[0]][p2[1]] = bit;
+      }
+    }
+
+    const dataBits = [];
+    for (const cw of codewords) for (let i = 7; i >= 0; i--) dataBits.push((cw >> i) & 1);
+
+    let bi = 0, up = true;
+    for (let col = size-1; col > 0; col -= 2) {
+      if (col === 6) col--;
+      for (let i = 0; i < size; i++) {
+        const row = up ? size-1-i : i;
+        for (let c = 0; c < 2; c++) {
+          const cc = col - c;
+          if (m[row][cc] === null) {
+            let bit = (bi < dataBits.length) ? dataBits[bi] : 0;
+            if ((row + cc) % 2 === 0) bit ^= 1;
+            m[row][cc] = bit;
+            bi++;
+          }
+        }
+      }
+      up = !up;
+    }
+
+    const fmt = FORMAT_INFO_L[mask];
+    const fmtPos = [
+      [8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],
+      [7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8],
+      [size-1,8],[size-2,8],[size-3,8],[size-4,8],[size-5,8],[size-6,8],[size-7,8],
+      [8,size-8],[8,size-7],[8,size-6],[8,size-5],[8,size-4],[8,size-3],[8,size-2],[8,size-1]
+    ];
+    for (let i = 0; i < 15; i++) {
+      const bit = (fmt >> (14 - i)) & 1;
+      const p = fmtPos[i];
+      if (p) m[p[0]][p[1]] = bit;
+    }
+
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        if (m[r][c] === null) m[r][c] = 0;
+
+    return m;
+  }
+
+  function generateQRCode(text, canvas) {
+    if (!text || text.trim() === '') throw new Error('文本不能为空');
+    const bytes = new TextEncoder().encode(text);
+
+    let version = 0;
+    for (let v = 1; v <= 20; v++) {
+      if (bytes.length <= VERSION_DATA_CAPACITY_L[v]) { version = v; break; }
+    }
+    if (version === 0) throw new Error('文本过长，最多 ' + VERSION_DATA_CAPACITY_L[20] + ' 字节');
+
+    const codewords = generateCodewords(bytes, version);
+    const matrix = buildMatrix(codewords, version, 0);
+    const size = matrix.length;
+
+    // 根据版本动态调整 canvas 大小（保持整数模块）
+    const canvasSize = Math.max(256, size * 6);
+    const moduleSize = Math.floor(canvasSize / size);
+    const actualSize = moduleSize * size;
+
+    canvas.width = actualSize;
+    canvas.height = actualSize;
+    canvas.style.width = '100%';
+    canvas.style.height = 'auto';
+    canvas.style.aspectRatio = '1 / 1';
+
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, actualSize, actualSize);
+    ctx.fillStyle = '#000000';
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        if (matrix[r][c] === 1) {
+          ctx.fillRect(c * moduleSize, r * moduleSize, moduleSize, moduleSize);
+        }
+      }
+    }
+  }
+
+  global.QRCodeGen = { generateQRCode };
+})(window);
+</script>
+
+<!-- ============ 2. 压缩工具 (双重压缩 + RAW 兜底) ============ -->
+<script>
+(function(global){
+  async function compressToBase64(str) {
+    const bytes = new TextEncoder().encode(str);
+
+    // 第一级：gzip
+    let best = null;
+    try {
+      const cs = new CompressionStream('gzip');
+      const writer = cs.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const buf = await new Response(cs.readable).arrayBuffer();
+      best = new Uint8Array(buf);
+    } catch(e){
+      // gzip 不支持，直接返回原 Base64
+      return 'RAW:' + btoa(unescape(encodeURIComponent(str)));
+    }
+
+    // 第二级：deflate-raw 再压一次
+    try {
+      const cs2 = new CompressionStream('deflate-raw');
+      const writer2 = cs2.writable.getWriter();
+      writer2.write(best);
+      writer2.close();
+      const buf2 = await new Response(cs2.readable).arrayBuffer();
+      const candidate = new Uint8Array(buf2);
+      if (candidate.byteLength < best.byteLength) best = candidate;
+    } catch(e) { /* 忽略 */ }
+
+    // 转 Base64（分块避免栈溢出）
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < best.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(null, best.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
+  }
+
+  async function decompressFromBase64(b64) {
+    if (b64.startsWith('RAW:')) {
+      return decodeURIComponent(escape(atob(b64.slice(4))));
+    }
+
+    let bytes;
+    try {
+      const binary = atob(b64);
+      bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    } catch(e){
+      throw new Error('数据格式错误');
+    }
+
+    // 先试 deflate-raw
+    try {
+      const ds = new DecompressionStream('deflate-raw');
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const buf = await new Response(ds.readable).arrayBuffer();
+      return new TextDecoder().decode(buf);
+    } catch(e) { /* 继续试 gzip */ }
+
+    // 再试 gzip
+    try {
+      const ds = new DecompressionStream('gzip');
+      const writer = ds.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      const buf = await new Response(ds.readable).arrayBuffer();
+      return new TextDecoder().decode(buf);
+    } catch(e) {
+      throw new Error('解压失败，数据可能已损坏');
+    }
+  }
+
+  global.Compress = { compressToBase64, decompressFromBase64 };
+})(window);
+</script>
+
+<!-- ============ 3. P2P 核心逻辑 ============ -->
+<script>
+(function(){
+  const RTC_CONFIG = {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ]
+  };
+
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const step1 = document.getElementById('step1');
+  const step2 = document.getElementById('step2');
+  const step3 = document.getElementById('step3');
+  const createBtn = document.getElementById('createBtn');
+  const offerQrWrap = document.getElementById('offerQrWrap');
+  const offerQr = document.getElementById('offerQr');
+  const offerText = document.getElementById('offerText');
+  const showOfferTextBtn = document.getElementById('showOfferTextBtn');
+  const scanOfferBtn = document.getElementById('scanOfferBtn');
+  const scannerWrap1 = document.getElementById('scannerWrap1');
+  const scanVideo1 = document.getElementById('scanVideo1');
+  const closeScan1 = document.getElementById('closeScan1');
+  const showPaste1 = document.getElementById('showPaste1');
+  const answerInput = document.getElementById('answerInput');
+  const joinBtn = document.getElementById('joinBtn');
+  const answerQrWrap = document.getElementById('answerQrWrap');
+  const answerQr = document.getElementById('answerQr');
+  const answerText = document.getElementById('answerText');
+  const showAnswerTextBtn = document.getElementById('showAnswerTextBtn');
+  const scanAnswerBtn = document.getElementById('scanAnswerBtn');
+  const scannerWrap2 = document.getElementById('scannerWrap2');
+  const scanVideo2 = document.getElementById('scanVideo2');
+  const closeScan2 = document.getElementById('closeScan2');
+  const showPaste2 = document.getElementById('showPaste2');
+  const answerPaste = document.getElementById('answerPaste');
+  const finishBtn = document.getElementById('finishBtn');
+  const lamp = document.getElementById('lamp');
+  const lampLabel = document.getElementById('lampLabel');
+
+  let pc = null, dc = null, isConnected = false, lampState = false;
+  let scanTimer = null;
+
+  function setStatus(text, state){
+    statusText.textContent = text;
+    statusDot.className = 'dot' + (state ? ' ' + state : '');
+  }
+
+  function createPeerConnection(){
+    pc = new RTCPeerConnection(RTC_CONFIG);
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+        setStatus('连接断开', '');
+        isConnected = false;
+      }
+    };
+    pc.ondatachannel = (event) => { if (!dc) setupDataChannel(event.channel); };
+    return pc;
+  }
+
+  function setupDataChannel(channel){
+    dc = channel;
+    dc.onopen = () => {
+      isConnected = true;
+      setStatus('✅ 已连接 · 数据直连', 'on');
+      lampLabel.textContent = '点击灯切换（另一台会同步）';
+    };
+    dc.onclose = () => { isConnected = false; setStatus('连接已关闭', ''); };
+    dc.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'lamp') setLamp(msg.value, false);
+      } catch(err) {}
+    };
+  }
+
+  function setLamp(value, broadcast = true){
+    lampState = value;
+    if (value) lamp.classList.add('on'); else lamp.classList.remove('on');
+    if (broadcast && dc && dc.readyState === 'open')
+      dc.send(JSON.stringify({ type: 'lamp', value }));
+  }
+
+  lamp.addEventListener('click', () => {
+    if (!isConnected) { setStatus('未连接，请先完成连接步骤', ''); return; }
+    setLamp(!lampState, true);
+  });
+
+  function waitForIceGathering(peerConnection){
+    return new Promise((resolve) => {
+      if (peerConnection.iceGatheringState === 'complete') { resolve(); return; }
+      const check = () => {
+        if (peerConnection.iceGatheringState === 'complete') {
+          peerConnection.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }
+      };
+      peerConnection.addEventListener('icegatheringstatechange', check);
+      setTimeout(() => {
+        peerConnection.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }, 3000);
+    });
+  }
+
+  // ============ 步骤1: 生成邀请 ============
+  createBtn.addEventListener('click', async () => {
+    try {
+      setStatus('正在生成邀请码…', 'wait');
+      createPeerConnection();
+      const channel = pc.createDataChannel('sync');
+      setupDataChannel(channel);
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
+
+      const sdpStr = JSON.stringify(pc.localDescription);
+      const compressed = await Compress.compressToBase64(sdpStr);
+
+      offerText.value = compressed;
+      offerQrWrap.style.display = 'block';
+      step2.style.display = 'block';
+      step3.style.display = 'none';
+
+      // ★ 尝试生成二维码，失败则自动降级到文本码
+      try {
+        QRCodeGen.generateQRCode(compressed, offerQr);
+        offerText.style.display = 'none';
+        showOfferTextBtn.textContent = '📋 显示文本码';
+        setStatus('邀请码已生成，等待对方扫码', 'wait');
+      } catch (e) {
+        // 降级：隐藏二维码区，展开文本码
+        offerQrWrap.style.display = 'none';
+        offerText.style.display = 'block';
+        showOfferTextBtn.textContent = '🙈 隐藏文本码';
+        setStatus('数据较大已切换为文本码，请复制发送给第二台手机', 'wait');
+      }
+    } catch (e) {
+      setStatus('生成失败: ' + e.message, '');
+    }
+  });
+
+  showOfferTextBtn.addEventListener('click', () => {
+    if (offerText.style.display === 'none' || !offerText.style.display) {
+      offerText.style.display = 'block';
+      showOfferTextBtn.textContent = '🙈 隐藏文本码';
+    } else {
+      offerText.style.display = 'none';
+      showOfferTextBtn.textContent = '📋 显示文本码';
+    }
+  });
+
+  // ============ 扫码 (邀请) ============
+  scanOfferBtn.addEventListener('click', async () => {
+    try {
+      scannerWrap1.style.display = 'block';
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      scanVideo1.srcObject = stream;
+      await scanVideo1.play();
+      startScan(scanVideo1, (raw) => {
+        answerInput.value = raw;
+        closeScanner1();
+        setStatus('已识别邀请码，请点击生成应答码', 'wait');
+      });
+      closeScan1.onclick = closeScanner1;
+    } catch (e) {
+      setStatus('无法打开摄像头: ' + e.message, '');
+      scannerWrap1.style.display = 'none';
+    }
+  });
+
+  function closeScanner1(){
+    if (scanVideo1.srcObject) {
+      scanVideo1.srcObject.getTracks().forEach(t => t.stop());
+      scanVideo1.srcObject = null;
+    }
+    scannerWrap1.style.display = 'none';
+    stopScan();
+  }
+
+  showPaste1.addEventListener('click', () => {
+    if (answerInput.style.display === 'none' || !answerInput.style.display) {
+      answerInput.style.display = 'block';
+      showPaste1.textContent = '🙈 隐藏粘贴框';
+    } else {
+      answerInput.style.display = 'none';
+      showPaste1.textContent = '📋 手动粘贴邀请码';
+    }
+  });
+
+  // ============ 步骤2: 生成应答 ============
+  joinBtn.addEventListener('click', async () => {
+    const raw = answerInput.value.trim();
+    if (!raw) { setStatus('请先扫码或粘贴邀请码', ''); return; }
+    try {
+      setStatus('正在处理邀请码…', 'wait');
+      createPeerConnection();
+
+      const sdpStr = await Compress.decompressFromBase64(raw);
+      const offerDesc = JSON.parse(sdpStr);
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offerDesc));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitForIceGathering(pc);
+
+      const answerSdp = JSON.stringify(pc.localDescription);
+      const compressed = await Compress.compressToBase64(answerSdp);
+
+      answerText.value = compressed;
+      answerQrWrap.style.display = 'block';
+
+      // ★ 尝试生成二维码，失败则降级
+      try {
+        QRCodeGen.generateQRCode(compressed, answerQr);
+        answerText.style.display = 'none';
+        showAnswerTextBtn.textContent = '📋 显示文本码';
+        setStatus('应答码已生成，请让第一台手机扫码', 'wait');
+      } catch (e) {
+        answerQrWrap.style.display = 'none';
+        answerText.style.display = 'block';
+        showAnswerTextBtn.textContent = '🙈 隐藏文本码';
+        setStatus('数据较大已切换为文本码，请复制发送回第一台手机', 'wait');
+      }
+    } catch (e) {
+      setStatus('加入失败: ' + e.message, '');
+    }
+  });
+
+  showAnswerTextBtn.addEventListener('click', () => {
+    if (answerText.style.display === 'none' || !answerText.style.display) {
+      answerText.style.display = 'block';
+      showAnswerTextBtn.textContent = '🙈 隐藏文本码';
+    } else {
+      answerText.style.display = 'none';
+      showAnswerTextBtn.textContent = '📋 显示文本码';
+    }
+  });
+
+  // ============ 扫码 (应答) ============
+  scanAnswerBtn.addEventListener('click', async () => {
+    try {
+      scannerWrap2.style.display = 'block';
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      scanVideo2.srcObject = stream;
+      await scanVideo2.play();
+      startScan(scanVideo2, (raw) => {
+        answerPaste.value = raw;
+        closeScanner2();
+        setStatus('已识别应答码，请点击建立连接', 'wait');
+      });
+      closeScan2.onclick = closeScanner2;
+    } catch (e) {
+      setStatus('无法打开摄像头: ' + e.message, '');
+      scannerWrap2.style.display = 'none';
+    }
+  });
+
+  function closeScanner2(){
+    if (scanVideo2.srcObject) {
+      scanVideo2.srcObject.getTracks().forEach(t => t.stop());
+      scanVideo2.srcObject = null;
+    }
+    scannerWrap2.style.display = 'none';
+    stopScan();
+  }
+
+  showPaste2.addEventListener('click', () => {
+    if (answerPaste.style.display === 'none' || !answerPaste.style.display) {
+      answerPaste.style.display = 'block';
+      showPaste2.textContent = '🙈 隐藏粘贴框';
+    } else {
+      answerPaste.style.display = 'none';
+      showPaste2.textContent = '📋 手动粘贴应答码';
+    }
+  });
+
+  // ============ 步骤3: 建立连接 ============
+  finishBtn.addEventListener('click', async () => {
+    const raw = answerPaste.value.trim();
+    if (!raw) { setStatus('请先扫码或粘贴应答码', ''); return; }
+    if (!pc) { setStatus('请先完成第一步', ''); return; }
+    try {
+      setStatus('正在建立连接…', 'wait');
+      const sdpStr = await Compress.decompressFromBase64(raw);
+      const answerDesc = JSON.parse(sdpStr);
+      await pc.setRemoteDescription(new RTCSessionDescription(answerDesc));
+      step3.style.display = 'none';
+    } catch (e) {
+      setStatus('连接失败: ' + e.message, '');
+    }
+  });
+
+  // ============ 扫码引擎 ============
+  function startScan(videoEl, onResult){
+    if (!('BarcodeDetector' in window)) {
+      setStatus('浏览器不支持扫码，请用文本码方式', '');
+      return;
+    }
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    let running = true;
+
+    async function tick(){
+      if (!running) return;
+      if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        ctx.drawImage(videoEl, 0, 0);
+        try {
+          const codes = await detector.detect(canvas);
+          if (codes.length > 0) {
+            running = false;
+            onResult(codes[0].rawValue);
+            return;
+          }
+        } catch(e) {}
+      }
+      scanTimer = requestAnimationFrame(tick);
+    }
+    tick();
+    window.__stopScan = () => { running = false; };
+  }
+
+  function stopScan(){
+    if (scanTimer) { cancelAnimationFrame(scanTimer); scanTimer = null; }
+    if (window.__stopScan) { window.__stopScan(); window.__stopScan = null; }
+  }
+
+})();
+</script>
+</body>
+</html>

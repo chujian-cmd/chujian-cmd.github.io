@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>反应速度测试 · 无依赖</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    background:linear-gradient(145deg,#eef4fe 0%,#dce7f7 100%);
+    min-height:100vh;display:flex;justify-content:center;align-items:center;padding:12px;
+  }
+  .card{
+    background:rgba(255,255,255,.94);backdrop-filter:blur(10px);
+    border-radius:32px;
+    box-shadow:0 25px 50px -12px rgba(0,30,80,.35),0 0 0 1px rgba(255,255,255,.6) inset;
+    padding:24px 20px 28px;max-width:560px;width:100%;
+  }
+  h1{font-size:1.6rem;font-weight:700;color:#0b1f33;display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  h1 .badge{font-size:.7rem;font-weight:600;background:#d4e2fc;color:#1a4cbf;padding:4px 10px;border-radius:40px;margin-left:auto}
+  .subhead{color:#4b6589;font-size:.85rem;margin-bottom:20px;border-left:3px solid #3b7bff;padding-left:12px}
+
+  .reaction-zone{
+    width:100%;height:240px;border-radius:24px;
+    display:flex;flex-direction:column;justify-content:center;align-items:center;
+    text-align:center;cursor:pointer;user-select:none;
+    transition:background .08s;
+    font-size:1.1rem;font-weight:600;color:#fff;
+    padding:20px;
+  }
+  .reaction-zone.wait{background:linear-gradient(135deg,#f56565,#e53e3e)}
+  .reaction-zone.ready{background:linear-gradient(135deg,#ecc94b,#d69e2e)}
+  .reaction-zone.go{background:linear-gradient(135deg,#48bb78,#38a169)}
+  .reaction-zone.result{background:linear-gradient(135deg,#4299e1,#3182ce)}
+  .reaction-zone .big{font-size:2.4rem;font-weight:800;margin-bottom:6px}
+  .reaction-zone .small{font-size:.85rem;font-weight:500;opacity:.9}
+
+  .reaction-info{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-top:14px;padding:12px 16px;background:#f7faff;border-radius:18px;
+    font-size:.85rem;color:#3a5370;border:1px solid #e1eaf2;
+  }
+  .reaction-info .lv{font-weight:700;color:#1a4cbf}
+  .reaction-info .best{font-weight:600}
+
+  .scores{margin-top:14px;background:#f7faff;border-radius:18px;padding:12px 16px;border:1px solid #e1eaf2}
+  .scores-title{font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;color:#617a9b;font-weight:700;margin-bottom:8px}
+  .scores-list{list-style:none;display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:#2d4059}
+  .scores-list li{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #e6eef8}
+  .scores-list li:last-child{border-bottom:none}
+  .scores-list .empty{color:#a0b6d0;font-style:italic;justify-content:center}
+
+  .reset-row{display:flex;justify-content:center;margin-top:12px}
+  .btn{
+    background:#eef4ff;border:1.5px solid #c4d8fc;color:#2962dd;
+    padding:8px 18px;border-radius:40px;font-weight:600;font-size:.82rem;
+    cursor:pointer;transition:.15s;
+  }
+  .btn:hover{background:#dfeaff}
+
+  .footer-note{font-size:.72rem;color:#7b93b0;text-align:center;margin-top:20px;border-top:1px solid #d9e4f0;padding-top:14px}
+
+  @media(max-width:480px){
+    .card{padding:20px 14px 24px}
+    h1{font-size:1.4rem}
+    .reaction-zone{height:200px;font-size:1rem}
+    .reaction-zone .big{font-size:2rem}
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>⚡ 反应速度测试 <span class="badge">无依赖</span></h1>
+  <div class="subhead">测测你的毫秒级反应 · 纯前端运行</div>
+
+  <div class="reaction-zone wait" id="reactionZone">
+    <div class="big">点击开始</div>
+    <div class="small">看到绿色立即点击（或按空格）</div>
+  </div>
+
+  <div class="reaction-info">
+    <span>本次反应：<span class="lv" id="lastTime">—</span></span>
+    <span class="best">最佳：<span id="bestTime">—</span></span>
+  </div>
+
+  <div class="scores">
+    <div class="scores-title">🏆 最佳记录 Top 5</div>
+    <ul class="scores-list" id="scoresList">
+      <li class="empty">还没有记录，快来试试！</li>
+    </ul>
+  </div>
+
+  <div class="reset-row">
+    <button class="btn" id="resetScoresBtn">🗑️ 清空记录</button>
+  </div>
+
+  <div class="footer-note">🔒 成绩保存在本地浏览器，不会上传</div>
+</div>
+
+<script>
+(function(){
+  const reactionZone = document.getElementById('reactionZone');
+  const lastTimeEl = document.getElementById('lastTime');
+  const bestTimeEl = document.getElementById('bestTime');
+  const scoresList = document.getElementById('scoresList');
+  const resetScoresBtn = document.getElementById('resetScoresBtn');
+
+  let state = 'idle';
+  let timer = null;
+  let startTime = 0;
+  let reactionTimes = JSON.parse(localStorage.getItem('reactionTimes') || '[]');
+
+  function renderScores(){
+    const sorted = [...reactionTimes].sort((a,b)=>a-b).slice(0,5);
+    if(sorted.length===0){
+      scoresList.innerHTML = '<li class="empty">还没有记录，快来试试！</li>';
+      bestTimeEl.textContent = '—';
+      return;
+    }
+    bestTimeEl.textContent = sorted[0] + ' ms';
+    scoresList.innerHTML = sorted.map((t,i)=>{
+      const medal = ['🥇','🥈','🥉','4️⃣','5️⃣'][i];
+      return `<li><span>${medal} 第${i+1}名</span><span><strong>${t} ms</strong></span></li>`;
+    }).join('');
+  }
+
+  function getLevel(ms){
+    if(ms < 180) return {name:'⚡ 职业电竞级'};
+    if(ms < 220) return {name:'🐱 猫科反应'};
+    if(ms < 280) return {name:'🧑 正常人类'};
+    if(ms < 380) return {name:'🦥 树懒级别'};
+    return {name:'🐢 蜗牛附体'};
+  }
+
+  function resetReaction(){
+    clearTimeout(timer);
+    state = 'idle';
+    reactionZone.className = 'reaction-zone wait';
+    reactionZone.innerHTML = '<div class="big">点击开始</div><div class="small">看到绿色立即点击（或按空格）</div>';
+  }
+
+  function startWaiting(){
+    state = 'waiting';
+    reactionZone.className = 'reaction-zone wait';
+    reactionZone.innerHTML = '<div class="big">等待变绿…</div><div class="small">别急，看准了再点</div>';
+    const delay = 1000 + Math.random()*3000;
+    timer = setTimeout(()=>{
+      if(state !== 'waiting') return;
+      state = 'go';
+      reactionZone.className = 'reaction-zone go';
+      reactionZone.innerHTML = '<div class="big">点我！</div><div class="small">快！</div>';
+      startTime = performance.now();
+    }, delay);
+  }
+
+  function handleClick(){
+    if(state === 'idle' || state === 'result'){
+      resetReaction();
+      startWaiting();
+    } else if(state === 'waiting'){
+      clearTimeout(timer);
+      state = 'result';
+      reactionZone.className = 'reaction-zone wait';
+      reactionZone.innerHTML = '<div class="big">❌ 抢跑了</div><div class="small">点击重新开始</div>';
+      lastTimeEl.textContent = '抢跑';
+    } else if(state === 'go'){
+      const elapsed = Math.round(performance.now() - startTime);
+      state = 'result';
+      const level = getLevel(elapsed);
+      reactionZone.className = 'reaction-zone result';
+      reactionZone.innerHTML = `<div class="big">${elapsed} ms</div><div class="small">${level.name}</div>`;
+      lastTimeEl.textContent = elapsed + ' ms';
+
+      reactionTimes.push(elapsed);
+      if(reactionTimes.length > 50) reactionTimes = reactionTimes.slice(-50);
+      localStorage.setItem('reactionTimes', JSON.stringify(reactionTimes));
+      renderScores();
+    }
+  }
+
+  reactionZone.addEventListener('click', handleClick);
+  window.addEventListener('keydown', (e)=>{
+    if(e.code==='Space'){ e.preventDefault(); handleClick(); }
+  });
+
+  resetScoresBtn.addEventListener('click', ()=>{
+    if(confirm('确定要清空所有记录吗？')){
+      reactionTimes = [];
+      localStorage.removeItem('reactionTimes');
+      renderScores();
+    }
+  });
+
+  renderScores();
+})();
+</script>
+</body>
+</html>

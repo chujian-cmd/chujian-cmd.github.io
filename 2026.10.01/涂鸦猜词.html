@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>涂鸦猜词 · 无依赖</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    background:linear-gradient(145deg,#eef4fe 0%,#dce7f7 100%);
+    min-height:100vh;display:flex;justify-content:center;align-items:center;padding:12px;
+  }
+  .card{
+    background:rgba(255,255,255,.94);backdrop-filter:blur(10px);
+    border-radius:32px;
+    box-shadow:0 25px 50px -12px rgba(0,30,80,.35),0 0 0 1px rgba(255,255,255,.6) inset;
+    padding:24px 20px 28px;max-width:560px;width:100%;
+  }
+  h1{font-size:1.6rem;font-weight:700;color:#0b1f33;display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  h1 .badge{font-size:.7rem;font-weight:600;background:#d4e2fc;color:#1a4cbf;padding:4px 10px;border-radius:40px;margin-left:auto}
+  .subhead{color:#4b6589;font-size:.85rem;margin-bottom:20px;border-left:3px solid #3b7bff;padding-left:12px}
+
+  .draw-header{
+    display:flex;justify-content:space-between;align-items:center;
+    background:#f7faff;border-radius:18px;padding:14px 18px;margin-bottom:12px;
+    border:1px solid #e1eaf2;flex-wrap:wrap;gap:8px;
+  }
+  .draw-word{font-size:.9rem;color:#3a5370}
+  .draw-word .target{font-size:1.15rem;font-weight:800;color:#1a4cbf;letter-spacing:1px}
+  .draw-actions{display:flex;gap:8px}
+  .btn{
+    background:#3b7bff;border:none;color:#fff;padding:8px 16px;border-radius:40px;
+    font-weight:600;font-size:.85rem;cursor:pointer;transition:.15s;
+    display:inline-flex;align-items:center;gap:5px;
+  }
+  .btn:hover{background:#2962dd;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn.secondary{background:#eef4ff;color:#2962dd;border:1.5px solid #c4d8fc}
+  .btn.secondary:hover{background:#dfeaff}
+  .btn.small{padding:6px 12px;font-size:.78rem}
+
+  .canvas-wrap{
+    position:relative;width:100%;aspect-ratio:1/1;
+    background:#fff;border-radius:20px;overflow:hidden;
+    border:2px dashed #c4d8fc;box-shadow:inset 0 2px 10px rgba(0,40,100,.04);
+  }
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair}
+
+  .brush-row{
+    display:flex;align-items:center;gap:10px;margin-top:12px;
+    background:#f7faff;border-radius:18px;padding:10px 14px;border:1px solid #e1eaf2;flex-wrap:wrap;
+  }
+  .color-swatches{display:flex;gap:6px;flex-wrap:wrap}
+  .swatch{
+    width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid transparent;
+    transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.1);
+  }
+  .swatch.active{border-color:#1a4cbf;transform:scale(1.15)}
+  .brush-size{display:flex;align-items:center;gap:6px;font-size:.8rem;color:#3a5370;margin-left:auto}
+  input[type=range].brush{width:80px;accent-color:#3b7bff}
+
+  .verdict{
+    margin-top:14px;background:linear-gradient(135deg,#f7fbff,#edf5ff);
+    border:1.5px solid #cfe0fc;border-radius:20px;padding:16px 18px;
+    font-size:.9rem;color:#0a2a55;display:none;
+  }
+  .verdict.show{display:block;animation:pop .3s ease}
+  @keyframes pop{0%{transform:scale(.96);opacity:0}100%{transform:scale(1);opacity:1}}
+  .verdict .score-big{font-size:1.6rem;font-weight:800;color:#1a4cbf;margin-bottom:6px}
+  .verdict .msg{color:#3a5370;line-height:1.5}
+  .verdict .row{display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;font-size:.8rem;color:#5b7391}
+
+  .footer-note{font-size:.72rem;color:#7b93b0;text-align:center;margin-top:20px;border-top:1px solid #d9e4f0;padding-top:14px}
+
+  @media(max-width:480px){
+    .card{padding:20px 14px 24px}
+    h1{font-size:1.4rem}
+    .btn{padding:7px 14px;font-size:.8rem}
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🎨 涂鸦猜词 <span class="badge">无依赖</span></h1>
+  <div class="subhead">画出来，让系统猜猜像不像 · 纯前端运行</div>
+
+  <div class="draw-header">
+    <div class="draw-word">请画出：<span class="target" id="drawTarget">猫</span></div>
+    <div class="draw-actions">
+      <button class="btn secondary small" id="newWordBtn">🔄 换一个</button>
+      <button class="btn small" id="guessBtn">🔍 我画完了</button>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="drawCanvas"></canvas>
+  </div>
+
+  <div class="brush-row">
+    <div class="color-swatches" id="colorSwatches"></div>
+    <div class="brush-size">
+      <span>粗细</span>
+      <input type="range" class="brush" id="brushSize" min="2" max="30" value="6">
+    </div>
+    <button class="btn secondary small" id="clearCanvasBtn">🗑️ 清空</button>
+  </div>
+
+  <div class="verdict" id="verdict">
+    <div class="score-big" id="verdictScore">—</div>
+    <div class="msg" id="verdictMsg">—</div>
+    <div class="row" id="verdictStats"></div>
+  </div>
+
+  <div class="footer-note">🔒 所有绘制都在本地画布完成，不会上传</div>
+</div>
+
+<script>
+(function(){
+  const drawCanvas = document.getElementById('drawCanvas');
+  const ctx = drawCanvas.getContext('2d');
+  const drawTarget = document.getElementById('drawTarget');
+  const newWordBtn = document.getElementById('newWordBtn');
+  const guessBtn = document.getElementById('guessBtn');
+  const clearCanvasBtn = document.getElementById('clearCanvasBtn');
+  const colorSwatches = document.getElementById('colorSwatches');
+  const brushSizeInput = document.getElementById('brushSize');
+  const verdict = document.getElementById('verdict');
+  const verdictScore = document.getElementById('verdictScore');
+  const verdictMsg = document.getElementById('verdictMsg');
+  const verdictStats = document.getElementById('verdictStats');
+
+  const WORDS = ['猫','房子','太阳','树','笑脸','星星','汽车','鱼','花','云','苹果','雨伞','月亮','蝴蝶','蛋糕','机器人','船','山','眼睛','钥匙','冰激凌','气球','时钟','鸟','乌龟'];
+  const COLORS = ['#1a1a1a','#e53e3e','#dd6b20','#d69e2e','#38a169','#3182ce','#805ad5','#d53f8c','#718096','#ffffff'];
+
+  let currentColor = '#1a1a1a';
+  let brushSize = 6;
+  let drawing = false;
+  let hasDrawn = false;
+  let strokeCount = 0;
+  let colorSet = new Set();
+  let dpr = window.devicePixelRatio || 1;
+
+  // 初始化调色板
+  COLORS.forEach((c,i)=>{
+    const s = document.createElement('div');
+    s.className = 'swatch' + (i===0?' active':'');
+    s.style.background = c;
+    if(c === '#ffffff') s.style.border = '2px solid #c4d8fc';
+    s.dataset.color = c;
+    s.addEventListener('click',()=>{
+      document.querySelectorAll('.swatch').forEach(x=>x.classList.remove('active'));
+      s.classList.add('active');
+      currentColor = c;
+    });
+    colorSwatches.appendChild(s);
+  });
+
+  function resizeCanvas(){
+    const rect = drawCanvas.parentElement.getBoundingClientRect();
+    const size = rect.width;
+    drawCanvas.width = size * dpr;
+    drawCanvas.height = size * dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    clearCanvas();
+  }
+
+  function getPos(e){
+    const rect = drawCanvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  function startDraw(e){
+    e.preventDefault();
+    drawing = true;
+    hasDrawn = true;
+    strokeCount++;
+    colorSet.add(currentColor);
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    ctx.strokeStyle = currentColor;
+    ctx.lineWidth = brushSize;
+    ctx.lineTo(pos.x+0.01, pos.y);
+    ctx.stroke();
+  }
+
+  function moveDraw(e){
+    if(!drawing) return;
+    e.preventDefault();
+    const pos = getPos(e);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+  }
+
+  function endDraw(e){
+    if(!drawing) return;
+    e.preventDefault();
+    drawing = false;
+    ctx.closePath();
+  }
+
+  drawCanvas.addEventListener('mousedown', startDraw);
+  drawCanvas.addEventListener('mousemove', moveDraw);
+  drawCanvas.addEventListener('mouseup', endDraw);
+  drawCanvas.addEventListener('mouseleave', endDraw);
+  drawCanvas.addEventListener('touchstart', startDraw, {passive:false});
+  drawCanvas.addEventListener('touchmove', moveDraw, {passive:false});
+  drawCanvas.addEventListener('touchend', endDraw);
+
+  brushSizeInput.addEventListener('input', ()=>{
+    brushSize = parseInt(brushSizeInput.value);
+  });
+
+  function clearCanvas(){
+    const w = drawCanvas.width / dpr;
+    const h = drawCanvas.height / dpr;
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,w,h);
+    hasDrawn = false;
+    strokeCount = 0;
+    colorSet = new Set();
+    verdict.classList.remove('show');
+  }
+
+  clearCanvasBtn.addEventListener('click', clearCanvas);
+
+  function newWord(){
+    let w;
+    do {
+      w = WORDS[Math.floor(Math.random()*WORDS.length)];
+    } while(w === drawTarget.textContent && WORDS.length > 1);
+    drawTarget.textContent = w;
+    clearCanvas();
+  }
+
+  newWordBtn.addEventListener('click', newWord);
+
+  function guess(){
+    if(!hasDrawn){
+      verdict.classList.add('show');
+      verdictScore.textContent = '🤔 空白的画布';
+      verdictMsg.textContent = '你什么都没画呀，我猜不出来……先动动画笔吧！';
+      verdictStats.innerHTML = '';
+      return;
+    }
+
+    const w = drawCanvas.width;
+    const h = drawCanvas.height;
+    const imgData = ctx.getImageData(0,0,w,h).data;
+    let painted = 0;
+    const step = 4;
+    let sampled = 0;
+    for(let i=0;i<imgData.length;i+=4*step){
+      const r=imgData[i],g=imgData[i+1],b=imgData[i+2];
+      if(!(r>245 && g>245 && b>245)) painted++;
+      sampled++;
+    }
+    const coverage = painted / sampled;
+
+    let score = 0;
+    score += Math.min(40, strokeCount * 4);
+    score += Math.min(30, colorSet.size * 10);
+    score += Math.min(30, Math.round(coverage * 200));
+    if(score > 100) score = 100;
+
+    let msg = '';
+    let emoji = '';
+    if(score >= 85){
+      emoji = '🎨';
+      msg = `画得真投入！笔触丰富、色彩${colorSet.size>2?'斑斓':'协调'}，虽然我猜不出具体是什么，但艺术感拉满！`;
+    } else if(score >= 60){
+      emoji = '👍';
+      msg = `有模有样！笔画和用色都挺讲究，${drawTarget.textContent}的灵魂已经画出来一半了。`;
+    } else if(score >= 35){
+      emoji = '😅';
+      msg = `嗯……有点抽象派。不过没关系，画画嘛，开心最重要！`;
+    } else {
+      emoji = '🐣';
+      msg = `寥寥几笔，简约风格！看来你走的是极简主义路线。`;
+    }
+
+    verdict.classList.add('show');
+    verdictScore.textContent = `${emoji} 像不像指数：${score}%`;
+    verdictMsg.textContent = msg;
+    verdictStats.innerHTML = `
+      <span>✏️ 笔画：${strokeCount}</span>
+      <span>🎨 用色：${colorSet.size} 种</span>
+      <span>📐 覆盖：${(coverage*100).toFixed(1)}%</span>
+    `;
+  }
+
+  guessBtn.addEventListener('click', guess);
+
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+  newWord();
+})();
+</script>
+</body>
+</html>
