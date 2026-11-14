@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek · 深度求索</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background-color: #0b0e14;
+    color: #eef4ff;
+    overflow-x: hidden;
+  }
+
+  /* ============================================================
+     3D 立体金属文字 —— 真正的挤出效果
+     原理：用 N 层相同文字沿 Z 轴逐层堆叠，形成实体厚度
+     ============================================================ */
+  .metal-3d-layer {
+    position: fixed;
+    inset: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 100;
+    perspective: 1400px;
+    perspective-origin: 50% 50%;
+  }
+
+  .metal-3d-scene {
+    transform-style: preserve-3d;
+    animation: sceneRotate 26s linear infinite;
+    will-change: transform;
+  }
+
+  @keyframes sceneRotate {
+    0%   { transform: rotateY(-26deg) rotateX(10deg); }
+    50%  { transform: rotateY(26deg)  rotateX(-4deg); }
+    100% { transform: rotateY(-26deg) rotateX(10deg); }
+  }
+
+  /* 文字容器，保持3D空间 */
+  .metal-3d-text {
+    position: relative;
+    transform-style: preserve-3d;
+    font-size: clamp(3.4rem, 11vw, 8rem);
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  /* 每一层挤出片 */
+  .metal-3d-text .slice {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-style: preserve-3d;
+    /* 厚度层：深色金属，靠后的层更暗 */
+    background: linear-gradient(180deg, #6b7f95 0%, #3a4b5e 45%, #566b80 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* 最前面的面板：亮金属渐变 + 高光描边 */
+  .metal-3d-text .face {
+    position: relative;
+    transform-style: preserve-3d;
+    background: linear-gradient(180deg,
+      #ffffff 0%,
+      #dfeaff 14%,
+      #ffffff 26%,
+      #a8bdd4 42%,
+      #eaf3ff 55%,
+      #ffffff 66%,
+      #9db2c9 82%,
+      #f2f8ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-stroke: 1px rgba(220, 240, 255, 0.55);
+    filter: drop-shadow(0 0 18px rgba(120, 190, 255, 0.55))
+            drop-shadow(0 0 46px rgba(80, 140, 255, 0.28));
+  }
+
+  /* 光泽扫过 */
+  .metal-3d-text .shine {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(115deg,
+      transparent 22%,
+      rgba(255,255,255,0.85) 40%,
+      #ffffff 47%,
+      rgba(255,255,255,0.85) 54%,
+      transparent 74%);
+    background-size: 260% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shineSweep 5s ease-in-out infinite;
+    transform: translateZ(2px);
+    pointer-events: none;
+  }
+
+  @keyframes shineSweep {
+    0%   { background-position: 220% 0; }
+    55%  { background-position: -120% 0; }
+    100% { background-position: -120% 0; }
+  }
+
+  /* 地面投影，增强立体空间感 */
+  .metal-3d-shadow {
+    position: absolute;
+    bottom: 16vh;
+    left: 50%;
+    width: clamp(320px, 80vw, 720px);
+    height: 60px;
+    background: radial-gradient(ellipse at center,
+      rgba(70, 140, 255, 0.28) 0%,
+      rgba(50, 100, 200, 0.12) 45%,
+      transparent 72%);
+    transform: translateX(-50%) rotateX(74deg);
+    filter: blur(14px);
+    animation: shadowPulse 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  @keyframes shadowPulse {
+    0%, 100% { opacity: 0.55; transform: translateX(-50%) rotateX(74deg) scale(1); }
+    50%      { opacity: 0.9;  transform: translateX(-50%) rotateX(74deg) scale(1.06); }
+  }
+
+  /* 副标题 */
+  .metal-3d-sub {
+    position: absolute;
+    bottom: 9vh;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-size: clamp(0.65rem, 1.8vw, 0.9rem);
+    letter-spacing: 0.55em;
+    text-transform: uppercase;
+    color: rgba(175, 210, 255, 0.5);
+    font-weight: 400;
+    text-indent: 0.55em;
+    animation: subGlow 3.4s ease-in-out infinite;
+  }
+
+  @keyframes subGlow {
+    0%, 100% { opacity: 0.35; letter-spacing: 0.55em; }
+    50%      { opacity: 0.9;  letter-spacing: 0.7em; }
+  }
+
+  /* ============ 以下为原有长页面部分 ============ */
+  .bg-container {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    background-color: #0b0e14;
+    transition: background-color 0.1s linear;
+    will-change: background-color;
+  }
+
+  .star-field {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .star {
+    position: absolute;
+    background: white;
+    border-radius: 50%;
+    animation: starPulse 4s infinite alternate;
+  }
+
+  @keyframes starPulse {
+    0%   { opacity: 0.1; transform: scale(0.8); }
+    100% { opacity: 0.5; transform: scale(1.2); }
+  }
+
+  .scroll-content {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    padding: 26vh 1.5rem 6rem;
+  }
+
+  .section {
+    width: min(900px, 100%);
+    margin: 4rem 0;
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.9s cubic-bezier(0.2,0.9,0.3,1),
+                transform 0.9s cubic-bezier(0.2,0.9,0.3,1);
+  }
+
+  .section.visible { opacity: 1; transform: translateY(0); }
+
+  .glass-card {
+    background: rgba(18, 22, 32, 0.65);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    border-radius: 48px;
+    padding: 3rem 2.5rem;
+    box-shadow: 0 25px 50px -8px rgba(0,0,0,0.6),
+                0 0 0 1px rgba(255,255,255,0.04) inset,
+                0 0 40px rgba(0,180,255,0.08);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .glow-line {
+    position: absolute;
+    top: 0; left: 10%;
+    width: 80%; height: 2px;
+    background: linear-gradient(90deg, transparent, #4aa8ff, #a57cff, #4aa8ff, transparent);
+    background-size: 200% 100%;
+    border-radius: 2px;
+    animation: lineFlow 4s linear infinite;
+    opacity: 0.8;
+  }
+
+  @keyframes lineFlow {
+    0%   { background-position: 0% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .svg-avatar {
+    width: 140px; height: 140px;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 0 24px rgba(80,170,255,0.6));
+  }
+
+  h1 {
+    font-size: 4rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, #ffffff 0%, #b8d9ff 80%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 0.25rem;
+  }
+
+  .subhead {
+    font-size: 1.2rem;
+    font-weight: 400;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #8ea6c9;
+    margin-bottom: 2rem;
+  }
+
+  .description {
+    font-size: 1.15rem;
+    line-height: 1.8;
+    color: #cbd6e6;
+    max-width: 680px;
+    margin-bottom: 2.8rem;
+  }
+
+  .features {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1.2rem;
+    width: 100%;
+  }
+
+  .feature-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: rgba(255,255,255,0.03);
+    border-radius: 28px;
+    padding: 1.6rem 1rem 1.4rem;
+    flex: 1 1 150px;
+    min-width: 130px;
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255,255,255,0.04);
+    transition: all 0.25s ease;
+  }
+
+  .feature-item:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(100,180,255,0.2);
+    box-shadow: 0 8px 20px -8px rgba(0,160,255,0.3);
+    transform: translateY(-3px);
+  }
+
+  .feature-icon {
+    width: 48px; height: 48px;
+    margin-bottom: 0.9rem;
+    color: #7db9ff;
+    filter: drop-shadow(0 0 8px rgba(80,170,255,0.4));
+  }
+
+  .feature-label {
+    font-size: 1rem;
+    font-weight: 500;
+    background: linear-gradient(180deg, #eef6ff, #b0c8e8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .section-title {
+    font-size: 2rem;
+    font-weight: 500;
+    background: linear-gradient(135deg, #ffffff, #b0d0ff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+  }
+
+  .section-title svg { width: 34px; height: 34px; opacity: 0.9; flex-shrink: 0; }
+
+  .info-list { display: flex; flex-direction: column; gap: 1.8rem; margin-top: 1rem; }
+  .info-item { display: flex; gap: 1.2rem; align-items: flex-start; }
+  .info-icon { width: 44px; height: 44px; flex-shrink: 0; color: #88c0ff; filter: drop-shadow(0 0 6px rgba(80,170,255,0.3)); }
+  .info-text h3 { font-size: 1.25rem; font-weight: 500; color: #dceaff; margin-bottom: 0.3rem; }
+  .info-text p { font-size: 1rem; line-height: 1.7; color: #a6b9d2; max-width: 600px; }
+
+  .tech-tags { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1.6rem; }
+  .tech-tag {
+    background: rgba(80,170,255,0.08);
+    border: 1px solid rgba(80,170,255,0.2);
+    border-radius: 40px;
+    padding: 0.5rem 1.2rem;
+    font-size: 0.9rem;
+    color: #b8d9ff;
+    transition: background 0.2s, border 0.2s;
+  }
+  .tech-tag:hover { background: rgba(80,170,255,0.15); border-color: rgba(80,170,255,0.4); }
+
+  .signature {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.8rem;
+    font-size: 0.9rem;
+    color: #7d8fa8;
+    margin-top: 3rem;
+  }
+  .signature svg { width: 20px; height: 20px; opacity: 0.7; }
+
+  @media (max-width: 700px) {
+    h1 { font-size: 2.8rem; }
+    .glass-card { padding: 2rem 1.5rem; border-radius: 32px; }
+    .section-title { font-size: 1.6rem; }
+    .info-item { gap: 0.8rem; }
+    .info-icon { width: 36px; height: 36px; }
+    .svg-avatar { width: 110px; height: 110px; }
+    .subhead { font-size: 0.9rem; letter-spacing: 0.2em; }
+    .description { font-size: 1rem; }
+  }
+
+  @media (max-width: 480px) {
+    h1 { font-size: 2.2rem; }
+    .feature-item { min-width: 100px; padding: 1.2rem 0.6rem; }
+    .feature-icon { width: 36px; height: 36px; }
+    .tech-tag { padding: 0.35rem 1rem; font-size: 0.8rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ========== 3D 立体金属文字层 ========== -->
+<div class="metal-3d-layer">
+  <div class="metal-3d-scene">
+    <div class="metal-3d-text" id="metalText">
+      <!-- 挤出片由 JS 动态生成（保证厚度真实） -->
+      <span class="face">DeepSeek</span>
+      <span class="shine">DeepSeek</span>
+    </div>
+  </div>
+  <!-- 地面投影 -->
+  <div class="metal-3d-shadow"></div>
+  <div class="metal-3d-sub">深度求索 · 智能之境</div>
+</div>
+
+<!-- 动态背景 -->
+<div class="bg-container" id="bgContainer"></div>
+<!-- 星点层 -->
+<div class="star-field" id="starField"></div>
+
+<!-- 滚动内容 -->
+<div class="scroll-content">
+
+  <!-- 首屏 -->
+  <div class="section hero visible" id="heroSection">
+    <div class="glass-card" style="width:100%;">
+      <div class="glow-line"></div>
+      <div style="display:flex; flex-direction:column; align-items:center; text-align:center;">
+        <svg class="svg-avatar" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="ringGrad" x1="20%" y1="20%" x2="80%" y2="80%">
+              <stop offset="0%" stop-color="#4aa8ff" stop-opacity="0.9"/>
+              <stop offset="50%" stop-color="#a57cff" stop-opacity="0.8"/>
+              <stop offset="100%" stop-color="#4aa8ff" stop-opacity="0.6"/>
+            </linearGradient>
+            <linearGradient id="innerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#8cc6ff"/>
+              <stop offset="100%" stop-color="#c9a2ff"/>
+            </linearGradient>
+            <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <circle cx="60" cy="60" r="46" stroke="url(#ringGrad)" stroke-width="2.2" fill="none" stroke-dasharray="6 12" opacity="0.8">
+            <animateTransform attributeName="transform" type="rotate" from="0 60 60" to="360 60 60" dur="12s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="60" cy="60" r="34" stroke="url(#ringGrad)" stroke-width="1.8" fill="none" stroke-dasharray="4 10" opacity="0.6">
+            <animateTransform attributeName="transform" type="rotate" from="360 60 60" to="0 60 60" dur="18s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="60" cy="60" r="20" fill="url(#innerGrad)" opacity="0.2" filter="url(#glow)"/>
+          <circle cx="60" cy="60" r="12" fill="url(#innerGrad)" opacity="0.9">
+            <animate attributeName="r" values="12;13.5;12;12" dur="3s" repeatCount="indefinite"/>
+          </circle>
+          <circle cx="60" cy="60" r="4.5" fill="#ffffff" opacity="0.9"/>
+          <path d="M60 34 L60 42 M60 78 L60 86 M34 60 L42 60 M78 60 L86 60" stroke="#b8d9ff" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+        </svg>
+
+        <h1>DeepSeek</h1>
+        <div class="subhead">深度求索 · 智能之境</div>
+        <p class="description">
+          由深度求索公司创造的 AI 助手。以纯粹的逻辑与广博的知识为基石，
+          在对话中理解，在思考中创造，为每一个问题寻找深刻的答案。
+        </p>
+
+        <div class="features">
+          <div class="feature-item">
+            <svg class="feature-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="20" cy="16" r="6" stroke="currentColor" stroke-width="1.8"/>
+              <circle cx="12" cy="28" r="5" stroke="currentColor" stroke-width="1.8"/>
+              <circle cx="28" cy="28" r="5" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M15 20 L12 23 M25 20 L28 23 M20 22 L20 26 M17 26 L12 28 M23 26 L28 28" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+            </svg>
+            <span class="feature-label">深度思考</span>
+          </div>
+          <div class="feature-item">
+            <svg class="feature-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8 20 C8 14, 14 12, 18 16 L22 20 C26 24, 32 22, 32 16 C32 12, 28 10, 24 12 L20 16 C16 20, 10 18, 8 20Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
+              <path d="M32 20 C32 26, 26 28, 22 24 L18 20 C14 16, 8 18, 8 24 C8 28, 12 30, 16 28 L20 24 C24 20, 30 22, 32 20Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
+            </svg>
+            <span class="feature-label">长上下文</span>
+          </div>
+          <div class="feature-item">
+            <svg class="feature-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/>
+              <rect x="20" y="20" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/>
+              <path d="M14 20 L14 28 L20 28" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              <path d="M26 14 L26 20 L20 20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span class="feature-label">多模态理解</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 关于 -->
+  <div class="section" id="aboutSection">
+    <div class="glass-card">
+      <div class="section-title">
+        <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="15" cy="15" r="11" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 4"/>
+          <path d="M15 8 L15 22 M8 15 L22 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        关于我们
+      </div>
+      <p style="font-size:1.1rem; line-height:1.9; color:#c3d3e8; margin-bottom:1.8rem;">
+        深度求索（DeepSeek）是一家专注于人工智能技术研发的公司，致力于探索智能的边界。
+        我们相信，通过持续的技术创新和对本质的深入思考，能够构建真正理解人类意图的 AI 系统。
+      </p>
+      <div class="info-list">
+        <div class="info-item">
+          <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 6 L24 16 L35 16 L26 23 L30 34 L20 27 L10 34 L14 23 L5 16 L16 16 L20 6Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" fill="currentColor" fill-opacity="0.08"/>
+          </svg>
+          <div class="info-text">
+            <h3>纯粹的技术驱动</h3>
+            <p>不追逐浮华，专注于底层模型能力的提升，让智能本身成为最好的表达。</p>
+          </div>
+        </div>
+        <div class="info-item">
+          <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="20" cy="20" r="14" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M20 12 L20 20 L26 26" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <div class="info-text">
+            <h3>长远的探索视角</h3>
+            <p>不满足于短期成效，持续投入基础研究，在深度与广度上同时推进。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 核心能力 -->
+  <div class="section" id="capabilitiesSection">
+    <div class="glass-card">
+      <div class="section-title">
+        <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M7 20 L7 10 L13 10 L13 20 M17 20 L17 6 L23 6 L23 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          <circle cx="7" cy="24" r="2" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="17" cy="24" r="2" stroke="currentColor" stroke-width="1.4"/>
+          <circle cx="23" cy="24" r="2" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+        核心能力
+      </div>
+      <div class="info-list">
+        <div class="info-item">
+          <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="10" width="24" height="18" rx="3" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M14 18 L18 22 L26 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="info-text">
+            <h3>复杂推理与问题求解</h3>
+            <p>面对多步骤、跨领域的复杂问题，能够拆解逻辑链条，提供清晰严谨的解答。</p>
+          </div>
+        </div>
+        <div class="info-item">
+          <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 8 C14 8 10 12 10 18 C10 24 14 28 20 28 C26 28 30 24 30 18 C30 12 26 8 20 8Z" stroke="currentColor" stroke-width="1.6"/>
+            <circle cx="20" cy="18" r="4" stroke="currentColor" stroke-width="1.6"/>
+          </svg>
+          <div class="info-text">
+            <h3>深层语义理解</h3>
+            <p>超越字面含义，捕捉对话中的隐含意图与情感脉络，给出有温度的回应。</p>
+          </div>
+        </div>
+      </div>
+      <div class="tech-tags">
+        <span class="tech-tag">Transformer</span>
+        <span class="tech-tag">长上下文窗口</span>
+        <span class="tech-tag">多轮对话</span>
+        <span class="tech-tag">代码生成</span>
+        <span class="tech-tag">数学推理</span>
+        <span class="tech-tag">知识问答</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 愿景 -->
+  <div class="section" id="visionSection">
+    <div class="glass-card" style="text-align:center;">
+      <div class="section-title" style="justify-content:center;">
+        <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M15 4 L17 12 L25 12 L19 17 L21 25 L15 20 L9 25 L11 17 L5 12 L13 12 L15 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" fill="currentColor" fill-opacity="0.1"/>
+        </svg>
+        愿景
+      </div>
+      <p style="font-size:1.25rem; line-height:1.9; color:#d0e0f5; max-width:680px; margin:0 auto 1.5rem;">
+        “让智能回归本质，以深度求索连接每一个未知。”
+      </p>
+      <div class="signature" style="margin-top:2rem;">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L15 9H22L16 14L18 21L12 17L6 21L8 14L2 9H9L12 2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="currentColor" fill-opacity="0.1"/>
+        </svg>
+        <span>DeepSeek · 深度求索</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  /* ==========================================================
+     1. 生成真正的 3D 立体金属文字 —— 多片沿 Z 轴堆叠挤出
+     ========================================================== */
+  const textContainer = document.getElementById('metalText');
+  const TEXT = 'DeepSeek';
+  const LAYERS = 26;        // 挤出层数（越多越厚实）
+  const DEPTH = 34;         // 总厚度 px
+
+  // 移除已有的临时片，保留 face 和 shine（它们由 HTML 提供）
+  const faceEl = textContainer.querySelector('.face');
+  const shineEl = textContainer.querySelector('.shine');
+  
+  // 清空容器，重新构建
+  textContainer.innerHTML = '';
+
+  // 先放最底层的深色挤出片（从后往前推，这样前面的层会自然盖住后面的）
+  for (let i = 0; i < LAYERS; i++) {
+    const slice = document.createElement('span');
+    slice.className = 'slice';
+    slice.textContent = TEXT;
+    // 从最深处 (i=0 最靠后) 到最前面 (i=LAYERS-1)
+    const z = -DEPTH + (i / (LAYERS - 1)) * DEPTH; // -DEPTH ~ 0
+    slice.style.transform = `translateZ(${z}px)`;
+    // 越靠后的层越暗（模拟环境光遮蔽）
+    const t = i / (LAYERS - 1); // 0=最后层, 1=最前层
+    const brightness = 0.28 + t * 0.72;
+    slice.style.filter = `brightness(${brightness})`;
+    textContainer.appendChild(slice);
+  }
+
+  // 放入金属正面（最前面）
+  faceEl.style.transform = `translateZ(${DEPTH + 0.5}px)`;
+  textContainer.appendChild(faceEl);
+
+  // 放入光泽扫过层（最前表面之上）
+  shineEl.style.transform = `translateZ(${DEPTH + 1}px)`;
+  textContainer.appendChild(shineEl);
+
+  // 文字尺寸参考：为了让绝对定位的层正确对齐，把 face 尺寸作为基准
+  // 由于所有层都是绝对定位且内容相同，父容器需要有明确尺寸
+  // 通过让 face 相对定位撑开容器高度，同时其他层绝对定位
+  // 但 face 在容器内是 position: relative，会撑开容器宽度；其他 slice 绝对定位在左上角对齐
+  // 为了宽度也一致，给容器设定 inline-block 行为已在 .metal-3d-text 中通过 white-space 保证
+  
+  // 修正：slice 的绝对定位需要与 face 的文本渲染完全对齐
+  // 由于字体一致，文本内容一致，只要 left/top 为 0 即可对齐
+  // 已在 CSS 中设置 .slice { position: absolute; top: 0; left: 0; }
+  
+  // 让 face 保持相对定位以撑开容器
+  faceEl.style.position = 'relative';
+  faceEl.style.display = 'block';
+
+  // 所有 slice 用和 face 相同的字体样式（继承自容器，但需显式设置背景裁剪）
+  // 样式已在 CSS 中定义好
+
+  /* ==========================================================
+     2. 鼠标视差增强 3D 感
+     ========================================================== */
+  const scene = document.querySelector('.metal-3d-scene');
+  const layer = document.querySelector('.metal-3d-layer');
+  
+  let mouseX = 0, mouseY = 0;
+  let targetRotX = 0, targetRotY = 0;
+  let currentRotX = 0, currentRotY = 0;
+  let animating = true;
+
+  document.addEventListener('mousemove', (e) => {
+    mouseX = (e.clientX / window.innerWidth - 0.5) * 2;  // -1 ~ 1
+    mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+    targetRotY = mouseX * 18;   // 左右摆动 ±18deg
+    targetRotX = -mouseY * 12;  // 上下摆动 ±12deg
+  });
+
+  document.addEventListener('mouseleave', () => {
+    targetRotX = 0;
+    targetRotY = 0;
+  });
+
+  // 用 rAF 平滑插值，叠加在 CSS 自动旋转之上
+  // 方案：CSS 的 animation 控制 scene 的基础旋转，
+  // 我们用鼠标偏移来微调 perspective-origin，或者用另一个外层包裹做 transform
+  // 更优雅：用 JS 直接控制 scene 的 transform 会覆盖 CSS animation，
+  // 所以改为：CSS animation 负责基础摆动；鼠标只改变 layer 的 perspective-origin
+  // 这样既有自动旋转又有鼠标响应，互不干扰
+  
+  // 这里用 rAF 平滑更新 perspective-origin，产生跟随鼠标的立体变化
+  function updateParallax() {
+    const originX = 50 + mouseX * 8;  // 50% ± 8%
+    const originY = 50 + mouseY * 8;
+    layer.style.perspectiveOrigin = `${originX}% ${originY}%`;
+    requestAnimationFrame(updateParallax);
+  }
+  updateParallax();
+
+  /* ==========================================================
+     3. 星点背景
+     ========================================================== */
+  const starField = document.getElementById('starField');
+  for (let i = 0; i < 120; i++) {
+    const star = document.createElement('div');
+    star.className = 'star';
+    star.style.left = Math.random() * 100 + '%';
+    star.style.top = Math.random() * 100 + '%';
+    const size = Math.random() * 2.8 + 1.2;
+    star.style.width = size + 'px';
+    star.style.height = size + 'px';
+    star.style.animationDelay = Math.random() * 8 + 's';
+    star.style.animationDuration = (Math.random() * 6 + 4) + 's';
+    star.style.background = 'radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(180,220,255,0.4) 100%)';
+    starField.appendChild(star);
+  }
+
+  /* ==========================================================
+     4. 滚动驱动背景色相
+     ========================================================== */
+  const bgContainer = document.getElementById('bgContainer');
+  const baseHue = 220;
+
+  function updateBackground() {
+    const scrollY = window.scrollY;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = docHeight > 0 ? scrollY / docHeight : 0;
+    const hue = (baseHue + progress * 140) % 360;
+
+    bgContainer.style.backgroundColor = `hsl(${hue}, 35%, 6%)`;
+    bgContainer.style.backgroundImage = `
+      radial-gradient(circle at 30% 40%, hsla(${hue},70%,60%,0.12) 0%, transparent 50%),
+      radial-gradient(circle at 80% 70%, hsla(${hue + 40},70%,60%,0.12) 0%, transparent 55%),
+      radial-gradient(circle at 10% 80%, hsla(${hue - 30},70%,60%,0.08) 0%, transparent 45%)
+    `;
+  }
+
+  updateBackground();
+  window.addEventListener('scroll', updateBackground, { passive: true });
+  window.addEventListener('resize', updateBackground);
+
+  /* ==========================================================
+     5. 滚动显现
+     ========================================================== */
+  const sections = document.querySelectorAll('.section');
+
+  function checkVisibility() {
+    const wh = window.innerHeight;
+    const offset = 80;
+    sections.forEach(sec => {
+      const rect = sec.getBoundingClientRect();
+      if (rect.top < wh - offset && rect.bottom > 0) {
+        sec.classList.add('visible');
+      }
+    });
+  }
+
+  checkVisibility();
+  window.addEventListener('scroll', checkVisibility, { passive: true });
+  window.addEventListener('resize', checkVisibility);
+  document.getElementById('heroSection').classList.add('visible');
+
+  /* ==========================================================
+     6. 首屏卡片鼠标轻微倾斜
+     ========================================================== */
+  const heroCard = document.querySelector('#heroSection .glass-card');
+  if (heroCard) {
+    document.addEventListener('mousemove', (e) => {
+      const xAxis = (window.innerWidth / 2 - e.clientX) / 100;
+      const yAxis = (window.innerHeight / 2 - e.clientY) / 100;
+      heroCard.style.transform = `rotateX(${yAxis * 0.06}deg) rotateY(${xAxis * 0.06}deg)`;
+    });
+    document.addEventListener('mouseleave', () => {
+      heroCard.style.transform = 'rotateX(0deg) rotateY(0deg)';
+    });
+  }
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSeek · 深度求索</title>
+    <style>
+        /* 全局重置 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: #0b0e14;
+            color: #eef4ff;
+            overflow-x: hidden;
+        }
+
+        /* 背景容器——由滚动驱动的动态渐变/色相 (通过 JS 更新) */
+        .bg-container {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background: radial-gradient(circle at 30% 40%, rgba(38, 139, 210, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 70%, rgba(147, 112, 219, 0.15) 0%, transparent 55%),
+                        radial-gradient(circle at 10% 80%, rgba(0, 180, 216, 0.1) 0%, transparent 45%);
+            background-color: #0b0e14;
+            transition: background-color 0.1s linear;
+            will-change: background-color;
+        }
+
+        /* 星点层 (纯CSS装饰) */
+        .star-field {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            pointer-events: none;
+        }
+
+        .star {
+            position: absolute;
+            background: white;
+            border-radius: 50%;
+            opacity: 0.3;
+            animation: starPulse 4s infinite alternate;
+        }
+
+        @keyframes starPulse {
+            0% { opacity: 0.1; transform: scale(0.8); }
+            100% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        /* 所有滚动内容都在这个容器内，相对z-index */
+        .scroll-content {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            padding: 2rem 1.5rem 6rem;
+        }
+
+        /* 区块通用样式 */
+        .section {
+            width: min(900px, 100%);
+            margin: 4rem 0;
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.9s cubic-bezier(0.2, 0.9, 0.3, 1), transform 0.9s cubic-bezier(0.2, 0.9, 0.3, 1);
+        }
+
+        .section.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* 玻璃卡片 */
+        .glass-card {
+            background: rgba(18, 22, 32, 0.65);
+            backdrop-filter: blur(20px) saturate(150%);
+            -webkit-backdrop-filter: blur(20px) saturate(150%);
+            border-radius: 48px;
+            padding: 3rem 2.5rem;
+            box-shadow: 0 25px 50px -8px rgba(0, 0, 0, 0.6),
+                        0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+                        0 0 40px rgba(0, 180, 255, 0.08);
+            transition: box-shadow 0.3s, background 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 顶部装饰线 */
+        .glow-line {
+            position: absolute;
+            top: 0;
+            left: 10%;
+            width: 80%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #4aa8ff, #a57cff, #4aa8ff, transparent);
+            background-size: 200% 100%;
+            border-radius: 2px;
+            animation: lineFlow 4s linear infinite;
+            opacity: 0.8;
+        }
+
+        @keyframes lineFlow {
+            0% { background-position: 0% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        /* 标题区域 */
+        .hero {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            margin-top: 2rem;
+        }
+
+        .svg-avatar {
+            width: 140px;
+            height: 140px;
+            margin-bottom: 1rem;
+            filter: drop-shadow(0 0 24px rgba(80, 170, 255, 0.6));
+        }
+
+        h1 {
+            font-size: 4rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #ffffff 0%, #b8d9ff 80%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 0.25rem;
+        }
+
+        .subhead {
+            font-size: 1.2rem;
+            font-weight: 400;
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+            color: #8ea6c9;
+            margin-bottom: 2rem;
+        }
+
+        .description {
+            font-size: 1.15rem;
+            line-height: 1.8;
+            color: #cbd6e6;
+            max-width: 680px;
+            margin-bottom: 2.8rem;
+            font-weight: 400;
+        }
+
+        /* 特性卡片网格 */
+        .features {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1.2rem;
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+
+        .feature-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 28px;
+            padding: 1.6rem 1rem 1.4rem;
+            flex: 1 1 150px;
+            min-width: 130px;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            transition: all 0.25s ease;
+        }
+
+        .feature-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(100, 180, 255, 0.2);
+            box-shadow: 0 8px 20px -8px rgba(0, 160, 255, 0.3);
+            transform: translateY(-3px);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 0.9rem;
+            color: #7db9ff;
+            filter: drop-shadow(0 0 8px rgba(80, 170, 255, 0.4));
+        }
+
+        .feature-label {
+            font-size: 1rem;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            background: linear-gradient(180deg, #eef6ff, #b0c8e8);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        /* 每个区块的小标题 */
+        .section-title {
+            font-size: 2rem;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+            background: linear-gradient(135deg, #ffffff, #b0d0ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .section-title svg {
+            width: 34px;
+            height: 34px;
+            opacity: 0.9;
+            flex-shrink: 0;
+        }
+
+        /* 内容列表 */
+        .info-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1.8rem;
+            margin-top: 1rem;
+        }
+
+        .info-item {
+            display: flex;
+            gap: 1.2rem;
+            align-items: flex-start;
+        }
+
+        .info-icon {
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
+            color: #88c0ff;
+            filter: drop-shadow(0 0 6px rgba(80, 170, 255, 0.3));
+        }
+
+        .info-text h3 {
+            font-size: 1.25rem;
+            font-weight: 500;
+            color: #dceaff;
+            margin-bottom: 0.3rem;
+        }
+
+        .info-text p {
+            font-size: 1rem;
+            line-height: 1.7;
+            color: #a6b9d2;
+            max-width: 600px;
+        }
+
+        /* 技术标签 */
+        .tech-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            margin-top: 1.6rem;
+        }
+
+        .tech-tag {
+            background: rgba(80, 170, 255, 0.08);
+            border: 1px solid rgba(80, 170, 255, 0.2);
+            border-radius: 40px;
+            padding: 0.5rem 1.2rem;
+            font-size: 0.9rem;
+            color: #b8d9ff;
+            letter-spacing: 0.02em;
+            transition: background 0.2s, border 0.2s;
+        }
+
+        .tech-tag:hover {
+            background: rgba(80, 170, 255, 0.15);
+            border-color: rgba(80, 170, 255, 0.4);
+        }
+
+        /* 签名 */
+        .signature {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.8rem;
+            font-size: 0.9rem;
+            color: #7d8fa8;
+            letter-spacing: 0.03em;
+            margin-top: 3rem;
+        }
+
+        .signature svg {
+            width: 20px;
+            height: 20px;
+            opacity: 0.7;
+        }
+
+        /* 响应式 */
+        @media (max-width: 700px) {
+            h1 { font-size: 2.8rem; }
+            .glass-card { padding: 2rem 1.5rem; border-radius: 32px; }
+            .section-title { font-size: 1.6rem; }
+            .info-item { gap: 0.8rem; }
+            .info-icon { width: 36px; height: 36px; }
+            .svg-avatar { width: 110px; height: 110px; }
+            .subhead { font-size: 0.9rem; letter-spacing: 0.2em; }
+            .description { font-size: 1rem; }
+        }
+
+        @media (max-width: 480px) {
+            h1 { font-size: 2.2rem; }
+            .feature-item { min-width: 100px; padding: 1.2rem 0.6rem; }
+            .feature-icon { width: 36px; height: 36px; }
+            .tech-tag { padding: 0.35rem 1rem; font-size: 0.8rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 动态背景 (色相由滚动位置控制) -->
+    <div class="bg-container" id="bgContainer"></div>
+
+    <!-- 星点层 -->
+    <div class="star-field" id="starField"></div>
+
+    <!-- 所有滚动内容 -->
+    <div class="scroll-content">
+
+        <!-- 首屏：品牌核心 -->
+        <div class="section hero visible" id="heroSection">
+            <div class="glass-card" style="width: 100%;">
+                <div class="glow-line"></div>
+                <div style="display: flex; flex-direction: column; align-items: center; text-align: center;">
+                    <!-- 主视觉 SVG -->
+                    <svg class="svg-avatar" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="ringGrad" x1="20%" y1="20%" x2="80%" y2="80%">
+                                <stop offset="0%" stop-color="#4aa8ff" stop-opacity="0.9"/>
+                                <stop offset="50%" stop-color="#a57cff" stop-opacity="0.8"/>
+                                <stop offset="100%" stop-color="#4aa8ff" stop-opacity="0.6"/>
+                            </linearGradient>
+                            <linearGradient id="innerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#8cc6ff" />
+                                <stop offset="100%" stop-color="#c9a2ff" />
+                            </linearGradient>
+                            <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+                                <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
+                                <feMerge>
+                                    <feMergeNode in="blur" />
+                                    <feMergeNode in="SourceGraphic" />
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <!-- 外环旋转 -->
+                        <circle cx="60" cy="60" r="46" stroke="url(#ringGrad)" stroke-width="2.2" fill="none"
+                                stroke-dasharray="6 12" opacity="0.8">
+                            <animateTransform attributeName="transform" type="rotate" from="0 60 60" to="360 60 60" dur="12s" repeatCount="indefinite" />
+                        </circle>
+                        <!-- 第二层环反向 -->
+                        <circle cx="60" cy="60" r="34" stroke="url(#ringGrad)" stroke-width="1.8" fill="none"
+                                stroke-dasharray="4 10" opacity="0.6">
+                            <animateTransform attributeName="transform" type="rotate" from="360 60 60" to="0 60 60" dur="18s" repeatCount="indefinite" />
+                        </circle>
+                        <!-- 核心 -->
+                        <circle cx="60" cy="60" r="20" fill="url(#innerGrad)" opacity="0.2" filter="url(#glow)" />
+                        <circle cx="60" cy="60" r="12" fill="url(#innerGrad)" opacity="0.9">
+                            <animate attributeName="r" values="12;13.5;12;12" dur="3s" repeatCount="indefinite" />
+                        </circle>
+                        <circle cx="60" cy="60" r="4.5" fill="#ffffff" opacity="0.9" />
+                        <path d="M60 34 L60 42 M60 78 L60 86 M34 60 L42 60 M78 60 L86 60"
+                              stroke="#b8d9ff" stroke-width="1.5" stroke-linecap="round" opacity="0.6" />
+                    </svg>
+
+                    <h1>DeepSeek</h1>
+                    <div class="subhead">深度求索 · 智能之境</div>
+                    <p class="description">
+                        由深度求索公司创造的 AI 助手。以纯粹的逻辑与广博的知识为基石，
+                        在对话中理解，在思考中创造，为每一个问题寻找深刻的答案。
+                    </p>
+
+                    <!-- 特性卡片 -->
+                    <div class="features">
+                        <div class="feature-item">
+                            <svg class="feature-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="20" cy="16" r="6" stroke="currentColor" stroke-width="1.8" />
+                                <circle cx="12" cy="28" r="5" stroke="currentColor" stroke-width="1.8" />
+                                <circle cx="28" cy="28" r="5" stroke="currentColor" stroke-width="1.8" />
+                                <path d="M15 20 L12 23 M25 20 L28 23 M20 22 L20 26 M17 26 L12 28 M23 26 L28 28"
+                                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.8" />
+                            </svg>
+                            <span class="feature-label">深度思考</span>
+                        </div>
+                        <div class="feature-item">
+                            <svg class="feature-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M8 20 C8 14, 14 12, 18 16 L22 20 C26 24, 32 22, 32 16 C32 12, 28 10, 24 12 L20 16 C16 20, 10 18, 8 20Z"
+                                      stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none" />
+                                <path d="M32 20 C32 26, 26 28, 22 24 L18 20 C14 16, 8 18, 8 24 C8 28, 12 30, 16 28 L20 24 C24 20, 30 22, 32 20Z"
+                                      stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none" />
+                            </svg>
+                            <span class="feature-label">长上下文</span>
+                        </div>
+                        <div class="feature-item">
+                            <svg class="feature-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8" />
+                                <rect x="20" y="20" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8" />
+                                <path d="M14 20 L14 28 L20 28" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                                <path d="M26 14 L26 20 L20 20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                            </svg>
+                            <span class="feature-label">多模态理解</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第二个区块：关于深度求索 -->
+        <div class="section" id="aboutSection">
+            <div class="glass-card">
+                <div class="section-title">
+                    <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="15" cy="15" r="11" stroke="currentColor" stroke-width="1.6" stroke-dasharray="4 4" />
+                        <path d="M15 8 L15 22 M8 15 L22 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    </svg>
+                    关于我们
+                </div>
+                <p style="font-size: 1.1rem; line-height: 1.9; color: #c3d3e8; margin-bottom: 1.8rem;">
+                    深度求索（DeepSeek）是一家专注于人工智能技术研发的公司，致力于探索智能的边界。
+                    我们相信，通过持续的技术创新和对本质的深入思考，能够构建真正理解人类意图的 AI 系统。
+                </p>
+                <div class="info-list">
+                    <div class="info-item">
+                        <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M20 6 L24 16 L35 16 L26 23 L30 34 L20 27 L10 34 L14 23 L5 16 L16 16 L20 6Z" 
+                                  stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" fill="currentColor" fill-opacity="0.08" />
+                        </svg>
+                        <div class="info-text">
+                            <h3>纯粹的技术驱动</h3>
+                            <p>不追逐浮华，专注于底层模型能力的提升，让智能本身成为最好的表达。</p>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="20" cy="20" r="14" stroke="currentColor" stroke-width="1.6" />
+                            <path d="M20 12 L20 20 L26 26" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                        </svg>
+                        <div class="info-text">
+                            <h3>长远的探索视角</h3>
+                            <p>不满足于短期成效，持续投入基础研究，在深度与广度上同时推进。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第三个区块：核心能力 -->
+        <div class="section" id="capabilitiesSection">
+            <div class="glass-card">
+                <div class="section-title">
+                    <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M7 20 L7 10 L13 10 L13 20 M17 20 L17 6 L23 6 L23 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                        <circle cx="7" cy="24" r="2" stroke="currentColor" stroke-width="1.4" />
+                        <circle cx="17" cy="24" r="2" stroke="currentColor" stroke-width="1.4" />
+                        <circle cx="23" cy="24" r="2" stroke="currentColor" stroke-width="1.4" />
+                    </svg>
+                    核心能力
+                </div>
+                <div class="info-list">
+                    <div class="info-item">
+                        <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="8" y="10" width="24" height="18" rx="3" stroke="currentColor" stroke-width="1.6" />
+                            <path d="M14 18 L18 22 L26 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <div class="info-text">
+                            <h3>复杂推理与问题求解</h3>
+                            <p>面对多步骤、跨领域的复杂问题，能够拆解逻辑链条，提供清晰严谨的解答。</p>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <svg class="info-icon" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M20 8 C14 8 10 12 10 18 C10 24 14 28 20 28 C26 28 30 24 30 18 C30 12 26 8 20 8Z" stroke="currentColor" stroke-width="1.6" />
+                            <circle cx="20" cy="18" r="4" stroke="currentColor" stroke-width="1.6" />
+                        </svg>
+                        <div class="info-text">
+                            <h3>深层语义理解</h3>
+                            <p>超越字面含义，捕捉对话中的隐含意图与情感脉络，给出有温度的回应。</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="tech-tags">
+                    <span class="tech-tag">Transformer</span>
+                    <span class="tech-tag">长上下文窗口</span>
+                    <span class="tech-tag">多轮对话</span>
+                    <span class="tech-tag">代码生成</span>
+                    <span class="tech-tag">数学推理</span>
+                    <span class="tech-tag">知识问答</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第四个区块：愿景 -->
+        <div class="section" id="visionSection">
+            <div class="glass-card" style="text-align: center;">
+                <div class="section-title" style="justify-content: center;">
+                    <svg viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M15 4 L17 12 L25 12 L19 17 L21 25 L15 20 L9 25 L11 17 L5 12 L13 12 L15 4Z" 
+                              stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" fill="currentColor" fill-opacity="0.1" />
+                    </svg>
+                    愿景
+                </div>
+                <p style="font-size: 1.25rem; line-height: 1.9; color: #d0e0f5; max-width: 680px; margin: 0 auto 1.5rem;">
+                    “让智能回归本质，以深度求索连接每一个未知。”
+                </p>
+                <div class="signature" style="margin-top: 2rem;">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L15 9H22L16 14L18 21L12 17L6 21L8 14L2 9H9L12 2Z"
+                              stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" fill="currentColor" fill-opacity="0.1" />
+                    </svg>
+                    <span>DeepSeek · 深度求索</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        (function() {
+            // ---------- 1. 生成背景星点 ----------
+            const starField = document.getElementById('starField');
+            const starCount = 120;
+            for (let i = 0; i < starCount; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                const x = Math.random() * 100;
+                const y = Math.random() * 100;
+                const size = Math.random() * 2.8 + 1.2;
+                const delay = Math.random() * 8;
+                const duration = Math.random() * 6 + 4;
+                star.style.left = x + '%';
+                star.style.top = y + '%';
+                star.style.width = size + 'px';
+                star.style.height = size + 'px';
+                star.style.animationDelay = delay + 's';
+                star.style.animationDuration = duration + 's';
+                star.style.background = 'radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(180,220,255,0.4) 100%)';
+                starField.appendChild(star);
+            }
+
+            // ---------- 2. 滚动驱动背景色相 ----------
+            const bgContainer = document.getElementById('bgContainer');
+            // 基础色调 (深色底) 和 目标色相偏移范围
+            const baseHue = 220; // 初始冷色
+            
+            function updateBackground() {
+                const scrollY = window.scrollY;
+                const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+                // 滚动进度 0 ~ 1
+                const progress = docHeight > 0 ? scrollY / docHeight : 0;
+                
+                // 色相从 220 (蓝) 逐渐偏移到 280 (紫) 甚至 340 (粉)，范围约 120 度
+                const hue = (baseHue + progress * 140) % 360;
+                
+                // 用 hsl 构建深色背景，同时保持亮度和饱和度适合深色模式
+                // 主背景色：很深的蓝紫色调
+                const bgColor = `hsl(${hue}, 35%, 6%)`;
+                // 叠加两层径向渐变，颜色也随色相变化，丰富层次
+                const grad1Color = `hsla(${hue}, 70%, 60%, 0.12)`;
+                const grad2Color = `hsla(${hue + 40}, 70%, 60%, 0.12)`;
+                const grad3Color = `hsla(${hue - 30}, 70%, 60%, 0.08)`;
+                
+                bgContainer.style.backgroundColor = bgColor;
+                bgContainer.style.backgroundImage = `
+                    radial-gradient(circle at 30% 40%, ${grad1Color} 0%, transparent 50%),
+                    radial-gradient(circle at 80% 70%, ${grad2Color} 0%, transparent 55%),
+                    radial-gradient(circle at 10% 80%, ${grad3Color} 0%, transparent 45%)
+                `;
+            }
+
+            // 初始化
+            updateBackground();
+            window.addEventListener('scroll', updateBackground, { passive: true });
+            window.addEventListener('resize', updateBackground);
+
+            // ---------- 3. 滚动触发区块显现 (淡入上浮) ----------
+            const sections = document.querySelectorAll('.section');
+            
+            function checkVisibility() {
+                const windowHeight = window.innerHeight;
+                const triggerOffset = 80; // 提前一点触发
+
+                sections.forEach(section => {
+                    const rect = section.getBoundingClientRect();
+                    // 当区块顶部进入视口底部上方 triggerOffset 像素时显示
+                    if (rect.top < windowHeight - triggerOffset && rect.bottom > 0) {
+                        section.classList.add('visible');
+                    } else {
+                        // 可选：如果希望离开视口再淡出，可以取消下一行注释
+                        // section.classList.remove('visible');
+                    }
+                });
+            }
+
+            // 初始检查（首屏区块已经 visible，但其他区块可能需要显示）
+            checkVisibility();
+            window.addEventListener('scroll', checkVisibility, { passive: true });
+            window.addEventListener('resize', checkVisibility);
+
+            // 确保首屏区块一开始就是可见的（已经手动加 visible 类，但为了逻辑统一，如果未加则加上）
+            document.getElementById('heroSection').classList.add('visible');
+
+            // ---------- 4. 轻微视差/卡片浮动效果 (鼠标) ----------
+            // 仅对第一张卡片做轻微鼠标视差，使页面更生动，但避免干扰
+            const heroCard = document.querySelector('#heroSection .glass-card');
+            if (heroCard) {
+                document.addEventListener('mousemove', (e) => {
+                    const xAxis = (window.innerWidth / 2 - e.clientX) / 100;
+                    const yAxis = (window.innerHeight / 2 - e.clientY) / 100;
+                    heroCard.style.transform = `rotateX(${yAxis * 0.06}deg) rotateY(${xAxis * 0.06}deg)`;
+                });
+                document.addEventListener('mouseleave', () => {
+                    heroCard.style.transform = 'rotateX(0deg) rotateY(0deg)';
+                });
+            }
+
+        })();
+    </script>
+</body>
+</html>
