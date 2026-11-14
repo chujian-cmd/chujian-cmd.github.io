@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Lander</title>
+<script>if (/^(ar|fa|he|iw|ur)(-|$)/i.test(navigator.language)) document.documentElement.dir = "rtl";</script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #0f1419; --muted: #536471; --panel: #f2f2f2; --cell: #e3e3e3; --accent: #1d9bf0;
+    --radius: 12px; --radius-inner: 8px; --gap: 8px; --max: 560px; --space: #050a18;
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.34, 1.56, .64, 1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000000; --fg: #e7e9ea; --muted: #71767b; --panel: #141414; --cell: #262626; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: none; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .hud { width: 100%; max-width: var(--max); display: flex; gap: var(--gap); flex-shrink: 0; }
+  .stat { flex: 1; min-width: 0; background: var(--panel); border-radius: var(--radius); padding: 8px 12px; text-align: center; }
+  .stat span { display: block; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat b { display: block; font-size: 20px; line-height: 24px; font-variant-numeric: tabular-nums; }
+  .tool { font: inherit; font-size: 15px; font-weight: 700; border: 0; border-radius: var(--radius); padding: 0 14px; background: var(--panel); color: var(--fg);
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; transition: transform .12s var(--ease); }
+  .tool:active { transform: scale(.95); }
+  .tool svg { width: 20px; height: 20px; }
+  .bump { animation: bump .3s var(--spring); }
+  @keyframes bump { 40% { transform: scale(1.2); } }
+  #wrap { position: relative; flex: 1; min-height: 0; width: 100%; max-width: var(--max); }
+  canvas { width: 100%; height: 100%; display: block; border-radius: var(--radius); background: var(--space); }
+  .overlay { position: absolute; inset: 0; z-index: 2; border-radius: var(--radius); background: rgba(0, 0, 0, .55); color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center;
+    transition: opacity .2s var(--ease), visibility 0s; }
+  .overlay > * { transition: transform .3s var(--spring); }
+  .overlay.hidden { opacity: 0; visibility: hidden; transition: opacity .2s var(--ease), visibility 0s linear .2s; }
+  .overlay.hidden > * { transform: translateY(8px) scale(.96); }
+  .overlay h2 { margin: 0; font-size: 28px; line-height: 32px; font-weight: 800; }
+  .overlay p { margin: 0; font-size: 15px; line-height: 20px; opacity: .85; }
+  .overlay p:empty { display: none; }
+  .play { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 20px; margin-top: 8px; border-radius: 9999px;
+    background: #fff; color: #000; font-size: 15px; font-weight: 700; }
+  .controls { width: 100%; max-width: var(--max); display: grid; grid-template-columns: 1fr 2fr 1fr; gap: var(--gap); flex-shrink: 0; }
+  .pad { font: inherit; font-size: 15px; font-weight: 700; height: 56px; border: 0; border-radius: var(--radius); background: var(--panel); color: var(--fg);
+    display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform .1s var(--ease), background-color .1s var(--ease); }
+  .pad svg { width: 24px; height: 24px; }
+  .pad.on { background: var(--cell); transform: scale(.96); }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+  [dir="rtl"] .stage, [dir="rtl"] body > #wrap, [dir="rtl"] .controls { direction: ltr; }
+  [dir="rtl"] .hint, [dir="rtl"] .tool { unicode-bidi: plaintext; }
+  @media (orientation: landscape) and (max-height: 540px) {
+    body { display: grid; grid-template-columns: minmax(112px, 168px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "hud stage" "hud hint"; justify-items: center; }
+    body:has(.controls) { grid-template-columns: minmax(112px, 168px) minmax(0, 1fr) auto; grid-template-areas: "hud stage controls" "hud hint controls"; }
+    .hud { grid-area: hud; flex-direction: column; align-self: start; }
+    .hud > * { flex: 0 0 auto; min-height: 44px; }
+    .hud canvas, #next { width: 100%; height: 56px; }
+    .stage, body > #wrap { grid-area: stage; width: 100%; height: 100%; max-width: none; }
+    .controls { grid-area: controls; align-self: end; width: 264px; }
+    .hint { grid-area: hint; }
+  }
+</style>
+</head>
+<body>
+  <div class="hud">
+    <div class="stat"><span>Fuel</span><b id="fuel">100</b></div>
+    <div class="stat"><span>Speed</span><b id="speed">0</b></div>
+    <div class="stat"><span>Landed</span><b id="landed">0</b></div>
+    <button class="tool" id="pause" aria-label="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg></button>
+  </div>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+    <div class="overlay" id="overlay"><h2 id="title">Lander</h2><p id="sub">Hold Thrust to slow down and the arrows to tilt. Land softly on the green pad.</p><span class="play" id="cta">Play</span></div>
+  </div>
+  <div class="controls">
+    <button class="pad" data-a="left" aria-label="Tilt left"><svg viewBox="0 0 24 24"><path d="M7 12l9-7v14z" fill="currentColor" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg></button>
+    <button class="pad" data-a="thrust"><svg viewBox="0 0 24 24"><path d="M12 7l7 9H5z" fill="currentColor" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>Thrust</button>
+    <button class="pad" data-a="right" aria-label="Tilt right"><svg viewBox="0 0 24 24"><path d="M17 12l-9 7V5z" fill="currentColor" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg></button>
+  </div>
+<script>
+(function () {
+  const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay'), titleEl = document.getElementById('title'), subEl = document.getElementById('sub');
+  const landedEl = document.getElementById('landed');
+  const ctaEl = document.getElementById('cta');
+  const GRAVITY = 22, THRUST = 60, TILT = 2.6, SAFE_VY = 28, SAFE_VX = 18, SAFE_ANGLE = 0.3;
+  const RESULT_DELAY_MS = 800;
+  const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W, H, lander, terrain, pad, stars, landed, running, ending, lastTs, raf = 0, input = { left: false, right: false, thrust: false }, level, attemptPending;
+  let particles = [], shakeTime = 0;
+
+  const VIBRATE_FALLBACK = { tick: 8, confirm: [15, 40, 15], reject: [40, 60, 80], heavy: 30 };
+  function haptic(kind) {
+    try {
+      if (window.XGamesHaptics) window.XGamesHaptics.postMessage(kind);
+      else if (navigator.vibrate) navigator.vibrate(VIBRATE_FALLBACK[kind]);
+    } catch (e) {}
+  }
+  function bump(el) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const prevW = W, prevH = H, w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!w || !h) return;
+    W = w; H = h;
+    stars = Array.from({ length: 70 }, () => ({ x: Math.random() * W, y: Math.random() * H * 0.7, r: Math.random() * 1.2 + 0.3 }));
+    if (landed === undefined) { landed = 0; level = 1; }
+    if (!terrain) newAttempt(); else rescaleWorld(W / prevW, H / prevH);
+    draw();
+  }
+  function rescaleWorld(sx, sy) {
+    if (!isFinite(sx) || !isFinite(sy)) return;
+    terrain.forEach(p => { p.x *= sx; p.y *= sy; });
+    pad.x1 *= sx; pad.x2 *= sx; pad.y *= sy;
+    lander.x *= sx; lander.y *= sy;
+  }
+  function newAttempt() {
+    const points = 14, padIndex = 2 + Math.floor(Math.random() * (points - 4));
+    const padWidth = Math.max(40, 90 - level * 6), step = (W - padWidth) / points;
+    terrain = [];
+    let x = 0, y = H * 0.72;
+    for (let i = 0; i <= points; i++) {
+      terrain.push({ x, y });
+      if (i === padIndex) { pad = { x1: x, x2: x + padWidth, y }; x += padWidth; terrain.push({ x, y }); }
+      if (i < points) { y = Math.min(H * 0.92, Math.max(H * 0.5, y + (Math.random() - 0.5) * H * 0.22)); x += step; }
+    }
+    lander = { x: W * 0.2 + Math.random() * W * 0.6, y: 40, vx: (Math.random() - 0.5) * 30, vy: 0, angle: 0, fuel: 100, alive: true };
+    particles = [];
+    input = { left: false, right: false, thrust: false };
+    document.querySelectorAll('.controls .pad').forEach(b => b.classList.remove('on'));
+    updateHud();
+  }
+  function groundAt(x) {
+    for (let i = 0; i < terrain.length - 1; i++) {
+      const a = terrain[i], b = terrain[i + 1];
+      if (x >= a.x && x <= b.x) { const t = b.x === a.x ? 0 : (x - a.x) / (b.x - a.x); return a.y + (b.y - a.y) * t; }
+    }
+    return H;
+  }
+  function showOverlay(t, s, cta) { titleEl.textContent = t; subEl.textContent = s; ctaEl.textContent = cta; overlay.classList.remove('hidden'); running = false; }
+  function overlayShown() { return !overlay.classList.contains('hidden'); }
+  function start() {
+    if (ending) return;
+    if (attemptPending) {
+      const held = { left: input.left, right: input.right, thrust: input.thrust };
+      attemptPending = false; newAttempt();
+      input = held;
+      document.querySelectorAll('.controls .pad').forEach(b => b.classList.toggle('on', input[b.dataset.a]));
+      draw();
+    }
+    overlay.classList.add('hidden'); running = true; ensureLoop();
+  }
+  function pause() {
+    if (!running) return;
+    showOverlay('Paused', '', 'Resume');
+  }
+  function updateHud() {
+    document.getElementById('fuel').textContent = Math.max(0, Math.round(lander.fuel));
+    document.getElementById('speed').textContent = Math.round(Math.hypot(lander.vx, lander.vy));
+    landedEl.textContent = landed;
+  }
+
+  function puff(x, y, count, spread, colors, up) {
+    if (REDUCED_MOTION) return;
+    for (let i = 0; i < count; i++) {
+      const a = up ? -Math.PI / 2 + (Math.random() - 0.5) * spread : Math.random() * Math.PI * 2, v = 30 + Math.random() * 120;
+      particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, size: 1.5 + Math.random() * 3, color: colors[i % colors.length] });
+    }
+  }
+  function finish(title, subtitle, cta) {
+    ending = true;
+    setTimeout(() => { ending = false; showOverlay(title, subtitle, cta); }, REDUCED_MOTION ? 0 : RESULT_DELAY_MS);
+  }
+
+  function update(dt) {
+    const l = lander;
+    if (input.left) l.angle -= TILT * dt;
+    if (input.right) l.angle += TILT * dt;
+    l.angle = Math.max(-1.2, Math.min(1.2, l.angle));
+    const thrusting = input.thrust && l.fuel > 0;
+    if (thrusting) {
+      l.vx += Math.sin(l.angle) * THRUST * dt; l.vy -= Math.cos(l.angle) * THRUST * dt; l.fuel -= 18 * dt;
+      if (!REDUCED_MOTION && Math.random() < 0.7) {
+        const a = l.angle + Math.PI / 2 + (Math.random() - 0.5) * 0.5, v = 60 + Math.random() * 60;
+        particles.push({ x: l.x - Math.sin(l.angle) * 14, y: l.y + Math.cos(l.angle) * 14, vx: Math.cos(a) * v + l.vx, vy: Math.sin(a) * v + l.vy, life: 0.6, size: 1.5 + Math.random() * 1.5, color: Math.random() < 0.5 ? '#ff7a00' : '#ffd400' });
+      }
+    }
+    l.vy += GRAVITY * dt;
+    l.x += l.vx * dt; l.y += l.vy * dt;
+    if (l.x < 10) { l.x = 10; l.vx = Math.abs(l.vx) * 0.5; }
+    if (l.x > W - 10) { l.x = W - 10; l.vx = -Math.abs(l.vx) * 0.5; }
+    const feet = l.y + 12;
+    if (feet >= groundAt(l.x - 8) || feet >= groundAt(l.x + 8)) {
+      const onPad = l.x - 8 >= pad.x1 && l.x + 8 <= pad.x2;
+      const soft = l.vy <= SAFE_VY && Math.abs(l.vx) <= SAFE_VX && Math.abs(l.angle) <= SAFE_ANGLE;
+      l.y = groundAt(l.x) - 12; l.vx = 0; l.vy = 0;
+      running = false;
+      if (onPad && soft) {
+        landed++; level++; updateHud(); bump(landedEl);
+        haptic('confirm');
+        puff(l.x, l.y + 12, 16, 2.6, ['#9aa0a6', '#c4c8cc'], true);
+        finish('Touchdown!', 'Fuel left ' + Math.round(l.fuel), 'Next pad');
+      } else {
+        l.alive = false;
+        haptic('reject');
+        if (!REDUCED_MOTION) shakeTime = 0.4;
+        puff(l.x, l.y, 40, 0, ['#ff7a00', '#ffd400', '#f4212e', '#e7e9ea'], false);
+        finish('Crashed', onPad ? 'Too fast or too tilted' : 'Missed the pad', 'Retry');
+        landed = 0; level = 1; updateHud();
+      }
+      attemptPending = true;
+      return;
+    }
+    updateHud();
+  }
+  function loop(ts) {
+    raf = 0;
+    if (lastTs === undefined) lastTs = ts;
+    const dt = Math.min(0.05, (ts - lastTs) / 1000); lastTs = ts;
+    if (running) update(dt);
+    particles.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += GRAVITY * 2 * dt; p.vx *= 0.97; p.life -= dt * 1.4; });
+    particles = particles.filter(p => p.life > 0);
+    if (shakeTime > 0) shakeTime -= dt;
+    draw();
+    if (running || particles.length || shakeTime > 0) raf = requestAnimationFrame(loop);
+    else lastTs = undefined;
+  }
+  function ensureLoop() { if (!raf) { lastTs = undefined; raf = requestAnimationFrame(loop); } }
+
+  function draw() {
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+    if (shakeTime > 0) ctx.translate((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10);
+    ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.6; stars.forEach(s => { ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); }); ctx.globalAlpha = 1;
+    ctx.fillStyle = '#3e4144'; ctx.beginPath(); ctx.moveTo(0, H);
+    terrain.forEach(p => ctx.lineTo(p.x, p.y)); ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#00ba7c'; ctx.fillRect(pad.x1, pad.y - 3, pad.x2 - pad.x1, 4);
+    const l = lander;
+    if (l.alive || REDUCED_MOTION) {
+      ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.angle);
+      if (input.thrust && l.fuel > 0 && running) {
+        ctx.fillStyle = '#ff7a00'; ctx.beginPath(); ctx.moveTo(-5, 12); ctx.lineTo(5, 12); ctx.lineTo(0, 12 + 14 + Math.random() * 8); ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle = l.alive ? '#e7e9ea' : '#f4212e';
+      ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(10, 4); ctx.lineTo(-10, 4); ctx.closePath(); ctx.fill();
+      ctx.fillRect(-10, 4, 20, 6);
+      ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-8, 10); ctx.lineTo(-12, 16); ctx.moveTo(8, 10); ctx.lineTo(12, 16); ctx.stroke();
+      ctx.restore();
+    }
+    particles.forEach(p => { ctx.globalAlpha = Math.max(0, Math.min(1, p.life)); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); });
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = (l.vy <= SAFE_VY && Math.abs(l.vx) <= SAFE_VX) ? '#00ba7c' : '#f4212e';
+    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.fillText('↓ ' + Math.round(l.vy) + '  ↔ ' + Math.round(l.vx), 12, 20);
+    ctx.restore();
+  }
+
+  document.querySelectorAll('.controls .pad').forEach(b => {
+    const set = on => { input[b.dataset.a] = on; b.classList.toggle('on', on); if (on && !running) start(); };
+    b.addEventListener('pointerdown', e => { e.preventDefault(); set(true); });
+    b.addEventListener('pointerup', () => set(false));
+    b.addEventListener('pointercancel', () => set(false));
+    b.addEventListener('pointerleave', () => set(false));
+  });
+  const wrap = document.getElementById('wrap');
+  let tapStartedStopped = false;
+  wrap.addEventListener('pointerdown', () => { tapStartedStopped = !running && overlayShown(); });
+  wrap.addEventListener('pointerup', () => { if (!running && tapStartedStopped && overlayShown()) start(); });
+  document.addEventListener('keydown', e => {
+    const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'thrust', ' ': 'thrust' };
+    if (!(e.key in map)) return; e.preventDefault(); input[map[e.key]] = true; if (!running) start();
+  });
+  document.addEventListener('keyup', e => { const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'thrust', ' ': 'thrust' }; if (e.key in map) input[map[e.key]] = false; });
+  new ResizeObserver(resize).observe(canvas);
+  document.getElementById('pause').addEventListener('click', pause);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+  resize();
+})();
+</script>
+</body>
+</html>

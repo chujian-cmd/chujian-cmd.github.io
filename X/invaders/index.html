@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Invaders</title>
+<script>if (/^(ar|fa|he|iw|ur)(-|$)/i.test(navigator.language)) document.documentElement.dir = "rtl";</script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #0f1419; --muted: #536471; --panel: #f2f2f2; --cell: #e3e3e3; --accent: #1d9bf0;
+    --radius: 12px; --radius-inner: 8px; --gap: 8px; --max: 560px; --space: #050a18;
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.34, 1.56, .64, 1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000000; --fg: #e7e9ea; --muted: #71767b; --panel: #141414; --cell: #262626; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: none; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .hud { width: 100%; max-width: var(--max); display: flex; gap: var(--gap); flex-shrink: 0; }
+  .stat { flex: 1; min-width: 0; background: var(--panel); border-radius: var(--radius); padding: 8px 12px; text-align: center; }
+  .stat span { display: block; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat b { display: block; font-size: 20px; line-height: 24px; font-variant-numeric: tabular-nums; }
+  .tool { font: inherit; font-size: 15px; font-weight: 700; border: 0; border-radius: var(--radius); padding: 0 14px; background: var(--panel); color: var(--fg);
+    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; transition: transform .12s var(--ease); }
+  .tool:active { transform: scale(.95); }
+  .tool svg { width: 20px; height: 20px; }
+  .bump { animation: bump .3s var(--spring); }
+  @keyframes bump { 40% { transform: scale(1.2); } }
+  #wrap { position: relative; flex: 1; min-height: 0; width: 100%; max-width: var(--max); }
+  canvas { width: 100%; height: 100%; display: block; border-radius: var(--radius); background: var(--space); }
+  .overlay { position: absolute; inset: 0; z-index: 2; border-radius: var(--radius); background: rgba(0, 0, 0, .55); color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center;
+    transition: opacity .2s var(--ease), visibility 0s; }
+  .overlay > * { transition: transform .3s var(--spring); }
+  .overlay.hidden { opacity: 0; visibility: hidden; transition: opacity .2s var(--ease), visibility 0s linear .2s; }
+  .overlay.hidden > * { transform: translateY(8px) scale(.96); }
+  .overlay h2 { margin: 0; font-size: 28px; line-height: 32px; font-weight: 800; }
+  .overlay p { margin: 0; font-size: 15px; line-height: 20px; opacity: .85; }
+  .overlay p:empty { display: none; }
+  .play { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 20px; margin-top: 8px; border-radius: 9999px;
+    background: #fff; color: #000; font-size: 15px; font-weight: 700; }
+  .hint { max-width: var(--max); color: var(--muted); font-size: 13px; line-height: 16px; text-align: center; flex-shrink: 0; margin: 0; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+  [dir="rtl"] .stage, [dir="rtl"] body > #wrap, [dir="rtl"] .controls { direction: ltr; }
+  [dir="rtl"] .hint, [dir="rtl"] .tool { unicode-bidi: plaintext; }
+  @media (orientation: landscape) and (max-height: 540px) {
+    body { display: grid; grid-template-columns: minmax(112px, 168px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "hud stage" "hud hint"; justify-items: center; }
+    body:has(.controls) { grid-template-columns: minmax(112px, 168px) minmax(0, 1fr) auto; grid-template-areas: "hud stage controls" "hud hint controls"; }
+    .hud { grid-area: hud; flex-direction: column; align-self: start; }
+    .hud > * { flex: 0 0 auto; min-height: 44px; }
+    .hud canvas, #next { width: 100%; height: 56px; }
+    .stage, body > #wrap { grid-area: stage; width: 100%; height: 100%; max-width: none; }
+    .controls { grid-area: controls; align-self: end; width: 264px; }
+    .hint { grid-area: hint; }
+  }
+</style>
+</head>
+<body>
+  <div class="hud">
+    <div class="stat"><span>Score</span><b id="score">0</b></div>
+    <div class="stat"><span>Lives</span><b id="lives">3</b></div>
+    <div class="stat"><span>Wave</span><b id="wave">1</b></div>
+    <button class="tool" id="pause" aria-label="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg></button>
+  </div>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+    <div class="overlay" id="overlay"><h2 id="title">Invaders</h2><p id="sub">Drag anywhere to move. Your ship fires by itself.</p><span class="play" id="cta">Play</span></div>
+  </div>
+<script>
+(function () {
+  const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay'), titleEl = document.getElementById('title'), subEl = document.getElementById('sub');
+  const ctaEl = document.getElementById('cta');
+  const scoreEl = document.getElementById('score'), livesEl = document.getElementById('lives'), waveEl = document.getElementById('wave');
+  const wrap = document.getElementById('wrap');
+  const ROWS = 5, COLS = 8, COLORS = ['#f4212e', '#ff7a00', '#ffd400', '#00ba7c', '#1d9bf0'];
+  const INVULNERABLE_S = 1.6, BANNER_S = 1.4, OVER_DELAY_MS = 900, DRAG_GAIN = 1.3;
+  const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W, H, ship, aliens, alienDir, alienStep, alienTimer, alienFrame, shots, bombs, shields, stars, score, lives, wave, best;
+  let state = 'ready', fireTimer, lastTs, raf = 0, invulnerable, banner, particles = [], shakeTime = 0;
+
+  const VIBRATE_FALLBACK = { tick: 8, confirm: [15, 40, 15], reject: [40, 60, 80], heavy: 30 };
+  function haptic(kind) {
+    try {
+      if (window.XGamesHaptics) window.XGamesHaptics.postMessage(kind);
+      else if (navigator.vibrate) navigator.vibrate(VIBRATE_FALLBACK[kind]);
+    } catch (e) {}
+  }
+  function bump(el) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+  function loadBest() { try { return Number(localStorage.getItem('bestInvaders') || 0); } catch (e) { return 0; } }
+  function saveBest() { try { localStorage.setItem('bestInvaders', String(best)); } catch (e) {} }
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const prevW = W, prevH = H, w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!w || !h) return;
+    W = w; H = h;
+    stars = Array.from({ length: 60 }, () => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.2 + 0.3, tw: Math.random() * 6 }));
+    if (!ship) { newGame(); return; }
+    rescaleWorld(W / prevW, H / prevH);
+    ship.y = H - 34; draw(performance.now());
+  }
+  function rescaleWorld(sx, sy) {
+    if (!isFinite(sx) || !isFinite(sy)) return;
+    aliens.forEach(a => { a.x *= sx; a.y *= sy; });
+    shields.forEach(b => { b.x *= sx; b.w *= sx; b.y *= sy; b.h *= sy; });
+    shots.forEach(s => { s.x *= sx; s.y *= sy; });
+    bombs.forEach(b => { b.x *= sx; b.y *= sy; });
+    ship.x *= sx;
+  }
+  function newGame() {
+    score = 0; lives = 3; wave = 1; best = loadBest();
+    ship = { x: W / 2, y: H - 34, w: 30, h: 14 };
+    invulnerable = 0; banner = null; particles = [];
+    startWave(); updateHud(); draw(performance.now());
+  }
+  function startWave() {
+    const cellW = Math.min(40, (W - 40) / COLS), left = (W - cellW * COLS) / 2 + cellW / 2;
+    aliens = [];
+    const top = Math.max(16, Math.min(40, H * 0.08)), rowGap = Math.max(16, Math.min(30, (H * 0.45 - top) / ROWS));
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) aliens.push({ x: left + c * cellW, y: top + r * rowGap, w: 22, h: 14, color: COLORS[r], alive: true });
+    alienDir = 1; alienStep = Math.max(0.16, 0.7 - (wave - 1) * 0.08); alienTimer = 0; alienFrame = 0;
+    shots = []; bombs = []; fireTimer = 0;
+    const shieldW = 44, gap = (W - 4 * shieldW) / 5;
+    shields = [];
+    for (let i = 0; i < 4; i++) for (let bx = 0; bx < 5; bx++) for (let by = 0; by < 3; by++) {
+      if (by === 2 && (bx === 1 || bx === 2 || bx === 3)) continue;
+      shields.push({ x: gap + i * (shieldW + gap) + bx * (shieldW / 5), y: H - 90 + by * 8, w: shieldW / 5, h: 8 });
+    }
+  }
+  function showOverlay(t, s, cta) { titleEl.textContent = t; subEl.textContent = s; ctaEl.textContent = cta; overlay.classList.remove('hidden'); }
+  function start() {
+    if (state === 'over') newGame();
+    overlay.classList.add('hidden'); state = 'play'; ensureLoop();
+  }
+  function pause() {
+    if (state !== 'play') return;
+    state = 'paused'; showOverlay('Paused', '', 'Resume');
+  }
+  function updateHud() {
+    scoreEl.textContent = score;
+    livesEl.textContent = lives;
+    waveEl.textContent = wave;
+  }
+  const hit = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+
+  function burst(x, y, color, count, speed) {
+    if (REDUCED_MOTION) return;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2, v = speed * (0.4 + Math.random());
+      particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, size: 2 + Math.random() * 2, color });
+    }
+  }
+
+  function update(dt) {
+    if (invulnerable > 0) invulnerable -= dt;
+    if (banner) { banner.t -= dt; if (banner.t <= 0) banner = null; }
+    fireTimer -= dt;
+    if (!banner && fireTimer <= 0 && shots.length < 2) { shots.push({ x: ship.x, y: ship.y - 12, w: 3, h: 10 }); fireTimer = 0.45; }
+    shots.forEach(s => { s.y -= 420 * dt; });
+    shots = shots.filter(s => s.y > -10);
+
+    const alive = aliens.filter(a => a.alive);
+    if (!banner) alienTimer += dt;
+    const step = alienStep * (0.3 + 0.7 * alive.length / (ROWS * COLS));
+    if (alive.length && alienTimer >= step) {
+      alienTimer = 0; alienFrame ^= 1;
+      const xs = alive.map(a => a.x);
+      const atEdge = alienDir > 0 ? Math.max(...xs) + 14 >= W - 8 : Math.min(...xs) - 14 <= 8;
+      if (atEdge) { alive.forEach(a => { a.y += 14; }); alienDir = -alienDir; }
+      else alive.forEach(a => { a.x += alienDir * 10; });
+      if (Math.random() < 0.35 + wave * 0.05) {
+        const shooter = alive[Math.floor(Math.random() * alive.length)];
+        bombs.push({ x: shooter.x, y: shooter.y + 10, w: 4, h: 10 });
+      }
+    }
+    bombs.forEach(b => { b.y += (180 + wave * 15) * dt; });
+    bombs = bombs.filter(b => b.y < H + 10);
+
+    for (const s of shots) {
+      const a = aliens.find(a => a.alive && hit(a, s));
+      if (a) {
+        a.alive = false; s.y = -100; score += 10 * (ROWS - COLORS.indexOf(a.color));
+        burst(a.x, a.y, a.color, 12, 90); updateHud();
+        continue;
+      }
+      const sh = shields.findIndex(b => hit({ x: b.x + b.w / 2, y: b.y + b.h / 2, w: b.w, h: b.h }, s));
+      if (sh >= 0) { const b = shields[sh]; burst(b.x + b.w / 2, b.y, '#00ba7c', 4, 40); shields.splice(sh, 1); s.y = -100; }
+    }
+    for (const b of bombs) {
+      const sh = shields.findIndex(k => hit({ x: k.x + k.w / 2, y: k.y + k.h / 2, w: k.w, h: k.h }, b));
+      if (sh >= 0) { const k = shields[sh]; burst(k.x + k.w / 2, k.y + k.h, '#00ba7c', 4, 40); shields.splice(sh, 1); b.y = H + 100; continue; }
+      if (invulnerable <= 0 && hit(ship, b)) { b.y = H + 100; loseLife(false); return; }
+    }
+    if (aliens.some(a => a.alive && a.y + 8 >= ship.y - ship.h)) { loseLife(true); return; }
+    if (!aliens.some(a => a.alive)) {
+      wave++; updateHud(); bump(waveEl); haptic('confirm');
+      startWave(); banner = { text: 'Wave ' + wave, t: BANNER_S };
+    }
+  }
+  function loseLife(landed) {
+    lives = landed ? 0 : lives - 1;
+    updateHud(); bump(livesEl);
+    burst(ship.x, ship.y, '#ffffff', 24, 140); burst(ship.x, ship.y, '#f4212e', 16, 100);
+    haptic('reject');
+    if (!REDUCED_MOTION) shakeTime = 0.35;
+    bombs = []; shots = [];
+    if (lives <= 0) {
+      state = 'over';
+      const record = score > best;
+      if (record) { best = score; saveBest(); }
+      setTimeout(() => { if (record) haptic('confirm'); showOverlay(record ? 'New best!' : 'Game over', record ? 'Score ' + score : 'Score ' + score + ' · Best ' + best, 'Play again'); }, REDUCED_MOTION ? 0 : OVER_DELAY_MS);
+      return;
+    }
+    invulnerable = INVULNERABLE_S;
+  }
+  function loop(ts) {
+    raf = 0;
+    if (lastTs === undefined) lastTs = ts;
+    const dt = Math.min(0.05, (ts - lastTs) / 1000); lastTs = ts;
+    if (state === 'play') update(dt);
+    particles.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.96; p.vy *= 0.96; p.life -= dt * 1.6; });
+    particles = particles.filter(p => p.life > 0);
+    if (shakeTime > 0) shakeTime -= dt;
+    draw(ts);
+    if (state === 'play' || particles.length || shakeTime > 0) raf = requestAnimationFrame(loop);
+    else lastTs = undefined;
+  }
+  function ensureLoop() { if (!raf) { lastTs = undefined; raf = requestAnimationFrame(loop); } }
+
+  function draw(now) {
+    ctx.save();
+    ctx.clearRect(0, 0, W, H);
+    if (shakeTime > 0) ctx.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+    ctx.fillStyle = '#ffffff';
+    stars.forEach(s => { ctx.globalAlpha = REDUCED_MOTION ? 0.6 : 0.4 + 0.3 * Math.sin(now / 600 + s.tw); ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); });
+    ctx.globalAlpha = 1;
+    aliens.forEach(a => { if (a.alive) drawAlien(a); });
+    ctx.fillStyle = '#00ba7c'; shields.forEach(b => ctx.fillRect(b.x, b.y, b.w - 1, b.h - 1));
+    ctx.fillStyle = '#ffd400'; shots.forEach(s => ctx.fillRect(s.x - 1.5, s.y - 5, 3, 10));
+    ctx.fillStyle = '#f4212e'; bombs.forEach(b => ctx.fillRect(b.x - 2, b.y - 5, 4, 10));
+    const blinking = invulnerable > 0 && Math.floor(invulnerable * 10) % 2 === 0;
+    if (state !== 'over' && !blinking) {
+      ctx.fillStyle = '#e7e9ea';
+      ctx.beginPath(); ctx.moveTo(ship.x, ship.y - 12); ctx.lineTo(ship.x + 15, ship.y + 7); ctx.lineTo(ship.x - 15, ship.y + 7); ctx.closePath(); ctx.fill();
+      ctx.fillRect(ship.x - 4, ship.y + 7, 8, 4);
+    }
+    particles.forEach(p => { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); });
+    ctx.globalAlpha = 1;
+    if (banner) {
+      const shown = BANNER_S - banner.t;
+      ctx.globalAlpha = Math.min(1, shown / 0.25, banner.t / 0.25);
+      ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center'; ctx.font = '800 28px system-ui, sans-serif';
+      ctx.fillText(banner.text, W / 2, H * 0.6);
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+  function drawAlien(a) {
+    const x = a.x, y = a.y, legs = alienFrame ? 2 : 0;
+    ctx.fillStyle = a.color;
+    ctx.fillRect(x - 9, y - 6, 18, 8);
+    ctx.fillRect(x - 11, y - 2, 22, 4);
+    ctx.fillRect(x - 6, y - 9, 3, 3); ctx.fillRect(x + 3, y - 9, 3, 3);
+    ctx.fillRect(x - 9 - legs, y + 2, 4, 4); ctx.fillRect(x + 5 + legs, y + 2, 4, 4);
+    ctx.fillStyle = '#050a18'; ctx.fillRect(x - 5, y - 4, 3, 3); ctx.fillRect(x + 2, y - 4, 3, 3);
+  }
+
+  let drag = null;
+  wrap.addEventListener('pointerdown', e => { drag = { id: e.pointerId, startState: state, overlayAtStart: !overlay.classList.contains('hidden'), x: e.clientX, shipX: ship.x }; });
+  wrap.addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.id || state === 'over' || state === 'paused') return;
+    ship.x = Math.min(W - 16, Math.max(16, drag.shipX + (e.clientX - drag.x) * DRAG_GAIN));
+    if (state !== 'play') draw(performance.now());
+  });
+  wrap.addEventListener('pointerup', e => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { startState, overlayAtStart } = drag;
+    drag = null;
+    if (startState === 'play' || (state === 'over' && !overlayAtStart)) return;
+    if (state === 'ready' || state === 'paused' || (state === 'over' && !overlay.classList.contains('hidden'))) start();
+  });
+  wrap.addEventListener('pointercancel', () => { drag = null; });
+  new ResizeObserver(resize).observe(canvas);
+  document.getElementById('pause').addEventListener('click', pause);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+  resize();
+})();
+</script>
+</body>
+</html>

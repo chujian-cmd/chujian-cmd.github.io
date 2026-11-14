@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Minesweeper</title>
+<script>if (/^(ar|fa|he|iw|ur)(-|$)/i.test(navigator.language)) document.documentElement.dir = "rtl";</script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #0f1419; --muted: #536471; --panel: #f2f2f2; --cell: #e3e3e3; --accent: #1d9bf0;
+    --radius: 12px; --radius-inner: 6px; --gap: 8px; --max: 560px;
+    --ease: cubic-bezier(.2, .8, .2, 1); --spring: cubic-bezier(.34, 1.56, .64, 1);
+    --cover: #d6d6d6; --cover-edge: rgba(0, 0, 0, .12); --open: #ffffff; --mine: #f4212e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000000; --fg: #e7e9ea; --muted: #71767b; --panel: #141414; --cell: #262626;
+      --cover: #333333; --cover-edge: rgba(0, 0, 0, .5); --open: #050505; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, Roboto, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; touch-action: none; overflow: hidden; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .hud { width: 100%; max-width: var(--max); display: flex; gap: var(--gap); flex-shrink: 0; }
+  .stat { flex: 1; min-width: 0; background: var(--panel); border-radius: var(--radius); padding: 8px 12px; text-align: center; }
+  .stat span { display: block; font-size: 11px; line-height: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .stat b { display: block; font-size: 20px; line-height: 24px; font-variant-numeric: tabular-nums; }
+  .tool { font: inherit; font-size: 15px; font-weight: 700; border: 0; border-radius: var(--radius); padding: 0 14px; background: var(--panel); color: var(--fg);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    transition: transform .12s var(--ease), background-color .15s, color .15s; }
+  .tool:active { transform: scale(.95); }
+  .tool.on { background: var(--accent); color: #fff; }
+  .tool svg { width: 20px; height: 20px; flex-shrink: 0; }
+  .tool.on .flag-cloth { fill: #fff; stroke: #fff; }
+  .ico { width: 64%; height: 64%; display: block; }
+  .stage { flex: 1; min-height: 0; width: 100%; max-width: var(--max); display: flex; align-items: center; justify-content: center; container-type: size; }
+  .hint.gone { opacity: 0; }
+  .hint { transition: opacity .3s var(--ease); max-width: var(--max); color: var(--muted); font-size: 13px; line-height: 16px; text-align: center; flex-shrink: 0; margin: 0; }
+  .overlay { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 24px;
+    opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .2s var(--ease), visibility 0s linear .2s; }
+  .overlay.show { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity .2s var(--ease); }
+  .card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 24px; border-radius: var(--radius); background: rgba(0, 0, 0, .82);
+    color: #fff; text-align: center; transform: translateY(8px) scale(.96); transition: transform .3s var(--spring); }
+  .overlay.show .card { transform: none; }
+  .card h2 { margin: 0; font-size: 28px; line-height: 32px; font-weight: 800; }
+  .card p { margin: 0; font-size: 15px; line-height: 20px; opacity: .85; }
+  .play { font: inherit; font-size: 15px; font-weight: 700; border: 0; border-radius: 9999px; min-height: 40px; padding: 0 20px; margin-top: 8px; background: #fff; color: #000;
+    transition: transform .12s var(--ease); }
+  .play:active { transform: scale(.95); }
+  .shake { animation: shake .35s var(--ease); }
+  @keyframes shake { 20% { transform: translateX(-6px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); } }
+
+  #boardWrap { position: relative; width: min(100%, calc(64vh * 9 / var(--rows, 9))); width: min(100cqw, calc(100cqh * 9 / var(--rows, 9))); aspect-ratio: 9 / var(--rows, 9); }
+  #board { width: 100%; height: 100%; display: grid; grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(var(--rows, 9), 1fr); gap: 4px; padding: 6px;
+    background: var(--panel); border-radius: var(--radius); }
+  .cell { border-radius: var(--radius-inner); background: var(--cover); box-shadow: inset 0 -3px 0 var(--cover-edge); display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: clamp(14px, 5vw, 24px); line-height: 1; transition: transform .12s var(--ease); }
+  .fresh .cell { animation: appear .32s var(--spring) backwards; animation-delay: var(--a, 0ms); }
+  .cell.pressed { transform: scale(.86); }
+  .cell.open { background: var(--open); box-shadow: none; animation: reveal .26s var(--ease); }
+  .cell.flag { animation: pop .3s var(--spring); }
+  .cell.mine { background: var(--cell); box-shadow: none; animation: pop .3s var(--spring); }
+  .cell.hit { background: var(--mine); animation: hit .45s var(--spring); }
+  .mine-body { fill: var(--fg); }
+  .mine-spikes { stroke: var(--fg); }
+  .mine-shine { fill: var(--open); }
+  .cell.hit .mine-body { fill: #fff; }
+  .cell.hit .mine-spikes { stroke: #fff; }
+  .cell.hit .mine-shine { fill: var(--mine); }
+  .cell.wrong { background: var(--cell); box-shadow: none; }
+  .cell.nudge { animation: wiggle .3s var(--ease); }
+  .won .cell { animation: wave .45s var(--ease) var(--w, 0ms); }
+  @keyframes appear { from { opacity: 0; transform: scale(.6); } }
+  @keyframes reveal { from { transform: scale(.82); background-color: var(--cover); color: transparent; } }
+  @keyframes pop { from { transform: scale(.5); } }
+  @keyframes hit { from { transform: scale(.4); } 60% { transform: scale(1.2); } }
+  @keyframes wiggle { 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
+  @keyframes wave { 50% { transform: scale(.88); } }
+  .n1 { color: #1d9bf0 } .n2 { color: #00ba7c } .n3 { color: #f4212e } .n4 { color: #7856ff }
+  .n5 { color: #ff7a00 } .n6 { color: #0891b2 } .n7 { color: var(--fg) } .n8 { color: var(--muted) }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; transition-duration: 1ms !important; } }
+  [dir="rtl"] .stage, [dir="rtl"] body > #wrap, [dir="rtl"] .controls { direction: ltr; }
+  [dir="rtl"] .hint, [dir="rtl"] .tool { unicode-bidi: plaintext; }
+  @media (orientation: landscape) and (max-height: 540px) {
+    body { display: grid; grid-template-columns: minmax(112px, 168px) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "hud stage" "hud hint"; justify-items: center; }
+    body:has(.controls) { grid-template-columns: minmax(112px, 168px) minmax(0, 1fr) auto; grid-template-areas: "hud stage controls" "hud hint controls"; }
+    .hud { grid-area: hud; flex-direction: column; align-self: start; }
+    .hud > * { flex: 0 0 auto; min-height: 44px; }
+    .hud canvas, #next { width: 100%; height: 56px; }
+    .stage, body > #wrap { grid-area: stage; width: 100%; height: 100%; max-width: none; }
+    .controls { grid-area: controls; align-self: end; width: 264px; }
+    .hint { grid-area: hint; }
+  }
+</style>
+</head>
+<body>
+  <div class="hud">
+    <div class="stat"><span>Mines</span><b id="mines">10</b></div>
+    <div class="stat"><span>Time</span><b id="time">0</b></div>
+    <button class="tool" id="flagMode" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M6 3.5v17" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path class="flag-cloth" d="M7 4.5h10.5l-2.6 4 2.6 4H7z" fill="#f4212e" stroke="#f4212e" stroke-width="1.6" stroke-linejoin="round"/></svg>Flag</button>
+    <button class="tool" id="new" aria-label="New game"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4h-4"/></svg></button>
+  </div>
+  <div class="stage">
+    <div id="boardWrap">
+      <div id="board"></div>
+      <div class="overlay" id="overlay">
+        <div class="card"><h2 id="msg"></h2><p id="sub"></p><button class="play" id="again">Play again</button></div>
+      </div>
+    </div>
+  </div>
+  <p class="hint">Tap to reveal, hold to flag. Tap a number once its mines are flagged to clear around it.</p>
+<script>
+(function () {
+  const NEW_GAME_GUARD_MS = 250, COLS = 9, MIN_ROWS = 9, MAX_ROWS = 16, MINE_DENSITY = 10 / 81, HOLD_MS = 300, MOVE_SLOP = 12, RING_MS = 24, MAX_RING_DELAY = 360;
+  const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const FLAG_ICON = '<svg class="ico" viewBox="0 0 24 24"><path d="M6 3.5v17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M7 4.5h10.5l-2.6 4 2.6 4H7z" fill="#f4212e" stroke="#f4212e" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  const MINE_ICON = '<svg class="ico" viewBox="0 0 24 24"><path class="mine-spikes" d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8" stroke="#0f1419" stroke-width="2.2" stroke-linecap="round"/><circle class="mine-body" cx="12" cy="12" r="6.2" fill="#0f1419"/><circle class="mine-shine" cx="9.9" cy="9.9" r="1.8" fill="#fff" opacity=".9"/></svg>';
+  const WRONG_FLAG_ICON = '<svg class="ico" viewBox="0 0 24 24"><g opacity=".45"><path d="M6 3.5v17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M7 4.5h10.5l-2.6 4 2.6 4H7z" fill="#f4212e" stroke="#f4212e" stroke-width="1.6" stroke-linejoin="round"/></g><path d="M5 5l14 14M19 5L5 19" stroke="#f4212e" stroke-width="2.6" stroke-linecap="round"/></svg>';
+  const boardWrap = document.getElementById('boardWrap');
+  const board = document.getElementById('board');
+  const overlay = document.getElementById('overlay');
+  const msg = document.getElementById('msg');
+  const sub = document.getElementById('sub');
+  const minesEl = document.getElementById('mines');
+  const timeEl = document.getElementById('time');
+  const flagBtn = document.getElementById('flagMode');
+  let ROWS = MIN_ROWS, MINES = 10, newGameAt = 0;
+  const hintEl = document.querySelector('.hint');
+  let mines, counts, opened, flagged, started, over, flagMode = loadFlagMode(), seconds, timer, cellEls, pending = [], press = null;
+
+  const VIBRATE_FALLBACK = { tick: 8, confirm: [15, 40, 15], reject: [40, 60, 80], heavy: 30 };
+  function haptic(kind) {
+    try {
+      if (window.XGamesHaptics) window.XGamesHaptics.postMessage(kind);
+      else if (navigator.vibrate) navigator.vibrate(VIBRATE_FALLBACK[kind]);
+    } catch (e) {}
+  }
+  function restartAnimation(el, cls) { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+  function later(ms, fn) { if (REDUCED_MOTION || ms <= 0) fn(); else pending.push(setTimeout(fn, ms)); }
+  const bestKey = () => ROWS === MIN_ROWS ? 'bestMinesweeper' : 'bestMinesweeper9x' + ROWS;
+  function loadBest() { try { const value = localStorage.getItem(bestKey()); return value === null ? null : Number(value); } catch (e) { return null; } }
+  function loadFlagMode() { try { return localStorage.getItem('minesweeperFlagMode') === '1'; } catch (e) { return false; } }
+  function saveFlagMode() { try { localStorage.setItem('minesweeperFlagMode', flagMode ? '1' : '0'); } catch (e) {} }
+  function saveBest(value) { try { localStorage.setItem(bestKey(), String(value)); } catch (e) {} }
+  function fitRows() {
+    const stage = boardWrap.parentElement, cell = stage.clientWidth / COLS;
+    if (!(cell > 0)) return MIN_ROWS;
+    return Math.max(MIN_ROWS, Math.min(MAX_ROWS, Math.floor(stage.clientHeight / cell)));
+  }
+
+  function init() {
+    pending.forEach(clearTimeout); pending = [];
+    cancelPress();
+    newGameAt = performance.now();
+    mines = new Set(); counts = []; opened = new Set(); flagged = new Set();
+    started = false; over = false; seconds = 0; stopTimer();
+    ROWS = fitRows(); MINES = Math.round(COLS * ROWS * MINE_DENSITY);
+    boardWrap.style.setProperty('--rows', ROWS);
+    hintEl.classList.remove('gone');
+    timeEl.textContent = '0'; minesEl.textContent = MINES;
+    overlay.classList.remove('show');
+    board.className = 'fresh';
+    board.textContent = '';
+    cellEls = [];
+    for (let i = 0; i < COLS * ROWS; i++) {
+      const el = document.createElement('div');
+      const diagonal = Math.floor(i / COLS) + i % COLS;
+      el.className = 'cell'; el.dataset.i = i;
+      el.style.setProperty('--a', (diagonal * 14) + 'ms');
+      el.style.setProperty('--w', (diagonal * 28) + 'ms');
+      board.appendChild(el);
+      cellEls.push(el);
+    }
+    later(600, () => board.classList.remove('fresh'));
+  }
+
+  function neighbors(i) {
+    const r = Math.floor(i / COLS), c = i % COLS, out = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) out.push(nr * COLS + nc);
+    }
+    return out;
+  }
+  const distance = (a, b) => Math.hypot(Math.floor(a / COLS) - Math.floor(b / COLS), a % COLS - b % COLS);
+
+  function placeMines(safe) {
+    const forbidden = new Set([safe, ...neighbors(safe)]);
+    while (mines.size < MINES) {
+      const i = Math.floor(Math.random() * COLS * ROWS);
+      if (!forbidden.has(i)) mines.add(i);
+    }
+    for (let i = 0; i < COLS * ROWS; i++) counts[i] = neighbors(i).filter(n => mines.has(n)).length;
+    started = true;
+    hintEl.classList.add('gone');
+    startTimer();
+  }
+  function startTimer() {
+    stopTimer();
+    timer = setInterval(() => { seconds = Math.min(999, seconds + 1); timeEl.textContent = seconds; }, 1000);
+  }
+  function stopTimer() { clearInterval(timer); timer = null; }
+
+  function paintOpen(k) {
+    const el = cellEls[k];
+    el.classList.remove('pressed');
+    el.classList.add('open');
+    if (counts[k]) { el.textContent = counts[k]; el.classList.add('n' + counts[k]); }
+  }
+
+  function flood(starts) {
+    const queue = starts.map(i => [i, 0]), rings = [];
+    for (let head = 0; head < queue.length; head++) {
+      const [k, depth] = queue[head];
+      if (opened.has(k) || flagged.has(k)) continue;
+      opened.add(k);
+      (rings[depth] = rings[depth] || []).push(k);
+      if (!counts[k]) neighbors(k).forEach(n => { if (!opened.has(n) && !flagged.has(n)) queue.push([n, depth + 1]); });
+    }
+    rings.forEach((ring, depth) => later(Math.min(depth * RING_MS, MAX_RING_DELAY), () => ring.forEach(paintOpen)));
+  }
+
+  function reveal(i) {
+    if (over || opened.has(i) || flagged.has(i)) return;
+    if (!started) placeMines(i);
+    if (mines.has(i)) { lose([i]); return; }
+    flood([i]);
+    checkWin();
+  }
+
+  function chord(i) {
+    if (over || !opened.has(i) || !counts[i]) return;
+    const around = neighbors(i);
+    const hidden = around.filter(n => !opened.has(n) && !flagged.has(n));
+    if (!hidden.length) return;
+    const flags = around.filter(n => flagged.has(n)).length;
+    if (flags !== counts[i]) { restartAnimation(cellEls[i], 'nudge'); haptic('tick'); return; }
+    const hits = hidden.filter(n => mines.has(n));
+    if (hits.length) { lose(hits); return; }
+    flood(hidden);
+    checkWin();
+  }
+
+  function toggleFlag(i) {
+    if (over || opened.has(i)) return;
+    const el = cellEls[i];
+    if (flagged.has(i)) { flagged.delete(i); el.classList.remove('flag'); el.textContent = ''; }
+    else { flagged.add(i); restartAnimation(el, 'flag'); el.innerHTML = FLAG_ICON; haptic('tick'); }
+    minesEl.textContent = MINES - flagged.size;
+  }
+
+  function checkWin() { if (opened.size === COLS * ROWS - MINES) win(); }
+
+  function lose(hits) {
+    over = true; stopTimer(); haptic('reject');
+    hits.forEach(h => { const el = cellEls[h]; el.classList.add('mine', 'hit'); el.innerHTML = MINE_ICON; });
+    const origin = hits[0];
+    [...mines].filter(m => !hits.includes(m) && !flagged.has(m))
+      .sort((a, b) => distance(a, origin) - distance(b, origin))
+      .forEach((m, index) => later(120 + index * 45, () => { const el = cellEls[m]; el.classList.add('mine'); el.innerHTML = MINE_ICON; }));
+    flagged.forEach(f => { if (!mines.has(f)) { const el = cellEls[f]; el.classList.add('wrong'); el.innerHTML = WRONG_FLAG_ICON; } });
+    if (!REDUCED_MOTION) restartAnimation(boardWrap, 'shake');
+    later(900, () => showOverlay('Boom!', 'Time ' + seconds + 's'));
+  }
+
+  function win() {
+    over = true; stopTimer(); haptic('confirm');
+    [...mines].filter(m => !flagged.has(m)).forEach((m, index) => later(index * 40, () => {
+      flagged.add(m); const el = cellEls[m]; restartAnimation(el, 'flag'); el.innerHTML = FLAG_ICON;
+    }));
+    minesEl.textContent = '0';
+    const best = loadBest(), record = best === null || seconds < best;
+    if (record) saveBest(seconds);
+    later(RING_MS * 8, () => board.classList.add('won'));
+    later(900, () => showOverlay(record ? 'New best!' : 'Cleared!', seconds + 's' + (record ? '' : ' · Best ' + best + 's')));
+  }
+
+  function showOverlay(title, subtitle) { msg.textContent = title; sub.textContent = subtitle; overlay.classList.add('show'); }
+
+  const isPainting = i => opened.has(i) && !cellEls[i].classList.contains('open');
+  function previewFor(i) {
+    if (isPainting(i)) return [];
+    if (!opened.has(i)) return [i];
+    if (!counts[i]) return [];
+    return neighbors(i).filter(n => !opened.has(n) && !flagged.has(n));
+  }
+  function primary(i) { if (isPainting(i)) return; if (opened.has(i)) chord(i); else if (flagMode) toggleFlag(i); else reveal(i); }
+  function secondary(i) { if (isPainting(i)) return; if (opened.has(i)) chord(i); else if (flagMode) reveal(i); else toggleFlag(i); }
+  function clearPreview() { if (press) press.preview.forEach(k => cellEls[k].classList.remove('pressed')); }
+  function cancelPress() { if (!press) return; clearTimeout(press.timer); clearPreview(); press = null; }
+
+  board.addEventListener('pointerdown', e => {
+    const el = e.target.closest('.cell');
+    if (!el || over || performance.now() - newGameAt < NEW_GAME_GUARD_MS) return;
+    cancelPress();
+    const i = Number(el.dataset.i);
+    if (e.pointerType === 'mouse' && e.button === 2) { secondary(i); return; }
+    if (e.button > 0) return;
+    press = { i, id: e.pointerId, x: e.clientX, y: e.clientY, held: false, preview: previewFor(i) };
+    board.setPointerCapture(e.pointerId);
+    press.preview.forEach(k => cellEls[k].classList.add('pressed'));
+    press.timer = setTimeout(() => {
+      if (!press) return;
+      press.held = true; clearPreview(); secondary(press.i);
+    }, HOLD_MS);
+  });
+  board.addEventListener('pointermove', e => {
+    if (!press || e.pointerId !== press.id) return;
+    if (Math.max(Math.abs(e.clientX - press.x), Math.abs(e.clientY - press.y)) > MOVE_SLOP) cancelPress();
+  });
+  board.addEventListener('pointerup', e => {
+    if (!press || e.pointerId !== press.id) return;
+    const { i, held } = press;
+    cancelPress();
+    if (!held) primary(i);
+  });
+  board.addEventListener('pointercancel', cancelPress);
+  document.addEventListener('contextmenu', e => e.preventDefault());
+
+  function renderFlagMode() {
+    flagBtn.classList.toggle('on', flagMode);
+    flagBtn.setAttribute('aria-pressed', String(flagMode));
+  }
+  flagBtn.addEventListener('click', () => { flagMode = !flagMode; saveFlagMode(); renderFlagMode(); });
+  renderFlagMode();
+  document.getElementById('new').addEventListener('click', init);
+  document.getElementById('again').addEventListener('click', init);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopTimer(); else if (started && !over) startTimer(); });
+  init();
+})();
+</script>
+</body>
+</html>
