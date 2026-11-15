@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#111">
+<title>Clawd 影子物理 · 转盘模拟</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#000;
+    font-family:system-ui,-apple-system,sans-serif;
+    touch-action:none;overscroll-behavior:none;user-select:none;-webkit-user-select:none}
+  #stage{position:fixed;inset:0}
+  canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #bg{z-index:1}
+  #paintLayer{z-index:2;pointer-events:none;touch-action:none}
+  #game{z-index:3;pointer-events:none}
+
+  #hud{position:absolute;top:calc(env(safe-area-inset-top,0px) + 8px);
+    left:50%;transform:translateX(-50%);
+    color:#fff;font-size:12px;line-height:1.4;text-align:center;
+    background:rgba(0,0,0,.45);padding:6px 12px;border-radius:999px;
+    pointer-events:none;z-index:20;white-space:nowrap;backdrop-filter:blur(6px)}
+  #hud b{color:#d97757}
+
+  #controls{position:absolute;inset:0;pointer-events:none;z-index:15}
+
+  #joystick{position:absolute;
+    left:calc(env(safe-area-inset-left,0px) + 24px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 24px);
+    width:130px;height:130px;border-radius:50%;
+    background:rgba(255,255,255,.08);
+    border:2px solid rgba(255,255,255,.18);
+    pointer-events:auto;touch-action:none;
+    display:flex;align-items:center;justify-content:center}
+  #knob{width:56px;height:56px;border-radius:50%;
+    background:rgba(217,119,87,.65);
+    box-shadow:0 2px 10px rgba(0,0,0,.4);
+    transform:translate(0,0);
+    transition:transform .06s linear}
+
+  #jumpBtn{position:absolute;
+    right:calc(env(safe-area-inset-right,0px) + 28px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 40px);
+    width:90px;height:90px;border-radius:50%;
+    background:rgba(217,119,87,.22);
+    border:2px solid rgba(217,119,87,.6);
+    color:#d97757;font-size:15px;font-weight:700;
+    pointer-events:auto;touch-action:none;
+    display:flex;align-items:center;justify-content:center}
+
+  #sideBtns{position:absolute;
+    right:calc(env(safe-area-inset-right,0px) + 8px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 150px);
+    display:flex;flex-direction:column;gap:8px;pointer-events:auto}
+  .sbtn{width:52px;height:52px;border-radius:50%;border:0;
+    background:rgba(255,255,255,.14);color:#fff;font-size:11px;
+    display:flex;align-items:center;justify-content:center;
+    touch-action:none;line-height:1.1;text-align:center}
+
+  body.drawing #joystick,
+  body.drawing #jumpBtn,
+  body.drawing #sideBtns{display:none}
+
+  #doneDraw{position:absolute;z-index:30;
+    left:50%;transform:translateX(-50%);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 24px);
+    padding:14px 32px;border-radius:999px;border:0;
+    background:#d97757;color:#fff;font-size:15px;font-weight:700;
+    display:none;pointer-events:auto;touch-action:none;
+    box-shadow:0 4px 20px rgba(217,119,87,.5)}
+  body.drawing #doneDraw{display:block}
+
+  #drawHint{position:absolute;z-index:25;
+    top:calc(env(safe-area-inset-top,0px) + 44px);
+    left:50%;transform:translateX(-50%);
+    color:#fff;font-size:13px;
+    background:rgba(217,119,87,.92);padding:8px 16px;border-radius:999px;
+    display:none;pointer-events:none;white-space:nowrap}
+  body.drawing #drawHint{display:block}
+
+  /* 转盘模式的物体选择栏 */
+  #turntableUI{position:absolute;z-index:18;left:50%;transform:translateX(-50%);
+    top:calc(env(safe-area-inset-top,0px) + 40px);
+    display:none;gap:8px;pointer-events:auto}
+  body.turntable #turntableUI{display:flex}
+  body.turntable #jumpBtn,
+  body.turntable #clearDraw{display:none}
+  .objBtn{width:48px;height:48px;border-radius:10px;border:2px solid rgba(255,255,255,.25);
+    background:rgba(0,0,0,.5);color:#fff;font-size:22px;
+    display:flex;align-items:center;justify-content:center;
+    touch-action:none;transition:border-color .15s}
+  .objBtn.active{border-color:#d97757;background:rgba(217,119,87,.3)}
+
+  #splash{position:fixed;inset:0;z-index:50;background:#0b0f12;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    color:#fff;padding:24px;text-align:center;gap:14px}
+  #splash h1{font-size:20px;margin:0}
+  #splash h1 span{color:#d97757}
+  #splash p{font-size:13px;color:#9ab;margin:0;line-height:1.6;max-width:340px}
+  #splash .btns{display:flex;flex-direction:column;gap:10px;width:min(280px,80vw)}
+  #splash button{padding:14px;border-radius:12px;border:0;font-size:15px;
+    background:#d97757;color:#fff;font-weight:600}
+  #splash button.alt{background:#334}
+  #splash button.alt2{background:#1e5c8a}
+  #splash .note{font-size:11px;color:#678}
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="cam" playsinline muted autoplay style="display:none"></video>
+  <canvas id="bg"></canvas>
+  <canvas id="paintLayer"></canvas>
+  <canvas id="game"></canvas>
+
+  <div id="hud"><b>Clawd</b> · 影子即关卡 · 摇杆移动 · 跳</div>
+  <div id="drawHint">✏️ 手指画出阴影作为地面</div>
+
+  <div id="turntableUI">
+    <button class="objBtn active" data-obj="cube">■</button>
+    <button class="objBtn" data-obj="sphere">●</button>
+    <button class="objBtn" data-obj="cone">▲</button>
+    <button class="objBtn" data-obj="torus">◎</button>
+    <button class="objBtn" data-obj="none">✕</button>
+  </div>
+
+  <div id="controls">
+    <div id="joystick"><div id="knob"></div></div>
+    <div id="jumpBtn">跳</div>
+    <div id="sideBtns">
+      <button class="sbtn" id="switchCam">切换<br>摄像头</button>
+      <button class="sbtn" id="clearDraw">清空<br>阴影</button>
+    </div>
+  </div>
+
+  <button id="doneDraw">完成绘制 · 开始游戏</button>
+</div>
+
+<div id="splash">
+  <h1>Clawd <span>影子物理</span></h1>
+  <p>三种影子来源：<br>真实摄像头 / 手指画 / 模拟转盘</p>
+  <div class="btns">
+    <button id="startCam">用摄像头玩</button>
+    <button class="alt" id="startDraw">手指画阴影</button>
+    <button class="alt2" id="startTurntable">模拟转盘（3D 旋转投影）</button>
+  </div>
+  <div class="note">建议横屏，效果更好</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(() => {
+  const video      = document.getElementById('cam');
+  const bg         = document.getElementById('bg');
+  const paintLayer = document.getElementById('paintLayer');
+  const game       = document.getElementById('game');
+  const bgCtx      = bg.getContext('2d', { willReadFrequently:true });
+  const paintCtx   = paintLayer.getContext('2d', { willReadFrequently:true });
+  const gCtx       = game.getContext('2d');
+  const splash     = document.getElementById('splash');
+  const joystick   = document.getElementById('joystick');
+  const knob       = document.getElementById('knob');
+  const jumpBtn    = document.getElementById('jumpBtn');
+
+  // ================= 模式管理 =================
+  // 'camera' | 'paint' | 'turntable'
+  let mode = null;
+
+  const isCoarse = matchMedia('(pointer:coarse)').matches;
+  const memHint  = navigator.deviceMemory || 4;
+  const lowEnd   = isCoarse && memHint <= 4;
+  const MAP_W = lowEnd ? 72 : 96;
+  const MAP_H = lowEnd ? 40 : 54;
+
+  let W=0, H=0, DPR=1;
+
+  function sizeCanvases() {
+    DPR = Math.min(window.devicePixelRatio||1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    for (const c of [bg, paintLayer, game]) {
+      c.width  = Math.round(W*DPR);
+      c.height = Math.round(H*DPR);
+    }
+    bgCtx.setTransform(DPR,0,0,DPR,0,0);
+    paintCtx.setTransform(DPR,0,0,DPR,0,0);
+    gCtx.setTransform(DPR,0,0,DPR,0,0);
+    if (tt.renderer) {
+      tt.renderer.setSize(W, H, false);
+      tt.camera.aspect = W/H;
+      tt.camera.updateProjectionMatrix();
+    }
+  }
+
+  function resetPlayer() {
+    player.x = W/2; player.y = H/3;
+    player.vx = player.vy = 0;
+    player.onGround = false;
+  }
+  function resize() { sizeCanvases(); resetPlayer(); }
+
+  // ================= 手绘模式 =================
+  let painting = false;
+  function clearPaint(){ paintCtx.clearRect(0,0,W,H); }
+  function paintAt(clientX, clientY, r=28){
+    paintCtx.fillStyle = '#000';
+    paintCtx.beginPath(); paintCtx.arc(clientX, clientY, r, 0, Math.PI*2); paintCtx.fill();
+  }
+  paintLayer.addEventListener('pointerdown', e => {
+    if (mode !== 'paint') return;
+    painting = true;
+    paintLayer.setPointerCapture(e.pointerId);
+    paintAt(e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  paintLayer.addEventListener('pointermove', e => {
+    if (mode !== 'paint' || !painting) return;
+    paintAt(e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  const endPaint = () => { painting = false; };
+  paintLayer.addEventListener('pointerup', endPaint);
+  paintLayer.addEventListener('pointercancel', endPaint);
+
+  // ================= 摄像头模式 =================
+  let camReady = false, facing = 'environment', stream = null;
+  async function openCam() {
+    try {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width:{ideal:1280}, height:{ideal:720} },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      camReady = true;
+      setMode('camera');
+    } catch(err) {
+      alert('无法打开摄像头：' + err.message + '\n可改用「手指画」或「模拟转盘」。');
+    }
+  }
+
+  // ================= 转盘模拟模式（Three.js） =================
+  const tt = {
+    renderer: null, scene: null, camera: null,
+    turntable: null, object: null,
+    objType: 'cube',
+    inited: false
+  };
+
+  function initTurntable() {
+    if (tt.inited) return;
+    tt.inited = true;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+    renderer.setSize(W, H, false);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // 关键：从这个 canvas 采样，但不要把 canvas 直接显示到页面
+    tt.renderer = renderer;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0e1318);
+    tt.scene = scene;
+
+    // 相机：从前方稍高处俯视转盘
+    const camera = new THREE.PerspectiveCamera(45, W/H, 0.1, 100);
+    camera.position.set(0, 4.5, 7);
+    camera.lookAt(0, 0.5, 0);
+    tt.camera = camera;
+
+    // 环境光
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+    // 主光源：从投影仪方向打，制造清晰的影子（模拟"投影仪在物体前方"）
+    const spot = new THREE.SpotLight(0xffffff, 2.2, 30, Math.PI/4, 0.4, 1);
+    spot.position.set(0, 8, 3);
+    spot.castShadow = true;
+    spot.shadow.mapSize.set(1024, 1024);
+    spot.shadow.camera.near = 0.5;
+    spot.shadow.camera.far = 20;
+    scene.add(spot);
+
+    // 辅助定向光让物体本身可见
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(-3, 6, 4);
+    scene.add(dir);
+
+    // 地面：接收影子
+    const groundGeo = new THREE.PlaneGeometry(20, 12);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0xcfd6dd, roughness: 0.95, metalness: 0
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI/2;
+    ground.position.y = 0;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // 转盘
+    const discGeo = new THREE.CylinderGeometry(2.2, 2.2, 0.18, 48);
+    const discMat = new THREE.MeshStandardMaterial({
+      color: 0x8899aa, roughness: 0.6, metalness: 0.2
+    });
+    const disc = new THREE.Mesh(discGeo, discMat);
+    disc.position.y = 0.09;
+    disc.receiveShadow = true;
+    disc.castShadow = true;
+    scene.add(disc);
+
+    // 转盘上的刻度（视觉参考）
+    const ringGeo = new THREE.TorusGeometry(2.0, 0.03, 8, 64);
+    const ringMat = new THREE.MeshStandardMaterial({ color: 0xd97757 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI/2;
+    ring.position.y = 0.19;
+    scene.add(ring);
+
+    tt.turntable = disc;
+    tt.ring = ring;
+
+    setTurntableObject('cube');
+  }
+
+  function setTurntableObject(type) {
+    tt.objType = type;
+    if (!tt.inited) return;
+
+    // 移除旧物体
+    if (tt.object) {
+      tt.scene.remove(tt.object);
+      tt.object.geometry?.dispose?.();
+      tt.object.material?.dispose?.();
+      tt.object = null;
+    }
+
+    if (type === 'none') return;
+
+    let geo;
+    switch(type) {
+      case 'sphere':  geo = new THREE.SphereGeometry(0.7, 32, 24); break;
+      case 'cone':    geo = new THREE.ConeGeometry(0.8, 1.4, 32); break;
+      case 'torus':   geo = new THREE.TorusKnotGeometry(0.5, 0.2, 64, 12); break;
+      case 'cube':
+      default:        geo = new THREE.BoxGeometry(1.2, 1.2, 1.2); break;
+    }
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x8a4a3a, roughness: 0.7, metalness: 0.1
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    // 放在转盘上，让物体中心高于盘面
+    const bbox = new THREE.Box3().setFromObject(mesh);
+    const height = bbox.max.y - bbox.min.y;
+    mesh.position.y = 0.18 + height/2;
+    mesh.position.x = 0.6; // 稍微偏离中心，旋转时影子会左右移动
+    tt.object = mesh;
+    tt.scene.add(mesh);
+  }
+
+  let ttAngle = 0;
+  function renderTurntable(dt) {
+    if (!tt.inited) return;
+    ttAngle += dt * 0.8; // 转速
+    // 转盘和物体一起绕 Y 轴旋转
+    if (tt.turntable) tt.turntable.rotation.y = ttAngle;
+    if (tt.ring)      tt.ring.rotation.z = ttAngle;
+    if (tt.object)    tt.object.rotation.y = ttAngle;
+    tt.renderer.render(tt.scene, tt.camera);
+  }
+
+  // ================= 碰撞地图 =================
+  const solid     = new Uint8Array(MAP_W*MAP_H);
+  const prevSolid = new Uint8Array(MAP_W*MAP_H);
+
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = MAP_W; tmpCanvas.height = MAP_H;
+  const tmpCtx = tmpCanvas.getContext('2d', { willReadFrequently:true });
+
+  function updateCollisionMap(dt) {
+    if (mode === 'camera' && camReady && video.videoWidth) {
+      // ----- 摄像头：亮度阈值 + 滞回 -----
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const scale = Math.max(W/vw, H/vh);
+      const dw = vw*scale, dh = vh*scale;
+      bgCtx.clearRect(0,0,W,H);
+      bgCtx.drawImage(video, (W-dw)/2, (H-dh)/2, dw, dh);
+
+      tmpCtx.clearRect(0,0,MAP_W,MAP_H);
+      tmpCtx.drawImage(bg, 0,0, bg.width, bg.height, 0,0, MAP_W, MAP_H);
+      const img = tmpCtx.getImageData(0,0,MAP_W,MAP_H).data;
+      const HI = 78, LO = 58;
+      for (let i=0,p=0; i<MAP_W*MAP_H; i++,p+=4) {
+        const lum = 0.299*img[p] + 0.587*img[p+1] + 0.114*img[p+2];
+        let s = prevSolid[i];
+        if (lum < LO) s = 1; else if (lum > HI) s = 0;
+        solid[i] = s;
+      }
+      prevSolid.set(solid);
+
+    } else if (mode === 'turntable') {
+      // ----- 转盘：渲染 3D 场景，再按亮度阈值提取 -----
+      renderTurntable(dt);
+      // 把 three.js 渲染结果画到 bg canvas（视觉上玩家能看到 3D 场景）
+      bgCtx.clearRect(0,0,W,H);
+      bgCtx.drawImage(tt.renderer.domElement, 0, 0, W, H);
+
+      tmpCtx.clearRect(0,0,MAP_W,MAP_H);
+      tmpCtx.drawImage(bg, 0,0, bg.width, bg.height, 0,0, MAP_W, MAP_H);
+      const img = tmpCtx.getImageData(0,0,MAP_W,MAP_H).data;
+      // 3D 场景的地面是浅灰（≈ 200），影子是暗色（< 100）
+      const HI = 150, LO = 90;
+      for (let i=0,p=0; i<MAP_W*MAP_H; i++,p+=4) {
+        const lum = 0.299*img[p] + 0.587*img[p+1] + 0.114*img[p+2];
+        let s = prevSolid[i];
+        if (lum < LO) s = 1; else if (lum > HI) s = 0;
+        solid[i] = s;
+      }
+      prevSolid.set(solid);
+
+    } else {
+      // ----- 手绘：alpha 通道判定 -----
+      bgCtx.clearRect(0,0,W,H);
+      bgCtx.fillStyle = '#20262c';
+      bgCtx.fillRect(0,0,W,H);
+      tmpCtx.clearRect(0,0,MAP_W,MAP_H);
+      tmpCtx.drawImage(paintLayer, 0,0, paintLayer.width, paintLayer.height,
+                       0,0, MAP_W, MAP_H);
+      const img = tmpCtx.getImageData(0,0,MAP_W,MAP_H).data;
+      for (let i=0,p=3; i<MAP_W*MAP_H; i++,p+=4) {
+        const a = img[p];
+        let s = prevSolid[i];
+        if (a > 40) s = 1; else if (a < 10) s = 0;
+        solid[i] = s;
+      }
+      prevSolid.set(solid);
+    }
+  }
+
+  // ================= 物理 =================
+  const player = { x:0, y:0, vx:0, vy:0, r:14, onGround:false, face:1 };
+
+  function worldToCell(wx, wy){
+    return { cx: Math.floor(wx/W*MAP_W), cy: Math.floor(wy/H*MAP_H) };
+  }
+  function isSolidCell(cx, cy){
+    if (cx < 0 || cy < 0 || cx >= MAP_W || cy >= MAP_H) return false;
+    return solid[cy*MAP_W + cx] === 1;
+  }
+  function circleHitsSolid(wx, wy, r){
+    const step = Math.max(2, r*0.6);
+    for (let dy=-r; dy<=r; dy+=step)
+      for (let dx=-r; dx<=r; dx+=step) {
+        if (dx*dx + dy*dy > r*r) continue;
+        const c = worldToCell(wx+dx, wy+dy);
+        if (isSolidCell(c.cx, c.cy)) return true;
+      }
+    return false;
+  }
+
+  const GRAVITY=2400, ACC=2800, MAX_VX=460, JUMP_V=760, FRICTION=0.84;
+  let inputX = 0, jumpHeld = false, jumpQueued = false;
+  let last = performance.now();
+
+  // ================= 渲染 Clawd =================
+  function drawClawd() {
+    const s = player.r;
+    const bob = player.onGround ? 0 : Math.sin(performance.now()/90) * 1.5;
+    gCtx.save();
+    gCtx.translate(player.x, player.y);
+    gCtx.scale(player.face, 1);
+
+    const ORANGE='#d97757', DARK='#a8543a';
+    const bw=s*1.6, bh=s*1.2;
+
+    // 腿
+    gCtx.fillStyle = DARK;
+    const legW=s*0.16, legH=s*0.34, legTop=bh/2+bob-legH*0.15;
+    for (const lx of [-bw*0.3,-bw*0.1,bw*0.1,bw*0.3])
+      gCtx.fillRect(lx-legW/2, legTop, legW, legH);
+
+    // 身体
+    gCtx.fillStyle=ORANGE; gCtx.strokeStyle=DARK; gCtx.lineWidth=2;
+    gCtx.beginPath();
+    if (gCtx.roundRect) gCtx.roundRect(-bw/2,-bh/2+bob,bw,bh,3);
+    else gCtx.rect(-bw/2,-bh/2+bob,bw,bh);
+    gCtx.fill(); gCtx.stroke();
+
+    // 手臂
+    const armW=s*0.28, armH=s*0.56, armY=-armH*0.1+bob;
+    gCtx.fillStyle=ORANGE; gCtx.strokeStyle=DARK; gCtx.lineWidth=1.5;
+    gCtx.fillRect(-bw/2-armW,armY,armW,armH); gCtx.strokeRect(-bw/2-armW,armY,armW,armH);
+    gCtx.fillRect(bw/2,armY,armW,armH);       gCtx.strokeRect(bw/2,armY,armW,armH);
+
+    // 眼睛
+    gCtx.fillStyle='#1a1a1a';
+    const eyeSize=s*0.26, eyeY=-bh/2+bh*0.32+bob, eyeGap=s*0.22;
+    gCtx.fillRect(-eyeGap-eyeSize, eyeY, eyeSize, eyeSize);
+    gCtx.fillRect( eyeGap,          eyeY, eyeSize, eyeSize);
+
+    gCtx.restore();
+  }
+
+  function step(now){
+    const dt = Math.min((now-last)/1000, 1/30);
+    last = now;
+
+    updateCollisionMap(dt);
+
+    // 输入
+    if (inputX !== 0) {
+      player.vx += inputX * ACC * dt;
+      player.face = inputX > 0 ? 1 : -1;
+    } else {
+      player.vx *= Math.pow(FRICTION, dt*60);
+    }
+    player.vx = Math.max(-MAX_VX, Math.min(MAX_VX, player.vx));
+
+    if ((jumpHeld || jumpQueued) && player.onGround) {
+      player.vy = -JUMP_V; player.onGround = false; jumpQueued = false;
+    }
+    player.vy += GRAVITY * dt;
+
+    // X 轴
+    const nx = player.x + player.vx*dt;
+    if (!circleHitsSolid(nx, player.y, player.r)) player.x = nx;
+    else {
+      let slid=false;
+      for (let s=1;s<=6;s++){
+        const tx=player.x+(player.vx*dt)*(1-s/7);
+        if (!circleHitsSolid(tx,player.y,player.r)){player.x=tx;slid=true;break;}
+      }
+      if (!slid) player.vx=0;
+    }
+
+    // Y 轴
+    player.onGround = false;
+    const ny = player.y + player.vy*dt;
+    if (!circleHitsSolid(player.x, ny, player.r)) player.y = ny;
+    else {
+      if (player.vy > 0) player.onGround = true;
+      player.vy = 0;
+    }
+
+    if (player.y > H + 120) resetPlayer();
+
+    // 渲染
+    gCtx.clearRect(0,0,W,H);
+    gCtx.save();
+    gCtx.globalAlpha = 0.14;
+    gCtx.fillStyle = '#d97757';
+    const cw=W/MAP_W, ch=H/MAP_H;
+    for (let cy=0;cy<MAP_H;cy++)
+      for (let cx=0;cx<MAP_W;cx++)
+        if (solid[cy*MAP_W+cx]) gCtx.fillRect(cx*cw,cy*ch,cw+0.6,ch+0.6);
+    gCtx.restore();
+
+    drawClawd();
+    requestAnimationFrame(step);
+  }
+
+  // ================= 摇杆/跳跃 =================
+  let joyId=null, joyCX=0, joyCY=0, joyR=0;
+  joystick.addEventListener('pointerdown', e => {
+    if (joyId!==null) return;
+    joyId=e.pointerId;
+    joystick.setPointerCapture(e.pointerId);
+    const r=joystick.getBoundingClientRect();
+    joyCX=r.left+r.width/2; joyCY=r.top+r.height/2; joyR=r.width/2-8;
+    moveKnob(e.clientX,e.clientY); e.preventDefault();
+  });
+  joystick.addEventListener('pointermove', e => {
+    if (e.pointerId!==joyId) return;
+    moveKnob(e.clientX,e.clientY); e.preventDefault();
+  });
+  function endJoy(e){
+    if (e.pointerId===joyId){ joyId=null; inputX=0; knob.style.transform='translate(0,0)'; }
+  }
+  joystick.addEventListener('pointerup', endJoy);
+  joystick.addEventListener('pointercancel', endJoy);
+  function moveKnob(cx,cy){
+    let dx=cx-joyCX, dy=cy-joyCY;
+    const d=Math.hypot(dx,dy);
+    if (d>joyR){ dx=dx/d*joyR; dy=dy/d*joyR; }
+    knob.style.transform=`translate(${dx}px,${dy}px)`;
+    inputX=Math.max(-1,Math.min(1,dx/joyR));
+  }
+
+  jumpBtn.addEventListener('pointerdown', e => {
+    e.preventDefault(); jumpHeld=true; jumpQueued=true;
+  });
+  jumpBtn.addEventListener('pointerup',     ()=>jumpHeld=false);
+  jumpBtn.addEventListener('pointercancel', ()=>jumpHeld=false);
+
+  window.addEventListener('keydown', e => {
+    const k=e.key.toLowerCase();
+    if (k==='arrowleft'||k==='a') inputX=-1;
+    if (k==='arrowright'||k==='d') inputX=1;
+    if (k===' '||k==='w'||k==='arrowup'){ jumpHeld=true; jumpQueued=true; e.preventDefault(); }
+  });
+  window.addEventListener('keyup', e => {
+    const k=e.key.toLowerCase();
+    if (k==='arrowleft'||k==='a'||k==='arrowright'||k==='d') inputX=0;
+    if (k===' '||k==='w'||k==='arrowup') jumpHeld=false;
+  });
+
+  // ================= 模式切换 =================
+  function setMode(m) {
+    mode = m;
+    document.body.classList.toggle('drawing',   m === 'paint');
+    document.body.classList.toggle('turntable', m === 'turntable');
+
+    paintLayer.style.pointerEvents = (m === 'paint') ? 'auto' : 'none';
+
+    if (m === 'turntable') {
+      initTurntable();
+      setTurntableObject(tt.objType);
+    }
+    splash.style.display = 'none';
+    resetPlayer();
+  }
+
+  // ================= 启动流程 =================
+  document.getElementById('startCam').onclick = openCam;
+
+  document.getElementById('startDraw').onclick = () => {
+    camReady = false;
+    setMode('paint');
+  };
+
+  document.getElementById('startTurntable').onclick = () => {
+    camReady = false;
+    setMode('turntable');
+  };
+
+  document.getElementById('doneDraw').onclick = () => {
+    document.body.classList.remove('drawing');
+    paintLayer.style.pointerEvents = 'none';
+  };
+
+  document.getElementById('clearDraw').onclick = clearPaint;
+
+  document.getElementById('switchCam').onclick = () => {
+    if (mode === 'turntable') { setMode('paint'); return; }
+    if (!camReady) { openCam(); return; }
+    facing = facing === 'environment' ? 'user' : 'environment';
+    openCam();
+  };
+
+  // 转盘物体选择
+  document.querySelectorAll('.objBtn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.objBtn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      setTurntableObject(btn.dataset.obj);
+    });
+  });
+
+  // ================= 初始化 =================
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  sizeCanvases();
+  resetPlayer();
+  requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>

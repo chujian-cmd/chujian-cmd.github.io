@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shadow Physics — 单文件 HTML</title>
+<style>
+  html,body{margin:0;height:100%;background:#111;overflow:hidden;font-family:system-ui,sans-serif}
+  #wrap{position:relative;width:100vw;height:100vh}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  #hud{position:absolute;left:12px;top:12px;color:#fff;font-size:12px;
+       background:rgba(0,0,0,.5);padding:8px 10px;border-radius:8px;line-height:1.5;
+       pointer-events:none;z-index:10}
+  #hud b{color:#7cf}
+  button{position:absolute;z-index:10;font-size:13px;padding:8px 14px;border-radius:8px;
+         border:0;background:#2a7;color:#fff;cursor:pointer}
+  #startBtn{left:12px;bottom:12px}
+  #clearBtn{left:120px;bottom:12px;background:#555}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="cam" playsinline muted style="display:none"></video>
+  <canvas id="bg"></canvas>      <!-- 摄像头画面 / 或用鼠标画的阴影 -->
+  <canvas id="game"></canvas>    <!-- 游戏层，叠加在上面，透明 -->
+  <div id="hud">
+    <b>影子即关卡</b><br>
+    摄像头暗区 → 碰撞体（低分辨率地图）<br>
+    方向键/AD 移动，空格跳<br>
+    无摄像头时：<b>鼠标/触摸拖拽画阴影</b>
+  </div>
+  <button id="startBtn">开启摄像头</button>
+  <button id="clearBtn">清空手绘阴影</button>
+</div>
+
+<script>
+(() => {
+  const video   = document.getElementById('cam');
+  const bg      = document.getElementById('bg');
+  const game    = document.getElementById('game');
+  const bgCtx   = bg.getContext('2d', { willReadFrequently: true });
+  const gCtx    = game.getContext('2d');
+  const startBtn= document.getElementById('startBtn');
+  const clearBtn= document.getElementById('clearBtn');
+
+  // ---- 低分辨率碰撞地图 ----
+  const MAP_W = 96, MAP_H = 54;           // 低分辨率网格
+  const gridCanvas = document.createElement('canvas');
+  gridCanvas.width = MAP_W; gridCanvas.height = MAP_H;
+  const gridCtx = gridCanvas.getContext('2d', { willReadFrequently: true });
+  let solid = new Uint8Array(MAP_W * MAP_H); // 1 = 实心(阴影)
+
+  // ---- 尺寸与缩放 ----
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    for (const c of [bg, game]) {
+      c.width  = Math.floor(W * DPR);
+      c.height = Math.floor(H * DPR);
+    }
+    bgCtx.setTransform(DPR,0,0,DPR,0,0);
+    gCtx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---- 手绘阴影（无摄像头 fallback）----
+  const paintCanvas = document.createElement('canvas');
+  const paintCtx = paintCanvas.getContext('2d');
+  paintCanvas.width = 480; paintCanvas.height = 270; // 逻辑分辨率
+  paintCtx.fillStyle = '#000';
+  let drawing = false;
+
+  function paintAt(clientX, clientY, r=18) {
+    const x = clientX / W * paintCanvas.width;
+    const y = clientY / H * paintCanvas.height;
+    paintCtx.beginPath();
+    paintCtx.arc(x, y, r, 0, Math.PI*2);
+    paintCtx.fill();
+  }
+  game.addEventListener('pointerdown', e => {
+    if (camReady) return;
+    drawing = true; paintAt(e.clientX, e.clientY);
+  });
+  window.addEventListener('pointermove', e => {
+    if (drawing) paintAt(e.clientX, e.clientY);
+  });
+  window.addEventListener('pointerup', () => drawing = false);
+  clearBtn.onclick = () => {
+    paintCtx.clearRect(0,0,paintCanvas.width,paintCanvas.height);
+  };
+
+  // ---- 摄像头 ----
+  let camReady = false;
+  startBtn.onclick = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: 1280, height: 720 },
+        audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      camReady = true;
+      startBtn.style.display = 'none';
+    } catch (err) {
+      alert('无法打开摄像头：' + err.message + '\n将使用鼠标手绘阴影模式。');
+    }
+  };
+
+  // ---- 把当前"影子源"画到 bg 画布，并提取碰撞地图 ----
+  // 简化流程：先把源缩放到低分辨率，取暗像素 => solid
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = MAP_W; tmpCanvas.height = MAP_H;
+  const tmpCtx = tmpCanvas.getContext('2d', { willReadFrequently: true });
+
+  function updateCollisionMap() {
+    // 1) 绘制源到主背景（视觉对齐：游戏就画在这张图上）
+    bgCtx.clearRect(0,0,W,H);
+    if (camReady && video.videoWidth) {
+      // cover 填充
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const scale = Math.max(W/vw, H/vh);
+      const dw = vw*scale, dh = vh*scale;
+      bgCtx.drawImage(video, (W-dw)/2, (H-dh)/2, dw, dh);
+    } else {
+      // 手绘阴影模式：黑底，阴影用深色块表示
+      bgCtx.fillStyle = '#222';
+      bgCtx.fillRect(0,0,W,H);
+      bgCtx.drawImage(paintCanvas, 0, 0, W, H);
+    }
+
+    // 2) 缩到低分辨率，做阈值化得到 solid 网格
+    tmpCtx.clearRect(0,0,MAP_W,MAP_H);
+    tmpCtx.drawImage(bg, 0,0, bg.width, bg.height, 0,0, MAP_W, MAP_H);
+    const img = tmpCtx.getImageData(0,0,MAP_W,MAP_H).data;
+
+    for (let i=0, p=0; i<MAP_W*MAP_H; i++, p+=4) {
+      const r=img[p], g=img[p+1], b=img[p+2];
+      const lum = 0.299*r + 0.587*g + 0.114*b;
+      // 暗 => 阴影 => 实心。阈值可调
+      solid[i] = lum < 70 ? 1 : 0;
+    }
+  }
+
+  // ---- 物理：小方块 ----
+  const player = {
+    x: W/2, y: H/2,
+    vx: 0, vy: 0,
+    r: 14,          // 半径
+    onGround: false
+  };
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === ' ') e.preventDefault();
+  });
+  window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+  const GRAVITY = 2200;      // px/s^2
+  const MOVE_ACC = 2600;
+  const MAX_VX  = 420;
+  const JUMP_V  = 720;
+  const FRICTION = 0.82;
+
+  // 世界坐标 -> 网格坐标
+  function worldToCell(wx, wy) {
+    const cx = Math.floor(wx / W * MAP_W);
+    const cy = Math.floor(wy / H * MAP_H);
+    return { cx, cy };
+  }
+  function isSolidCell(cx, cy) {
+    if (cx < 0 || cy < 0 || cx >= MAP_W || cy >= MAP_H) return true; // 边界当墙
+    return solid[cy*MAP_W + cx] === 1;
+  }
+  // 圆形与格子碰撞检测（近似用包围盒采样）
+  function circleHitsSolid(wx, wy, r) {
+    const step = Math.max(2, r*0.6);
+    for (let dy=-r; dy<=r; dy+=step) {
+      for (let dx=-r; dx<=r; dx+=step) {
+        if (dx*dx+dy*dy > r*r) continue;
+        const { cx, cy } = worldToCell(wx+dx, wy+dy);
+        if (isSolidCell(cx, cy)) return true;
+      }
+    }
+    return false;
+  }
+
+  let last = performance.now();
+  function step(now) {
+    const dt = Math.min((now - last)/1000, 1/30);
+    last = now;
+
+    updateCollisionMap();
+
+    // ---- 输入 ----
+    const left  = keys['arrowleft'] || keys['a'];
+    const right = keys['arrowright']|| keys['d'];
+    const jump  = keys[' '] || keys['w'] || keys['arrowup'];
+
+    // ---- 水平移动 ----
+    if (left)  player.vx -= MOVE_ACC * dt;
+    if (right) player.vx += MOVE_ACC * dt;
+    if (!left && !right) player.vx *= Math.pow(FRICTION, dt*60);
+    player.vx = Math.max(-MAX_VX, Math.min(MAX_VX, player.vx));
+
+    // ---- 跳跃 ----
+    if (jump && player.onGround) {
+      player.vy = -JUMP_V;
+      player.onGround = false;
+    }
+
+    // ---- 重力 ----
+    player.vy += GRAVITY * dt;
+
+    // ---- 逐轴移动 + 碰撞 ----
+    // X 轴
+    let nx = player.x + player.vx * dt;
+    if (!circleHitsSolid(nx, player.y, player.r)) {
+      player.x = nx;
+    } else {
+      // 尝试微调滑动
+      let slid = false;
+      for (let s=1; s<=6; s++) {
+        const tryX = player.x + (player.vx*dt) * (1 - s/7);
+        if (!circleHitsSolid(tryX, player.y, player.r)) { player.x = tryX; slid = true; break; }
+      }
+      if (!slid) player.vx = 0;
+    }
+
+    // Y 轴
+    player.onGround = false;
+    let ny = player.y + player.vy * dt;
+    if (!circleHitsSolid(player.x, ny, player.r)) {
+      player.y = ny;
+    } else {
+      if (player.vy > 0) player.onGround = true;
+      player.vy = 0;
+    }
+
+    // 掉出屏幕：重置
+    if (player.y > H + 100) {
+      player.x = W/2; player.y = H/3;
+      player.vx = player.vy = 0;
+    }
+
+    // ---- 渲染游戏层 ----
+    gCtx.clearRect(0,0,W,H);
+
+    // 调试：可视化碰撞网格（半透明覆盖）
+    gCtx.save();
+    gCtx.globalAlpha = 0.18;
+    gCtx.fillStyle = '#0f8';
+    const cw = W / MAP_W, ch = H / MAP_H;
+    for (let cy=0; cy<MAP_H; cy++) {
+      for (let cx=0; cx<MAP_W; cx++) {
+        if (solid[cy*MAP_W+cx]) gCtx.fillRect(cx*cw, cy*ch, cw+0.5, ch+0.5);
+      }
+    }
+    gCtx.restore();
+
+    // 小方块（画成圆角方块）
+    gCtx.save();
+    gCtx.translate(player.x, player.y);
+    const size = player.r*1.7;
+    gCtx.fillStyle = player.onGround ? '#ffd24a' : '#ff8a3d';
+    gCtx.strokeStyle = 'rgba(0,0,0,.5)';
+    gCtx.lineWidth = 2;
+    const rr = 4;
+    gCtx.beginPath();
+    gCtx.roundRect(-size/2, -size/2, size, size, rr);
+    gCtx.fill(); gCtx.stroke();
+    // 眼睛朝向速度方向
+    gCtx.fillStyle = '#222';
+    const dir = player.vx >= 0 ? 1 : -1;
+    gCtx.beginPath();
+    gCtx.arc(3*dir, -3, 2.2, 0, Math.PI*2);
+    gCtx.fill();
+    gCtx.restore();
+
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>
