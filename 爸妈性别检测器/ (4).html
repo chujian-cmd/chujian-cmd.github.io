@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人物性别检测器 · 量子隧道版</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    background: #d4d0c8;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: "MS Sans Serif", "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    color: #000000;
+    padding: 20px;
+  }
+
+  .window {
+    background: #d4d0c8;
+    width: 420px;
+    padding: 2px;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+  }
+
+  .titlebar {
+    background: #000080;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 3px 5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #000000;
+  }
+
+  .titlebar .win-buttons {
+    display: flex;
+    gap: 2px;
+  }
+
+  .titlebar .win-buttons span {
+    display: inline-block;
+    width: 16px;
+    height: 14px;
+    background: #d4d0c8;
+    border-top: 1px solid #ffffff;
+    border-left: 1px solid #ffffff;
+    border-right: 1px solid #808080;
+    border-bottom: 1px solid #808080;
+    color: #000000;
+    font-size: 9px;
+    line-height: 12px;
+    text-align: center;
+    font-weight: bold;
+    cursor: default;
+  }
+
+  .content {
+    padding: 14px 14px 12px 14px;
+  }
+
+  .label {
+    font-size: 13px;
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+
+  .button-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .btn {
+    background: #d4d0c8;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+    color: #000000;
+    font-family: "MS Sans Serif", "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    padding: 5px 0;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+    letter-spacing: 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn:focus { outline: none; }
+  .btn:focus-visible {
+    outline: 1px dotted #000000;
+    outline-offset: -4px;
+  }
+  .btn:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: none;
+    transform: translate(1px, 1px);
+  }
+  .btn:disabled {
+    color: #808080;
+    text-shadow: 1px 1px 0 #ffffff;
+    cursor: default;
+  }
+  .btn:disabled:active {
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+    transform: none;
+  }
+
+  /* ===== 科幻扫描面板 ===== */
+  .scanner {
+    background: #0a0a0a;
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: inset 1px 1px 0 #000000;
+    padding: 10px;
+    margin-bottom: 10px;
+    display: none;
+    font-family: "Courier New", Courier, monospace;
+  }
+
+  .scanner.active { display: block; }
+
+  .scanner-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #4afa7a;
+    font-size: 10px;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    text-shadow: 0 0 4px #4afa7a;
+  }
+
+  .scanner-header .live-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: #ff3b30;
+    margin-right: 4px;
+    animation: blink 0.8s step-end infinite;
+  }
+
+  @keyframes blink { 50% { opacity: 0.15; } }
+
+  .progress-track {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    height: 14px;
+    margin-bottom: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: repeating-linear-gradient(
+      90deg,
+      #2d9d4e 0px, #2d9d4e 6px,
+      #3fca66 6px, #3fca66 12px
+    );
+    transition: width 0.15s linear;
+  }
+
+  .progress-text {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: #ffffff;
+    letter-spacing: 2px;
+    text-shadow: 1px 1px 0 #000000;
+  }
+
+  /* 量子隧道示意图 */
+  .tunnel-view {
+    background: #000000;
+    border: 1px solid #2a2a2a;
+    height: 52px;
+    margin-bottom: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tunnel-wall {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: #1e5e2e;
+    box-shadow: 0 0 6px #2d9d4e;
+    opacity: 0.5;
+  }
+
+  .tunnel-wall.left  { left: 10%; }
+  .tunnel-wall.right { right: 10%; }
+
+  .tunnel-particle {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 7px;
+    height: 7px;
+    margin-top: -3.5px;
+    background: #7fe0ff;
+    border-radius: 50%;
+    box-shadow: 0 0 8px #7fe0ff, 0 0 16px #3f8fff;
+    transition: left 0.1s linear;
+    z-index: 2;
+  }
+
+  .tunnel-particle.echo {
+    background: #f5c542;
+    box-shadow: 0 0 8px #f5c542, 0 0 16px #e09000;
+  }
+
+  .tunnel-label {
+    position: absolute;
+    bottom: 2px;
+    right: 4px;
+    font-size: 8px;
+    color: #2d9d4e;
+    letter-spacing: 1px;
+    z-index: 3;
+  }
+
+  .log-panel {
+    background: #000000;
+    border: 1px solid #2a2a2a;
+    height: 96px;
+    overflow: hidden;
+    padding: 4px 6px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #3fca66;
+    text-shadow: 0 0 3px #2d9d4e;
+  }
+
+  .log-line {
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 0;
+    animation: logIn 0.12s ease-out forwards;
+  }
+
+  @keyframes logIn { to { opacity: 1; } }
+
+  .log-line.warn  { color: #f5c542; text-shadow: 0 0 3px #f5c542; }
+  .log-line.error { color: #ff5c4d; text-shadow: 0 0 4px #ff3b30; }
+  .log-line.final { color: #7fe0ff; text-shadow: 0 0 4px #7fe0ff; }
+  .log-line.dim   { color: #1e7a38; }
+
+  .result-box {
+    background: #ffffff;
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: inset 1px 1px 0 #000000;
+    padding: 9px 12px;
+    font-size: 13px;
+    color: #000000;
+    min-height: 44px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    word-break: break-word;
+    gap: 3px;
+  }
+
+  .result-main { font-size: 14px; }
+
+  .result-serial {
+    font-size: 10px;
+    color: #5c5248;
+    font-family: "Courier New", Courier, monospace;
+    letter-spacing: 1px;
+  }
+
+  .status-bar {
+    background: #d4d0c8;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 4px 6px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    margin-top: 10px;
+    text-align: center;
+  }
+
+  /* 弹窗 */
+  .dialog-overlay {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    visibility: hidden;
+    opacity: 0;
+  }
+
+  .dialog-overlay.active {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .dialog {
+    background: #d4d0c8;
+    padding: 2px;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 2px 2px 0 #000000;
+    min-width: 300px;
+    max-width: 360px;
+  }
+
+  .dialog-titlebar {
+    background: #000080;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 3px 6px;
+    letter-spacing: 1px;
+  }
+
+  .dialog-body {
+    padding: 16px 16px 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .dialog-message {
+    font-size: 13px;
+    color: #000000;
+    text-align: center;
+    line-height: 1.7;
+    white-space: pre-line;
+  }
+
+  .dialog-message .serial {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 11px;
+    color: #404040;
+    letter-spacing: 1px;
+    display: block;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed #999999;
+  }
+
+  .dialog-btn-wrap {
+    display: flex;
+    justify-content: center;
+  }
+
+  .dialog-ok-btn {
+    background: #d4d0c8;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+    color: #000000;
+    font-family: "MS Sans Serif", "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    padding: 3px 24px;
+    cursor: pointer;
+    user-select: none;
+    min-width: 76px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dialog-ok-btn:focus { outline: none; }
+  .dialog-ok-btn:focus-visible {
+    outline: 1px dotted #000000;
+    outline-offset: -4px;
+  }
+  .dialog-ok-btn:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: none;
+    transform: translate(1px, 1px);
+  }
+</style>
+</head>
+<body>
+
+<div class="window">
+  <div class="titlebar">
+    <span>人物性别检测器 · 量子隧道版 v3.1</span>
+    <div class="win-buttons">
+      <span>_</span><span>□</span><span>×</span>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="label">
+      请点击人物按钮，启动量子隧道性别检测：
+    </div>
+
+    <div class="button-grid" id="buttonGrid">
+      <button class="btn" data-person="dad">爸 爸</button>
+      <button class="btn" data-person="mom">妈 妈</button>
+      <button class="btn" data-person="grandpa">爷 爷</button>
+      <button class="btn" data-person="grandma">奶 奶</button>
+      <button class="btn" data-person="uncle">叔 叔</button>
+      <button class="btn" data-person="aunt">阿 姨</button>
+      <button class="btn" data-person="brother">哥 哥</button>
+      <button class="btn" data-person="sister">姐 姐</button>
+    </div>
+
+    <div class="scanner" id="scanner">
+      <div class="scanner-header">
+        <span><span class="live-dot"></span>QUANTUM TUNNEL ENGINE · ONLINE</span>
+        <span id="scannerPhase">STANDBY</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+      <!-- 量子隧道示意图 -->
+      <div class="tunnel-view">
+        <div class="tunnel-wall left"></div>
+        <div class="tunnel-wall right"></div>
+        <div class="tunnel-particle" id="tunnelParticle" style="left: 0%;"></div>
+        <div class="tunnel-label" id="tunnelLabel">TUNNEL</div>
+      </div>
+      <div class="log-panel" id="logPanel"></div>
+    </div>
+
+    <div class="result-box" id="resultBox">
+      <span class="result-main">等待检测…</span>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+      状态：就绪 | 量子隧道引擎待命
+    </div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div class="dialog-overlay" id="dialogOverlay">
+  <div class="dialog">
+    <div class="dialog-titlebar" id="dialogTitle">检测结果</div>
+    <div class="dialog-body">
+      <div class="dialog-message" id="dialogMessage"></div>
+      <div class="dialog-btn-wrap">
+        <button class="dialog-ok-btn" id="dialogOkBtn">确 定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const buttonGrid    = document.getElementById('buttonGrid');
+    const resultBox     = document.getElementById('resultBox');
+    const statusBar     = document.getElementById('statusBar');
+    const scanner       = document.getElementById('scanner');
+    const progressFill  = document.getElementById('progressFill');
+    const progressText  = document.getElementById('progressText');
+    const logPanel      = document.getElementById('logPanel');
+    const scannerPhase  = document.getElementById('scannerPhase');
+    const tunnelParticle= document.getElementById('tunnelParticle');
+    const tunnelLabel   = document.getElementById('tunnelLabel');
+    const dialogOverlay = document.getElementById('dialogOverlay');
+    const dialogTitle   = document.getElementById('dialogTitle');
+    const dialogMessage = document.getElementById('dialogMessage');
+    const dialogOkBtn   = document.getElementById('dialogOkBtn');
+
+    const personData = {
+      dad:     { name: '爸爸', gender: '男性' },
+      mom:     { name: '妈妈', gender: '女性' },
+      grandpa: { name: '爷爷', gender: '男性' },
+      grandma: { name: '奶奶', gender: '女性' },
+      uncle:   { name: '叔叔', gender: '男性' },
+      aunt:    { name: '阿姨', gender: '女性' },
+      brother: { name: '哥哥', gender: '男性' },
+      sister:  { name: '姐姐', gender: '女性' }
+    };
+
+    let busy = false;
+    let timers = [];
+    let particleTimer = null;
+
+    function clearAll() {
+      timers.forEach(t => clearTimeout(t));
+      timers = [];
+      if (particleTimer) { clearInterval(particleTimer); particleTimer = null; }
+    }
+
+    function later(fn, ms) {
+      const t = setTimeout(fn, ms);
+      timers.push(t);
+      return t;
+    }
+
+    /* ---------- 日志 ---------- */
+    function addLog(text, cls) {
+      const line = document.createElement('div');
+      line.className = 'log-line' + (cls ? ' ' + cls : '');
+      line.textContent = text;
+      logPanel.appendChild(line);
+      while (logPanel.children.length > 8) {
+        logPanel.removeChild(logPanel.firstChild);
+      }
+    }
+
+    function setProgress(pct) {
+      progressFill.style.width = pct + '%';
+      progressText.textContent = pct + '%';
+    }
+
+    /* ---------- 粒子动画 ---------- */
+    function startParticle(durationMs, onDone) {
+      if (particleTimer) clearInterval(particleTimer);
+      const start = Date.now();
+      tunnelParticle.classList.remove('echo');
+      tunnelParticle.style.left = '0%';
+      particleTimer = setInterval(() => {
+        const p = Math.min(1, (Date.now() - start) / durationMs);
+        // 模拟隧穿：中间加速，穿过 10%~90% 区域
+        let left;
+        if (p < 0.35) {
+          left = (p / 0.35) * 10;           // 0% → 10%
+        } else if (p < 0.65) {
+          left = 10 + ((p - 0.35) / 0.30) * 80; // 10% → 90%（穿越势垒）
+        } else {
+          left = 90 + ((p - 0.65) / 0.35) * 10; // 90% → 100%
+        }
+        tunnelParticle.style.left = left + '%';
+        if (p >= 1) {
+          clearInterval(particleTimer);
+          particleTimer = null;
+          if (onDone) onDone();
+        }
+      }, 30);
+    }
+
+    /* ---------- 弹窗 ---------- */
+    function showDialog(title, message) {
+      dialogTitle.textContent = title;
+      dialogMessage.innerHTML = message;
+      dialogOverlay.classList.add('active');
+      dialogOkBtn.focus();
+    }
+    function closeDialog() {
+      dialogOverlay.classList.remove('active');
+    }
+
+    /* ---------- 检测编号 ---------- */
+    function makeSerial() {
+      const chars = 'ABCDEF0123456789';
+      let s = '';
+      for (let i = 0; i < 16; i++) {
+        if (i === 4 || i === 8 || i === 12) s += '-';
+        s += chars[Math.floor(Math.random() * chars.length)];
+      }
+      return s;
+    }
+
+    /* ---------- 主流程 ---------- */
+    function detectPerson(btn) {
+      if (busy) return;
+      const key = btn.dataset.person;
+      const person = personData[key];
+      if (!person) return;
+
+      busy = true;
+      clearAll();
+
+      const originalText = btn.textContent;
+      const allBtns = Array.from(buttonGrid.querySelectorAll('.btn'));
+      allBtns.forEach(b => b.disabled = true);
+      btn.textContent = '检 测 中';
+
+      // 重置面板
+      logPanel.innerHTML = '';
+      setProgress(0);
+      scannerPhase.textContent = 'INIT';
+      scanner.classList.add('active');
+      resultBox.innerHTML = '<span class="result-main">扫描中…</span>';
+      statusBar.textContent = '状态：启动量子隧道引擎';
+      tunnelParticle.style.left = '0%';
+      tunnelParticle.classList.remove('echo');
+      tunnelLabel.textContent = 'TUNNEL';
+
+      // 阶段 1：启动
+      addLog('> 初始化量子隧道性别识别引擎 v3.1 ...');
+      later(() => {
+        setProgress(5);
+        addLog('> 加载多模态特征库 [OK]');
+        scannerPhase.textContent = 'LOAD';
+        statusBar.textContent = '状态：加载特征库';
+      }, 250);
+
+      later(() => {
+        setProgress(10);
+        addLog('> 校准传感器阵列 [12/12 通道]');
+        scannerPhase.textContent = 'CALIB';
+      }, 750);
+
+      // 阶段 2：量子隧道注入
+      later(() => {
+        setProgress(16);
+        addLog('> 制备量子叠加态 ... 自旋上行/下行', 'dim');
+        scannerPhase.textContent = 'TUNNEL';
+        statusBar.textContent = '状态：量子隧道注入中';
+        tunnelLabel.textContent = 'INJECTING';
+        startParticle(1800);
+      }, 1200);
+
+      later(() => {
+        setProgress(26);
+        addLog('> 粒子进入势垒区 ... 隧道穿透概率 87.3%', 'warn');
+      }, 1800);
+
+      later(() => {
+        setProgress(36);
+        addLog('> 量子隧穿发生！势垒宽度 1.2nm');
+        tunnelLabel.textContent = 'TUNNELING';
+      }, 2400);
+
+      // 阶段 3：纠缠异常 + 重试
+      later(() => {
+        setProgress(44);
+        addLog('> 检测到量子纠缠异常！相位偏移 0.0032rad', 'error');
+        scannerPhase.textContent = 'FAULT';
+        statusBar.textContent = '状态：异常！启动重试';
+        tunnelParticle.classList.add('echo');
+        tunnelLabel.textContent = 'ECHO';
+      }, 3000);
+
+      later(() => {
+        setProgress(48);
+        addLog('> 错误代码 QE-0x2F：纠缠对退相干', 'error');
+      }, 3500);
+
+      later(() => {
+        setProgress(52);
+        addLog('> 启动纠错协议 ... 重试 1/3', 'warn');
+        statusBar.textContent = '状态：纠错重试 1/3';
+        tunnelLabel.textContent = 'RETRY 1/3';
+        startParticle(1200);
+      }, 4000);
+
+      later(() => {
+        setProgress(58);
+        addLog('> 重试成功，纠缠保真度回升至 99.4%');
+        scannerPhase.textContent = 'RECOVER';
+        tunnelParticle.classList.remove('echo');
+      }, 4800);
+
+      // 阶段 4：深度推理
+      later(() => {
+        setProgress(66);
+        addLog('> 进入深度神经网络推理层 ...', 'warn');
+        scannerPhase.textContent = 'INFER';
+        statusBar.textContent = '状态：深度神经网络推理中';
+        tunnelLabel.textContent = 'INFER';
+      }, 5300);
+
+      later(() => {
+        setProgress(74);
+        addLog('> 交叉验证：遗传学 × 行为学 × 声纹 [OK]');
+      }, 5800);
+
+      later(() => {
+        setProgress(82);
+        addLog('> 排除量子噪声干扰 ... 信噪比 42.7dB');
+        scannerPhase.textContent = 'VERIFY';
+        statusBar.textContent = '状态：最终判定校验';
+      }, 6300);
+
+      later(() => {
+        setProgress(92);
+        addLog('> 性别判定完成，锁定结果');
+        tunnelLabel.textContent = 'LOCKED';
+        tunnelParticle.classList.add('echo');
+      }, 6800);
+
+      later(() => {
+        setProgress(100);
+        addLog(`>> 结论：${person.name} → ${person.gender} <<`, 'final');
+        scannerPhase.textContent = 'DONE';
+        statusBar.textContent = '状态：检测完成';
+        tunnelLabel.textContent = 'DONE';
+      }, 7400);
+
+      // 阶段 5：出结果
+      later(() => {
+        allBtns.forEach(b => b.disabled = false);
+        btn.textContent = originalText;
+        busy = false;
+
+        const serial = makeSerial();
+        const confidence = (99.1 + Math.random() * 0.8).toFixed(2);
+
+        resultBox.innerHTML =
+          `<span class="result-main">${person.name} 的性别是：${person.gender}</span>` +
+          `<span class="result-serial">检测编号 ${serial}</span>`;
+
+        statusBar.textContent = '状态：就绪 | 可继续检测其他人物';
+
+        showDialog('检测结果',
+          `目标人物：${person.name}\n` +
+          `检测性别：${person.gender}\n` +
+          `置信度：${confidence}%\n` +
+          `隧道穿透：成功\n` +
+          `<span class="serial">检测编号 ${serial}</span>`);
+      }, 8000);
+    }
+
+    // 绑定按钮
+    const allBtns = buttonGrid.querySelectorAll('.btn');
+    allBtns.forEach(btn => {
+      btn.addEventListener('click', () => detectPerson(btn));
+    });
+
+    // 弹窗事件
+    dialogOkBtn.addEventListener('click', closeDialog);
+    dialogOverlay.addEventListener('click', e => {
+      if (e.target === dialogOverlay) closeDialog();
+    });
+    document.addEventListener('keydown', e => {
+      if (dialogOverlay.classList.contains('active')) {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault();
+          closeDialog();
+        }
+      }
+    });
+
+  })();
+</script>
+</body>
+</html>

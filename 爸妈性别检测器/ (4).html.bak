@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人物性别检测器 · 量子版</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    background: #d4d0c8;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: "MS Sans Serif", "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    color: #000000;
+    padding: 20px;
+  }
+
+  .window {
+    background: #d4d0c8;
+    width: 400px;
+    padding: 2px;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+  }
+
+  .titlebar {
+    background: #000080;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 3px 5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #000000;
+  }
+
+  .titlebar .win-buttons {
+    display: flex;
+    gap: 2px;
+  }
+
+  .titlebar .win-buttons span {
+    display: inline-block;
+    width: 16px;
+    height: 14px;
+    background: #d4d0c8;
+    border-top: 1px solid #ffffff;
+    border-left: 1px solid #ffffff;
+    border-right: 1px solid #808080;
+    border-bottom: 1px solid #808080;
+    color: #000000;
+    font-size: 9px;
+    line-height: 12px;
+    text-align: center;
+    font-weight: bold;
+    cursor: default;
+  }
+
+  .content {
+    padding: 14px 14px 12px 14px;
+  }
+
+  .label {
+    font-size: 13px;
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+
+  .button-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .btn {
+    background: #d4d0c8;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+    color: #000000;
+    font-family: "MS Sans Serif", "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    padding: 5px 0;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+    letter-spacing: 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .btn:focus {
+    outline: none;
+  }
+
+  .btn:focus-visible {
+    outline: 1px dotted #000000;
+    outline-offset: -4px;
+  }
+
+  .btn:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: none;
+    transform: translate(1px, 1px);
+  }
+
+  .btn:disabled {
+    color: #808080;
+    text-shadow: 1px 1px 0 #ffffff;
+    cursor: default;
+  }
+
+  .btn:disabled:active {
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+    transform: none;
+  }
+
+  /* ===== 科幻检测面板 ===== */
+  .scanner {
+    background: #0a0a0a;
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: inset 1px 1px 0 #000000;
+    padding: 10px;
+    margin-bottom: 10px;
+    display: none;
+    font-family: "Courier New", Courier, monospace;
+  }
+
+  .scanner.active {
+    display: block;
+  }
+
+  .scanner-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #4afa7a;
+    font-size: 10px;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    text-shadow: 0 0 4px #4afa7a;
+  }
+
+  .scanner-header .live-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: #ff3b30;
+    margin-right: 4px;
+    animation: blink 0.8s step-end infinite;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0.15; }
+  }
+
+  .progress-track {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    height: 14px;
+    margin-bottom: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: repeating-linear-gradient(
+      90deg,
+      #2d9d4e 0px,
+      #2d9d4e 6px,
+      #3fca66 6px,
+      #3fca66 12px
+    );
+    transition: width 0.15s linear;
+  }
+
+  .progress-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    color: #ffffff;
+    letter-spacing: 2px;
+    text-shadow: 1px 1px 0 #000000;
+  }
+
+  .log-panel {
+    background: #000000;
+    border: 1px solid #2a2a2a;
+    height: 84px;
+    overflow: hidden;
+    padding: 4px 6px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #3fca66;
+    text-shadow: 0 0 3px #2d9d4e;
+  }
+
+  .log-line {
+    white-space: nowrap;
+    overflow: hidden;
+    opacity: 0;
+    animation: logIn 0.12s ease-out forwards;
+  }
+
+  @keyframes logIn {
+    to { opacity: 1; }
+  }
+
+  .log-line.warn { color: #f5c542; text-shadow: 0 0 3px #f5c542; }
+  .log-line.final { color: #7fe0ff; text-shadow: 0 0 4px #7fe0ff; }
+
+  .result-box {
+    background: #ffffff;
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: inset 1px 1px 0 #000000;
+    padding: 9px 12px;
+    font-size: 14px;
+    color: #000000;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    word-break: break-word;
+  }
+
+  .status-bar {
+    background: #d4d0c8;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    padding: 4px 6px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    margin-top: 10px;
+    text-align: center;
+  }
+
+  /* 弹窗 */
+  .dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    visibility: hidden;
+    opacity: 0;
+  }
+
+  .dialog-overlay.active {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .dialog {
+    background: #d4d0c8;
+    padding: 2px;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 2px 2px 0 #000000;
+    min-width: 280px;
+    max-width: 340px;
+  }
+
+  .dialog-titlebar {
+    background: #000080;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 3px 6px;
+    letter-spacing: 1px;
+  }
+
+  .dialog-body {
+    padding: 16px 16px 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .dialog-message {
+    font-size: 13px;
+    color: #000000;
+    text-align: center;
+    line-height: 1.7;
+    white-space: pre-line;
+  }
+
+  .dialog-btn-wrap {
+    display: flex;
+    justify-content: center;
+  }
+
+  .dialog-ok-btn {
+    background: #d4d0c8;
+    border-top: 2px solid #ffffff;
+    border-left: 2px solid #ffffff;
+    border-right: 2px solid #808080;
+    border-bottom: 2px solid #808080;
+    box-shadow: 1px 1px 0 #000000;
+    color: #000000;
+    font-family: "MS Sans Serif", "Segoe UI", Tahoma, "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    padding: 3px 24px;
+    cursor: pointer;
+    user-select: none;
+    min-width: 76px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .dialog-ok-btn:focus { outline: none; }
+  .dialog-ok-btn:focus-visible {
+    outline: 1px dotted #000000;
+    outline-offset: -4px;
+  }
+  .dialog-ok-btn:active {
+    border-top: 2px solid #808080;
+    border-left: 2px solid #808080;
+    border-right: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    box-shadow: none;
+    transform: translate(1px, 1px);
+  }
+</style>
+</head>
+<body>
+
+<div class="window">
+  <div class="titlebar">
+    <span>人物性别检测器 · 量子版 v2.7</span>
+    <div class="win-buttons">
+      <span>_</span><span>□</span><span>×</span>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="label">
+      请点击人物按钮，启动多模态性别检测流程：
+    </div>
+
+    <div class="button-grid" id="buttonGrid">
+      <button class="btn" data-person="dad">爸 爸</button>
+      <button class="btn" data-person="mom">妈 妈</button>
+      <button class="btn" data-person="grandpa">爷 爷</button>
+      <button class="btn" data-person="grandma">奶 奶</button>
+      <button class="btn" data-person="uncle">叔 叔</button>
+      <button class="btn" data-person="aunt">阿 姨</button>
+      <button class="btn" data-person="brother">哥 哥</button>
+      <button class="btn" data-person="sister">姐 姐</button>
+    </div>
+
+    <!-- 科幻检测面板 -->
+    <div class="scanner" id="scanner">
+      <div class="scanner-header">
+        <span><span class="live-dot"></span>NEURAL SCAN ENGINE · ONLINE</span>
+        <span id="scannerPhase">STANDBY</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progressFill"></div>
+        <div class="progress-text" id="progressText">0%</div>
+      </div>
+      <div class="log-panel" id="logPanel"></div>
+    </div>
+
+    <div class="result-box" id="resultBox">等待检测…</div>
+
+    <div class="status-bar" id="statusBar">
+      状态：就绪 | 检测引擎待命
+    </div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div class="dialog-overlay" id="dialogOverlay">
+  <div class="dialog">
+    <div class="dialog-titlebar" id="dialogTitle">检测结果</div>
+    <div class="dialog-body">
+      <div class="dialog-message" id="dialogMessage"></div>
+      <div class="dialog-btn-wrap">
+        <button class="dialog-ok-btn" id="dialogOkBtn">确 定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    const buttonGrid = document.getElementById('buttonGrid');
+    const resultBox = document.getElementById('resultBox');
+    const statusBar = document.getElementById('statusBar');
+    const scanner = document.getElementById('scanner');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    const logPanel = document.getElementById('logPanel');
+    const scannerPhase = document.getElementById('scannerPhase');
+    const dialogOverlay = document.getElementById('dialogOverlay');
+    const dialogTitle = document.getElementById('dialogTitle');
+    const dialogMessage = document.getElementById('dialogMessage');
+    const dialogOkBtn = document.getElementById('dialogOkBtn');
+
+    const personData = {
+      dad:      { name: '爸爸', gender: '男性' },
+      mom:      { name: '妈妈', gender: '女性' },
+      grandpa:  { name: '爷爷', gender: '男性' },
+      grandma:  { name: '奶奶', gender: '女性' },
+      uncle:    { name: '叔叔', gender: '男性' },
+      aunt:     { name: '阿姨', gender: '女性' },
+      brother:  { name: '哥哥', gender: '男性' },
+      sister:   { name: '姐姐', gender: '女性' }
+    };
+
+    let busy = false;
+    let timers = [];
+
+    function clearTimers() {
+      timers.forEach(t => clearTimeout(t));
+      timers = [];
+    }
+
+    function later(fn, ms) {
+      const t = setTimeout(fn, ms);
+      timers.push(t);
+      return t;
+    }
+
+    /* ---------- 科幻日志工具 ---------- */
+    function addLog(text, cls) {
+      const line = document.createElement('div');
+      line.className = 'log-line' + (cls ? ' ' + cls : '');
+      line.textContent = text;
+      logPanel.appendChild(line);
+      // 保持日志不超过 8 行
+      while (logPanel.children.length > 8) {
+        logPanel.removeChild(logPanel.firstChild);
+      }
+    }
+
+    function setProgress(pct) {
+      progressFill.style.width = pct + '%';
+      progressText.textContent = pct + '%';
+    }
+
+    /* ---------- 弹窗 ---------- */
+    function showDialog(title, message) {
+      dialogTitle.textContent = title;
+      dialogMessage.textContent = message;
+      dialogOverlay.classList.add('active');
+      dialogOkBtn.focus();
+    }
+    function closeDialog() {
+      dialogOverlay.classList.remove('active');
+    }
+
+    /* ---------- 主检测流程 ---------- */
+    function detectPerson(btn) {
+      if (busy) return;
+      const key = btn.dataset.person;
+      const person = personData[key];
+      if (!person) return;
+
+      busy = true;
+
+      // 按钮 UI 状态
+      const originalText = btn.textContent;
+      btn.textContent = '检 测 中';
+      btn.disabled = true;
+      Array.from(buttonGrid.querySelectorAll('.btn')).forEach(b => {
+        if (b !== btn) b.disabled = true;
+      });
+
+      // 重置扫描面板
+      clearTimers();
+      logPanel.innerHTML = '';
+      setProgress(0);
+      scannerPhase.textContent = 'INIT';
+      scanner.classList.add('active');
+      resultBox.textContent = '扫描中…';
+      statusBar.textContent = '状态：启动多模态检测引擎';
+
+      // 阶段 1：启动引擎（0 - 15%）
+      addLog('> 初始化量子性别识别引擎 v2.7 ...');
+      later(() => {
+        setProgress(6);
+        addLog('> 加载多模态特征库 [OK]');
+        scannerPhase.textContent = 'LOAD';
+        statusBar.textContent = '状态：加载特征库';
+      }, 300);
+
+      later(() => {
+        setProgress(15);
+        addLog('> 校准传感器阵列 [12/12 通道]');
+        scannerPhase.textContent = 'CALIB';
+      }, 900);
+
+      // 阶段 2：采集特征（15% - 45%）
+      later(() => {
+        setProgress(24);
+        addLog('> 采集面部特征点 ... 68/68');
+        scannerPhase.textContent = 'ACQUIRE';
+        statusBar.textContent = '状态：采集生物特征';
+      }, 1400);
+
+      later(() => {
+        setProgress(33);
+        addLog('> 分析声纹频谱 ... 采样率 48kHz');
+      }, 1900);
+
+      later(() => {
+        setProgress(42);
+        addLog('> 提取步态动力学子特征 [128 维]');
+      }, 2400);
+
+      // 阶段 3：深度分析（45% - 80%）
+      later(() => {
+        setProgress(50);
+        addLog('> 进入深度神经网络推理层 ...', 'warn');
+        scannerPhase.textContent = 'INFER';
+        statusBar.textContent = '状态：深度神经网络推理中';
+      }, 2900);
+
+      later(() => {
+        setProgress(58);
+        addLog('> 检测到 3 处微小矛盾特征，启动仲裁机制', 'warn');
+      }, 3400);
+
+      later(() => {
+        setProgress(67);
+        addLog('> 仲裁完成，置信度收敛中 ...');
+      }, 3900);
+
+      later(() => {
+        setProgress(75);
+        addLog('> 交叉验证：遗传学模型 × 行为学模型 [OK]');
+      }, 4400);
+
+      // 阶段 4：最终判定（80% - 100%）
+      later(() => {
+        setProgress(84);
+        addLog('> 排除量子噪声干扰 ... 信噪比 42.7dB');
+        scannerPhase.textContent = 'VERIFY';
+        statusBar.textContent = '状态：最终判定校验';
+      }, 4900);
+
+      later(() => {
+        setProgress(93);
+        addLog('> 性别判定完成，锁定结果');
+      }, 5400);
+
+      later(() => {
+        setProgress(100);
+        addLog(`>> 结论：${person.name} → ${person.gender} <<`, 'final');
+        scannerPhase.textContent = 'DONE';
+        statusBar.textContent = '状态：检测完成';
+      }, 6000);
+
+      // 阶段 5：展示结果 + 弹窗
+      later(() => {
+        // 恢复按钮
+        btn.textContent = originalText;
+        btn.disabled = false;
+        Array.from(buttonGrid.querySelectorAll('.btn')).forEach(b => {
+          b.disabled = false;
+        });
+        busy = false;
+
+        resultBox.textContent = `${person.name} 的性别是：${person.gender}`;
+        statusBar.textContent = '状态：就绪 | 可继续检测其他人物';
+
+        showDialog('检测结果', 
+          `目标人物：${person.name}\n` +
+          `检测性别：${person.gender}\n` +
+          `置信度：99.7%\n` +
+          `—— 量子检测引擎认证`);
+      }, 6600);
+    }
+
+    // 绑定按钮
+    const allBtns = buttonGrid.querySelectorAll('.btn');
+    allBtns.forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        detectPerson(btn);
+      });
+    });
+
+    // 弹窗事件
+    dialogOkBtn.addEventListener('click', closeDialog);
+    dialogOverlay.addEventListener('click', function(e) {
+      if (e.target === dialogOverlay) closeDialog();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (dialogOverlay.classList.contains('active')) {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault();
+          closeDialog();
+        }
+      }
+    });
+
+  })();
+</script>
+</body>
+</html>
