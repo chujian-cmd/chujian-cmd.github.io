@@ -95,8 +95,11 @@
   }
   .custom-cell:hover .cell-delete{ display:flex; }
 
-  .add-cell{ border:1px dashed #d4d4d4; color:#a3a3a3; }
-  .add-cell:hover{ border-color:#171717; color:#171717; background:#fff; }
+  .custom-empty{
+    grid-column:1/-1;font-size:11px;color:#c0c0c0;
+    padding:4px 6px 8px;line-height:1.6;
+  }
+  .custom-empty b{ color:#737373;font-weight:600; }
 
   .morph-settings{ padding:2px 6px 8px; display:flex; flex-direction:column; gap:10px; }
   .morph-row{ display:flex; align-items:center; gap:10px; }
@@ -192,7 +195,7 @@
   .modal.open{ display:flex; }
   .modal-box{
     background:#fff;border-radius:14px;padding:20px;
-    width:100%;max-width:480px;
+    width:100%;max-width:420px;
     box-shadow:0 24px 64px rgba(0,0,0,0.2);
   }
   .modal-title{
@@ -201,8 +204,14 @@
   .modal-sub{
     font-size:11px;color:#a3a3a3;margin-bottom:12px;line-height:1.5;
   }
+  .modal-input{
+    width:100%;height:38px;border:1px solid #ececec;border-radius:10px;
+    padding:0 12px;font-size:13px;color:#171717;outline:none;
+    font-family:inherit;
+  }
+  .modal-input:focus{ border-color:#d4d4d4; }
   .modal-textarea{
-    width:100%;height:180px;resize:vertical;
+    width:100%;height:150px;resize:vertical;
     border:1px solid #ececec;border-radius:10px;
     padding:10px 12px;font-size:12px;
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -210,7 +219,7 @@
     line-height:1.5;
   }
   .modal-textarea:focus{ border-color:#d4d4d4; }
-  .modal-actions{ display:flex;justify-content:flex-end;gap:8px;margin-top:12px; }
+  .modal-actions{ display:flex;justify-content:flex-end;gap:8px;margin-top:14px; }
   .modal-btn{
     height:34px;padding:0 16px;border-radius:9px;
     border:1px solid #ececec;background:#fff;color:#525252;
@@ -229,6 +238,7 @@
     opacity:0;pointer-events:none;transition:all .25s ease;
     z-index:1100;
     box-shadow:0 8px 24px rgba(0,0,0,0.18);
+    max-width:80vw;text-align:center;
   }
   .toast.show{ opacity:1; transform:translate(-50%,0); }
 
@@ -271,7 +281,7 @@
     </svg>
     <span>变形</span>
   </button>
-  <button class="tool-btn save-btn" id="saveTemplateBtn" title="把最近画好的形状存成模板" disabled>
+  <button class="tool-btn save-btn" id="saveTemplateBtn" title="把刚画的形状命名并保存" disabled>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
       <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
       <path d="M17 21v-8H7v8M7 3v5h8"/>
@@ -316,28 +326,25 @@
 
 <div class="hint" id="hint">拖拽画线 · 松开变形<br>滚轮缩放 · 中键/Shift+拖拽平移 · 双指捏合</div>
 
-<!-- 添加自定义 SVG 弹窗 -->
-<div class="modal" id="svgModal">
+<!-- 命名对话框 -->
+<div class="modal" id="nameModal">
   <div class="modal-box">
-    <div class="modal-title">添加自定义形状</div>
-    <div class="modal-sub">粘贴 SVG 源码，或从下方选择文件。会自动提取所有路径、圆、矩形、多边形。</div>
-    <textarea class="modal-textarea" id="svgModalInput" placeholder="&lt;svg viewBox=&quot;0 0 24 24&quot;&gt;&#10;  &lt;path d=&quot;...&quot;/&gt;&#10;&lt;/svg&gt;"></textarea>
-    <input type="file" id="svgFileInput" accept=".svg,image/svg+xml" style="display:none">
+    <div class="modal-title">保存为形状</div>
+    <div class="modal-sub">给它起个名字，以后可以在选择器里直接调用。</div>
+    <input type="text" class="modal-input" id="nameInput" placeholder="形状名称" maxlength="20">
     <div class="modal-actions">
-      <button class="modal-btn" id="svgFileBtn">选择文件…</button>
-      <div style="flex:1"></div>
-      <button class="modal-btn" id="svgModalCancel">取消</button>
-      <button class="modal-btn primary" id="svgModalConfirm">添加</button>
+      <button class="modal-btn" id="nameCancel">取消</button>
+      <button class="modal-btn primary" id="nameConfirm">保存</button>
     </div>
   </div>
 </div>
 
-<!-- 导入模板弹窗 -->
+<!-- 导入对话框 -->
 <div class="modal" id="importModal">
   <div class="modal-box">
-    <div class="modal-title">导入自定义模板</div>
+    <div class="modal-title">导入形状库</div>
     <div class="modal-sub">粘贴之前导出的 JSON 数据。</div>
-    <textarea class="modal-textarea" id="importInput" placeholder='[{"id":"...","name":"...","svg":"..."}]'></textarea>
+    <textarea class="modal-textarea" id="importInput" placeholder='[{"name":"...","subPaths":[...]}]'></textarea>
     <div class="modal-actions">
       <button class="modal-btn" id="importCancel">取消</button>
       <button class="modal-btn primary" id="importConfirm">导入</button>
@@ -512,13 +519,62 @@ const SVG_DATA = {
 };
 
 /* ============================================================
-   SVG → 子路径（支持 transform / 相对命令 / 自适应采样）
+   SVG → 子路径（手动解析 transform，不依赖 getScreenCTM）
    ============================================================ */
+function mulMat(m1, m2) {
+  return {
+    a: m1.a * m2.a + m1.c * m2.b,
+    b: m1.b * m2.a + m1.d * m2.b,
+    c: m1.a * m2.c + m1.c * m2.d,
+    d: m1.b * m2.c + m1.d * m2.d,
+    e: m1.a * m2.e + m1.c * m2.f + m1.e,
+    f: m1.b * m2.e + m1.d * m2.f + m1.f
+  };
+}
+
 function applyMatrix(m, p) {
   return {
     x: m.a * p.x + m.c * p.y + m.e,
     y: m.b * p.x + m.d * p.y + m.f
   };
+}
+
+function parseTransformAttr(str) {
+  if (!str) return null;
+  const re = /(matrix|translate|scale|rotate|skewX|skewY)\s*\(([^)]*)\)/gi;
+  let result = null;
+  let match;
+  while ((match = re.exec(str)) !== null) {
+    const fn = match[1].toLowerCase();
+    const nums = match[2].trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+    let m = null;
+    if (fn === 'matrix' && nums.length >= 6) {
+      m = { a: nums[0], b: nums[1], c: nums[2], d: nums[3], e: nums[4], f: nums[5] };
+    } else if (fn === 'translate') {
+      m = { a: 1, b: 0, c: 0, d: 1, e: nums[0] || 0, f: nums.length > 1 ? nums[1] : 0 };
+    } else if (fn === 'scale') {
+      const sx = nums.length >= 1 ? nums[0] : 1;
+      const sy = nums.length >= 2 ? nums[1] : sx;
+      m = { a: sx, b: 0, c: 0, d: sy, e: 0, f: 0 };
+    } else if (fn === 'rotate') {
+      const deg = nums[0] || 0;
+      const rad = deg * Math.PI / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      m = { a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 };
+      if (nums.length >= 3) {
+        const cx = nums[1], cy = nums[2];
+        const t1 = { a: 1, b: 0, c: 0, d: 1, e: cx, f: cy };
+        const t2 = { a: 1, b: 0, c: 0, d: 1, e: -cx, f: -cy };
+        m = mulMat(mulMat(t1, m), t2);
+      }
+    } else if (fn === 'skewx') {
+      m = { a: 1, b: 0, c: Math.tan((nums[0] || 0) * Math.PI / 180), d: 1, e: 0, f: 0 };
+    } else if (fn === 'skewy') {
+      m = { a: 1, b: Math.tan((nums[0] || 0) * Math.PI / 180), c: 0, d: 1, e: 0, f: 0 };
+    }
+    if (m) result = result ? mulMat(result, m) : m;
+  }
+  return result;
 }
 
 function splitSubPaths(d) {
@@ -536,8 +592,7 @@ function splitSubPaths(d) {
   return result;
 }
 
-/* 采样单个 SVG 图形元素，返回 [{points, closed}] */
-function sampleShapeElement(el, rel, measureSvg) {
+function sampleShapeElement(el, matrix, measureSvg) {
   const tag = el.tagName;
   const results = [];
   const RAW = 100;
@@ -558,9 +613,7 @@ function sampleShapeElement(el, rel, measureSvg) {
       measureSvg.appendChild(pathEl);
 
       let len = 0;
-      try {
-        len = pathEl.getTotalLength();
-      } catch (e) { len = 0; }
+      try { len = pathEl.getTotalLength(); } catch (e) { len = 0; }
       if (!isFinite(len) || len === 0) {
         measureSvg.removeChild(pathEl);
         continue;
@@ -570,14 +623,10 @@ function sampleShapeElement(el, rel, measureSvg) {
       const localPts = [];
       for (let i = 0; i < n; i++) {
         let p;
-        try {
-          p = pathEl.getPointAtLength((i / (n - 1)) * len);
-        } catch (e) { continue; }
+        try { p = pathEl.getPointAtLength((i / (n - 1)) * len); }
+        catch (e) { continue; }
         let pt = { x: p.x, y: p.y };
-        if (isRelStart) {
-          pt.x += lastEndX;
-          pt.y += lastEndY;
-        }
+        if (isRelStart) { pt.x += lastEndX; pt.y += lastEndY; }
         localPts.push(pt);
       }
       measureSvg.removeChild(pathEl);
@@ -587,11 +636,10 @@ function sampleShapeElement(el, rel, measureSvg) {
       lastEndX = lastPt.x;
       lastEndY = lastPt.y;
 
-      const pts = localPts.map(p => applyMatrix(rel, p));
+      const pts = localPts.map(p => applyMatrix(matrix, p));
       const closed = /[Zz]/.test(subD);
       results.push({ points: pts, closed });
 
-      // 如果闭合，起点即终点，供下一个相对 m 使用
       if (closed) {
         const firstPt = localPts[0];
         lastEndX = firstPt.x;
@@ -603,28 +651,22 @@ function sampleShapeElement(el, rel, measureSvg) {
     const cy = parseFloat(el.getAttribute('cy') || 0);
     const r = parseFloat(el.getAttribute('r') || 0);
     const pts = [];
-    for (let i = 0; i < RAW; i++) {
+    for (let i = 0; i <= RAW; i++) {
       const a = (i / RAW) * Math.PI * 2;
-      pts.push(applyMatrix(rel, { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }));
+      pts.push(applyMatrix(matrix, { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }));
     }
-    if (pts.length) {
-      pts.push({ ...pts[0] });
-      results.push({ points: pts, closed: true });
-    }
+    results.push({ points: pts, closed: true });
   } else if (tag === 'ellipse') {
     const cx = parseFloat(el.getAttribute('cx') || 0);
     const cy = parseFloat(el.getAttribute('cy') || 0);
     const rx = parseFloat(el.getAttribute('rx') || 0);
     const ry = parseFloat(el.getAttribute('ry') || 0);
     const pts = [];
-    for (let i = 0; i < RAW; i++) {
+    for (let i = 0; i <= RAW; i++) {
       const a = (i / RAW) * Math.PI * 2;
-      pts.push(applyMatrix(rel, { x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry }));
+      pts.push(applyMatrix(matrix, { x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry }));
     }
-    if (pts.length) {
-      pts.push({ ...pts[0] });
-      results.push({ points: pts, closed: true });
-    }
+    results.push({ points: pts, closed: true });
   } else if (tag === 'rect') {
     const x = parseFloat(el.getAttribute('x') || 0);
     const y = parseFloat(el.getAttribute('y') || 0);
@@ -633,34 +675,30 @@ function sampleShapeElement(el, rel, measureSvg) {
     const rx0 = parseFloat(el.getAttribute('rx') || 0);
     const ry0 = parseFloat(el.getAttribute('ry') || rx0);
 
-    let corners;
+    let pts;
     if (rx0 > 0 || ry0 > 0) {
       const rx = Math.min(rx0 || ry0, w / 2);
       const ry = Math.min(ry0 || rx0, h / 2);
-      const pts = [];
-      // 顺时针：从右上角圆弧开始，依次是右下、左下、左上
-      const arcPts = (cx, cy, a0, a1, steps) => {
+      pts = [];
+      const arc = (cx, cy, a0, a1, steps) => {
         for (let i = 0; i <= steps; i++) {
           const a = a0 + (a1 - a0) * (i / steps);
           pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
         }
       };
-      // 采样点顺序：上边 → 右上圆角 → 右边 → 右下 → 下边 → 左下 → 左边 → 左上
-      arcPts(x + w - rx, y + ry,     -Math.PI / 2, 0,          6);
-      arcPts(x + w - rx, y + h - ry,  0,            Math.PI / 2, 6);
-      arcPts(x + rx,     y + h - ry,  Math.PI / 2,  Math.PI,     6);
-      arcPts(x + rx,     y + ry,      Math.PI,      3 * Math.PI / 2, 6);
-      corners = pts;
-      const transformed = corners.map(p => applyMatrix(rel, p));
-      transformed.push({ ...transformed[0] });
-      results.push({ points: transformed, closed: true });
+      arc(x + w - rx, y + ry,     -Math.PI / 2, 0,             8);
+      arc(x + w - rx, y + h - ry,  0,            Math.PI / 2,   8);
+      arc(x + rx,     y + h - ry,  Math.PI / 2,  Math.PI,       8);
+      arc(x + rx,     y + ry,      Math.PI,      3 * Math.PI/2, 8);
+      pts = pts.map(p => applyMatrix(matrix, p));
+      pts.push({ ...pts[0] });
     } else {
-      corners = [
-        { x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }
-      ];
       const per = 2 * (w + h);
       if (per === 0) return results;
-      const pts = [];
+      const corners = [
+        { x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }
+      ];
+      pts = [];
       for (let i = 0; i < RAW; i++) {
         const d = (i / RAW) * per;
         let acc = 0;
@@ -669,17 +707,15 @@ function sampleShapeElement(el, rel, measureSvg) {
           const segLen = Math.hypot(b.x - a.x, b.y - a.y);
           if (acc + segLen >= d) {
             const t = segLen === 0 ? 0 : (d - acc) / segLen;
-            pts.push(applyMatrix(rel, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
+            pts.push(applyMatrix(matrix, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
             break;
           }
           acc += segLen;
         }
       }
-      if (pts.length) {
-        pts.push({ ...pts[0] });
-        results.push({ points: pts, closed: true });
-      }
+      pts.push({ ...pts[0] });
     }
+    results.push({ points: pts, closed: true });
   } else if (tag === 'line') {
     const x1 = parseFloat(el.getAttribute('x1') || 0);
     const y1 = parseFloat(el.getAttribute('y1') || 0);
@@ -688,7 +724,7 @@ function sampleShapeElement(el, rel, measureSvg) {
     const pts = [];
     for (let i = 0; i < RAW; i++) {
       const t = i / (RAW - 1);
-      pts.push(applyMatrix(rel, { x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t }));
+      pts.push(applyMatrix(matrix, { x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t }));
     }
     results.push({ points: pts, closed: false });
   } else if (tag === 'polyline' || tag === 'polygon') {
@@ -696,9 +732,7 @@ function sampleShapeElement(el, rel, measureSvg) {
     if (!raw) return results;
     const nums = raw.split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
     const verts = [];
-    for (let i = 0; i + 1 < nums.length; i += 2) {
-      verts.push({ x: nums[i], y: nums[i + 1] });
-    }
+    for (let i = 0; i + 1 < nums.length; i += 2) verts.push({ x: nums[i], y: nums[i + 1] });
     if (verts.length < 2) return results;
     const isClosed = tag === 'polygon';
     const vlist = isClosed ? verts.concat([verts[0]]) : verts;
@@ -713,7 +747,7 @@ function sampleShapeElement(el, rel, measureSvg) {
         const segLen = Math.hypot(b.x - a.x, b.y - a.y);
         if (acc + segLen >= d) {
           const t = segLen === 0 ? 0 : (d - acc) / segLen;
-          pts.push(applyMatrix(rel, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
+          pts.push(applyMatrix(matrix, { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
           break;
         }
         acc += segLen;
@@ -733,84 +767,68 @@ function svgToSubPaths(svgStr) {
   const svg = doc.querySelector('svg');
   if (!svg) return null;
 
-  // 基本清理
-  svg.querySelectorAll('script, foreignObject').forEach(el => el.remove());
-
-  const container = document.createElement('div');
-  container.style.cssText = 'position:absolute;top:0;left:0;width:200px;height:200px;overflow:hidden;opacity:0;pointer-events:none;z-index:-1;';
-  document.body.appendChild(container);
-
   const measureSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   measureSvg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;');
   document.body.appendChild(measureSvg);
 
-  let result = null;
+  const subPaths = [];
+  const IDENT = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 
-  try {
-    let imported;
-    try {
-      imported = document.importNode(svg, true);
-    } catch (e) {
-      return null;
+  function walk(node, parentMatrix) {
+    if (!node || node.nodeType !== 1) return;
+    const tag = (node.tagName || node.nodeName || '').toLowerCase();
+    if (tag === 'script' || tag === 'foreignobject' || tag === 'defs' || tag === 'symbol') return;
+
+    let matrix = parentMatrix;
+    const tAttr = node.getAttribute ? node.getAttribute('transform') : null;
+    if (tAttr) {
+      const t = parseTransformAttr(tAttr);
+      if (t) matrix = mulMat(matrix, t);
     }
-    container.appendChild(imported);
 
-    if (!imported.getAttribute('viewBox')) {
-      const w = parseFloat(imported.getAttribute('width')) || 100;
-      const h = parseFloat(imported.getAttribute('height')) || 100;
-      imported.setAttribute('viewBox', `0 0 ${w} ${h}`);
-    }
-    imported.setAttribute('width', '200');
-    imported.setAttribute('height', '200');
-
-    const rootCTM = imported.getScreenCTM();
-    if (!rootCTM) return null;
-    const rootInv = rootCTM.inverse();
-
-    const shapeEls = imported.querySelectorAll('path, circle, rect, line, polyline, polygon, ellipse');
-    const subPaths = [];
-
-    shapeEls.forEach(el => {
-      let elCTM;
-      try { elCTM = el.getScreenCTM(); } catch (e) { return; }
-      if (!elCTM) return;
-      const rel = rootInv.multiply(elCTM);
-      const parts = sampleShapeElement(el, rel, measureSvg);
+    if (tag === 'path' || tag === 'circle' || tag === 'ellipse' ||
+        tag === 'rect' || tag === 'line' || tag === 'polyline' || tag === 'polygon') {
+      const parts = sampleShapeElement(node, matrix, measureSvg);
       for (const p of parts) subPaths.push(p);
-    });
-
-    if (subPaths.length === 0) return null;
-
-    // 归一化：中心在原点，最长边为 1
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const sp of subPaths) {
-      for (const p of sp.points) {
-        if (p.x < minX) minX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y > maxY) maxY = p.y;
-      }
+    } else {
+      const children = node.childNodes;
+      for (let i = 0; i < children.length; i++) walk(children[i], matrix);
     }
-    if (!isFinite(minX)) return null;
-
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const size = Math.max(maxX - minX, maxY - minY, 0.001);
-
-    for (const sp of subPaths) {
-      sp.points = sp.points.map(p => ({
-        x: (p.x - cx) / size,
-        y: (p.y - cy) / size
-      }));
-    }
-
-    result = subPaths;
-  } finally {
-    document.body.removeChild(measureSvg);
-    document.body.removeChild(container);
   }
 
-  return result;
+  try {
+    walk(svg, IDENT);
+  } catch (e) {
+    document.body.removeChild(measureSvg);
+    return null;
+  }
+  document.body.removeChild(measureSvg);
+
+  if (subPaths.length === 0) return null;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sp of subPaths) {
+    for (const p of sp.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (!isFinite(minX)) return null;
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const size = Math.max(maxX - minX, maxY - minY, 0.001);
+
+  for (const sp of subPaths) {
+    sp.points = sp.points.map(p => ({
+      x: (p.x - cx) / size,
+      y: (p.y - cy) / size
+    }));
+  }
+
+  return subPaths;
 }
 
 const STAR_TEMPLATE = [{
@@ -828,6 +846,9 @@ const STAR_TEMPLATE = [{
   ],
   closed: true
 }];
+
+/* 内置模板缓存（避免每次都跑解析） */
+const builtinCache = new Map();
 
 /* ============================================================
    画布与状态
@@ -848,9 +869,8 @@ let currentTemplate = STAR_TEMPLATE;
 let currentTemplateName = '星形';
 let currentTemplateId = null;
 
-// 变形参数
 let morphScale = 1.0;
-let morphRotation = 0; // 度
+let morphRotation = 0;
 
 let morphMode = 'immediate';
 let history = [];
@@ -863,9 +883,8 @@ let rafId = null;
 let needsRender = false;
 let hintHidden = false;
 
-/* 自定义模板 */
-let customTemplates = [];           // [{id, name, svg} | {id, name, subPaths}]
-const customCache = new Map();      // id -> subPaths
+let customTemplates = [];        // [{id, name, subPaths}]
+const customCache = new Map();
 const STORAGE_KEY = 'line-shape-infinite:templates:v1';
 
 /* ============================================================
@@ -1008,7 +1027,6 @@ function bboxIntersects(bbox, rect, margin) {
            bbox.maxY < rect.minY - margin || bbox.minY > rect.maxY + margin);
 }
 
-/* 根据子路径的总长度决定采样点数 */
 function sampleCountFor(subPaths) {
   let len = 0;
   for (const sp of subPaths) {
@@ -1018,6 +1036,27 @@ function sampleCountFor(subPaths) {
     }
   }
   return Math.max(40, Math.min(220, Math.round(len * 25)));
+}
+
+/* 归一化子路径到 [-0.5,0.5] 范围，最长边为 1 */
+function normalizeSubPaths(subPaths) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sp of subPaths) {
+    for (const p of sp.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (!isFinite(minX)) return subPaths;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const size = Math.max(maxX - minX, maxY - minY, 0.001);
+  return subPaths.map(sp => ({
+    points: sp.points.map(p => ({ x: (p.x - cx) / size, y: (p.y - cy) / size })),
+    closed: sp.closed
+  }));
 }
 
 /* ============================================================
@@ -1070,9 +1109,7 @@ function composite() {
     }
   }
 
-  for (const m of morphs) {
-    drawMorph(ctx, m);
-  }
+  for (const m of morphs) drawMorph(ctx, m);
 
   for (const item of pendingLines) {
     if (bboxIntersects(item.bbox, visible, item.width + 20)) {
@@ -1209,10 +1246,7 @@ function startMorph(linePoints) {
     points: t.points.map(p => {
       const rx = p.x * cosR - p.y * sinR;
       const ry = p.x * sinR + p.y * cosR;
-      return {
-        x: cx + rx * scale,
-        y: cy + ry * scale
-      };
+      return { x: cx + rx * scale, y: cy + ry * scale };
     }),
     closed: t.closed
   }));
@@ -1356,10 +1390,8 @@ canvas.addEventListener('mousedown', (e) => {
     e.preventDefault();
     mousePanning = true;
     panStart = {
-      screenX: e.clientX,
-      screenY: e.clientY,
-      offsetX: view.offsetX,
-      offsetY: view.offsetY
+      screenX: e.clientX, screenY: e.clientY,
+      offsetX: view.offsetX, offsetY: view.offsetY
     };
     document.body.classList.add('panning');
     return;
@@ -1411,13 +1443,11 @@ function touchCenterScreen(t1, t2, rect) {
 
 canvas.addEventListener('touchstart', (e) => {
   const rect = canvas.getBoundingClientRect();
-
   if (e.touches.length === 1 && touchMode === null) {
     touchMode = 'draw';
     down(e);
     return;
   }
-
   if (e.touches.length === 2) {
     e.preventDefault();
     if (drawing) {
@@ -1434,13 +1464,11 @@ canvas.addEventListener('touchstart', (e) => {
       startScale: view.scale,
       startOffsetX: view.offsetX,
       startOffsetY: view.offsetY,
-      centerX: center.x,
-      centerY: center.y
+      centerX: center.x, centerY: center.y
     };
     const w = screenToWorld(center.x, center.y);
     pinchState.worldCenterX = w.x;
     pinchState.worldCenterY = w.y;
-    return;
   }
 }, { passive: false });
 
@@ -1463,9 +1491,7 @@ canvas.addEventListener('touchmove', (e) => {
     updateZoomLabel();
     return;
   }
-  if (touchMode === 'draw' && e.touches.length === 1) {
-    move(e);
-  }
+  if (touchMode === 'draw' && e.touches.length === 1) move(e);
 }, { passive: false });
 
 canvas.addEventListener('touchend', (e) => {
@@ -1544,7 +1570,7 @@ function showToast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 1600);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
 }
 
 /* ============================================================
@@ -1577,7 +1603,6 @@ function renderThumbnail(subPaths, size) {
     if (sp.closed) g.closePath();
     g.stroke();
   }
-
   return c;
 }
 
@@ -1590,7 +1615,7 @@ function loadCustomTemplates() {
     if (!raw) return;
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return;
-    customTemplates = arr.filter(t => t && t.id && t.name && (t.svg || t.subPaths));
+    customTemplates = arr.filter(t => t && t.id && t.name && Array.isArray(t.subPaths));
   } catch (e) {
     console.warn('加载自定义模板失败', e);
   }
@@ -1598,28 +1623,20 @@ function loadCustomTemplates() {
 
 function saveCustomTemplates() {
   try {
-    const data = customTemplates.map(t => {
-      if (t.svg) return { id: t.id, name: t.name, svg: t.svg };
-      if (t.subPaths) return { id: t.id, name: t.name, subPaths: t.subPaths };
-      return null;
-    }).filter(Boolean);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(customTemplates));
   } catch (e) {
-    console.warn('保存自定义模板失败（可能超出配额）', e);
+    console.warn('保存失败', e);
     showToast('保存失败：存储空间不足');
   }
 }
 
 function getSubPathsFor(entry) {
   if (customCache.has(entry.id)) return customCache.get(entry.id);
-  let sp = null;
-  if (entry.svg) {
-    sp = svgToSubPaths(entry.svg);
-  } else if (entry.subPaths) {
-    sp = entry.subPaths;
+  if (Array.isArray(entry.subPaths)) {
+    customCache.set(entry.id, entry.subPaths);
+    return entry.subPaths;
   }
-  if (sp) customCache.set(entry.id, sp);
-  return sp;
+  return null;
 }
 
 function newId() {
@@ -1629,32 +1646,12 @@ function newId() {
 /* ============================================================
    自定义模板：增删
    ============================================================ */
-function addCustomFromSvg(svgStr, silent) {
-  svgStr = (svgStr || '').trim();
-  if (!svgStr) return false;
-  const subPaths = svgToSubPaths(svgStr);
-  if (!subPaths || subPaths.length === 0) {
-    if (!silent) showToast('无法解析这个 SVG');
-    return false;
-  }
-  const entry = {
-    id: newId(),
-    name: `自定义 ${customTemplates.length + 1}`,
-    svg: svgStr
-  };
-  customTemplates.push(entry);
-  customCache.set(entry.id, subPaths);
-  saveCustomTemplates();
-  rebuildCustomGrid();
-  if (!silent) showToast('已添加');
-  return true;
-}
-
 function removeCustomTemplate(id) {
   customTemplates = customTemplates.filter(t => t.id !== id);
   customCache.delete(id);
   saveCustomTemplates();
   rebuildCustomGrid();
+
   if (currentTemplateId === id) {
     currentTemplate = STAR_TEMPLATE;
     currentTemplateName = '星形';
@@ -1664,36 +1661,93 @@ function removeCustomTemplate(id) {
   updateActiveCell();
 }
 
-function saveCurrentShapeAsTemplate() {
-  if (history.length === 0) {
-    showToast('还没有画好的形状');
-    return;
-  }
+/* 保存待处理线条（批量模式下用户画的原始线条） */
+function savePendingAsTemplate(name) {
+  const subPaths = pendingLines.map(item => ({
+    points: resample(item.points, 160),
+    closed: false
+  }));
+  return normalizeSubPaths(subPaths);
+}
+
+/* 保存最近完成的形状 */
+function saveLastHistoryAsTemplate() {
   const last = history[history.length - 1];
-  const simplified = last.subPaths.map(sp => ({
-    points: sp.closed ? resampleClosed(sp.points, 120) : resample(sp.points, 120),
+  const subPaths = last.subPaths.map(sp => ({
+    points: sp.closed ? resampleClosed(sp.points, 160) : resample(sp.points, 160),
     closed: sp.closed
   }));
+  return normalizeSubPaths(subPaths);
+}
 
-  const entry = {
-    id: newId(),
-    name: `形状 ${customTemplates.length + 1}`,
-    subPaths: simplified
-  };
+/* ============================================================
+   命名对话框
+   ============================================================ */
+let pendingSaveSource = null;  // 'pending' | 'history'
+
+const nameModal = document.getElementById('nameModal');
+const nameInput = document.getElementById('nameInput');
+
+function openNameModal(source) {
+  pendingSaveSource = source;
+  nameInput.value = '';
+  nameModal.classList.add('open');
+  setTimeout(() => nameInput.focus(), 50);
+}
+
+function closeNameModal() {
+  nameModal.classList.remove('open');
+  pendingSaveSource = null;
+}
+
+function confirmSaveShape() {
+  const name = (nameInput.value || '').trim() || `形状 ${customTemplates.length + 1}`;
+
+  let subPaths;
+  if (pendingSaveSource === 'pending') {
+    subPaths = savePendingAsTemplate(name);
+  } else if (pendingSaveSource === 'history') {
+    subPaths = saveLastHistoryAsTemplate();
+  } else {
+    closeNameModal();
+    return;
+  }
+
+  if (!subPaths || subPaths.length === 0) {
+    closeNameModal();
+    return;
+  }
+
+  const entry = { id: newId(), name, subPaths };
   customTemplates.push(entry);
-  customCache.set(entry.id, simplified);
+  customCache.set(entry.id, subPaths);
   saveCustomTemplates();
   rebuildCustomGrid();
 
-  // 顺便切换为这个形状
-  currentTemplate = simplified;
-  currentTemplateName = entry.name;
+  // 立刻切换为这个形状
+  currentTemplate = subPaths;
+  currentTemplateName = name;
   currentTemplateId = entry.id;
-  pickerLabel.textContent = entry.name;
+  pickerLabel.textContent = name;
   updateActiveCell();
 
-  showToast('已存为模板');
+  // 清空待处理线条
+  if (pendingSaveSource === 'pending') {
+    pendingLines = [];
+  }
+
+  closeNameModal();
+  composite();
+  updateToolbar();
+  showToast(`已保存「${name}」`);
 }
+
+document.getElementById('nameCancel').addEventListener('click', closeNameModal);
+document.getElementById('nameConfirm').addEventListener('click', confirmSaveShape);
+nameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); confirmSaveShape(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeNameModal(); }
+});
 
 /* ============================================================
    选择器
@@ -1703,7 +1757,6 @@ const pickerPanel = document.getElementById('pickerPanel');
 const pickerLabel = document.getElementById('pickerLabel');
 
 let customGridEl = null;
-let customEmptyHintEl = null;
 
 function buildPicker() {
   pickerPanel.innerHTML = '';
@@ -1714,12 +1767,6 @@ function buildPicker() {
   customLabel.innerHTML = `<span>自定义</span>`;
   const actions = document.createElement('div');
   actions.className = 'cat-actions';
-
-  const addBtn = document.createElement('button');
-  addBtn.className = 'cat-action-btn';
-  addBtn.textContent = '+ 添加';
-  addBtn.addEventListener('click', openSvgModal);
-  actions.appendChild(addBtn);
 
   const exportBtn = document.createElement('button');
   exportBtn.className = 'cat-action-btn';
@@ -1782,8 +1829,16 @@ function buildPicker() {
       cell.dataset.idx = idx;
       cell.title = `${cat} #${idx + 1}`;
       cell.addEventListener('click', () => {
-        const subPaths = svgToSubPaths(svgStr);
-        if (!subPaths || subPaths.length === 0) return;
+        const cacheKey = `${cat}:${idx}`;
+        let subPaths = builtinCache.get(cacheKey);
+        if (!subPaths) {
+          subPaths = svgToSubPaths(svgStr);
+          if (!subPaths || subPaths.length === 0) {
+            showToast('这个形状暂时用不了');
+            return;
+          }
+          builtinCache.set(cacheKey, subPaths);
+        }
         currentTemplate = subPaths;
         currentTemplateName = `${cat} #${idx + 1}`;
         currentTemplateId = null;
@@ -1806,15 +1861,12 @@ function buildPicker() {
   const settings = document.createElement('div');
   settings.className = 'morph-settings';
 
-  // 大小
   const sizeRow = document.createElement('div');
   sizeRow.className = 'morph-row';
   sizeRow.innerHTML = `<span class="morph-row-label">大小</span>`;
   const sizeSlider = document.createElement('input');
   sizeSlider.type = 'range';
-  sizeSlider.min = '0.3';
-  sizeSlider.max = '2.5';
-  sizeSlider.step = '0.05';
+  sizeSlider.min = '0.3'; sizeSlider.max = '2.5'; sizeSlider.step = '0.05';
   sizeSlider.value = String(morphScale);
   const sizeVal = document.createElement('span');
   sizeVal.className = 'morph-row-value';
@@ -1827,15 +1879,12 @@ function buildPicker() {
   sizeRow.appendChild(sizeVal);
   settings.appendChild(sizeRow);
 
-  // 旋转
   const rotRow = document.createElement('div');
   rotRow.className = 'morph-row';
   rotRow.innerHTML = `<span class="morph-row-label">旋转</span>`;
   const rotSlider = document.createElement('input');
   rotSlider.type = 'range';
-  rotSlider.min = '-180';
-  rotSlider.max = '180';
-  rotSlider.step = '5';
+  rotSlider.min = '-180'; rotSlider.max = '180'; rotSlider.step = '5';
   rotSlider.value = String(morphRotation);
   const rotVal = document.createElement('span');
   rotVal.className = 'morph-row-value';
@@ -1859,8 +1908,8 @@ function rebuildCustomGrid() {
 
   if (customTemplates.length === 0) {
     const hint = document.createElement('div');
-    hint.style.cssText = 'grid-column:1/-1;font-size:11px;color:#c0c0c0;padding:4px 6px 8px;line-height:1.5;';
-    hint.textContent = '还没有自定义形状。点「+ 添加」粘贴 SVG，或画完一笔后点上方「存形状」。';
+    hint.className = 'custom-empty';
+    hint.innerHTML = '还没有自定义形状。<br>先在 <b>批量模式</b> 画一个，然后点上方 <b>「存形状」</b>。';
     customGridEl.appendChild(hint);
   }
 
@@ -1872,10 +1921,7 @@ function rebuildCustomGrid() {
 
     const subPaths = getSubPathsFor(entry);
     if (subPaths) {
-      const thumb = renderThumbnail(subPaths, 22);
-      cell.appendChild(thumb);
-    } else {
-      cell.innerHTML = L('<path d="M12 3l9 18H3z"/>');
+      cell.appendChild(renderThumbnail(subPaths, 22));
     }
 
     const del = document.createElement('button');
@@ -1902,14 +1948,6 @@ function rebuildCustomGrid() {
     customGridEl.appendChild(cell);
   }
 
-  // 添加格
-  const addCell = document.createElement('div');
-  addCell.className = 'icon-cell add-cell';
-  addCell.innerHTML = L('<path d="M12 5v14M5 12h14"/>');
-  addCell.title = '添加自定义形状';
-  addCell.addEventListener('click', openSvgModal);
-  customGridEl.appendChild(addCell);
-
   updateActiveCell();
 }
 
@@ -1920,7 +1958,10 @@ function updateActiveCell() {
     } else if (cell.dataset.builtin === 'star') {
       cell.classList.toggle('active', currentTemplateId === null && currentTemplateName === '星形');
     } else if (cell.dataset.cat !== undefined) {
-      cell.classList.toggle('active', currentTemplateId === null && currentTemplateName === `${cell.dataset.cat} #${parseInt(cell.dataset.idx, 10) + 1}`);
+      cell.classList.toggle('active',
+        currentTemplateId === null &&
+        currentTemplateName === `${cell.dataset.cat} #${parseInt(cell.dataset.idx, 10) + 1}`
+      );
     }
   });
 }
@@ -1943,12 +1984,8 @@ document.addEventListener('click', (e) => {
 /* ============================================================
    模态框
    ============================================================ */
-function openModal(id) {
-  document.getElementById(id).classList.add('open');
-}
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
-}
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 document.querySelectorAll('.modal').forEach(m => {
   m.addEventListener('click', (e) => {
@@ -1963,89 +2000,24 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-/* --- SVG 添加 --- */
-function openSvgModal() {
-  closePicker();
-  document.getElementById('svgModalInput').value = '';
-  openModal('svgModal');
-  setTimeout(() => document.getElementById('svgModalInput').focus(), 50);
-}
-
-document.getElementById('svgModalCancel').addEventListener('click', () => closeModal('svgModal'));
-
-document.getElementById('svgModalConfirm').addEventListener('click', () => {
-  const val = document.getElementById('svgModalInput').value;
-  if (addCustomFromSvg(val)) {
-    closeModal('svgModal');
-  }
-});
-
-document.getElementById('svgFileBtn').addEventListener('click', () => {
-  document.getElementById('svgFileInput').click();
-});
-
-document.getElementById('svgFileInput').addEventListener('change', (e) => {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    document.getElementById('svgModalInput').value = reader.result;
-  };
-  reader.readAsText(file);
-  e.target.value = '';
-});
-
-/* 拖拽 SVG 文件到面板 */
-pickerPanel.addEventListener('dragover', (e) => {
-  e.preventDefault();
-});
-pickerPanel.addEventListener('drop', (e) => {
-  e.preventDefault();
-  const file = e.dataTransfer.files && e.dataTransfer.files[0];
-  if (!file) return;
-  if (!/\.svg$/i.test(file.name) && file.type !== 'image/svg+xml') {
-    showToast('请拖入 .svg 文件');
-    return;
-  }
-  const reader = new FileReader();
-  reader.onload = () => {
-    addCustomFromSvg(reader.result);
-  };
-  reader.readAsText(file);
-});
-
-/* --- 导入 --- */
+/* ---- 导入 ---- */
 document.getElementById('importCancel').addEventListener('click', () => closeModal('importModal'));
 
 document.getElementById('importConfirm').addEventListener('click', () => {
   const raw = document.getElementById('importInput').value.trim();
   if (!raw) return;
   let arr;
-  try {
-    arr = JSON.parse(raw);
-  } catch (e) {
-    showToast('JSON 格式错误');
-    return;
-  }
-  if (!Array.isArray(arr)) {
-    showToast('数据格式不对');
-    return;
-  }
+  try { arr = JSON.parse(raw); }
+  catch (e) { showToast('JSON 格式错误'); return; }
+  if (!Array.isArray(arr)) { showToast('数据格式不对'); return; }
+
   let count = 0;
   for (const item of arr) {
-    if (!item || !item.name) continue;
-    if (item.svg) {
-      if (addCustomFromSvg(item.svg, true)) count++;
-    } else if (item.subPaths) {
-      const entry = {
-        id: newId(),
-        name: item.name,
-        subPaths: item.subPaths
-      };
-      customTemplates.push(entry);
-      customCache.set(entry.id, item.subPaths);
-      count++;
-    }
+    if (!item || !item.name || !Array.isArray(item.subPaths)) continue;
+    const entry = { id: newId(), name: String(item.name), subPaths: item.subPaths };
+    customTemplates.push(entry);
+    customCache.set(entry.id, item.subPaths);
+    count++;
   }
   if (count > 0) {
     saveCustomTemplates();
@@ -2058,18 +2030,13 @@ document.getElementById('importConfirm').addEventListener('click', () => {
   }
 });
 
-/* --- 导出 --- */
+/* ---- 导出 ---- */
 function exportTemplates() {
   if (customTemplates.length === 0) {
     showToast('还没有自定义形状');
     return;
   }
-  const data = customTemplates.map(t => {
-    if (t.svg) return { name: t.name, svg: t.svg };
-    if (t.subPaths) return { name: t.name, subPaths: t.subPaths };
-    return null;
-  }).filter(Boolean);
-
+  const data = customTemplates.map(t => ({ name: t.name, subPaths: t.subPaths }));
   const text = JSON.stringify(data);
 
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2106,7 +2073,7 @@ const saveTemplateBtn = document.getElementById('saveTemplateBtn');
 function updateToolbar() {
   undoBtn.disabled = history.length === 0 && pendingLines.length === 0;
   redoBtn.disabled = redoStack.length === 0;
-  saveTemplateBtn.disabled = history.length === 0;
+  saveTemplateBtn.disabled = history.length === 0 && pendingLines.length === 0;
   if (morphMode === 'batch' && pendingLines.length > 0) {
     morphBtn.style.display = 'flex';
   } else {
@@ -2172,13 +2139,12 @@ modeBtn.addEventListener('click', () => {
   } else {
     if (pendingLines.length > 0) {
       for (const item of pendingLines) {
-        const savedColor = brush.color;
-        const savedWidth = brush.width;
+        const sc = brush.color, sw = brush.width;
         brush.color = item.color;
         brush.width = item.width;
         startMorph(item.points);
-        brush.color = savedColor;
-        brush.width = savedWidth;
+        brush.color = sc;
+        brush.width = sw;
       }
       pendingLines = [];
       composite();
@@ -2193,13 +2159,12 @@ modeBtn.addEventListener('click', () => {
 morphBtn.addEventListener('click', () => {
   if (pendingLines.length === 0) return;
   for (const item of pendingLines) {
-    const savedColor = brush.color;
-    const savedWidth = brush.width;
+    const sc = brush.color, sw = brush.width;
     brush.color = item.color;
     brush.width = item.width;
     startMorph(item.points);
-    brush.color = savedColor;
-    brush.width = savedWidth;
+    brush.color = sc;
+    brush.width = sw;
   }
   pendingLines = [];
   composite();
@@ -2207,7 +2172,15 @@ morphBtn.addEventListener('click', () => {
   updateToolbar();
 });
 
-saveTemplateBtn.addEventListener('click', saveCurrentShapeAsTemplate);
+saveTemplateBtn.addEventListener('click', () => {
+  if (pendingLines.length > 0) {
+    openNameModal('pending');
+  } else if (history.length > 0) {
+    openNameModal('history');
+  } else {
+    showToast('还没有可保存的形状');
+  }
+});
 
 /* ============================================================
    画笔控件
@@ -2216,10 +2189,7 @@ const colorInput = document.getElementById('colorInput');
 const sizeInput = document.getElementById('sizeInput');
 const sizeLabel = document.getElementById('sizeLabel');
 
-colorInput.addEventListener('input', (e) => {
-  brush.color = e.target.value;
-});
-
+colorInput.addEventListener('input', (e) => { brush.color = e.target.value; });
 sizeInput.addEventListener('input', (e) => {
   brush.width = parseFloat(e.target.value);
   sizeLabel.textContent = brush.width;
@@ -2254,7 +2224,6 @@ function resizeCanvas() {
     view.offsetX += (W - oldW) / 2;
     view.offsetY += (H - oldH) / 2;
   }
-
   composite();
   updateZoomLabel();
 }
@@ -2276,19 +2245,18 @@ window.addEventListener('blur', () => {
   }
 });
 
-/* 快捷键：Ctrl+Z 撤销，Ctrl+Shift+Z / Ctrl+Y 重做 */
+/* 快捷键 */
 window.addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+
   const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
   const mod = isMac ? e.metaKey : e.ctrlKey;
   if (!mod) return;
 
   if (e.key === 'z' || e.key === 'Z') {
     e.preventDefault();
-    if (e.shiftKey) {
-      redoBtn.click();
-    } else {
-      undoBtn.click();
-    }
+    if (e.shiftKey) redoBtn.click();
+    else undoBtn.click();
   } else if (e.key === 'y' || e.key === 'Y') {
     e.preventDefault();
     redoBtn.click();

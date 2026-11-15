@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>画线 · 平滑变星形</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1e2b;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, sans-serif;
+        }
+        .card {
+            background: #0e121c;
+            padding: 24px 24px 32px;
+            border-radius: 42px;
+            box-shadow: 0 25px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05);
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 24px;
+            background: #212638;
+            box-shadow: inset 0 5px 12px rgba(0, 0, 0, 0.5), 0 10px 20px rgba(0, 0, 0, 0.4);
+            width: 600px;
+            height: 400px;
+            cursor: pointer;
+        }
+        .info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 18px;
+            padding: 0 8px;
+            color: #b9c7e7;
+            font-size: 0.95rem;
+            letter-spacing: 0.3px;
+        }
+        .status {
+            background: #2c3349;
+            padding: 8px 18px;
+            border-radius: 60px;
+            font-weight: 500;
+            color: #d0e0ff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        button {
+            background: #3f4b6b;
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 6px 0 #1e2332, 0 6px 12px black;
+            font-size: 0.9rem;
+            letter-spacing: 0.3px;
+        }
+        button:hover {
+            background: #55648f;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 0 #1e2332, 0 10px 18px black;
+        }
+        button:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 #1e2332, 0 8px 12px black;
+        }
+        .hint {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #7f8bb3;
+        }
+        .hint span {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #5f7fff;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #5f7fff;
+        }
+    </style>
+</head>
+<body>
+<div class="card">
+    <canvas id="mainCanvas" width="600" height="400"></canvas>
+    <div class="info">
+        <div class="status" id="statusText">✏️ 画一条线</div>
+        <div class="hint">
+            <span></span> 单击画布开始 / 重置
+        </div>
+        <button id="resetBtn">↺ 重绘</button>
+    </div>
+</div>
+
+<script>
+    (function() {
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('statusText');
+
+        // 固定尺寸
+        const CW = 600;
+        const CH = 400;
+
+        // 预设的 SVG 星形路径 (10个顶点 五角星变体，稍微调整使其更像“星形”)
+        // 这是一个圆润的星形，用path描述的贝塞尔曲线来保证平滑
+        // 为了让变形看起来更惊艳，我们使用一个相对复杂的对称星形。
+        // 坐标基于600x400视图框，中心大约 (300,200)，半径约 150
+        const svgStarPath = new Path2D(`
+            M 300 60 
+            L 350 160 
+            L 460 170 
+            L 380 240 
+            L 400 350 
+            L 300 290 
+            L 200 350 
+            L 220 240 
+            L 140 170 
+            L 250 160 
+            Z
+        `);
+        // 注意: 上面的路径是一个简单的10边形星形，但是为了让平滑变形更明显，使用二次/三次贝塞尔？
+        // 实际上Path2D支持直线，但变形过程是插值顶点，直线也能平滑过渡。为了让最终形状更“SVG图形”，
+        // 我们稍微调整顶点使其更优雅——不过保持原样也OK。但我们可以用贝塞尔曲线版本来炫技？不用，简单星形足矣。
+        // 为了让形状更柔和，改用二次贝塞尔？但顶点插值需要顶点数组，所以还是用折线顶点数组。
+        // 所以改为使用顶点数组驱动变形，并且目标顶点数组就是上面星形的10个顶点。
+
+        // 定义目标顶点 (星形路径 10 个点)
+        const targetVertices = [
+            { x: 300, y: 60 },   // 上
+            { x: 350, y: 160 },
+            { x: 460, y: 170 },
+            { x: 380, y: 240 },
+            { x: 400, y: 350 },
+            { x: 300, y: 290 },  // 下
+            { x: 200, y: 350 },
+            { x: 220, y: 240 },
+            { x: 140, y: 170 },
+            { x: 250, y: 160 }
+        ];
+
+        // 状态管理
+        let phase = 'drawing';          // 'drawing' 或 'morphing'
+        let drawnPoints = [];           // 用户画线时记录的点 (有序)
+        let isDrawing = false;          // 鼠标是否按下
+        let animationId = null;         // requestAnimationFrame ID
+
+        // 变形动画参数
+        let startVertices = [];         // 变形开始时的顶点(从绘制的线提取)
+        let endVertices = targetVertices; // 目标顶点
+        let morphProgress = 0;          // 0 → 1
+        const MORPH_SPEED = 0.035;      // 每帧增量，大约30帧完成（约0.5秒60fps）
+
+        // 为了方便，将绘制的点重新采样为与目标顶点数量相同的顶点（10个）
+        // 这样变形时每个顶点一一对应，路径平滑变化。
+        function resamplePointsToLength(points, targetCount) {
+            if (points.length === 0) return [];
+            if (points.length === 1) {
+                // 如果只有一个点，就复制成多个相同点（但一般不会）
+                return Array(targetCount).fill().map(() => ({ ...points[0] }));
+            }
+
+            // 计算总长度 & 分段
+            const totalLength = computeTotalLength(points);
+            if (totalLength === 0) {
+                // 所有点相同，就取第一个点复制
+                return Array(targetCount).fill().map(() => ({ ...points[0] }));
+            }
+
+            const step = totalLength / (targetCount - 1); // 目标点之间的弧长间距
+            const resampled = [];
+            let accumulated = 0;
+            let currentSegmentIndex = 0; // 当前在 points 中的段索引 (points[i] -> points[i+1])
+            let currentSegStart = points[0];
+            let currentSegEnd = points[1] || points[0];
+
+            // 辅助函数：获取从当前段起点到当前段某比例位置的插值点
+            function getPointInSegment(segIdx, t) {
+                const p1 = points[segIdx];
+                const p2 = points[segIdx + 1];
+                return {
+                    x: p1.x + (p2.x - p1.x) * t,
+                    y: p1.y + (p2.y - p1.y) * t
+                };
+            }
+
+            // 第一个点就是起点
+            resampled.push({ x: points[0].x, y: points[0].y });
+
+            // 我们逐步行进
+            let segIdx = 0;
+            let segStart = points[0];
+            let segEnd = points[1];
+            let segLength = segEnd ? Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y) : 0;
+            let segConsumed = 0; // 在当前段上已经走过的长度
+
+            // 目标是在除了起点之外的 targetCount-1 个等距点
+            for (let i = 1; i < targetCount; i++) {
+                const targetDist = i * step;
+                // 从当前段开始累加，直到超过目标距离
+                while (segIdx < points.length - 1) {
+                    if (segConsumed + (segLength - segConsumed) >= targetDist) {
+                        // 目标点就在当前段内
+                        const remainingDist = targetDist - segConsumed;
+                        const t = remainingDist / segLength;
+                        const pt = {
+                            x: segStart.x + (segEnd.x - segStart.x) * t,
+                            y: segStart.y + (segEnd.y - segStart.y) * t
+                        };
+                        resampled.push(pt);
+                        break;
+                    } else {
+                        // 移动到下一段
+                        segConsumed += segLength;
+                        segIdx++;
+                        if (segIdx >= points.length - 1) {
+                            // 已经到最后一个点，剩下的填充最后一个点
+                            resampled.push({ x: points[points.length - 1].x, y: points[points.length - 1].y });
+                            break;
+                        }
+                        segStart = points[segIdx];
+                        segEnd = points[segIdx + 1];
+                        segLength = Math.hypot(segEnd.x - segStart.x, segEnd.y - segStart.y);
+                    }
+                }
+                // 如果已经超出所有线段（segIdx 到了最后），推入最后一个点
+                if (resampled.length <= i) {
+                    // 可能因为浮点误差未推入，直接推入最后一个点
+                    const lastPt = points[points.length - 1];
+                    resampled.push({ x: lastPt.x, y: lastPt.y });
+                }
+            }
+
+            // 确保有 targetCount 个点
+            while (resampled.length < targetCount) {
+                const lastPt = points[points.length - 1];
+                resampled.push({ x: lastPt.x, y: lastPt.y });
+            }
+            // 如果多了就截断 (一般不会)
+            return resampled.slice(0, targetCount);
+        }
+
+        // 计算折线总长度
+        function computeTotalLength(points) {
+            let len = 0;
+            for (let i = 1; i < points.length; i++) {
+                len += Math.hypot(points[i].x - points[i-1].x, points[i].y - points[i-1].y);
+            }
+            return len;
+        }
+
+        // 将顶点数组转为Path2D (直线连接)
+        function verticesToPath(vertices) {
+            const path = new Path2D();
+            if (vertices.length === 0) return path;
+            path.moveTo(vertices[0].x, vertices[0].y);
+            for (let i = 1; i < vertices.length; i++) {
+                path.lineTo(vertices[i].x, vertices[i].y);
+            }
+            path.closePath(); // 闭合路径，让星形更完整
+            return path;
+        }
+
+        // 重绘canvas，根据当前状态
+        function render() {
+            ctx.clearRect(0, 0, CW, CH);
+
+            // 绘制背景微网格 (装饰)
+            ctx.save();
+            ctx.strokeStyle = "#2f3650";
+            ctx.lineWidth = 1;
+            for (let i = 0; i < CW; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(i, 0);
+                ctx.lineTo(i, CH);
+                ctx.strokeStyle = "#2a3146";
+                ctx.stroke();
+            }
+            for (let i = 0; i < CH; i += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, i);
+                ctx.lineTo(CW, i);
+                ctx.strokeStyle = "#2a3146";
+                ctx.stroke();
+            }
+            ctx.restore();
+
+            if (phase === 'drawing') {
+                // 绘制用户当前画出的线 (如果不为空)
+                if (drawnPoints.length > 1) {
+                    ctx.beginPath();
+                    ctx.moveTo(drawnPoints[0].x, drawnPoints[0].y);
+                    for (let i = 1; i < drawnPoints.length; i++) {
+                        ctx.lineTo(drawnPoints[i].x, drawnPoints[i].y);
+                    }
+                    ctx.strokeStyle = '#5f7fff';
+                    ctx.lineWidth = 6;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.shadowColor = '#3f5fcf';
+                    ctx.shadowBlur = 18;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                    // 起点小圆点
+                    ctx.beginPath();
+                    ctx.arc(drawnPoints[0].x, drawnPoints[0].y, 6, 0, Math.PI * 2);
+                    ctx.fillStyle = '#b0c2ff';
+                    ctx.shadowBlur = 16;
+                    ctx.shadowColor = '#6f8fff';
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                } else if (drawnPoints.length === 1) {
+                    // 只画了一个点
+                    ctx.beginPath();
+                    ctx.arc(drawnPoints[0].x, drawnPoints[0].y, 6, 0, Math.PI * 2);
+                    ctx.fillStyle = '#b0c2ff';
+                    ctx.shadowBlur = 16;
+                    ctx.shadowColor = '#6f8fff';
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
+            } else if (phase === 'morphing') {
+                // 变形阶段：根据morphProgress计算当前顶点
+                if (startVertices.length !== endVertices.length) {
+                    console.warn('顶点数量不匹配，重新采样');
+                    // 紧急处理
+                    return;
+                }
+                const currentVerts = startVertices.map((startPt, idx) => {
+                    const endPt = endVertices[idx];
+                    return {
+                        x: startPt.x + (endPt.x - startPt.x) * morphProgress,
+                        y: startPt.y + (endPt.y - startPt.y) * morphProgress
+                    };
+                });
+
+                // 绘制变形中的图形
+                const path = verticesToPath(currentVerts);
+                ctx.save();
+                // 填充一个半透明渐变效果
+                const gradient = ctx.createLinearGradient(200, 100, 400, 300);
+                gradient.addColorStop(0, '#aaccff');
+                gradient.addColorStop(0.5, '#7f9fff');
+                gradient.addColorStop(1, '#5f7fff');
+                ctx.fillStyle = gradient;
+                ctx.shadowColor = '#5f7fff';
+                ctx.shadowBlur = 24;
+                ctx.fill(path);
+                // 描边加强
+                ctx.shadowBlur = 30;
+                ctx.strokeStyle = '#ffffffcc';
+                ctx.lineWidth = 3;
+                ctx.stroke(path);
+                ctx.restore();
+
+                // 绘制顶点小圆点 (可选，增加科技感)
+                ctx.save();
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = '#8ab2ff';
+                currentVerts.forEach(v => {
+                    ctx.beginPath();
+                    ctx.arc(v.x, v.y, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#d0e4ff';
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
+
+            // 绘制提示文字/装饰 (如果没有任何点)
+            if (phase === 'drawing' && drawnPoints.length === 0) {
+                ctx.save();
+                ctx.font = 'bold 22px "Segoe UI", system-ui, sans-serif';
+                ctx.fillStyle = '#4e5b7c';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowColor = '#0a0e18';
+                ctx.shadowBlur = 10;
+                ctx.fillText('点击并拖拽画线', CW/2, CH/2 - 20);
+                ctx.font = '16px system-ui';
+                ctx.fillStyle = '#3e4a6a';
+                ctx.fillText('松开后自动变形', CW/2, CH/2 + 25);
+                ctx.restore();
+            }
+        }
+
+        // 动画循环：更新morph进度并重绘
+        function morphAnimation() {
+            if (phase !== 'morphing') return;
+
+            morphProgress += MORPH_SPEED;
+            if (morphProgress >= 1.0) {
+                morphProgress = 1.0;
+                phase = 'drawing'; // 变形完成，回到drawing，但保留最终图形？为了可继续重置，但drawnPoints需要重置
+                // 变形完成后，我们保留展示最终图形，但用户单击会重置并开始新画
+                // 所以设置drawnPoints为[]，但为了显示最终图形，我们其实已经画完了。
+                // 但canvas的渲染已经根据morphProgress画出来了，再改phase会清除？
+                // 因为render会重新绘制，如果phase='drawing'且drawnPoints为空，会显示提示文字，星形消失。
+                // 所以我们希望变形完成后显示星形，但用户点击后可以重新开始。
+                // 解决办法：让 phase = 'completed' 状态，但是简单起见还是保持 'morphing' 直到用户点击重置
+                // 但用户点击重置会重置状态，所以不冲突。
+                // 这里我们让 phase 变成 'idle' 或 'done'。
+                // 重新设计：增加 'done' 状态，显示最终图形。用户点击则重置进入drawing。
+                // 为了简单：不改变phase，保留 morphing 但 morphProgress 停在1，绘制最终形状。
+                // 但用户点击会重置 phase = 'drawing'，所以可以。
+                // 但morphing状态下如果用户点击会触发重置，没问题。
+                // 我们仍然保持phase = 'morphing'，但是morphProgress=1，动画停止。
+                // 不过在渲染时是用的morphing分支，没问题。
+                // 为了还能继续画，用户点击会重置。
+                // 并且动画循环会停止。
+                // 但我们不希望继续请求帧，所以取消动画ID。
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                statusEl.textContent = '✨ 星形已呈现 · 单击画布重置';
+                // 重绘一次确保最终状态
+                render();
+                return;
+            }
+
+            render();
+            animationId = requestAnimationFrame(morphAnimation);
+        }
+
+        // 重置到绘制状态 (清除所有，准备新线)
+        function resetToDrawing() {
+            // 取消任何进行中的动画
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+
+            phase = 'drawing';
+            drawnPoints = [];
+            isDrawing = false;
+            morphProgress = 0;
+            startVertices = [];
+            statusEl.textContent = '✏️ 画一条线';
+            render();
+        }
+
+        // 开始变形：从当前绘制的线提取起始顶点，启动动画
+        function startMorph() {
+            if (drawnPoints.length < 2) {
+                // 点太少，无法形成线，直接重置
+                resetToDrawing();
+                return;
+            }
+
+            // 对绘制点进行重采样，使其顶点数量与目标相同（10个）
+            const targetCount = targetVertices.length; // 10
+            let sampled = resamplePointsToLength(drawnPoints, targetCount);
+
+            // 确保采样点数量准确
+            if (sampled.length !== targetCount) {
+                // 如果因为某些原因不匹配，补全或截断
+                while (sampled.length < targetCount) {
+                    sampled.push({ ...sampled[sampled.length-1] });
+                }
+                sampled = sampled.slice(0, targetCount);
+            }
+
+            startVertices = sampled;
+            endVertices = targetVertices;
+            morphProgress = 0;
+            phase = 'morphing';
+            statusEl.textContent = '🌀 变形中...';
+
+            // 开始动画
+            if (animationId) cancelAnimationFrame(animationId);
+            animationId = requestAnimationFrame(morphAnimation);
+        }
+
+        // 鼠标事件处理
+        function getCanvasMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;   // canvas物理像素比
+            const scaleY = canvas.height / rect.height;
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            const mouseY = (e.clientY - rect.top) * scaleY;
+            return {
+                x: Math.min(Math.max(mouseX, 0), CW),
+                y: Math.min(Math.max(mouseY, 0), CH)
+            };
+        }
+
+        function onMouseDown(e) {
+            e.preventDefault();
+            // 如果正在变形或者已完成(相位不是drawing)，先重置
+            if (phase !== 'drawing') {
+                resetToDrawing();
+                // 重置后，继续本次按下作为新线的起点
+            }
+            // 开始新的绘制
+            isDrawing = true;
+            const pos = getCanvasMousePos(e);
+            drawnPoints = [pos]; // 新起点
+            statusEl.textContent = '✏️ 绘制中...';
+            render();
+        }
+
+        function onMouseMove(e) {
+            if (!isDrawing || phase !== 'drawing') return;
+            e.preventDefault();
+            const pos = getCanvasMousePos(e);
+            const lastPoint = drawnPoints[drawnPoints.length - 1];
+            // 防止添加太密集的点（距离太近，性能&美观）
+            if (Math.hypot(pos.x - lastPoint.x, pos.y - lastPoint.y) < 3) return;
+            drawnPoints.push(pos);
+            render();
+        }
+
+        function onMouseUp(e) {
+            if (!isDrawing || phase !== 'drawing') return;
+            e.preventDefault();
+            isDrawing = false;
+
+            // 鼠标松开，如果绘制点数 >= 2 则开始变形，否则重置
+            if (drawnPoints.length >= 2) {
+                // 额外优化：如果最后一个点跟倒数第二个点太近，也去掉？无所谓
+                startMorph();
+            } else {
+                // 只有一个点或者没有点，直接重置，不保留一个点
+                resetToDrawing();
+            }
+        }
+
+        // 处理鼠标离开画布时，如果还在绘制，强制结束（视为抬起）
+        function onMouseLeave(e) {
+            if (isDrawing && phase === 'drawing') {
+                isDrawing = false;
+                if (drawnPoints.length >= 2) {
+                    startMorph();
+                } else {
+                    resetToDrawing();
+                }
+            }
+        }
+
+        // 重置按钮
+        document.getElementById('resetBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            resetToDrawing();
+        });
+
+        // 注册事件
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mouseup', onMouseUp);
+        canvas.addEventListener('mouseleave', onMouseLeave);
+
+        // 初始化渲染
+        resetToDrawing();
+
+        // 窗口大小不变，无需resize处理
+    })();
+</script>
+</body>
+</html>
