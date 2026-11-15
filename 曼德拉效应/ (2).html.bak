@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>曼德拉效应 · 终端记忆</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #000000;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', 'Fira Code', 'Consolas', monospace;
+            padding: 16px;
+            color: #ffffff;
+        }
+
+        .terminal {
+            width: 100%;
+            max-width: 900px;
+            background: #000000;
+            border: 1px solid #333333;
+            border-radius: 0;
+            padding: 24px 28px 28px 28px;
+            box-shadow: 0 0 40px rgba(255, 255, 255, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* 顶部终端栏 */
+        .terminal-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a2a2a;
+            padding-bottom: 10px;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+            color: #888888;
+        }
+
+        .terminal-bar .title {
+            color: #ffffff;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+        }
+
+        .terminal-bar .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .terminal-bar .status::before {
+            content: "●";
+            color: #ffffff;
+            font-size: 0.7rem;
+            animation: pulse 1.8s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+
+        /* Canvas 容器 —— 记忆显示屏 */
+        .canvas-wrapper {
+            background: #000000;
+            border: 1px solid #2e2e2e;
+            padding: 12px 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            min-height: 220px;
+        }
+
+        #memoryCanvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 100%;
+            background: #000000;
+            image-rendering: crisp-edges;
+        }
+
+        /* 信息行 */
+        .info-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #888888;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 0 4px;
+            border-bottom: 1px dashed #222222;
+            padding-bottom: 8px;
+        }
+
+        .info-line .reality-tag {
+            color: #ffffff;
+            background: #1a1a1a;
+            padding: 2px 12px;
+            border: 1px solid #333333;
+            font-weight: 600;
+        }
+
+        .info-line .belief-tag {
+            color: #ffffff;
+            background: #1a1a1a;
+            padding: 2px 12px;
+            border: 1px solid #333333;
+            font-weight: 600;
+        }
+
+        /* 按钮区域 —— 终端指令 */
+        .command-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 6px 0 2px;
+        }
+
+        .cmd-btn {
+            background: #000000;
+            border: 1px solid #444444;
+            color: #ffffff;
+            padding: 12px 28px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 0.06s, border-color 0.06s;
+            flex: 1 0 auto;
+            min-width: 160px;
+            font-weight: 400;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+        }
+
+        .cmd-btn:hover {
+            background: #111111;
+            border-color: #777777;
+        }
+
+        .cmd-btn:active {
+            background: #1a1a1a;
+            transform: translateY(1px);
+        }
+
+        .cmd-btn:disabled {
+            opacity: 0.35;
+            pointer-events: none;
+            border-color: #222222;
+        }
+
+        .cmd-btn .prompt {
+            color: #888888;
+            font-size: 0.8rem;
+        }
+
+        /* 记忆日志 / 集体记忆 */
+        .log-terminal {
+            background: #000000;
+            border: 1px solid #222222;
+            padding: 16px 14px 12px;
+            margin-top: 4px;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #777777;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #1e1e1e;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+
+        .log-header .count {
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        .log-list {
+            min-height: 80px;
+            max-height: 160px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding-right: 6px;
+            scrollbar-width: thin;
+            scrollbar-color: #333333 #000000;
+        }
+
+        .log-list::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .log-list::-webkit-scrollbar-track {
+            background: #000000;
+        }
+
+        .log-list::-webkit-scrollbar-thumb {
+            background: #333333;
+        }
+
+        .log-entry {
+            font-size: 0.8rem;
+            padding: 6px 10px;
+            background: #0a0a0a;
+            border-left: 3px solid #ffffff;
+            color: #dddddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: inherit;
+            animation: fadeIn 0.15s ease;
+            word-break: break-word;
+        }
+
+        .log-entry .entry-text {
+            font-weight: 500;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }
+
+        .log-entry .entry-source {
+            font-size: 0.7rem;
+            color: #888888;
+            background: #1a1a1a;
+            padding: 1px 8px;
+            border-radius: 0;
+            white-space: nowrap;
+            margin-left: 12px;
+        }
+
+        .log-empty {
+            color: #444444;
+            font-style: italic;
+            text-align: center;
+            padding: 20px 0;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(3px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 重置按钮小号 */
+        .reset-row {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+
+        .reset-btn {
+            background: transparent;
+            border: 1px solid #2e2e2e;
+            color: #777777;
+            padding: 6px 20px;
+            font-family: inherit;
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+
+        .reset-btn:hover {
+            border-color: #666666;
+            color: #cccccc;
+        }
+
+        .reset-btn:active {
+            background: #111111;
+        }
+
+        /* 底部提示 */
+        .hint {
+            font-size: 0.7rem;
+            color: #3a3a3a;
+            text-align: right;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        /* 状态描述 */
+        .status-desc {
+            font-size: 0.75rem;
+            color: #aaaaaa;
+            letter-spacing: 1px;
+            padding: 8px 4px 0;
+            border-top: 1px dashed #222222;
+            margin-top: 4px;
+            line-height: 1.6;
+        }
+
+        .status-desc .highlight {
+            color: #ffffff;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+<div class="terminal">
+    <!-- 顶部终端栏 -->
+    <div class="terminal-bar">
+        <span class="title">// MANDELA EFFECT</span>
+        <span class="status">MEMORY CORRUPT</span>
+    </div>
+
+    <!-- Canvas 显示区域 -->
+    <div class="canvas-wrapper">
+        <canvas id="memoryCanvas" width="800" height="200"></canvas>
+    </div>
+
+    <!-- 当前现实 & 集体信念 -->
+    <div class="info-line">
+        <span>现实</span>
+        <span class="reality-tag" id="realityLabel">皮卡丘的尾巴末端是黄色的</span>
+    </div>
+    <div class="info-line" style="border-bottom: none; padding-bottom: 0;">
+        <span>集体记忆</span>
+        <span class="belief-tag" id="beliefLabel">皮卡丘的尾巴末端是黄色的</span>
+    </div>
+
+    <!-- 操作指令按钮 -->
+    <div class="command-row">
+        <button class="cmd-btn" id="shiftBtn">
+            <span class="prompt">&gt;</span> 传播错误记忆
+        </button>
+        <button class="cmd-btn" id="recallBtn">
+            <span class="prompt">&gt;</span> 回忆（随机）
+        </button>
+    </div>
+
+    <!-- 记忆日志 / 集体记忆记录 -->
+    <div class="log-terminal">
+        <div class="log-header">
+            <span>📋 集体记忆记录</span>
+            <span class="count" id="logCount">00</span>
+        </div>
+        <div id="logList" class="log-list">
+            <div class="log-empty">[ 暂无集体记忆 ]</div>
+        </div>
+        <div class="reset-row">
+            <button id="resetBtn" class="reset-btn">⟲ 重置现实</button>
+        </div>
+    </div>
+
+    <div class="status-desc" id="statusDesc">
+        <span class="highlight">▸ 现实：</span>皮卡丘的尾巴末端是黄色的<br>
+        <span class="highlight">▸ 集体记忆：</span>大家一直记得尾巴末端是黄色的<br>
+        <span style="color:#666;">—— 如果传播错误记忆，集体记忆会逐渐被扭曲 ——</span>
+    </div>
+
+    <div class="hint">[ S ] 传播错误记忆  [ R ] 随机回忆  [ 观察现实 vs 集体记忆 ]</div>
+</div>
+
+<script>
+    (function() {
+        // ----- 核心数据 -----
+        // 真实情况：皮卡丘尾巴末端是黄色的（没有黑色）
+        const TRUE_FACT = "皮卡丘的尾巴末端是黄色的";
+        // 错误记忆 / 曼德拉效应：尾巴末端是黑色的
+        const FALSE_FACT = "皮卡丘的尾巴末端是黑色的";
+        // 一些其他变体，用于集体记忆的混淆
+        const VARIANT_TEXTS = [
+            "皮卡丘的尾巴末端是黄色的",
+            "皮卡丘的尾巴末端是黑色的",
+            "皮卡丘的尾巴末端是黄黑色的",
+            "皮卡丘的尾巴末端有黑色条纹",
+            "皮卡丘的尾巴末端是黄色带黑尖",
+            "皮卡丘的尾巴末端是黑黄色的",
+            "皮卡丘的尾巴末端是纯黄色的",
+            "皮卡丘的尾巴末端是纯黑色的"
+        ];
+
+        // 当前“现实”文字 —— 一开始是真实的
+        let currentReality = TRUE_FACT;
+        // 当前“集体记忆”文字 —— 一开始也是真实的
+        let currentBelief = TRUE_FACT;
+
+        // 记忆日志: { text, source }  (source: 'reality' 或 'belief')
+        let memoryLog = [];
+
+        // Canvas 相关
+        const canvas = document.getElementById('memoryCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // DOM 元素
+        const realityLabel = document.getElementById('realityLabel');
+        const beliefLabel = document.getElementById('beliefLabel');
+        const logList = document.getElementById('logList');
+        const logCount = document.getElementById('logCount');
+        const shiftBtn = document.getElementById('shiftBtn');
+        const recallBtn = document.getElementById('recallBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const statusDesc = document.getElementById('statusDesc');
+
+        // ----- Canvas 渲染（降低清晰度、噪点、重影）-----
+        function drawTextOnCanvas(text, blurAmount = 1.8, noiseIntensity = 0.25) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.save();
+
+            // 字体设置
+            const baseFontSize = 64;
+            ctx.font = `bold ${baseFontSize}px 'Courier New', 'Fira Code', monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // 测量并缩放
+            const metrics = ctx.measureText(text);
+            const maxWidth = canvas.width - 80;
+            let scaleFactor = 1;
+            if (metrics.width > maxWidth) {
+                scaleFactor = maxWidth / metrics.width;
+            }
+            const actualFontSize = Math.floor(baseFontSize * scaleFactor);
+            ctx.font = `bold ${actualFontSize}px 'Courier New', 'Fira Code', monospace`;
+
+            ctx.fillStyle = '#ffffff';
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // 绘制清晰文字
+            ctx.fillText(text, centerX, centerY);
+
+            // 模糊重影
+            ctx.globalAlpha = 0.12;
+            const offsets = [
+                [-2, -1], [2, 1], [-1, 2], [1, -2],
+                [-3, 0], [3, 0], [0, -3], [0, 3],
+                [-1, -1], [1, 1], [-1, 1], [1, -1],
+                [-2, 2], [2, -2], [-2, -2], [2, 2]
+            ];
+            for (let [dx, dy] of offsets) {
+                ctx.fillText(text, centerX + dx, centerY + dy);
+            }
+
+            ctx.globalAlpha = 1.0;
+
+            // 噪点
+            ctx.globalAlpha = 0.08;
+            ctx.fillStyle = '#ffffff';
+            const noiseCount = Math.floor(noiseIntensity * 1800);
+            for (let i = 0; i < noiseCount; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const size = Math.random() * 2.2 + 0.5;
+                ctx.fillRect(x, y, size, size);
+            }
+
+            // 额外细小噪点
+            ctx.globalAlpha = 0.06;
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 400; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.fillRect(x, y, 1, 1);
+            }
+
+            // 扫描线
+            ctx.globalAlpha = 0.05;
+            ctx.fillStyle = '#ffffff';
+            for (let y = 0; y < canvas.height; y += 4) {
+                ctx.fillRect(0, y, canvas.width, 1);
+            }
+
+            ctx.restore();
+        }
+
+        // 更新 Canvas 显示（根据当前集体记忆还是现实？这里选择显示"集体记忆"，因为集体记忆才是曼德拉效应的核心）
+        // 但我们可以显示当前现实还是集体记忆？为了效果，显示集体记忆（大家相信的东西）
+        function updateCanvasDisplay(text) {
+            const blurVar = 1.2 + Math.random() * 0.8;
+            drawTextOnCanvas(text, blurVar, 0.2 + Math.random() * 0.15);
+        }
+
+        // ----- 渲染日志 -----
+        function renderLog() {
+            logCount.textContent = String(memoryLog.length).padStart(2, '0');
+
+            if (memoryLog.length === 0) {
+                logList.innerHTML = '<div class="log-empty">[ 暂无集体记忆 ]</div>';
+                return;
+            }
+
+            let html = '';
+            for (let i = memoryLog.length - 1; i >= 0; i--) {
+                const entry = memoryLog[i];
+                const sourceLabel = entry.source === 'reality' ? '现实' : '记忆';
+                const safeText = escapeHtml(entry.text);
+                html += `
+                    <div class="log-entry">
+                        <span class="entry-text">${safeText}</span>
+                        <span class="entry-source">${sourceLabel}</span>
+                    </div>
+                `;
+            }
+            logList.innerHTML = html;
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/[&<>"]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                if (m === '"') return '&quot;';
+                return m;
+            });
+        }
+
+        // 添加记忆
+        function addMemory(text, source) {
+            const now = new Date();
+            // 避免短时间内重复相同文本+来源
+            if (memoryLog.length > 0) {
+                const last = memoryLog[memoryLog.length - 1];
+                if (last.text === text && last.source === source && (now - last.timestamp) < 1000) {
+                    return;
+                }
+            }
+            memoryLog.push({ text, source, timestamp: now });
+            if (memoryLog.length > 30) {
+                memoryLog = memoryLog.slice(-30);
+            }
+            renderLog();
+        }
+
+        // 更新状态描述
+        function updateStatusDesc() {
+            statusDesc.innerHTML = `
+                <span class="highlight">▸ 现实：</span>${escapeHtml(currentReality)}<br>
+                <span class="highlight">▸ 集体记忆：</span>${escapeHtml(currentBelief)}<br>
+                <span style="color:#666;">${currentBelief !== currentReality ? '⚠️ 集体记忆与现实不符 —— 曼德拉效应发生' : '✓ 集体记忆与现实一致'}</span>
+            `;
+        }
+
+        // 设置现实文字（更新标签和 Canvas? 但 Canvas 显示集体记忆，所以只更新标签）
+        function setRealityText(text) {
+            currentReality = text;
+            const displayText = text.length > 20 ? text.slice(0, 18) + '…' : text;
+            realityLabel.textContent = displayText;
+        }
+
+        // 设置集体记忆文字（更新标签、Canvas、状态描述）
+        function setBeliefText(text) {
+            currentBelief = text;
+            const displayText = text.length > 20 ? text.slice(0, 18) + '…' : text;
+            beliefLabel.textContent = displayText;
+            updateCanvasDisplay(text);
+            updateStatusDesc();
+        }
+
+        // ----- 核心操作：传播错误记忆 -----
+        function shiftReality() {
+            // 旧现实/旧集体记忆存入日志
+            addMemory(currentReality, 'reality');
+            addMemory(currentBelief, 'belief');
+
+            // 随机选择一个错误变体（从 VARIANT_TEXTS 中选一个，且不能与当前现实相同，也不能与当前集体记忆相同？但为了体现传播，我们可以让现实和集体记忆都向错误方向漂移）
+            // 让现实变成错误事实，集体记忆也逐步变成错误事实
+            // 但为了体现“曼德拉效应”，我们可以让现实慢慢被集体记忆覆盖，但这里简单化：点击一次，集体记忆变成错误记忆，现实保持？不对。
+            // 根据用户需求：程序一开始相信真的，然后因为曼德拉效应开始相信假的了。所以集体记忆逐渐变成假的，现实其实没变？但为了戏剧性，让现实也轻微变化？
+            // 更合理的：现实保持不变（真实），集体记忆因为“传播”变成了错误记忆。所以人们开始相信假的。
+            // 所以：点击传播错误记忆时，集体记忆变成错误事实（黑色尾巴），但现实仍然是真实（黄色尾巴）。但这样“现实”就没用了？我们可以让现实也随机变一下，但真实情况是固定。
+            // 我们重新定义：现实是真正的客观事实，但因为我们无法直接观察，所以会随着集体记忆变化？不，更符合曼德拉效应：集体记忆错了，但现实没变。
+            // 那我们就让现实始终保持 TRUE_FACT，而集体记忆变成 FALSE_FACT。
+            // 但为了体现“后来因为曼德拉效应开始相信假的了”，集体记忆可以变成各种错误变体。
+            // 所以在这个模拟中：现实 = 客观事实（永远是真），集体记忆 = 大家的信念（可以变化）。
+            // 但用户可能想看到“现实”也变化？实际上曼德拉效应就是集体记忆与现实不符。所以现实中皮卡丘尾巴是黄色的，但大家都记得是黑色的。
+            // 所以我们让集体记忆变成黑色，现实保持黄色。
+            // 但是按钮叫“传播错误记忆”，点击后集体记忆变成错误记忆。
+            // 但这样“扭曲”只有一次？我们可以多次点击，集体记忆随机变成各种错误变体。
+
+            // 所以我们保留现实不变（TRUE_FACT），只改变集体记忆。
+            // 但这样“现实”标签就永远不变，会不会无聊？我们可以让现实也有小概率变化？不，不要混淆概念。
+            // 我决定：在这个模拟中，现实是客观事实，不变。集体记忆变化。
+            // 但为了可玩性，每点击一次“传播错误记忆”，集体记忆就随机变成一个错误变体（从 VARIANT_TEXTS 中选一个不等于当前集体记忆且不等于 TRUE_FACT 的）。
+            // 同时记录日志。
+
+            // 但用户可能想看到“现实”也变化？实际上曼德拉效应中，现实是客观的，不变。集体记忆错了。
+            // 所以我们保持现实不变。
+
+            // 找到可用的错误变体（不包括 TRUE_FACT）
+            const wrongVariants = VARIANT_TEXTS.filter(t => t !== TRUE_FACT);
+            // 随机选一个与当前集体记忆不同的
+            let newBelief = currentBelief;
+            let attempts = 0;
+            while (newBelief === currentBelief && attempts < 30) {
+                const idx = Math.floor(Math.random() * wrongVariants.length);
+                newBelief = wrongVariants[idx];
+                attempts++;
+            }
+            if (newBelief === currentBelief) {
+                // 保底
+                for (let v of wrongVariants) {
+                    if (v !== currentBelief) {
+                        newBelief = v;
+                        break;
+                    }
+                }
+            }
+
+            // 更新集体记忆
+            setBeliefText(newBelief);
+            // 记录新集体记忆
+            addMemory(newBelief, 'belief');
+            // 现实也记录一次（虽然没变，但表示我们检查了现实）
+            addMemory(currentReality, 'reality');
+        }
+
+        // ----- 回忆（随机）：从集体记忆日志中随机选一条，设置为当前集体记忆 -----
+        function recallCover() {
+            if (memoryLog.length === 0) {
+                return;
+            }
+
+            // 从日志中筛选出 source === 'belief' 的条目
+            const beliefLogs = memoryLog.filter(entry => entry.source === 'belief');
+            if (beliefLogs.length === 0) {
+                // 如果没有信念日志，就从全部日志中选
+                if (memoryLog.length > 0) {
+                    const randomEntry = memoryLog[Math.floor(Math.random() * memoryLog.length)];
+                    setBeliefText(randomEntry.text);
+                    addMemory(randomEntry.text, 'belief');
+                }
+                return;
+            }
+
+            // 随机选一条信念记忆
+            const chosen = beliefLogs[Math.floor(Math.random() * beliefLogs.length)];
+            // 如果选择的记忆和当前集体记忆不同，则设置
+            if (chosen.text !== currentBelief) {
+                // 旧集体记忆存入日志
+                addMemory(currentBelief, 'belief');
+                // 设置为回忆的记忆
+                setBeliefText(chosen.text);
+                // 新集体记忆再记录一次（强化）
+                addMemory(chosen.text, 'belief');
+            } else {
+                // 相同则强化
+                addMemory(chosen.text, 'belief');
+                // 视觉上刷新一下 Canvas
+                updateCanvasDisplay(currentBelief);
+            }
+        }
+
+        // ----- 重置 -----
+        function resetToInitial() {
+            // 清空记忆
+            memoryLog = [];
+            // 重置现实与集体记忆
+            currentReality = TRUE_FACT;
+            currentBelief = TRUE_FACT;
+            // 更新界面
+            realityLabel.textContent = currentReality.length > 20 ? currentReality.slice(0, 18) + '…' : currentReality;
+            beliefLabel.textContent = currentBelief.length > 20 ? currentBelief.slice(0, 18) + '…' : currentBelief;
+            updateCanvasDisplay(currentBelief);
+            updateStatusDesc();
+            renderLog();
+            // 添加初始记忆（现实和集体记忆都记录）
+            addMemory(TRUE_FACT, 'reality');
+            addMemory(TRUE_FACT, 'belief');
+        }
+
+        // ----- 初始化 -----
+        function init() {
+            resetToInitial();
+        }
+
+        // ----- 事件绑定 -----
+        shiftBtn.addEventListener('click', shiftReality);
+        recallBtn.addEventListener('click', recallCover);
+        resetBtn.addEventListener('click', resetToInitial);
+
+        // 键盘快捷键
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                shiftReality();
+            } else if (e.key === 'r' || e.key === 'R') {
+                e.preventDefault();
+                recallCover();
+            }
+        });
+
+        // 启动
+        init();
+
+    })();
+</script>
+</body>
+</html>

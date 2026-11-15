@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>曼德拉效应 · 终端记忆</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #000000;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', 'Fira Code', 'Consolas', monospace;
+            padding: 16px;
+            color: #ffffff;
+        }
+
+        .terminal {
+            width: 100%;
+            max-width: 900px;
+            background: #000000;
+            border: 1px solid #333333;
+            border-radius: 0;
+            padding: 24px 28px 28px 28px;
+            box-shadow: 0 0 40px rgba(255, 255, 255, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* 顶部终端栏 */
+        .terminal-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a2a2a;
+            padding-bottom: 10px;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+            color: #888888;
+        }
+
+        .terminal-bar .title {
+            color: #ffffff;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+        }
+
+        .terminal-bar .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .terminal-bar .status::before {
+            content: "●";
+            color: #ffffff;
+            font-size: 0.7rem;
+            animation: pulse 1.8s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+
+        /* Canvas 容器 —— 记忆显示屏 */
+        .canvas-wrapper {
+            background: #000000;
+            border: 1px solid #2e2e2e;
+            padding: 12px 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            min-height: 220px;
+        }
+
+        #memoryCanvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 100%;
+            background: #000000;
+            image-rendering: crisp-edges; /* 保持像素感 */
+        }
+
+        /* 信息行 */
+        .info-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #888888;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 0 4px;
+            border-bottom: 1px dashed #222222;
+            padding-bottom: 8px;
+        }
+
+        .info-line .reality-tag {
+            color: #ffffff;
+            background: #1a1a1a;
+            padding: 2px 12px;
+            border: 1px solid #333333;
+            font-weight: 600;
+        }
+
+        /* 按钮区域 —— 终端指令 */
+        .command-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 6px 0 2px;
+        }
+
+        .cmd-btn {
+            background: #000000;
+            border: 1px solid #444444;
+            color: #ffffff;
+            padding: 12px 28px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 0.06s, border-color 0.06s;
+            flex: 1 0 auto;
+            min-width: 160px;
+            font-weight: 400;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+        }
+
+        .cmd-btn:hover {
+            background: #111111;
+            border-color: #777777;
+        }
+
+        .cmd-btn:active {
+            background: #1a1a1a;
+            transform: translateY(1px);
+        }
+
+        .cmd-btn:disabled {
+            opacity: 0.35;
+            pointer-events: none;
+            border-color: #222222;
+        }
+
+        .cmd-btn .prompt {
+            color: #888888;
+            font-size: 0.8rem;
+        }
+
+        /* 日志终端 */
+        .log-terminal {
+            background: #000000;
+            border: 1px solid #222222;
+            padding: 16px 14px 12px;
+            margin-top: 4px;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #777777;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #1e1e1e;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+
+        .log-header .count {
+            color: #ffffff;
+            font-weight: 600;
+        }
+
+        .log-list {
+            min-height: 80px;
+            max-height: 140px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding-right: 6px;
+            scrollbar-width: thin;
+            scrollbar-color: #333333 #000000;
+        }
+
+        .log-list::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .log-list::-webkit-scrollbar-track {
+            background: #000000;
+        }
+
+        .log-list::-webkit-scrollbar-thumb {
+            background: #333333;
+        }
+
+        .log-entry {
+            font-size: 0.8rem;
+            padding: 6px 10px;
+            background: #0a0a0a;
+            border-left: 3px solid #ffffff;
+            color: #dddddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: inherit;
+            animation: fadeIn 0.15s ease;
+            word-break: break-word;
+        }
+
+        .log-entry .entry-text {
+            font-weight: 500;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }
+
+        .log-entry .entry-time {
+            color: #666666;
+            font-size: 0.7rem;
+            margin-left: 12px;
+            white-space: nowrap;
+        }
+
+        .log-empty {
+            color: #444444;
+            font-style: italic;
+            text-align: center;
+            padding: 20px 0;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(3px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 重置按钮小号 */
+        .reset-row {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 10px;
+        }
+
+        .reset-btn {
+            background: transparent;
+            border: 1px solid #2e2e2e;
+            color: #777777;
+            padding: 6px 20px;
+            font-family: inherit;
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+
+        .reset-btn:hover {
+            border-color: #666666;
+            color: #cccccc;
+        }
+
+        .reset-btn:active {
+            background: #111111;
+        }
+
+        /* 底部提示 */
+        .hint {
+            font-size: 0.7rem;
+            color: #3a3a3a;
+            text-align: right;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        /* 终端光标 */
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 1em;
+            background: #ffffff;
+            margin-left: 2px;
+            animation: blink 1s step-end infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+<div class="terminal">
+    <!-- 顶部终端栏 -->
+    <div class="terminal-bar">
+        <span class="title">// MANDELA EFFECT</span>
+        <span class="status">MEMORY CORRUPT</span>
+    </div>
+
+    <!-- Canvas 显示区域 -->
+    <div class="canvas-wrapper">
+        <canvas id="memoryCanvas" width="800" height="200"></canvas>
+    </div>
+
+    <!-- 当前现实标签 -->
+    <div class="info-line">
+        <span>现实版本</span>
+        <span class="reality-tag" id="realityLabel">曼德拉效应</span>
+    </div>
+
+    <!-- 操作指令按钮 -->
+    <div class="command-row">
+        <button class="cmd-btn" id="shiftBtn">
+            <span class="prompt">&gt;</span> 扭曲现实
+        </button>
+        <button class="cmd-btn" id="recallBtn">
+            <span class="prompt">&gt;</span> 回忆覆盖
+        </button>
+    </div>
+
+    <!-- 记忆日志 -->
+    <div class="log-terminal">
+        <div class="log-header">
+            <span>📋 MEMORY LOG</span>
+            <span class="count" id="logCount">00</span>
+        </div>
+        <div id="logList" class="log-list">
+            <div class="log-empty">[ 无记忆痕迹 ]</div>
+        </div>
+        <div class="reset-row">
+            <button id="resetBtn" class="reset-btn">⟲ 重置现实</button>
+        </div>
+    </div>
+
+    <div class="hint">[ S ] 扭曲  [ R ] 回忆  [ 每次操作改变现实 ]</div>
+</div>
+
+<script>
+    (function() {
+        // ----- 核心数据 -----
+        const INITIAL_TEXT = "曼德拉效应";
+        // 可切换的“现实”变体 (模拟各种记忆偏差)
+        const REALITY_VARIANTS = [
+            "曼德拉效应",
+            "曼德拉效应？",
+            "曼德拉效應",
+            "曼德拉效映",
+            "曼德拉效应✨",
+            "曼德拉效应…",
+            "曼德拉效应#",
+            "曼德拉效应??",
+            "曼德拉效 应",
+            "曼德拉效应 (改)",
+            "曼德拉效",
+            "曼德拉 效应",
+            "曼德拉效应_",
+            "曼德拉效应!!",
+            "曼德拉效应???"
+        ];
+
+        // Canvas 相关
+        const canvas = document.getElementById('memoryCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 当前现实文字
+        let currentReality = INITIAL_TEXT;
+
+        // 记忆日志: { text, timestamp }
+        let memoryLog = [];
+
+        // DOM 元素
+        const realityLabel = document.getElementById('realityLabel');
+        const logList = document.getElementById('logList');
+        const logCount = document.getElementById('logCount');
+        const shiftBtn = document.getElementById('shiftBtn');
+        const recallBtn = document.getElementById('recallBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        // ----- Canvas 渲染（核心：降低清晰度 / 模糊 / 噪点）-----
+        function drawTextOnCanvas(text, blurAmount = 1.8, noiseIntensity = 0.25) {
+            // 清空画布 —— 纯黑背景
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 保存状态
+            ctx.save();
+
+            // 设置文字样式：白色，超大，等宽字体
+            const fontSize = 72;
+            ctx.font = `bold ${fontSize}px 'Courier New', 'Fira Code', monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // 测量文字宽度，用于自适应（如果太长就缩小字号）
+            const metrics = ctx.measureText(text);
+            const maxWidth = canvas.width - 80; // 左右留白
+            let scaleFactor = 1;
+            if (metrics.width > maxWidth) {
+                scaleFactor = maxWidth / metrics.width;
+            }
+            const actualFontSize = Math.floor(fontSize * scaleFactor);
+            ctx.font = `bold ${actualFontSize}px 'Courier New', 'Fira Code', monospace`;
+
+            // 设置文字颜色为纯白
+            ctx.fillStyle = '#ffffff';
+
+            // 绘制文字到画布中心（先绘制清晰的，作为基础，再叠加模糊效果）
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // 绘制清晰的文字 (作为基底)
+            ctx.fillText(text, centerX, centerY);
+
+            // ----- 制造模糊/不清晰效果：多次偏移绘制半透明文字 -----
+            // 模拟低分辨率/噪点效果：用多个偏移位置绘制，并降低不透明度
+            ctx.globalAlpha = 0.12;  // 降低透明度，产生朦胧重影
+
+            // 偏移半径，根据模糊程度控制
+            const offsets = [
+                [-2, -1], [2, 1], [-1, 2], [1, -2],
+                [-3, 0], [3, 0], [0, -3], [0, 3],
+                [-1, -1], [1, 1], [-1, 1], [1, -1],
+                [-2, 2], [2, -2], [-2, -2], [2, 2]
+            ];
+
+            // 绘制重影文字
+            for (let [dx, dy] of offsets) {
+                ctx.fillText(text, centerX + dx, centerY + dy);
+            }
+
+            // 恢复透明度
+            ctx.globalAlpha = 1.0;
+
+            // ----- 增加噪点(白色小点) 模拟信号干扰 -----
+            ctx.globalAlpha = 0.08;
+            ctx.fillStyle = '#ffffff';
+            const noiseCount = Math.floor(noiseIntensity * 1800); // 1800 个噪点
+            for (let i = 0; i < noiseCount; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const size = Math.random() * 2.2 + 0.5;
+                ctx.fillRect(x, y, size, size);
+            }
+
+            // 额外增加一些随机的暗色噪点，增加质感
+            ctx.globalAlpha = 0.06;
+            ctx.fillStyle = '#ffffff';
+            for (let i = 0; i < 400; i++) {
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                ctx.fillRect(x, y, 1, 1);
+            }
+
+            // 轻微扫描线效果（可选，加强终端感）
+            ctx.globalAlpha = 0.05;
+            ctx.fillStyle = '#ffffff';
+            for (let y = 0; y < canvas.height; y += 4) {
+                ctx.fillRect(0, y, canvas.width, 1);
+            }
+
+            ctx.restore();
+        }
+
+        // 更新 Canvas 显示（基于当前现实文字）
+        function updateCanvasDisplay(text) {
+            // 模糊程度可以稍微随机一点，让每次都有细微变化 (更自然)
+            const blurVar = 1.2 + Math.random() * 0.8;   // 1.2 ~ 2.0 之间变化
+            drawTextOnCanvas(text, blurVar, 0.2 + Math.random() * 0.15);
+        }
+
+        // ----- 渲染日志 -----
+        function renderLog() {
+            // 更新计数
+            logCount.textContent = String(memoryLog.length).padStart(2, '0');
+
+            if (memoryLog.length === 0) {
+                logList.innerHTML = '<div class="log-empty">[ 无记忆痕迹 ]</div>';
+                return;
+            }
+
+            let html = '';
+            // 倒序显示（最新的在上）
+            for (let i = memoryLog.length - 1; i >= 0; i--) {
+                const entry = memoryLog[i];
+                const timeStr = entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                // 简单转义
+                const safeText = escapeHtml(entry.text);
+                html += `
+                    <div class="log-entry">
+                        <span class="entry-text">${safeText}</span>
+                        <span class="entry-time">${timeStr}</span>
+                    </div>
+                `;
+            }
+            logList.innerHTML = html;
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/[&<>"]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                if (m === '"') return '&quot;';
+                return m;
+            });
+        }
+
+        // 添加记忆（带简单去重/限制）
+        function addMemory(text) {
+            const now = new Date();
+            // 如果最后一条和text相同且时间间隔小于1.2秒，则忽略，防止无限重复
+            if (memoryLog.length > 0) {
+                const last = memoryLog[memoryLog.length - 1];
+                if (last.text === text && (now - last.timestamp) < 1200) {
+                    return;
+                }
+            }
+            memoryLog.push({ text, timestamp: now });
+            // 限制最多20条
+            if (memoryLog.length > 20) {
+                memoryLog = memoryLog.slice(-20);
+            }
+            renderLog();
+        }
+
+        // 设置现实文字（并更新 Canvas、标签）
+        function setRealityText(text, updateLabel = true) {
+            currentReality = text;
+            // 更新 Canvas 显示
+            updateCanvasDisplay(text);
+            // 更新标签
+            if (updateLabel) {
+                // 如果文字太长，截断显示
+                const displayText = text.length > 14 ? text.slice(0, 12) + '…' : text;
+                realityLabel.textContent = displayText;
+            }
+        }
+
+        // ----- 扭曲现实 -----
+        function shiftReality() {
+            // 随机选择一个变体（不能与当前现实完全相同）
+            let newText = currentReality;
+            let attempts = 0;
+            const maxAttempts = 40;
+            while (newText === currentReality && attempts < maxAttempts) {
+                const idx = Math.floor(Math.random() * REALITY_VARIANTS.length);
+                newText = REALITY_VARIANTS[idx];
+                attempts++;
+            }
+            if (newText === currentReality) {
+                // 实在选不到，强制选一个不同的
+                for (let variant of REALITY_VARIANTS) {
+                    if (variant !== currentReality) {
+                        newText = variant;
+                        break;
+                    }
+                }
+            }
+
+            // 旧的现实变成记忆
+            addMemory(currentReality);
+            // 设置新现实
+            setRealityText(newText);
+            // 新现实也作为记忆记录
+            addMemory(newText);
+        }
+
+        // ----- 回忆覆盖 -----
+        function recallCover() {
+            if (memoryLog.length === 0) {
+                // 无记忆时无法回忆
+                return;
+            }
+
+            // 优先选取和当前现实不同的记忆
+            let candidates = memoryLog.filter(entry => entry.text !== currentReality);
+            if (candidates.length === 0) {
+                candidates = memoryLog; // 全都一样就只能随便选
+            }
+            const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+
+            if (chosen.text !== currentReality) {
+                // 旧现实存忆
+                addMemory(currentReality);
+                // 设为回忆文字
+                setRealityText(chosen.text);
+                // 回忆文字再强化记忆
+                addMemory(chosen.text);
+            } else {
+                // 回忆与当前相同，记忆强化
+                addMemory(chosen.text);
+                // 视觉上轻微闪一下（重绘Canvas，加一点点随机变化）
+                updateCanvasDisplay(currentReality);
+            }
+        }
+
+        // ----- 重置 -----
+        function resetToInitial() {
+            memoryLog = [];
+            currentReality = INITIAL_TEXT;
+            setRealityText(INITIAL_TEXT, true);
+            renderLog();
+            // 添加初始记忆
+            addMemory(INITIAL_TEXT);
+        }
+
+        // ----- 初始化 -----
+        function init() {
+            // 初始绘制
+            currentReality = INITIAL_TEXT;
+            setRealityText(INITIAL_TEXT, true);
+            // 清空日志
+            memoryLog = [];
+            renderLog();
+            // 加入初始记忆
+            addMemory(INITIAL_TEXT);
+            // 加点小随机：让Canvas初始状态就有轻微模糊（重绘一下，加一点随机偏移）
+            updateCanvasDisplay(INITIAL_TEXT);
+        }
+
+        // 监听窗口大小变化（可选，保持Canvas清晰度，但我们canvas固定宽度800，保持）
+        // 对于小屏幕，我们让canvas宽度自适应，但内部像素仍为800宽，CSS缩放即可
+        // 不需要额外处理
+
+        // ----- 事件绑定 -----
+        shiftBtn.addEventListener('click', shiftReality);
+        recallBtn.addEventListener('click', recallCover);
+        resetBtn.addEventListener('click', resetToInitial);
+
+        // 键盘快捷键 (S / R)
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                shiftReality();
+            } else if (e.key === 'r' || e.key === 'R') {
+                e.preventDefault();
+                recallCover();
+            }
+        });
+
+        // 启动
+        init();
+
+        // 每次交互后可以微小重绘，增加动态模糊感（比如每次操作后随机微调噪点）
+        // 但为了性能，上面已经在updateCanvasDisplay里做了轻微随机
+
+        // 额外：定时轻微变化噪点，强化“信号不良”的感觉（每秒刷新几次，但不要过于频繁，避免闪烁）
+        // 注意：不要过度影响性能，每 1.8 秒重绘一次微小噪点变化，但会干扰用户阅读，所以只在用户操作时重绘即可。
+        // 已足够。
+
+    })();
+</script>
+</body>
+</html>

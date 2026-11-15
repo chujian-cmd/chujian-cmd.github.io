@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>曼德拉效应 · 程序自欺</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#000; color:#fff;
+    font-family:'Courier New', monospace;
+    min-height:100vh;
+    display:flex; justify-content:center; align-items:center;
+    padding:20px;
+  }
+  .terminal {
+    width:100%; max-width:820px;
+    border:1px solid #333;
+    padding:24px;
+  }
+  .bar {
+    display:flex; justify-content:space-between;
+    font-size:.75rem; color:#666;
+    border-bottom:1px solid #222;
+    padding-bottom:8px; margin-bottom:20px;
+    letter-spacing:2px; text-transform:uppercase;
+  }
+  .bar .dot { color:#fff; animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.15} }
+
+  canvas {
+    display:block; width:100%; height:auto;
+    background:#000; border:1px solid #1e1e1e;
+    margin-bottom:16px;
+  }
+
+  .belief {
+    font-size:.8rem; color:#888;
+    letter-spacing:1px; padding:8px 0;
+    border-bottom:1px dashed #222;
+    margin-bottom:16px;
+  }
+  .belief .val { color:#fff; font-weight:600; }
+
+  .controls { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  button {
+    flex:1; min-width:140px;
+    background:#000; border:1px solid #444; color:#fff;
+    padding:11px 20px; font-family:inherit;
+    font-size:.85rem; letter-spacing:2px;
+    text-transform:uppercase; cursor:pointer;
+    transition:.08s;
+  }
+  button:hover { background:#111; border-color:#777; }
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.3; pointer-events:none; }
+
+  .log {
+    border:1px solid #1e1e1e;
+    padding:12px;
+    max-height:180px; overflow-y:auto;
+    font-size:.78rem;
+    scrollbar-width:thin;
+    scrollbar-color:#333 #000;
+  }
+  .log::-webkit-scrollbar { width:5px; }
+  .log::-webkit-scrollbar-thumb { background:#333; }
+
+  .log-line {
+    padding:4px 0;
+    border-bottom:1px solid #111;
+    color:#aaa;
+    animation:fade .15s ease;
+  }
+  .log-line:last-child { border-bottom:none; }
+  .log-line .tag { color:#666; margin-right:8px; }
+  .log-line .truth { color:#fff; }
+  .log-line .lie { color:#fff; text-decoration:line-through; text-decoration-color:#555; }
+  .log-line .drift { color:#888; }
+  @keyframes fade { from{opacity:0;transform:translateX(-4px)} to{opacity:1;transform:none} }
+
+  .note {
+    font-size:.7rem; color:#3a3a3a;
+    margin-top:12px; letter-spacing:1px;
+    text-align:right;
+  }
+</style>
+</head>
+<body>
+<div class="terminal">
+
+  <div class="bar">
+    <span><span class="dot">●</span> MEMORY DAEMON v0.3</span>
+    <span id="driftLabel">DRIFT: 0%</span>
+  </div>
+
+  <canvas id="c" width="800" height="160"></canvas>
+
+  <div class="belief">
+    程序当前确信：<span class="val" id="beliefText">皮卡丘的尾巴末端是黄色的</span>
+  </div>
+
+  <div class="controls">
+    <button id="tickBtn">▸ 运行一个周期</button>
+    <button id="autoBtn">▸ 自动运行</button>
+    <button id="resetBtn" style="flex:0 0 auto; min-width:100px;">⟲ 重启</button>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div class="note">每次运行，记忆都会被轻微篡改。程序自己不会察觉。</div>
+</div>
+
+<script>
+(function(){
+  // ===== 核心：程序内部的状态 =====
+  // 真实事实（外部世界不变的真相）
+  const TRUTH = "皮卡丘的尾巴末端是黄色的";
+
+  // 程序当前"确信"的内容 —— 一开始是正确的
+  let belief = TRUTH;
+
+  // 漂移度：0 = 完全正确，越大越偏离
+  let drift = 0;
+
+  // 日志
+  let logs = [];
+
+  // 自动运行定时器
+  let autoTimer = null;
+
+  // ===== DOM =====
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const beliefText = document.getElementById('beliefText');
+  const logEl = document.getElementById('log');
+  const driftLabel = document.getElementById('driftLabel');
+  const tickBtn = document.getElementById('tickBtn');
+  const autoBtn = document.getElementById('autoBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  // ===== 各种"错误记忆变体"，按偏离程度排列 =====
+  // 程序会随着drift增加，逐渐"记住"这些错误版本
+  const DRIFT_STATES = [
+    { minDrift: 0,  text: "皮卡丘的尾巴末端是黄色的" },          // 真相
+    { minDrift: 8,  text: "皮卡丘的尾巴末端是黄色带一点黑" },
+    { minDrift: 18, text: "皮卡丘的尾巴末端有黑色部分" },
+    { minDrift: 30, text: "皮卡丘的尾巴末端是黄黑相间的" },
+    { minDrift: 45, text: "皮卡丘的尾巴末端有黑色条纹" },
+    { minDrift: 60, text: "皮卡丘的尾巴末端是黑色的" },          // 经典曼德拉错误
+    { minDrift: 75, text: "皮卡丘的尾巴整个是黑色的" },
+    { minDrift: 88, text: "皮卡丘的尾巴是黑色的" },
+    { minDrift: 95, text: "皮卡丘的尾巴末端是纯黑的" },
+  ];
+
+  // ===== Canvas 绘制（带模糊/噪点，越漂移越模糊）=====
+  function draw(text, blurLevel) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // 自适应字号
+    let fontSize = 44;
+    ctx.font = `bold ${fontSize}px 'Courier New', monospace`;
+    let m = ctx.measureText(text);
+    const maxW = canvas.width - 80;
+    if (m.width > maxW) {
+      fontSize = Math.floor(fontSize * maxW / m.width);
+      ctx.font = `bold ${fontSize}px 'Courier New', monospace`;
+    }
+
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    // 基础文字
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, cx, cy);
+
+    // 重影数量随漂移度增加（0 → 16）
+    const ghostCount = Math.floor(blurLevel * 16);
+    ctx.globalAlpha = 0.08 + blurLevel * 0.06;
+    for (let i = 0; i < ghostCount; i++) {
+      const dx = (Math.random() - 0.5) * 8 * blurLevel;
+      const dy = (Math.random() - 0.5) * 8 * blurLevel;
+      ctx.fillText(text, cx + dx, cy + dy);
+    }
+
+    // 噪点随漂移度增加
+    ctx.globalAlpha = 0.04 + blurLevel * 0.1;
+    ctx.fillStyle = '#fff';
+    const dots = Math.floor(300 + blurLevel * 2000);
+    for (let i = 0; i < dots; i++) {
+      ctx.fillRect(Math.random()*canvas.width, Math.random()*canvas.height,
+                   Math.random()*1.5+.5, Math.random()*1.5+.5);
+    }
+
+    // 扫描线
+    ctx.globalAlpha = 0.05;
+    for (let y = 0; y < canvas.height; y += 3) {
+      ctx.fillRect(0, y, canvas.width, 1);
+    }
+
+    ctx.restore();
+  }
+
+  // ===== 根据 drift 获取程序当前"应该确信"的内容 =====
+  function getBeliefByDrift(d) {
+    let result = TRUTH;
+    for (let s of DRIFT_STATES) {
+      if (d >= s.minDrift) result = s.text;
+    }
+    return result;
+  }
+
+  // ===== 核心：运行一个周期 =====
+  function tick() {
+    // 旧的确信
+    const oldBelief = belief;
+
+    // drift 增加：每次 +5~14 的随机量（有波动感）
+    const increase = 4 + Math.random() * 10;
+    drift = Math.min(100, drift + increase);
+
+    // 根据 drift 得出新的确信
+    belief = getBeliefByDrift(drift);
+
+    // 写日志：如果变了，记录"记忆被篡改"
+    const time = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    if (oldBelief !== belief) {
+      logs.push({ time, oldText: oldBelief, newText: belief, drift: Math.floor(drift) });
+    } else {
+      // 没变的话，也记录一次"记忆被扰动"，但用另一种标记
+      logs.push({ time, oldText: oldBelief, newText: null, drift: Math.floor(drift) });
+    }
+
+    // 限制日志长度
+    if (logs.length > 60) logs = logs.slice(-60);
+
+    // 渲染
+    render();
+  }
+
+  // ===== 渲染所有 =====
+  function render() {
+    // Canvas
+    const blurLevel = drift / 100;
+    draw(belief, blurLevel);
+
+    // 确信文本
+    beliefText.textContent = belief;
+
+    // 漂移度
+    driftLabel.textContent = `DRIFT: ${Math.floor(drift)}%`;
+    // 颜色提示：越漂移越灰
+    driftLabel.style.color = drift > 60 ? '#fff' : '#666';
+
+    // 日志
+    logEl.innerHTML = '';
+    // 倒序：最新的在顶部
+    for (let i = logs.length - 1; i >= 0; i--) {
+      const L = logs[i];
+      const div = document.createElement('div');
+      div.className = 'log-line';
+
+      if (L.newText && L.newText !== L.oldText) {
+        // 记忆发生了漂移
+        div.innerHTML = `<span class="tag">[${L.time}]</span>
+          <span class="lie">${escapeHtml(L.oldText)}</span>
+          <span class="drift"> → </span>
+          <span class="truth">${escapeHtml(L.newText)}</span>
+          <span class="tag" style="float:right">drift ${L.drift}%</span>`;
+      } else {
+        // 记忆只是被扰动，没变
+        div.innerHTML = `<span class="tag">[${L.time}]</span>
+          <span class="drift">${escapeHtml(L.oldText)}</span>
+          <span class="tag"> (记忆被扰动)</span>
+          <span class="tag" style="float:right">drift ${L.drift}%</span>`;
+      }
+      logEl.appendChild(div);
+    }
+
+    // 自动按钮状态
+    if (autoTimer) {
+      autoBtn.textContent = '▸ 停止运行';
+    } else {
+      autoBtn.textContent = '▸ 自动运行';
+    }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  // ===== 自动运行 =====
+  function toggleAuto() {
+    if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+      render();
+    } else {
+      autoTimer = setInterval(tick, 900);
+      render();
+    }
+  }
+
+  // ===== 重置 =====
+  function reset() {
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    belief = TRUTH;
+    drift = 0;
+    logs = [];
+    render();
+  }
+
+  // ===== 初始化 =====
+  function init() {
+    reset();
+    // 初始画一次
+    draw(TRUTH, 0);
+  }
+
+  // ===== 事件 =====
+  tickBtn.addEventListener('click', tick);
+  autoBtn.addEventListener('click', toggleAuto);
+  resetBtn.addEventListener('click', reset);
+
+  // 键盘 S = tick
+  window.addEventListener('keydown', e => {
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); tick(); }
+    if (e.key === 'a' || e.key === 'A') { e.preventDefault(); toggleAuto(); }
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>

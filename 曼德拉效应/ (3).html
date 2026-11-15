@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>曼德拉效应 · 程序自欺</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#000; color:#fff;
+    font-family:'Courier New', monospace;
+    min-height:100vh;
+    display:flex; justify-content:center; align-items:center;
+    padding:20px;
+  }
+  .terminal {
+    width:100%; max-width:820px;
+    border:1px solid #333;
+    padding:24px;
+  }
+  .bar {
+    display:flex; justify-content:space-between;
+    font-size:.75rem; color:#666;
+    border-bottom:1px solid #222;
+    padding-bottom:8px; margin-bottom:20px;
+    letter-spacing:2px; text-transform:uppercase;
+  }
+  .bar .dot { color:#fff; animation:pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.15} }
+
+  canvas {
+    display:block; width:100%; height:auto;
+    background:#000; border:1px solid #1e1e1e;
+    margin-bottom:16px;
+  }
+
+  .state {
+    font-size:.8rem; color:#888;
+    letter-spacing:1px; padding:8px 0;
+    border-bottom:1px dashed #222;
+    margin-bottom:16px;
+    line-height:1.8;
+  }
+  .state .val { color:#fff; font-weight:600; }
+  .state .old { color:#555; text-decoration:line-through; }
+
+  .controls { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  button {
+    flex:1; min-width:120px;
+    background:#000; border:1px solid #444; color:#fff;
+    padding:11px 20px; font-family:inherit;
+    font-size:.85rem; letter-spacing:2px;
+    text-transform:uppercase; cursor:pointer;
+    transition:.08s;
+  }
+  button:hover { background:#111; border-color:#777; }
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.3; pointer-events:none; }
+
+  .log {
+    border:1px solid #1e1e1e;
+    padding:12px;
+    max-height:200px; overflow-y:auto;
+    font-size:.78rem;
+    scrollbar-width:thin;
+    scrollbar-color:#333 #000;
+  }
+  .log::-webkit-scrollbar { width:5px; }
+  .log::-webkit-scrollbar-thumb { background:#333; }
+
+  .log-line {
+    padding:4px 0;
+    border-bottom:1px solid #111;
+    color:#aaa;
+    animation:fade .15s ease;
+    font-family:'Courier New', monospace;
+  }
+  .log-line:last-child { border-bottom:none; }
+  .log-line .tag { color:#666; margin-right:8px; }
+  .log-line .truth { color:#fff; }
+  .log-line .lie { color:#fff; }
+  .log-line .drift { color:#555; }
+  .log-line .warn { color:#888; font-style:italic; }
+  @keyframes fade { from{opacity:0;transform:translateX(-4px)} to{opacity:1;transform:none} }
+
+  .note {
+    font-size:.7rem; color:#3a3a3a;
+    margin-top:12px; letter-spacing:1px;
+    text-align:right;
+  }
+</style>
+</head>
+<body>
+<div class="terminal">
+
+  <div class="bar">
+    <span><span class="dot">●</span> MEMORY DAEMON</span>
+    <span id="driftLabel">DRIFT: 0%</span>
+  </div>
+
+  <canvas id="c" width="800" height="160"></canvas>
+
+  <div class="state">
+    程序当前确信：<span class="val" id="beliefText">123</span><br>
+    真实值（外部真相）：<span class="old" id="truthText">123</span>
+  </div>
+
+  <div class="controls">
+    <button id="tickBtn">▸ 运行</button>
+    <button id="autoBtn">▸ 自动</button>
+    <button id="resetBtn" style="flex:0 0 auto; min-width:90px;">⟲ 重启</button>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div class="note">程序每运行一次，记忆就被轻微篡改。它从不怀疑自己。</div>
+</div>
+
+<script>
+(function(){
+  // ============================================================
+  // 核心：真相与记忆
+  // ============================================================
+  // 外部真相——永远不变
+  const TRUTH = "123";
+
+  // 程序当前"确信"的内容——会随着运行慢慢漂移
+  let belief = TRUTH;
+
+  // 漂移进度：0 → 100
+  let drift = 0;
+
+  // 日志
+  let logs = [];
+
+  // 自动定时器
+  let autoTimer = null;
+
+  // ============================================================
+  // 漂移路径：从 123 慢慢变成 321（或其他）
+  // 每一步都是上一个状态的轻微"记错"，像传话游戏
+  // ============================================================
+  const DRIFT_PATH = [
+    "123",   // 真相
+    "132",   // 数字位置轻微调换（2和3换位）
+    "312",   // 继续调换
+    "321",   // 完全反转
+    "32l",   // 3 变成小写 L 的错字（记忆开始模糊）
+    "3ZI",   // 字符形状相近但错了
+    "BZI",   // 进一步变形
+    "B2I",   // 继续
+    "B2l",   // 越来越不像
+    "??",    // 记忆彻底模糊
+  ];
+
+  // 根据 drift 从路径中取一个状态
+  // drift 0 → 索引 0，drift 100 → 索引 9
+  function getBeliefByDrift(d) {
+    const idx = Math.min(DRIFT_PATH.length - 1, Math.floor((d / 100) * (DRIFT_PATH.length - 1)));
+    return DRIFT_PATH[idx];
+  }
+
+  // ============================================================
+  // DOM
+  // ============================================================
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const beliefText = document.getElementById('beliefText');
+  const truthText = document.getElementById('truthText');
+  const logEl = document.getElementById('log');
+  const driftLabel = document.getElementById('driftLabel');
+  const tickBtn = document.getElementById('tickBtn');
+  const autoBtn = document.getElementById('autoBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  // ============================================================
+  // Canvas 绘制（越漂移越模糊、越不清晰）
+  // ============================================================
+  function draw(text, blurLevel) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // 字号自适应
+    let fontSize = 72;
+    ctx.font = `bold ${fontSize}px 'Courier New', monospace`;
+    let m = ctx.measureText(text);
+    const maxW = canvas.width - 80;
+    if (m.width > maxW) {
+      fontSize = Math.floor(fontSize * maxW / m.width);
+      ctx.font = `bold ${fontSize}px 'Courier New', monospace`;
+    }
+
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    // 基础文字（白色）
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, cx, cy);
+
+    // ---- 模糊重影：数量随 drift 增加 ----
+    const ghostCount = Math.floor(blurLevel * 24);
+    ctx.globalAlpha = 0.1 + blurLevel * 0.15;
+    for (let i = 0; i < ghostCount; i++) {
+      const dx = (Math.random() - 0.5) * 12 * blurLevel;
+      const dy = (Math.random() - 0.5) * 12 * blurLevel;
+      ctx.fillText(text, cx + dx, cy + dy);
+    }
+
+    // ---- 噪点：随 drift 增多 ----
+    ctx.globalAlpha = 0.03 + blurLevel * 0.12;
+    ctx.fillStyle = '#fff';
+    const dots = Math.floor(200 + blurLevel * 2500);
+    for (let i = 0; i < dots; i++) {
+      ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height,
+                   Math.random() * 1.8 + 0.4, Math.random() * 1.8 + 0.4);
+    }
+
+    // ---- 扫描线 ----
+    ctx.globalAlpha = 0.05;
+    for (let y = 0; y < canvas.height; y += 3) {
+      ctx.fillRect(0, y, canvas.width, 1);
+    }
+
+    ctx.restore();
+  }
+
+  // ============================================================
+  // 核心：运行一个周期
+  // ============================================================
+  function tick() {
+    const oldBelief = belief;
+    const oldIdx = DRIFT_PATH.indexOf(oldBelief);
+
+    // drift 增长：+6 ~ +14，有随机波动
+    const increase = 6 + Math.random() * 8;
+    drift = Math.min(100, drift + increase);
+
+    // 计算新的确信
+    belief = getBeliefByDrift(drift);
+
+    // ---- 写日志 ----
+    const time = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    if (oldBelief !== belief) {
+      logs.push({
+        time,
+        oldText: oldBelief,
+        newText: belief,
+        drift: Math.floor(drift),
+        type: 'change'   // 记忆发生了改变
+      });
+    } else {
+      logs.push({
+        time,
+        oldText: oldBelief,
+        newText: null,
+        drift: Math.floor(drift),
+        type: 'stable'   // 记忆被扰动但没变
+      });
+    }
+
+    // 限制日志条数
+    if (logs.length > 80) logs = logs.slice(-80);
+
+    render();
+  }
+
+  // ============================================================
+  // 渲染
+  // ============================================================
+  function render() {
+    const blurLevel = drift / 100;
+
+    // Canvas
+    draw(belief, blurLevel);
+
+    // 确信文字
+    beliefText.textContent = belief;
+
+    // 漂移标签
+    driftLabel.textContent = `DRIFT: ${Math.floor(drift)}%`;
+    driftLabel.style.color = drift > 70 ? '#fff' : '#666';
+
+    // 日志
+    logEl.innerHTML = '';
+    for (let i = logs.length - 1; i >= 0; i--) {
+      const L = logs[i];
+      const div = document.createElement('div');
+      div.className = 'log-line';
+
+      if (L.type === 'change') {
+        div.innerHTML = `<span class="tag">[${L.time}]</span>
+          <span class="lie">${escapeHtml(L.oldText)}</span>
+          <span class="drift"> → </span>
+          <span class="truth">${escapeHtml(L.newText)}</span>
+          <span class="tag" style="float:right">drift ${L.drift}%</span>`;
+      } else {
+        div.innerHTML = `<span class="tag">[${L.time}]</span>
+          <span class="drift">${escapeHtml(L.oldText)}</span>
+          <span class="warn"> (记忆被扰动，但未改变)</span>
+          <span class="tag" style="float:right">drift ${L.drift}%</span>`;
+      }
+      logEl.appendChild(div);
+    }
+
+    // 自动按钮文字
+    autoBtn.textContent = autoTimer ? '▸ 停止' : '▸ 自动';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  // ============================================================
+  // 自动运行 / 重置
+  // ============================================================
+  function toggleAuto() {
+    if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+      render();
+    } else {
+      autoTimer = setInterval(tick, 800);
+      render();
+    }
+  }
+
+  function reset() {
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+    belief = TRUTH;
+    drift = 0;
+    logs = [];
+    render();
+  }
+
+  // ============================================================
+  // 初始化
+  // ============================================================
+  function init() {
+    reset();
+  }
+
+  // ============================================================
+  // 事件
+  // ============================================================
+  tickBtn.addEventListener('click', tick);
+  autoBtn.addEventListener('click', toggleAuto);
+  resetBtn.addEventListener('click', reset);
+
+  window.addEventListener('keydown', e => {
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); tick(); }
+    if (e.key === 'a' || e.key === 'A') { e.preventDefault(); toggleAuto(); }
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
