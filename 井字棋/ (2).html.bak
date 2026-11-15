@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>井字棋 · 白底黑盘 · 连线获胜</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: white;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        }
+
+        .game-container {
+            background: white;
+            border-radius: 2rem;
+            padding: 2rem 2.5rem 2.5rem 2.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            border: 1px solid #eaeaea;
+            position: relative;
+        }
+
+        h1 {
+            font-weight: 500;
+            font-size: 2rem;
+            letter-spacing: 2px;
+            color: #111;
+            margin-bottom: 1.2rem;
+            text-transform: uppercase;
+            background: white;
+            padding: 0 0.5rem;
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 0.3rem;
+        }
+
+        /* 棋盘容器——相对定位，用于放置获胜线条的 canvas */
+        .board-wrapper {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 1.8rem;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-template-rows: repeat(3, 100px);
+            gap: 6px;
+            background-color: black;
+            border: 6px solid black;
+            border-radius: 12px;
+            box-shadow: 0 6px 0 rgba(0, 0, 0, 0.1);
+        }
+
+        /* 画布——绝对定位覆盖整个棋盘区域，用于画获胜线 */
+        #winCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;   /* 让点击穿透，不影响格子操作 */
+            z-index: 10;
+        }
+
+        /* 格子样式 */
+        .cell {
+            background-color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 5rem;
+            font-weight: 600;
+            line-height: 1;
+            color: black;
+            transition: background-color 0.1s ease;
+            cursor: pointer;
+            user-select: none;
+            border-radius: 4px;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+        }
+
+        .cell.filled {
+            cursor: default;
+        }
+
+        .cell:not(.filled):hover {
+            background-color: #f2f2f2;
+        }
+
+        .status {
+            font-size: 1.5rem;
+            font-weight: 400;
+            color: #222;
+            background: white;
+            padding: 0.6rem 1.8rem;
+            border-radius: 40px;
+            border: 2px solid #ddd;
+            margin-bottom: 1.5rem;
+            min-height: 4rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 0 #eee;
+        }
+
+        .status.win {
+            border-color: #000;
+            font-weight: 600;
+            color: #000;
+            background: #f8f8f8;
+        }
+
+        .reset-btn {
+            background: black;
+            color: white;
+            border: none;
+            font-size: 1.3rem;
+            font-weight: 500;
+            padding: 0.8rem 2.8rem;
+            border-radius: 50px;
+            cursor: pointer;
+            letter-spacing: 1px;
+            transition: background 0.2s, transform 0.1s;
+            border: 2px solid black;
+            box-shadow: 0 4px 0 #333;
+            font-family: inherit;
+        }
+
+        .reset-btn:hover {
+            background: #1a1a1a;
+        }
+
+        .reset-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #333;
+        }
+
+        .cell span {
+            display: block;
+            line-height: 1;
+            margin-top: -8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>井字棋</h1>
+        <div class="board-wrapper" id="boardWrapper">
+            <div class="board" id="board">
+                <!-- 动态生成格子 -->
+            </div>
+            <!-- 获胜连线画布 -->
+            <canvas id="winCanvas"></canvas>
+        </div>
+        <div class="status" id="status">〇 的回合</div>
+        <button class="reset-btn" id="resetBtn">重开一局</button>
+    </div>
+
+    <script>
+        (function() {
+            // ---------- 游戏状态 ----------
+            let boardState = ['', '', '', '', '', '', '', '', ''];
+            let currentPlayer = '〇';
+            const PLAYER_O = '〇';
+            const PLAYER_X = 'X';
+            let gameActive = true;
+
+            // DOM 元素
+            const boardElement = document.getElementById('board');
+            const statusElement = document.getElementById('status');
+            const canvas = document.getElementById('winCanvas');
+            const ctx = canvas.getContext('2d');
+            const boardWrapper = document.getElementById('boardWrapper');
+
+            // 获胜组合
+            const winPatterns = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8],
+                [0, 3, 6], [1, 4, 7], [2, 5, 8],
+                [0, 4, 8], [2, 4, 6]
+            ];
+
+            // 存储当前获胜的组合索引（如果有），用于重绘时画线
+            let currentWinPattern = null;
+
+            // ---------- 工具：获取格子中心坐标 (相对于棋盘容器/画布) ----------
+            function getCellCenter(index) {
+                const col = index % 3;
+                const row = Math.floor(index / 3);
+                const borderSize = 6;      // board的边框
+                const cellSize = 100;
+                const gap = 6;
+                const x = borderSize + col * (cellSize + gap) + cellSize / 2;
+                const y = borderSize + row * (cellSize + gap) + cellSize / 2;
+                return { x, y };
+            }
+
+            // ---------- 调整画布尺寸以匹配棋盘区域（wrapper 尺寸）----------
+            function resizeCanvas() {
+                const rect = boardWrapper.getBoundingClientRect();
+                const width = rect.width;
+                const height = rect.height;
+                if (width > 0 && height > 0) {
+                    canvas.width = width;
+                    canvas.height = height;
+                }
+                // 重绘获胜线（如果有）
+                drawWinLine();
+            }
+
+            // ---------- 绘制获胜连线 ----------
+            function drawWinLine() {
+                // 清除画布
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                if (!currentWinPattern) return;
+
+                // 获取三个格子的中心坐标
+                const [a, , c] = currentWinPattern; // 取第一个和第三个作为两端
+                const start = getCellCenter(a);
+                const end = getCellCenter(c);
+
+                // 样式：灰色粗线，带圆头
+                ctx.beginPath();
+                ctx.strokeStyle = '#9e9e9e'; // 灰色线条
+                ctx.lineWidth = 10;
+                ctx.lineCap = 'round';
+                ctx.moveTo(start.x, start.y);
+                ctx.lineTo(end.x, end.y);
+                ctx.stroke();
+            }
+
+            // ---------- 渲染棋盘格子 ----------
+            function renderBoard() {
+                boardElement.innerHTML = '';
+                for (let i = 0; i < 9; i++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.dataset.index = i;
+                    const mark = boardState[i];
+                    if (mark !== '') {
+                        cell.textContent = mark;
+                        cell.classList.add('filled');
+                    } else {
+                        cell.textContent = '';
+                    }
+                    cell.addEventListener('click', cellClickHandler);
+                    boardElement.appendChild(cell);
+                }
+                resizeCanvas();
+            }
+
+            // ---------- 格子点击处理 ----------
+            function cellClickHandler(e) {
+                const cell = e.currentTarget;
+                const index = parseInt(cell.dataset.index, 10);
+
+                if (!gameActive || boardState[index] !== '') {
+                    return;
+                }
+
+                // 落子
+                boardState[index] = currentPlayer;
+                cell.textContent = currentPlayer;
+                cell.classList.add('filled');
+
+                // 检查胜负
+                const winInfo = checkGameResult();
+                if (winInfo) {
+                    gameActive = false;
+                    if (winInfo.result === 'win') {
+                        currentWinPattern = winInfo.pattern;
+                        statusElement.textContent = `${currentPlayer} 获胜！`;
+                        statusElement.classList.add('win');
+                        drawWinLine();
+                    } else if (winInfo.result === 'draw') {
+                        statusElement.textContent = '平局！';
+                        statusElement.classList.add('win');
+                        currentWinPattern = null;
+                        drawWinLine();
+                    }
+                    return;
+                }
+
+                // 切换玩家
+                currentPlayer = (currentPlayer === PLAYER_O) ? PLAYER_X : PLAYER_O;
+                updateStatusTurn();
+            }
+
+            // 更新状态栏
+            function updateStatusTurn() {
+                if (!gameActive) return;
+                statusElement.textContent = `${currentPlayer} 的回合`;
+                statusElement.classList.remove('win');
+            }
+
+            // ---------- 检查游戏结果 ----------
+            function checkGameResult() {
+                for (let pattern of winPatterns) {
+                    const [a, b, c] = pattern;
+                    if (boardState[a] !== '' && boardState[a] === boardState[b] && boardState[a] === boardState[c]) {
+                        return { result: 'win', pattern: pattern };
+                    }
+                }
+
+                if (boardState.every(cell => cell !== '')) {
+                    return { result: 'draw' };
+                }
+
+                return null;
+            }
+
+            // ---------- 重置游戏 ----------
+            function resetGame() {
+                boardState = ['', '', '', '', '', '', '', '', ''];
+                currentPlayer = PLAYER_O;
+                gameActive = true;
+                currentWinPattern = null;
+
+                statusElement.classList.remove('win');
+                statusElement.textContent = `${currentPlayer} 的回合`;
+
+                renderBoard();
+                // 清除画布上的线条
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+
+            // ---------- 初始化 ----------
+            function initGame() {
+                renderBoard();
+                statusElement.textContent = `${currentPlayer} 的回合`;
+                document.getElementById('resetBtn').addEventListener('click', resetGame);
+                // 窗口大小变化时重新调整画布（可选，增强稳健性）
+                window.addEventListener('resize', () => {
+                    resizeCanvas();
+                });
+            }
+
+            initGame();
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>井字棋 · 白底黑盘 · 〇先X后</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: white;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            /* 确保整体纯白背景 */
+        }
+
+        .game-container {
+            background: white;
+            border-radius: 2rem;
+            padding: 2rem 2.5rem 2.5rem 2.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05); /* 极淡阴影，保持白底干净 */
+            border: 1px solid #eaeaea; /* 极浅灰边框，让容器有边界感但不破坏白色基调 */
+        }
+
+        h1 {
+            font-weight: 500;
+            font-size: 2rem;
+            letter-spacing: 2px;
+            color: #111;
+            margin-bottom: 1.2rem;
+            text-transform: uppercase;
+            background: white;
+            padding: 0 0.5rem;
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 0.3rem;
+        }
+
+        /* 黑色棋盘 —— 使用深黑边框网格 */
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-template-rows: repeat(3, 100px);
+            gap: 6px;                /* 缝隙露出黑色背景，形成网格线效果 */
+            background-color: black;  /* 黑底网格线 */
+            border: 6px solid black;  /* 外框也是黑色，更结实 */
+            border-radius: 12px;      /* 轻微圆角，视觉舒适 */
+            box-shadow: 0 6px 0 rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.8rem;
+        }
+
+        /* 格子 —— 白色背景，与黑色边框形成高对比 */
+        .cell {
+            background-color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 5rem;
+            font-weight: 600;
+            line-height: 1;
+            color: black;            /* 〇和X都是黑色，符合黑白主题 */
+            transition: background-color 0.1s ease;
+            cursor: pointer;
+            user-select: none;
+            border-radius: 4px;      /* 格子轻微圆角，让触感柔和 */
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+        }
+
+        /* 已经不能点击的格子取消手型 */
+        .cell.filled {
+            cursor: default;
+        }
+
+        /* 悬停效果，不影响已填充格子 */
+        .cell:not(.filled):hover {
+            background-color: #f2f2f2;
+        }
+
+        /* 状态栏：显示当前轮到谁 */
+        .status {
+            font-size: 1.5rem;
+            font-weight: 400;
+            color: #222;
+            background: white;
+            padding: 0.6rem 1.8rem;
+            border-radius: 40px;
+            border: 2px solid #ddd;
+            margin-bottom: 1.5rem;
+            min-height: 4rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            letter-spacing: 0.5px;
+            box-shadow: 0 2px 0 #eee;
+        }
+
+        /* 重置按钮——简洁黑白风格 */
+        .reset-btn {
+            background: black;
+            color: white;
+            border: none;
+            font-size: 1.3rem;
+            font-weight: 500;
+            padding: 0.8rem 2.8rem;
+            border-radius: 50px;
+            cursor: pointer;
+            letter-spacing: 1px;
+            transition: background 0.2s, transform 0.1s;
+            border: 2px solid black;
+            box-shadow: 0 4px 0 #333;
+            font-family: inherit;
+        }
+
+        .reset-btn:hover {
+            background: #1a1a1a;
+        }
+
+        .reset-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #333;
+        }
+
+        /* 当游戏结束时，状态栏特殊颜色（但仍保持黑白灰） */
+        .status.win {
+            border-color: #000;
+            font-weight: 600;
+            color: #000;
+            background: #f8f8f8;
+        }
+
+        /* 确保棋盘格子内符号严格居中 */
+        .cell span {
+            display: block;
+            line-height: 1;
+            margin-top: -8px; /* 微调垂直居中，让〇和X视觉居中 */
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>井字棋</h1>
+        <div class="board" id="board">
+            <!-- 动态或静态生成9个格子，使用JS生成保证结构清晰，也方便重置 -->
+        </div>
+        <div class="status" id="status">〇 的回合</div>
+        <button class="reset-btn" id="resetBtn">重开一局</button>
+    </div>
+
+    <script>
+        (function() {
+            // ---------- 游戏状态 ----------
+            let boardState = ['', '', '', '', '', '', '', '', '']; // 索引0-8，''表示空
+            let currentPlayer = '〇'; // 先手：〇 (注意是圆符号)
+            const PLAYER_O = '〇';
+            const PLAYER_X = 'X';
+            let gameActive = true;     // 游戏是否进行中
+            let gameResultMessage = ''; // 用于显示获胜/平局信息
+
+            // DOM 元素
+            const boardElement = document.getElementById('board');
+            const statusElement = document.getElementById('status');
+
+            // 获胜组合 (8种)
+            const winPatterns = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8], // 行
+                [0, 3, 6], [1, 4, 7], [2, 5, 8], // 列
+                [0, 4, 8], [2, 4, 6]             // 对角线
+            ];
+
+            // ---------- 初始化/渲染棋盘 ----------
+            function renderBoard() {
+                // 清空棋盘并重新创建9个格子
+                boardElement.innerHTML = '';
+                for (let i = 0; i < 9; i++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.dataset.index = i;
+                    // 设置格子的内容（〇, X 或空）
+                    const mark = boardState[i];
+                    if (mark !== '') {
+                        cell.textContent = mark;
+                        cell.classList.add('filled');
+                    } else {
+                        cell.textContent = ''; // 确保空
+                    }
+                    // 添加点击事件监听 (直接在元素上绑定，避免事件委托的索引问题)
+                    cell.addEventListener('click', cellClickHandler);
+                    boardElement.appendChild(cell);
+                }
+            }
+
+            // ---------- 格子点击处理 ----------
+            function cellClickHandler(e) {
+                const cell = e.currentTarget;
+                const index = parseInt(cell.dataset.index, 10);
+
+                // 如果游戏不活跃，或者格子已有内容，则忽略点击
+                if (!gameActive || boardState[index] !== '') {
+                    return;
+                }
+
+                // 更新状态
+                boardState[index] = currentPlayer;
+                // 更新界面
+                cell.textContent = currentPlayer;
+                cell.classList.add('filled');
+
+                // 检查胜负/平局
+                const result = checkGameResult();
+                if (result !== null) {
+                    gameActive = false;
+                    // 更新状态栏
+                    if (result === 'win') {
+                        // 当前玩家获胜（因为是在他下子后检查的）
+                        statusElement.textContent = `${currentPlayer} 获胜！`;
+                        statusElement.classList.add('win');
+                    } else if (result === 'draw') {
+                        statusElement.textContent = '平局！';
+                        statusElement.classList.add('win'); // 使用同样加粗效果
+                    }
+                    return;
+                }
+
+                // 切换玩家
+                currentPlayer = (currentPlayer === PLAYER_O) ? PLAYER_X : PLAYER_O;
+                updateStatusTurn();
+            }
+
+            // 更新状态栏轮到谁
+            function updateStatusTurn() {
+                if (!gameActive) return;
+                statusElement.textContent = `${currentPlayer} 的回合`;
+                statusElement.classList.remove('win'); // 确保移除特殊样式
+            }
+
+            // ---------- 检查游戏结果 (获胜/平局) ----------
+            function checkGameResult() {
+                // 1. 检查是否有玩家获胜
+                for (let pattern of winPatterns) {
+                    const [a, b, c] = pattern;
+                    if (boardState[a] !== '' && boardState[a] === boardState[b] && boardState[a] === boardState[c]) {
+                        // 有玩家连成三子
+                        return 'win';
+                    }
+                }
+
+                // 2. 检查是否平局 (棋盘已满且无胜者)
+                if (boardState.every(cell => cell !== '')) {
+                    return 'draw';
+                }
+
+                // 3. 游戏继续
+                return null;
+            }
+
+            // ---------- 重置游戏 ----------
+            function resetGame() {
+                // 重置状态
+                boardState = ['', '', '', '', '', '', '', '', ''];
+                currentPlayer = PLAYER_O;  // 先手〇
+                gameActive = true;
+                gameResultMessage = '';
+
+                // 重置状态栏样式和文字
+                statusElement.classList.remove('win');
+                statusElement.textContent = `${currentPlayer} 的回合`;
+
+                // 重新渲染棋盘（会重建所有格子，清除旧的事件监听和内容）
+                renderBoard();
+            }
+
+            // ---------- 初始化游戏 ----------
+            function initGame() {
+                // 首次渲染棋盘
+                renderBoard();
+                // 设置初始状态栏
+                statusElement.textContent = `${currentPlayer} 的回合`;
+                // 绑定重置按钮
+                const resetBtn = document.getElementById('resetBtn');
+                resetBtn.addEventListener('click', resetGame);
+            }
+
+            // 启动游戏
+            initGame();
+        })();
+    </script>
+</body>
+</html>
