@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>泛光圆 · 晃动小球</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: black;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      touch-action: none;  /* 阻止触摸滚动/缩放 */
+      overscroll-behavior: none;
+      overflow: hidden;
+    }
+
+    .scene {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 泛光的大圆容器 */
+    .glow-ring {
+      position: relative;
+      width: min(80vw, 80vh);
+      height: min(80vw, 80vh);
+      max-width: 560px;
+      max-height: 560px;
+      border-radius: 50%;
+      /* 内层深色背景，配合外发光 */
+      background: radial-gradient(circle at 30% 30%, #111, #000);
+      /* 外发光 + 内阴影模拟边框泛光 */
+      box-shadow: 
+        0 0 25px rgba(0, 200, 255, 0.7),
+        0 0 60px rgba(0, 180, 255, 0.4),
+        inset 0 0 30px rgba(0, 220, 255, 0.2),
+        inset 0 0 10px rgba(0, 255, 255, 0.3);
+      border: 1px solid rgba(0, 200, 255, 0.4);
+      /* 微妙的内部光晕 */
+      transition: box-shadow 0.2s;
+    }
+
+    /* 柔光边框效果更明显 */
+    .glow-ring::after {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: transparent;
+      box-shadow: 0 0 15px #00c8ff, 0 0 30px #0088ff;
+      opacity: 0.5;
+      filter: blur(3px);
+      z-index: -1;
+    }
+
+    /* 小球画布：铺满整个大圆，小球通过绝对定位绘制 */
+    .balls-layer {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      overflow: hidden;  /* 保证小球不会跑出圆外，视觉整洁 */
+      /* 轻微内部渐变增加层次 */
+      background: radial-gradient(circle at 40% 40%, rgba(30, 30, 30, 0.3), transparent 70%);
+    }
+
+    /* 每个小球基础样式 */
+    .ball {
+      position: absolute;
+      border-radius: 50%;
+      /* 每个小球的独立光晕与色彩在JS中动态设置，但先给默认值 */
+      will-change: transform, left, top;
+      transition: transform 0.05s linear;
+      box-shadow: 0 0 8px currentColor;
+      /* 轻微高光 */
+      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.8), rgba(255,255,255,0.1) 60%, rgba(0,0,0,0.2));
+      background-blend-mode: overlay;
+    }
+
+    /* 调试/提示 */
+    .hint {
+      position: fixed;
+      bottom: 16px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: rgba(120, 220, 255, 0.6);
+      font-size: 14px;
+      letter-spacing: 2px;
+      pointer-events: none;
+      text-shadow: 0 0 10px #00aaff;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="glow-ring" id="glowRing">
+      <div class="balls-layer" id="ballsLayer"></div>
+    </div>
+  </div>
+  <div class="hint">晃动手机 · 小球晃动</div>
+
+  <script>
+    (function() {
+      // ----- 配置参数 -----
+      const BALL_COUNT = 7;                // 小球数量
+      const BASE_RADIUS = 10;              // 基准半径(px)，根据圆容器大小缩放
+      const MAX_ACCEL = 25;               // 加速度限制，避免飞出太远
+      const FRICTION = 0.92;              // 速度摩擦系数
+      const BOUNCE = 0.7;                 // 碰撞弹性
+      const SENSITIVITY = 0.8;            // 重力感应灵敏度 (手机倾斜映射到加速度)
+
+      // 小球颜色 (青色/蓝色/紫色 霓虹色系)
+      const COLORS = [
+        '#4df0ff', // 亮青
+        '#3a9eff', // 天蓝
+        '#b84dff', // 紫
+        '#00e0c0', // 薄荷
+        '#5f7aff', // 蓝紫
+        '#ff4dd0', // 粉紫(点缀)
+        '#7af0ff', // 淡青
+      ];
+
+      // ----- 获取元素 -----
+      const ring = document.getElementById('glowRing');
+      const ballsLayer = document.getElementById('ballsLayer');
+
+      // ----- 状态 -----
+      let ringRect = ring.getBoundingClientRect();
+      let ringWidth = ringRect.width;
+      let ringHeight = ringRect.height;
+      // 小球半径基于容器尺寸，让小球看起来比例协调 (最多不超过12px, 最小6px)
+      const ballRadius = Math.max(6, Math.min(12, ringWidth * 0.035));
+      
+      // 小球数据结构
+      let balls = [];
+
+      // 加速度 (重力感应模拟) — 假设手机倾斜时产生加速度
+      let accelX = 0;
+      let accelY = 0;
+
+      // 用于平滑传感器数据
+      let targetAccelX = 0;
+      let targetAccelY = 0;
+
+      // ----- 初始化小球 -----
+      function initBalls() {
+        balls = [];
+        // 为避免全部重叠，在圆内随机分布，但保证在半径内
+        for (let i = 0; i < BALL_COUNT; i++) {
+          // 随机位置：距圆心一定范围内 (避免刚好在边界)
+          const angle = Math.random() * Math.PI * 2;
+          const dist = Math.random() * (ringWidth / 2 - ballRadius * 2) * 0.7; // 不要太靠边
+          const centerX = ringWidth / 2;
+          const centerY = ringHeight / 2;
+          let x = centerX + Math.cos(angle) * dist;
+          let y = centerY + Math.sin(angle) * dist;
+
+          // 确保在圆内 (安全)
+          const maxDist = ringWidth / 2 - ballRadius - 2; // 留一点边距
+          const dx = x - centerX;
+          const dy = y - centerY;
+          const currentDist = Math.sqrt(dx*dx + dy*dy);
+          if (currentDist > maxDist) {
+            const ratio = maxDist / currentDist;
+            x = centerX + dx * ratio;
+            y = centerY + dy * ratio;
+          }
+
+          // 速度初始化为微小随机值，看起来自然
+          const vx = (Math.random() - 0.5) * 0.8;
+          const vy = (Math.random() - 0.5) * 0.8;
+
+          // 颜色随机从色板选取
+          const color = COLORS[i % COLORS.length];
+          
+          balls.push({
+            x, y,
+            vx, vy,
+            radius: ballRadius * (0.8 + Math.random() * 0.5), // 略微不同大小
+            color: color,
+            element: null,
+            id: i,
+          });
+        }
+
+        // 渲染到DOM
+        ballsLayer.innerHTML = '';
+        balls.forEach(ball => {
+          const el = document.createElement('div');
+          el.className = 'ball';
+          el.style.width = `${ball.radius * 2}px`;
+          el.style.height = `${ball.radius * 2}px`;
+          el.style.left = '0px';
+          el.style.top = '0px';
+          // 背景颜色 + 径向渐变高光覆盖
+          el.style.backgroundColor = ball.color;
+          el.style.backgroundImage = 'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0.1) 60%, rgba(0,0,0,0.3))';
+          el.style.backgroundBlendMode = 'overlay';
+          el.style.boxShadow = `0 0 12px ${ball.color}, 0 0 20px ${ball.color}80`;
+          el.style.border = '1px solid rgba(255,255,255,0.3)';
+          // 定位方式使用transform会更流畅，但为了边界碰撞方便用left/top？用transform: translate 更佳
+          // 但我们需要通过left/top来控制位置，且更新频繁，但使用transform可以启用GPU加速。
+          // 优化: 使用 transform: translate3d 来避免重排。我们用 transform 替代 left/top。
+          // 初始化时设置transform。
+          el.style.position = 'absolute';
+          el.style.willChange = 'transform';
+          el.style.left = '0';
+          el.style.top = '0';
+          // 小球中心与元素对齐，使用 translate(-50%, -50%) 会让中心点对应坐标，但配合绝对定位0,0很复杂。
+          // 更简单: 设置 left/top 为0，然后用 translate 移动，小球左上角坐标 = (x - radius, y - radius)
+          // 但为了不频繁计算，直接使用 transform: translate(calc(x - r), calc(y - r)) 不太方便。
+          // 更好的方式：使用 margin-left 等？但性能最优还是transform，我们用 translate(px, px) 并配合 left/top 为0，居中偏移使用额外方式。
+          // 简便且高效：在样式中用 left = 0, top = 0，然后 transform: translate3d(x - radius, y - radius, 0) 其中x,y是中心坐标。
+          // 对，就是这样。这样小球元素默认在左上角(0,0)，移动translate后它的左上角到达 (x - radius, y - radius)，使得中心在(x,y)。
+          // 我们调整一下初始样式：删除left/top，或者用left:0;top:0;
+          el.style.left = '0px';
+          el.style.top = '0px';
+          // 但为了不影响布局，小球需要是绝对定位
+          el.style.position = 'absolute';
+          // 用 transform 移动，所以 margin 无关。
+          ball.element = el;
+          ballsLayer.appendChild(el);
+        });
+      }
+
+      // ----- 更新小球位置 (基于物理模拟) -----
+      function updateBalls() {
+        const centerX = ringWidth / 2;
+        const centerY = ringHeight / 2;
+        const maxDist = ringWidth / 2 - 2; // 稍微留点边距，避免小球边缘跑出圆外
+
+        // 加速度平滑 (让运动有惯性感)
+        // 使用lerp让加速度渐变
+        accelX += (targetAccelX - accelX) * 0.15;
+        accelY += (targetAccelY - accelY) * 0.15;
+
+        // 额外微小随机扰动，避免完全静止 (小球一直有一点点生气)
+        const jitterX = (Math.random() - 0.5) * 0.1;
+        const jitterY = (Math.random() - 0.5) * 0.1;
+
+        for (let ball of balls) {
+          // 应用加速度 (重力感应)
+          ball.vx += (accelX + jitterX) * 0.2;  // 系数调整手感
+          ball.vy += (accelY + jitterY) * 0.2;
+
+          // 限制最大速度，避免飞出
+          const maxSpeed = 12;
+          const speed = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+          if (speed > maxSpeed) {
+            ball.vx = (ball.vx / speed) * maxSpeed;
+            ball.vy = (ball.vy / speed) * maxSpeed;
+          }
+
+          // 摩擦力 (阻尼)
+          ball.vx *= FRICTION;
+          ball.vy *= FRICTION;
+
+          // 如果速度极小则归零，避免永久漂移
+          if (Math.abs(ball.vx) < 0.02) ball.vx = 0;
+          if (Math.abs(ball.vy) < 0.02) ball.vy = 0;
+
+          // 预测新位置
+          let newX = ball.x + ball.vx;
+          let newY = ball.y + ball.vy;
+
+          // 边界碰撞处理 (限制在圆形内部)
+          // 计算新位置相对于圆心的距离
+          let dx = newX - centerX;
+          let dy = newY - centerY;
+          let dist = Math.sqrt(dx * dx + dy * dy);
+
+          // 如果超出圆形边界（减去小球半径）
+          const maxAllowedDist = maxDist - ball.radius;
+          if (dist > maxAllowedDist) {
+            // 将位置拉到边界上
+            const ratio = maxAllowedDist / dist;
+            // 计算边界上的位置
+            const boundX = centerX + dx * ratio;
+            const boundY = centerY + dy * ratio;
+
+            // 计算法线方向 (从圆心指向小球)
+            const nx = dx / dist;
+            const ny = dy / dist;
+
+            // 速度在法线方向的分量
+            const vn = ball.vx * nx + ball.vy * ny;
+            // 如果速度方向向外，则反弹
+            if (vn > 0) {
+              // 反射速度: v' = v - (1+BOUNCE) * vn * n
+              ball.vx -= (1 + BOUNCE) * vn * nx;
+              ball.vy -= (1 + BOUNCE) * vn * ny;
+            }
+
+            // 更新位置到边界
+            newX = boundX;
+            newY = boundY;
+
+            // 轻微能量损失 (可选的额外摩擦)
+            ball.vx *= 0.98;
+            ball.vy *= 0.98;
+          }
+
+          // 再次确保位置在圆内 (由于反弹和位置修正可能会有微小偏差)
+          dx = newX - centerX;
+          dy = newY - centerY;
+          dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > maxAllowedDist) {
+            const ratio = maxAllowedDist / dist;
+            newX = centerX + dx * ratio;
+            newY = centerY + dy * ratio;
+          }
+
+          // 更新小球位置
+          ball.x = newX;
+          ball.y = newY;
+
+          // 更新DOM位置 (使用transform: translate3d 性能更好)
+          if (ball.element) {
+            // 左上角坐标 = 中心坐标 - 半径
+            const leftPos = ball.x - ball.radius;
+            const topPos = ball.y - ball.radius;
+            ball.element.style.transform = `translate3d(${leftPos}px, ${topPos}px, 0)`;
+          }
+        }
+      }
+
+      // ----- 动画循环 -----
+      function animate() {
+        updateBalls();
+        requestAnimationFrame(animate);
+      }
+
+      // ----- 处理窗口大小变化 (重新计算尺寸/更新边界) -----
+      function handleResize() {
+        const newRect = ring.getBoundingClientRect();
+        // 如果尺寸变化较大，更新全局变量并重置小球位置，避免卡在奇怪的地方
+        if (Math.abs(newRect.width - ringWidth) > 2 || Math.abs(newRect.height - ringHeight) > 2) {
+          ringWidth = newRect.width;
+          ringHeight = newRect.height;
+          // 重新初始化小球 (简单重置)
+          initBalls();
+        } else {
+          ringWidth = newRect.width;
+          ringHeight = newRect.height;
+        }
+      }
+
+      // ----- 设备方向 / 运动传感器处理 -----
+      function handleMotion(event) {
+        const acc = event.accelerationIncludingGravity;
+        if (!acc) return;
+
+        // accelerationIncludingGravity 包含重力，静止时x,y约为0(竖屏) 或 -9.8等
+        // 我们需要的是倾斜导致的加速度影响，忽略静止重力。
+        // 但简单方案：使用 deviceorientation 更直观，但需要用户授权 (iOS 13+)
+        // 这里使用 devicemotion 并减去重力影响比较麻烦。不如使用 deviceorientation 的 beta/gamma。
+        // 但是部分Android浏览器支持 motion 且可以用 accelerationIncludingGravity 的 x,y 来映射倾斜。
+        // 为了简单且兼容性好，回退到 deviceorientation。
+        // 但我们已经注册了 devicemotion，这里先保留，实际使用 orientation 更稳定。
+        // 所以这个函数暂时不用，改用 orientation 监听。
+        // 留着以备有些浏览器。
+      }
+
+      // 设备方向 (更常用)
+      function handleOrientation(event) {
+        // beta: 前后倾斜 (-180 ~ 180)  gamma: 左右倾斜 (-90 ~ 90)
+        const beta = event.beta;   // 前后
+        const gamma = event.gamma; // 左右
+
+        // 将 beta/gamma 映射到加速度 (范围 -1 到 1 然后乘以灵敏度)
+        // 手机平放时 beta≈0, gamma≈0; 竖起时 beta≈90
+        // 我们期望：向前倾斜 -> 小球向前(下)运动  (根据坐标系)
+        // 但界面坐标系：Y向下为正，X向右为正。
+        // 设备beta: 手机顶部向下倾斜时beta为正 (0~180) → 重力让小球向“下”运动? 
+        // 根据直觉调整: 手机向前倾斜(顶部向下)，小球应该向屏幕下方移动 -> Y正方向。 所以 accelY 应该为正。
+        // 但beta为正时对应手机顶部向下倾斜，重力感应小球向下(屏幕下方) => 我们需要 accelY = beta相关 正值。
+        // 同理 gamma: 手机向右倾斜(gamma为正)，小球向右移动 -> accelX为正。
+        // 限制范围，并做平滑。
+        // 将角度限制在 -90..90 之间，并转换为 -1..1 的系数
+        let rawX = Math.max(-90, Math.min(90, gamma)) / 90;  // gamma范围-90到90
+        let rawY = Math.max(-90, Math.min(90, beta)) / 90;
+
+        // 灵敏度调整
+        targetAccelX = rawX * SENSITIVITY * 8; // 放大到合适的加速度值
+        targetAccelY = rawY * SENSITIVITY * 8;
+      }
+
+      // 回退：如果没有 orientation 支持，尝试 devicemotion 粗略映射 (一般用不上)
+      function handleMotionFallback(event) {
+        const acc = event.accelerationIncludingGravity;
+        if (!acc) return;
+        // 简单映射: 利用 x, y 的加速度 (减去重力分量粗略估计) 但不够精准，只作为备选。
+        // 大多数现代设备都支持 orientation，所以这个基本不用。
+      }
+
+      // ----- 启动所有监听 -----
+      function startSensors() {
+        // 优先使用 deviceorientation (更平滑、直观)
+        if (window.DeviceOrientationEvent) {
+          window.addEventListener('deviceorientation', handleOrientation, false);
+        } else if (window.DeviceMotionEvent) {
+          // 备选：motion 但效果较差
+          window.addEventListener('devicemotion', handleMotionFallback, false);
+        } else {
+          // 没有传感器，使用鼠标/触摸模拟? 可不用，但给出提示
+          console.log('此设备不支持重力感应，但小球仍会因为随机扰动和惯性轻微晃动。');
+        }
+
+        // 额外监听触摸滑动 (用于桌面调试或没有陀螺仪的设备) —— 但为了简洁不添加了。
+      }
+
+      // ----- 重新设置尺寸并初始化 (带防抖) -----
+      function setup() {
+        const rect = ring.getBoundingClientRect();
+        ringWidth = rect.width;
+        ringHeight = rect.height;
+        initBalls();
+      }
+
+      // ----- 页面初始化 -----
+      window.addEventListener('load', () => {
+        setup();
+        startSensors();
+        // 启动动画
+        animate();
+
+        // 窗口尺寸变化
+        window.addEventListener('resize', () => {
+          handleResize();
+        });
+
+        // 处理屏幕旋转
+        window.addEventListener('orientationchange', () => {
+          setTimeout(() => {
+            handleResize();
+          }, 100);
+        });
+      });
+
+      // 防止iOS 13+ 需要用户交互授权 DeviceOrientationEvent
+      // 我们在触摸/点击时请求权限 (非必须但推荐)
+      function requestSensorPermission() {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          DeviceOrientationEvent.requestPermission()
+            .then(permissionState => {
+              if (permissionState === 'granted') {
+                window.addEventListener('deviceorientation', handleOrientation);
+              }
+            })
+            .catch(console.error);
+        } else {
+          // 非iOS或已支持
+        }
+      }
+
+      // 用户触摸时尝试请求权限 (对iOS)
+      document.body.addEventListener('touchstart', function once() {
+        requestSensorPermission();
+        document.body.removeEventListener('touchstart', once);
+      }, { once: true });
+
+      // 同时也监听鼠标点击(桌面调试) 但不影响
+      document.body.addEventListener('click', function onceClick() {
+        requestSensorPermission();
+        document.body.removeEventListener('click', onceClick);
+      }, { once: true });
+
+      // 如果已经授权过，直接尝试添加监听 (有些浏览器不需要)
+      // 在startSensors里已经加了监听，但iOS可能静默失败，重新尝试一次。
+      // 为了不重复添加，使用标志。
+      let orientationAttached = false;
+      const originalStart = startSensors;
+      startSensors = function() {
+        if (orientationAttached) return;
+        if (window.DeviceOrientationEvent) {
+          window.addEventListener('deviceorientation', handleOrientation, false);
+          orientationAttached = true;
+        } else if (window.DeviceMotionEvent) {
+          window.addEventListener('devicemotion', handleMotionFallback, false);
+        }
+        // 对iOS requestPermission 后再次添加
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          // 需要用户手势触发，我们通过点击/触摸已经请求，这里不再重复。
+        }
+      };
+      // 替换
+      startSensors = startSensors.bind(this);
+
+      // 重新执行以便在load时附加，但load时可能会失败，我们已加触摸/点击请求。
+      // 但为了在load时也尝试添加监听（非iOS情况）：
+      window.addEventListener('load', () => {
+        if (!orientationAttached && window.DeviceOrientationEvent) {
+          window.addEventListener('deviceorientation', handleOrientation);
+          orientationAttached = true;
+        } else if (!orientationAttached && window.DeviceMotionEvent) {
+          window.addEventListener('devicemotion', handleMotionFallback);
+        }
+      });
+
+    })();
+  </script>
+</body>
+</html>

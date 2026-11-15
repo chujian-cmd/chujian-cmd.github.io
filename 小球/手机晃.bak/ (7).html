@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>晃动小球</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: black;
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      font-family: system-ui, sans-serif;
+      touch-action: none; overflow: hidden;
+    }
+    .scene { width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .glow-ring {
+      position: relative;
+      width: min(80vw, 80vh); height: min(80vw, 80vh);
+      max-width: 560px; max-height: 560px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #111, #000);
+      box-shadow:
+        0 0 25px rgba(0, 200, 255, 0.7),
+        0 0 60px rgba(0, 180, 255, 0.4),
+        inset 0 0 30px rgba(0, 220, 255, 0.2),
+        inset 0 0 10px rgba(0, 255, 255, 0.3);
+      border: 1px solid rgba(0, 200, 255, 0.4);
+    }
+    .glow-ring::after {
+      content: ''; position: absolute; inset: -2px; border-radius: 50%;
+      box-shadow: 0 0 15px #00c8ff, 0 0 30px #0088ff;
+      opacity: 0.5; filter: blur(3px); z-index: -1;
+    }
+    .balls-layer { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; }
+    .ball { position: absolute; left: 0; top: 0; border-radius: 50%; will-change: transform; }
+    .hint {
+      position: fixed; bottom: 16px; left: 0; right: 0; text-align: center;
+      color: rgba(120, 220, 255, 0.6); font-size: 14px; letter-spacing: 2px;
+      pointer-events: none; text-shadow: 0 0 10px #00aaff; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="glow-ring" id="glowRing">
+      <div class="balls-layer" id="ballsLayer"></div>
+    </div>
+  </div>
+  <div class="hint">晃动手机 · 小球跟着晃</div>
+
+  <script>
+    (function() {
+      const BALL_COUNT = 7;
+      const COLORS = ['#4df0ff','#3a9eff','#b84dff','#00e0c0','#5f7aff','#ff4dd0','#7af0ff'];
+      // 核心参数
+      const SHAKE_GAIN = 0.35;   // 晃动加速度 → 小球位移 的强度（越大晃得越猛）
+      const WALL_BOUNCE = 0.6;
+      const BALL_BOUNCE = 0.6;
+
+      const ring = document.getElementById('glowRing');
+      const ballsLayer = document.getElementById('ballsLayer');
+      let ringW = 0, ringH = 0, ballRadius = 8;
+      let balls = [];
+
+      // 当前帧的"晃动位移量"（由加速度直接转成位移，不积分）
+      let shakeOffsetX = 0, shakeOffsetY = 0;
+
+      // ---------- 初始化 ----------
+      function init() {
+        const rect = ring.getBoundingClientRect();
+        ringW = rect.width;
+        ringH = rect.height;
+        ballRadius = Math.max(7, Math.min(14, ringW * 0.04));
+
+        balls = [];
+        ballsLayer.innerHTML = '';
+
+        const cx = ringW / 2, cy = ringH / 2;
+        const maxR = ringW / 2 - ballRadius - 4;
+        const minDist = ballRadius * 2.1;
+        const minDistSq = minDist * minDist;
+
+        for (let i = 0; i < BALL_COUNT; i++) {
+          let x = 0, y = 0, ok = false, tries = 0;
+          while (!ok && tries < 300) {
+            ok = true;
+            const a = Math.random() * Math.PI * 2;
+            const r = Math.sqrt(Math.random()) * maxR * 0.6;
+            x = cx + Math.cos(a) * r;
+            y = cy + Math.sin(a) * r;
+            for (let b of balls) {
+              const dx = x - b.x, dy = y - b.y;
+              if (dx*dx + dy*dy < minDistSq) { ok = false; break; }
+            }
+            tries++;
+          }
+          const color = COLORS[i % COLORS.length];
+          const el = document.createElement('div');
+          el.className = 'ball';
+          el.style.width = ballRadius * 2 + 'px';
+          el.style.height = ballRadius * 2 + 'px';
+          el.style.background = color;
+          el.style.boxShadow = `0 0 10px ${color}, 0 0 20px ${color}80`;
+          ballsLayer.appendChild(el);
+          balls.push({ x, y, vx: 0, vy: 0, el });
+        }
+        render();
+      }
+
+      function render() {
+        for (let b of balls) {
+          b.el.style.transform = `translate3d(${b.x - ballRadius}px, ${b.y - ballRadius}px, 0)`;
+        }
+      }
+
+      // ---------- 每帧更新 ----------
+      function update() {
+        const cx = ringW / 2, cy = ringH / 2;
+        const maxR = ringW / 2 - ballRadius - 2;
+
+        // ★ 核心：把"晃动位移量"直接加到每个小球的位置上
+        // 就像晃动盒子，里面的珠子被甩向晃动方向
+        for (let b of balls) {
+          b.vx += shakeOffsetX;
+          b.vy += shakeOffsetY;
+
+          // 摩擦（小一点，让球多滚几下）
+          b.vx *= 0.92;
+          b.vy *= 0.92;
+
+          if (Math.abs(b.vx) < 0.02) b.vx = 0;
+          if (Math.abs(b.vy) < 0.02) b.vy = 0;
+
+          b.x += b.vx;
+          b.y += b.vy;
+        }
+
+        // 球间碰撞
+        const r2 = ballRadius * 2;
+        const r2Sq = r2 * r2;
+        for (let i = 0; i < balls.length; i++) {
+          for (let j = i + 1; j < balls.length; j++) {
+            const a = balls[i], b = balls[j];
+            let dx = b.x - a.x, dy = b.y - a.y;
+            let d2 = dx*dx + dy*dy;
+            if (d2 > 0 && d2 < r2Sq) {
+              const d = Math.sqrt(d2);
+              const nx = dx/d, ny = dy/d;
+              const overlap = (r2 - d) / 2;
+              a.x -= nx * overlap; a.y -= ny * overlap;
+              b.x += nx * overlap; b.y += ny * overlap;
+              const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+              const vn = rvx*nx + rvy*ny;
+              if (vn < 0) {
+                const imp = -(1 + BALL_BOUNCE) * vn / 2;
+                a.vx -= imp * nx; a.vy -= imp * ny;
+                b.vx += imp * nx; b.vy += imp * ny;
+              }
+            }
+          }
+        }
+
+        // 圆形边界
+        for (let b of balls) {
+          let dx = b.x - cx, dy = b.y - cy;
+          const dist = Math.hypot(dx, dy);
+          if (dist > maxR) {
+            const nx = dx/(dist||1), ny = dy/(dist||1);
+            b.x = cx + nx * maxR;
+            b.y = cy + ny * maxR;
+            const vn = b.vx*nx + b.vy*ny;
+            if (vn > 0) {
+              b.vx -= (1 + WALL_BOUNCE) * vn * nx;
+              b.vy -= (1 + WALL_BOUNCE) * vn * ny;
+            }
+          }
+        }
+
+        // 用完清零，下一帧重新由传感器填充
+        shakeOffsetX = 0;
+        shakeOffsetY = 0;
+
+        render();
+      }
+
+      function animate() {
+        update();
+        requestAnimationFrame(animate);
+      }
+
+      // ---------- 传感器：核心只有这一段 ----------
+      let lastX = 0, lastY = 0;
+      let hasLast = false;
+
+      function onMotion(e) {
+        const acc = e.accelerationIncludingGravity;
+        if (!acc) return;
+
+        const ax = acc.x || 0;
+        const ay = acc.y || 0;
+
+        if (!hasLast) {
+          lastX = ax; lastY = ay; hasLast = true;
+          return;
+        }
+
+        // ★ 关键：取加速度的"变化量"（delta）
+        // 手机静止时 delta≈0；晃动时 delta 很大
+        // 晃动方向与加速度变化方向相反（惯性）
+        let dax = ax - lastX;
+        let day = ay - lastY;
+        lastX = ax; lastY = ay;
+
+        // 设备坐标 y 向上，屏幕 y 向下，取反
+        day = -day;
+
+        // 限幅，避免异常值把球甩飞
+        dax = Math.max(-20, Math.min(20, dax));
+        day = Math.max(-20, Math.min(20, day));
+
+        // 变成小球速度增量
+        shakeOffsetX = dax * SHAKE_GAIN;
+        shakeOffsetY = day * SHAKE_GAIN;
+      }
+
+      function requestPermission() {
+        if (typeof DeviceMotionEvent !== 'undefined' &&
+            typeof DeviceMotionEvent.requestPermission === 'function') {
+          DeviceMotionEvent.requestPermission().then(s => {
+            if (s === 'granted') window.addEventListener('devicemotion', onMotion);
+          }).catch(()=>{});
+        }
+      }
+
+      window.addEventListener('load', () => {
+        init();
+        animate();
+
+        if (typeof DeviceMotionEvent !== 'undefined' &&
+            typeof DeviceMotionEvent.requestPermission === 'function') {
+          const trigger = () => {
+            requestPermission();
+            document.body.removeEventListener('touchstart', trigger);
+            document.body.removeEventListener('click', trigger);
+          };
+          document.body.addEventListener('touchstart', trigger, { once: true });
+          document.body.addEventListener('click', trigger, { once: true });
+        } else {
+          window.addEventListener('devicemotion', onMotion);
+        }
+      });
+
+      let resizeTimer;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(init, 150);
+      });
+      window.addEventListener('orientationchange', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(init, 250);
+      });
+    })();
+  </script>
+</body>
+</html>
