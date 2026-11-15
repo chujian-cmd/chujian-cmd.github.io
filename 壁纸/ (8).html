@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>纯净流体光晕壁纸</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #05010a; /* 极暗紫黑底 */
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="fluid-canvas"></canvas>
+
+    <!-- 引入真正的底层流体力学物理引擎 -->
+    <script src="https://cdn.jsdelivr.net/npm/webgl-fluid@0.3/dist/webgl-fluid.umd.js"></script>
+
+    <script>
+        window.addEventListener('load', () => {
+            const canvas = document.getElementById('fluid-canvas');
+            
+            // 我们预设 4 种高级单色 (紫红、黄、青、蓝)，轮流切换
+            const colorPalettes = [
+                { r: 0.8, g: 0.05, b: 0.4 },  // 品红
+                { r: 0.7, g: 0.7, b: 0.0 },   // 亮黄
+                { r: 0.0, g: 0.8, b: 0.7 },   // 青蓝
+                { r: 0.1, g: 0.2, b: 0.9 }    // 幽蓝
+            ];
+            let currentColorIndex = 0;
+
+            // 初始化流体模拟，极其克制的参数设置
+            const fluid = WebGLFluid(canvas, {
+                // --- 核心质感：大块、厚实、无杂点 ---
+                SIM_RESOLUTION: 128,       
+                DYE_RESOLUTION: 1024,      // 高分辨率，保证边缘平滑无锯齿
+                
+                // --- 物理特性 ---
+                DENSITY_DISSIPATION: 0.98, // 消散慢，能拉出很长的丝带 (图6、图8)
+                VELOCITY_DISSIPATION: 0.1, // 阻力极小，推挤效果丝滑，像粘稠气体
+                PRESSURE: 0.8,             
+                
+                CURL: 6,                   // 【灵魂参数】：极低涡度！这样才不会产生细碎的毛刺水波，保持整体的圆润和干净
+                
+                SPLAT_RADIUS: 0.6,         // 【关键】：增大笔刷。手指划过时拉出的是粗壮的河流，而不是细线
+                SPLAT_FORCE: 6000,         // 推开周围气体的力度
+                
+                SHADING: true,             // 【必须有】：开启光影厚度，让纯色也有一团一团的 3D 体积感
+                
+                // --- 坚决去花哨化 ---
+                COLORFUL: false,           // 严禁彩虹色
+                BLOOM: false,              // 严禁发光刺眼
+                SUNRAYS: false,            // 严禁星芒
+                
+                BACK_COLOR: { r: 5, g: 1, b: 10 },
+                COLOR_PALETTE: [colorPalettes[0]] // 初始颜色
+            });
+
+            // --- 颜色平滑切换机制 ---
+            // 每隔 6 秒，切换一次颜色，让画面不那么死板
+            setInterval(() => {
+                currentColorIndex = (currentColorIndex + 1) % colorPalettes.length;
+                
+                // 底层库没有暴露直接修改颜色的 API，我们用一点小 trick
+                // 动态修改碰撞和手指移动的颜色
+                const newColor = colorPalettes[currentColorIndex];
+                // 修改底层库注入的全局变量（或重新初始化）
+                // 由于原库的限制，这里用最直观的方法：重新绑定配置
+                fluid.setConfig({
+                    COLOR_PALETTE: [newColor]
+                });
+            }, 6000);
+
+            // 模拟图4：如果什么都不做，屏幕中心会慢慢浮现一个圆
+            setTimeout(() => {
+                const rect = canvas.getBoundingClientRect();
+                const x = rect.width / 2;
+                const y = rect.height / 2;
+                // 触发一次微小的点击
+                canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: x, clientY: y }));
+                canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: x + 1, clientY: y + 1 }));
+                canvas.dispatchEvent(new MouseEvent('mouseup'));
+            }, 800);
+        });
+    </script>
+</body>
+</html>

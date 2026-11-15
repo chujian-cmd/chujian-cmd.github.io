@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>圆形烟雾壁纸</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0b0209; /* 极暗的紫黑色底 */
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="smoke-canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('smoke-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 预渲染一个带有柔和边缘的圆形光斑纹理 (用于模拟圆形烟雾)
+        const smokeSprite = document.createElement('canvas');
+        const spriteSize = 256;
+        smokeSprite.width = spriteSize;
+        smokeSprite.height = spriteSize;
+        const sCtx = smokeSprite.getContext('2d');
+        
+        // 绘制圆形径向渐变，中心微微发亮，边缘模糊透出底色
+        const gradient = sCtx.createRadialGradient(
+            spriteSize/2, spriteSize/2, 0,
+            spriteSize/2, spriteSize/2, spriteSize/2
+        );
+        gradient.addColorStop(0, 'rgba(200, 0, 100, 0.6)');   // 核心品红
+        gradient.addColorStop(0.4, 'rgba(150, 0, 80, 0.3)');  // 向外过渡
+        gradient.addColorStop(1, 'rgba(50, 0, 30, 0)');       // 完全透明，融入黑夜
+        
+        sCtx.fillStyle = gradient;
+        sCtx.fillRect(0, 0, spriteSize, spriteSize);
+
+        // 粒子系统
+        const particles = [];
+        const MAX_PARTICLES = 250;
+
+        let mouse = { x: -1000, y: -1000, px: -1000, py: -1000, down: false };
+
+        // 生成一个圆形的烟雾粒子
+        function spawnParticle(x, y, vx, vy) {
+            if (particles.length > MAX_PARTICLES) return;
+
+            particles.push({
+                x: x + (Math.random() - 0.5) * 20, // 在手指周围随机散布
+                y: y + (Math.random() - 0.5) * 20,
+                vx: vx * 0.3 + (Math.random() - 0.5) * 1.5, // 施加手指的推力
+                vy: vy * 0.3 + (Math.random() - 0.5) * 1.5,
+                life: 1.0, // 生命周期 (1 = 刚生成, 0 = 消失)
+                decay: 0.005 + Math.random() * 0.01, // 消散速度
+                size: 100 + Math.random() * 150, // 烟雾团的大小 (半径)
+                angle: Math.random() * Math.PI * 2
+            });
+        }
+
+        // 处理输入事件
+        function handleMove(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+            
+            if (mouse.px !== -1000) {
+                const vx = x - mouse.px;
+                const vy = y - mouse.py;
+                const speed = Math.sqrt(vx * vx + vy * vy);
+                
+                // 根据滑动速度决定生成多少个烟团
+                if (speed > 2) {
+                    const num = Math.min(3, Math.floor(speed / 10));
+                    for (let i = 0; i < num; i++) {
+                        spawnParticle(x, y, vx, vy);
+                    }
+                }
+            }
+            mouse.px = x;
+            mouse.py = y;
+        }
+
+        // 鼠标/触摸事件
+        canvas.addEventListener('mousedown', (e) => { mouse.down = true; mouse.px = -1000; mouse.py = -1000; handleMove(e.clientX, e.clientY); });
+        canvas.addEventListener('mousemove', (e) => { if (mouse.down) handleMove(e.clientX, e.clientY); });
+        canvas.addEventListener('mouseup', () => mouse.down = false);
+        canvas.addEventListener('mouseleave', () => mouse.down = false);
+
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); mouse.down = true; mouse.px = -1000; mouse.py = -1000; handleMove(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); if (mouse.down) handleMove(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        canvas.addEventListener('touchend', () => mouse.down = false);
+
+        // 动画主循环
+        function animate() {
+            // 使用 'lighter' 混合模式，让重叠的烟雾产生光感叠加，像发光体
+            ctx.globalCompositeOperation = 'source-over';
+            // 用带透明度的底色清理画布，产生拖影/残影 (让烟雾消散更自然)
+            ctx.fillStyle = 'rgba(11, 2, 9, 0.15)'; 
+            ctx.fillRect(0, 0, width, height);
+
+            // 开始绘制烟雾粒子
+            ctx.globalCompositeOperation = 'lighter'; 
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                
+                // 物理运动：根据速度移动
+                p.x += p.vx;
+                p.y += p.vy;
+                
+                // 摩擦力：让烟雾逐渐慢下来，停止推挤
+                p.vx *= 0.95;
+                p.vy *= 0.95;
+                
+                // 增加一点点随机漂浮感 (气体感)
+                p.vx += (Math.random() - 0.5) * 0.2;
+                p.vy += (Math.random() - 0.5) * 0.2;
+
+                // 减少生命周期
+                p.life -= p.decay;
+
+                // 如果生命结束，移除粒子
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                // 绘制烟雾团
+                ctx.save();
+                // 透明度跟随生命周期
+                ctx.globalAlpha = p.life * 0.8; 
+                ctx.translate(p.x, p.y);
+                
+                // 缓慢旋转，增加动态感
+                p.angle += 0.005;
+                ctx.rotate(p.angle);
+                
+                // 随着生命流逝，烟雾团会稍微膨胀一点
+                const currentSize = p.size * (1.5 - p.life * 0.5);
+                
+                // 画出预渲染的烟雾团纹理
+                ctx.drawImage(
+                    smokeSprite, 
+                    -currentSize/2, -currentSize/2, 
+                    currentSize, currentSize
+                );
+                
+                ctx.restore();
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // 启动动画
+        animate();
+    </script>
+</body>
+</html>

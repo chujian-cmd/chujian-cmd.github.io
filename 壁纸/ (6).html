@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>纯净圆形烟雾壁纸</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #08020a; /* 深空紫黑底色 */
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="smoke-canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('smoke-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 预渲染一个极其纯净的圆形发光纹理（没有杂质）
+        const spriteCanvas = document.createElement('canvas');
+        const spriteSize = 256;
+        spriteCanvas.width = spriteSize;
+        spriteCanvas.height = spriteSize;
+        const sCtx = spriteCanvas.getContext('2d');
+        
+        // 画一个边缘非常柔和的圆
+        const gradient = sCtx.createRadialGradient(
+            spriteSize/2, spriteSize/2, 0,
+            spriteSize/2, spriteSize/2, spriteSize/2
+        );
+        // 中心是高亮的品红，向外柔和过渡到透明
+        gradient.addColorStop(0, 'rgba(220, 10, 120, 0.6)');
+        gradient.addColorStop(0.3, 'rgba(180, 5, 100, 0.3)');
+        gradient.addColorStop(0.7, 'rgba(100, 0, 50, 0.05)');
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        
+        sCtx.fillStyle = gradient;
+        sCtx.fillRect(0, 0, spriteSize, spriteSize);
+
+        // --- 物理系统 ---
+        const blobs = [];
+        const MAX_BLOBS = 80; // 限制最大数量，保持画面干净
+        let mouse = { x: -1000, y: -1000, px: -1000, py: -1000 };
+
+        // 生成一个新的圆形烟雾
+        function spawnBlob(x, y) {
+            if (blobs.length >= MAX_BLOBS) return;
+
+            // 添加一点点随机偏移，让生成的圆不完全重叠在一条直线上
+            let offsetX = (Math.random() - 0.5) * 20;
+            let offsetY = (Math.random() - 0.5) * 20;
+
+            blobs.push({
+                x: x + offsetX,
+                y: y + offsetY,
+                vx: 0,
+                vy: 0,
+                life: 1.0, // 生命周期
+                decay: 0.008 + Math.random() * 0.005, // 消散速度
+                size: 120 + Math.random() * 80, // 圆的初始大小
+                maxSize: 200 + Math.random() * 100 // 消散时膨胀到的最大尺寸
+            });
+        }
+
+        // 处理手指/鼠标移动
+        function handleMove(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+            
+            if (mouse.px !== -1000) {
+                // 计算滑动距离，距离越远生成得越密集
+                const dist = Math.hypot(x - mouse.px, y - mouse.py);
+                const steps = Math.floor(dist / 10); // 每滑动 10px 生成一个圆
+                
+                for (let i = 0; i < steps; i++) {
+                    const t = i / steps;
+                    spawnBlob(
+                        mouse.px + (x - mouse.px) * t,
+                        mouse.py + (y - mouse.py) * t
+                    );
+                }
+            } else {
+                spawnBlob(x, y); // 刚按下时生成一个
+            }
+            mouse.px = x;
+            mouse.py = y;
+        }
+
+        // 事件绑定
+        canvas.addEventListener('mousedown', (e) => { mouse.px = -1000; handleMove(e.clientX, e.clientY); });
+        canvas.addEventListener('mousemove', (e) => { if (e.buttons === 1) handleMove(e.clientX, e.clientY); });
+        canvas.addEventListener('mouseup', () => { mouse.px = -1000; });
+        canvas.addEventListener('mouseleave', () => { mouse.px = -1000; });
+
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); mouse.px = -1000; handleMove(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        canvas.addEventListener('touchend', () => { mouse.px = -1000; });
+
+        // --- 渲染循环 ---
+        function animate() {
+            // 使用极暗的底色，稍微带一点透明度，制造柔和的拖影（不要完全擦干净）
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(8, 2, 10, 0.25)'; 
+            ctx.fillRect(0, 0, width, height);
+
+            // 切换为叠加发光模式，让圆与圆交汇的地方更亮，产生体积感
+            ctx.globalCompositeOperation = 'lighter'; 
+
+            for (let i = blobs.length - 1; i >= 0; i--) {
+                let b = blobs[i];
+                
+                // 物理运动：慢慢向外扩散
+                b.x += b.vx;
+                b.y += b.vy;
+                
+                // 摩擦阻力，让推挤慢慢停下
+                b.vx *= 0.92;
+                b.vy *= 0.92;
+
+                // 生命流逝
+                b.life -= b.decay;
+
+                if (b.life <= 0) {
+                    blobs.splice(i, 1);
+                    continue;
+                }
+
+                // 随着生命减少，烟雾圆团会慢慢变大（像气体散开）
+                let currentSize = b.size + (1 - b.life) * 50;
+                
+                // 保持透明度跟随生命值 (乘以 0.5 让它柔和，不要太刺眼)
+                ctx.globalAlpha = b.life * 0.6; 
+                
+                // 绘制纯圆
+                ctx.drawImage(
+                    spriteCanvas,
+                    b.x - currentSize / 2,
+                    b.y - currentSize / 2,
+                    currentSize,
+                    currentSize
+                );
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

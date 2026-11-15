@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>云团拉伸壁纸</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #05010a; /* 极暗底色 */
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            /* 核心视觉魔法：使用 CSS 让整个画布产生极致的柔光模糊感 */
+            filter: blur(20px) contrast(1.2); 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- 核心数据结构：云团的节点 (用于拉伸和物理形变) ---
+        // 我们不需要无数小粒子，只需要十几个“控制点”，形成一个柔和的网格
+        const NUM_POINTS = 12; 
+        let points = [];
+        let targetX = width / 2;
+        let targetY = height / 2;
+        
+        // 颜色状态 (根据你截图里的紫、黄、蓝切换)
+        const colors = [
+            { r: 230, g: 0, b: 120 },  // 品红
+            { r: 180, g: 200, b: 0 },  // 亮黄
+            { r: 60, g: 20, b: 250 }   // 深蓝
+        ];
+        let currentColor = colors[0];
+
+        // 初始化点，全部聚拢在中心
+        for (let i = 0; i < NUM_POINTS; i++) {
+            let angle = (i / NUM_POINTS) * Math.PI * 2;
+            points.push({
+                baseAngle: angle,
+                x: targetX,
+                y: targetY,
+                vx: 0,
+                vy: 0,
+                // 基础半径（控制云团大小）
+                baseRadius: 150 + Math.random() * 50 
+            });
+        }
+
+        // --- 交互处理 ---
+        let isMouseDown = false;
+        let mouseX = -1000, mouseY = -1000;
+
+        function updateMouse(x, y) {
+            targetX = x;
+            targetY = y;
+            mouseX = x;
+            mouseY = y;
+        }
+
+        window.addEventListener('mousedown', (e) => { isMouseDown = true; updateMouse(e.clientX, e.clientY); });
+        window.addEventListener('mousemove', (e) => { if (isMouseDown) updateMouse(e.clientX, e.clientY); });
+        window.addEventListener('mouseup', () => { isMouseDown = false; });
+
+        window.addEventListener('touchstart', (e) => { e.preventDefault(); isMouseDown = true; updateMouse(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        window.addEventListener('touchmove', (e) => { e.preventDefault(); if (isMouseDown) updateMouse(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        window.addEventListener('touchend', () => { isMouseDown = false; });
+
+        // --- 颜色循环 ---
+        let colorIndex = 0;
+        setInterval(() => {
+            colorIndex = (colorIndex + 1) % colors.length;
+            currentColor = colors[colorIndex];
+        }, 5000);
+
+        // --- 动画主循环 ---
+        function animate() {
+            // 1. 清理画布，留下极微弱的残影让过渡更丝滑
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(5, 1, 10, 0.3)'; 
+            ctx.fillRect(0, 0, width, height);
+
+            // 2. 计算每个节点的物理形变
+            for (let i = 0; i < NUM_POINTS; i++) {
+                let p = points[i];
+                
+                // 目标位置：以鼠标位置为圆心，根据角度分布
+                let targetPointX = targetX + Math.cos(p.baseAngle) * p.baseRadius;
+                let targetPointY = targetY + Math.sin(p.baseAngle) * p.baseRadius;
+
+                // 如果你按住鼠标，边缘的点会被“拉长”
+                if (isMouseDown) {
+                    // 计算当前点和鼠标的距离，越远拉扯越严重
+                    let dist = Math.hypot(p.x - mouseX, p.y - mouseY);
+                    if (dist > 0) {
+                        // 制造一种惯性拉伸感 (模拟粘稠液体的跟随)
+                        targetPointX += (p.x - mouseX) * 0.1;
+                        targetPointY += (p.y - mouseY) * 0.1;
+                    }
+                }
+
+                // 物理弹簧模型 (F = kx)
+                let dx = targetPointX - p.x;
+                let dy = targetPointY - p.y;
+                
+                // 弹力系数 (越小越软，越容易拉长)
+                const stiffness = isMouseDown ? 0.03 : 0.08;
+                p.vx += dx * stiffness;
+                p.vy += dy * stiffness;
+                
+                // 摩擦力 (让运动平缓，像浓郁的烟雾)
+                p.vx *= 0.85;
+                p.vy *= 0.85;
+
+                // 更新位置
+                p.x += p.vx;
+                p.y += p.vy;
+            }
+
+            // 3. 绘制云团 (使用类似 Metaball 的混合模式)
+            // 'lighter' 模式会让重叠的透明色叠加变亮，产生你截图里那种发光云朵的质感
+            ctx.globalCompositeOperation = 'lighter';
+
+            // 绘制大面积的渐变
+            ctx.beginPath();
+            
+            // 遍历所有点，画出一个个大光斑，让它们自然融合
+            for (let i = 0; i < NUM_POINTS; i++) {
+                let p = points[i];
+                
+                // 创建径向渐变 (中心亮，边缘完全透明)
+                let gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 120);
+                // 核心高亮
+                gradient.addColorStop(0, `rgba(${currentColor.r}, ${currentColor.g}, ${currentColor.b}, 0.4)`);
+                // 边缘消散
+                gradient.addColorStop(0.5, `rgba(${currentColor.r}, ${currentColor.g}, ${currentColor.b}, 0.1)`);
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 120, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        // 启动
+        animate();
+    </script>
+</body>
+</html>
