@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>星 → 圆</title>
+<style>
+  html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="400"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const N = 60;
+const R = 120, CX = 200, CY = 200;
+
+// 星星：10 个尖角，按周长均匀采样成 N 个点
+const starPts = (() => {
+  const outer = R, inner = R * 0.382;
+  const verts = [];
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI/2 + i * Math.PI/5;
+    const r = i % 2 === 0 ? outer : inner;
+    verts.push({ x: CX + Math.cos(a)*r, y: CY + Math.sin(a)*r });
+  }
+  verts.push(verts[0]);
+  // 按弧长均匀重采样
+  let total = 0;
+  for (let i = 1; i < verts.length; i++) total += Math.hypot(verts[i].x-verts[i-1].x, verts[i].y-verts[i-1].y);
+  const step = total / (N - 1);
+  const out = [{...verts[0]}];
+  let si = 0, sd = 0;
+  for (let i = 1; i < N; i++) {
+    const target = i * step;
+    while (si < verts.length - 1) {
+      const a = verts[si], b = verts[si+1];
+      const sl = Math.hypot(b.x-a.x, b.y-a.y);
+      if (sd + sl >= target - 1e-9) {
+        const t = sl === 0 ? 0 : (target - sd) / sl;
+        out.push({ x: a.x + (b.x-a.x)*t, y: a.y + (b.y-a.y)*t });
+        break;
+      }
+      sd += sl; si++;
+    }
+  }
+  return out;
+})();
+
+// 圆：N 个点，按相同角度参数对齐
+const circlePts = Array.from({length: N}, (_, i) => {
+  const a = -Math.PI/2 + (i / (N - 1)) * Math.PI * 2;
+  return { x: CX + Math.cos(a)*R, y: CY + Math.sin(a)*R };
+});
+
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+
+let progress = 0;
+const SPEED = 0.006;
+
+function frame() {
+  progress += SPEED;
+  if (progress >= 1) progress = 1;
+
+  const t = ease(progress);
+  ctx.clearRect(0, 0, 400, 400);
+  ctx.strokeStyle = '#171717';
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let i = 0; i < N; i++) {
+    const a = starPts[i], b = circlePts[i];
+    const x = a.x + (b.x - a.x) * t;
+    const y = a.y + (b.y - a.y) * t;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+
+  if (progress < 1) requestAnimationFrame(frame);
+  else setTimeout(() => { progress = 0; requestAnimationFrame(frame); }, 800);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
