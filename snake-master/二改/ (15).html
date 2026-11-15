@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang=zh-CN>
+<head>
+<meta charset=utf-8>
+<title>URL 贪吃蛇！</title>
+<meta name=description content="在浏览器地址栏上玩经典贪吃蛇游戏。"/>
+<meta name=viewport content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#222"/>
+<style>
+html, body, h1, p { margin: 0; padding: 0; }
+* { box-sizing: border-box; }
+html {
+  height: 100%;
+  font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  color: #222;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+body {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+a { color: #3473ee; }
+
+/* === 放大镜：4 层 Braille，行距拉开，层间分隔 === */
+#mobile-board {
+  display: none;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  font-family: monospace;
+  text-align: center;
+  background: #8881;
+  border-radius: 10px;
+  padding: 8px 0;
+  margin-bottom: 2px;
+  overflow: hidden;
+  border: 2px solid #0bc3ff;
+  box-shadow: inset 0 0 0 3px #0bc3ff22;
+  transition: border-color .15s, box-shadow .15s;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;   /* ★ 4 层均分高度，拉开距离 */
+  align-items: center;
+}
+#mobile-board.dead {
+  border-color: #ff4d4d;
+  box-shadow: inset 0 0 0 3px #ff4d4d44;
+}
+
+/* 每一层是一个独立的 div，4 层均分棋盘高度 */
+.braille-layer {
+  white-space: pre;
+  font-family: monospace;
+  width: 100%;
+  text-align: center;
+  /* 字号由 JS 动态计算，撑满宽度 */
+  line-height: 1;
+  /* 层间用微妙的分隔线，让你看出这是 4 层 */
+  position: relative;
+}
+.braille-layer + .braille-layer::before {
+  content: '';
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  top: -4px;
+  height: 1px;
+  background: #0bc3ff33;
+}
+
+#mobile-score {
+  display: none;
+  width: 100%;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: bold;
+  color: #0bc3ff;
+  margin-bottom: 1px;
+  flex: 0 0 auto;
+}
+:root.touch #mobile-board { display: flex; }
+:root.touch #mobile-score { display: block; }
+:root.touch #url-container { display: none !important; }
+
+/* === 摇杆 === */
+#joystick {
+  display: none;
+  position: relative;
+  width: min(38vw, 150px);
+  height: min(38vw, 150px);
+  margin: 2px auto;
+  flex: 0 0 auto;
+  touch-action: none;
+}
+:root.touch #joystick { display: block; }
+#joystick .base {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, #8882 0%, #8881 70%, #8880 100%);
+  border: 2px solid #8886;
+}
+#joystick .base::before, #joystick .base::after {
+  content: ''; position: absolute; background: #8883;
+}
+#joystick .base::before {
+  left: 50%; top: 10%; bottom: 10%; width: 1px; transform: translateX(-50%);
+}
+#joystick .base::after {
+  top: 50%; left: 10%; right: 10%; height: 1px; transform: translateY(-50%);
+}
+#joystick .knob {
+  position: absolute; left: 50%; top: 50%;
+  width: 44%; height: 44%; margin-left: -22%; margin-top: -22%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #0bc3ff, #0788b3);
+  box-shadow: 0 4px 14px #0bc3ff44, inset 0 -3px 8px #0004;
+  transition: transform .08s ease-out;
+  pointer-events: none;
+}
+#joystick.active .knob { transition: none; }
+#joystick .hint {
+  position: absolute; left: 50%; bottom: -1.2em;
+  transform: translateX(-50%);
+  font-size: 0.7rem; color: #888;
+  white-space: nowrap; pointer-events: none;
+}
+
+.controls { display: none; }
+#url, #max-score-grid {
+  background: #8883; padding: 2px; border-radius: 3px; font-family: monospace;
+}
+#share { display: inline-block; }
+footer { margin-top: auto; font-size: 0.65rem; padding-top: 1px; flex: 0 0 auto; }
+.invisible { display: none !important; }
+.hidden { visibility: hidden; }
+:root.touch .no-touch-only,
+:root:not(.touch) .touch-only { display: none; }
+
+.expand-btn, .collapse-btn {
+  background: none; border: none; padding: 0; font: inherit;
+  font-weight: bold; cursor: pointer; width: 1rem;
+}
+.expand-btn, .expandable {
+  transition: transform, opacity; transition-duration: .4s;
+}
+.expandable {
+  display: inline-block; position: relative; height: 1.5rem;
+  transform: translateX(-100%); padding-right: 10px;
+}
+.expand-btn {
+  position: absolute; right: 0; top: 0;
+  transform: translateX(100%); opacity: 1;
+}
+.help-toggle { color: #0bc3ff; }
+.high-score-toggle { color: #ff8c0b; }
+.collapse-btn { color: #aaa; }
+.expandable.expanded { height: auto; transform: none; }
+.expandable.expanded .expand-btn { opacity: 0; }
+#share-note { padding-left: 0.5rem; }
+#share-note.invisible {
+  transition: opacity 0.4s ease-in-out, display 0s ease-out 0.4s;
+  transition-behavior: allow-discrete;
+  opacity: 0; display: none;
+}
+
+#toast {
+  position: fixed; left: 50%; top: 30%;
+  transform: translate(-50%, -50%) scale(0.9);
+  background: #222e; color: #fff;
+  padding: .7em 1.4em; border-radius: .6em;
+  font-weight: bold; font-size: 1.1rem;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s;
+  z-index: 100; white-space: nowrap;
+}
+#toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+@media (prefers-color-scheme: dark) {
+  html { background: #222; color: #eee; }
+  #url, #max-score-grid { background: #fff2; }
+  a { color: #6fa0ff; }
+  #mobile-board { background: #fff1; }
+  #joystick .base { background: radial-gradient(circle, #fff2 0%, #fff1 70%, #fff0 100%); border-color: #fff3; }
+  #joystick .base::before, #joystick .base::after { background: #fff2; }
+}
+</style>
+<script>
+  if ('ontouchstart' in document.documentElement) {
+    document.documentElement.classList.add('touch')
+  }
+</script>
+</head>
+<noscript>⚠ 抱歉，本游戏需要启用 JavaScript。</noscript>
+
+<div id="mobile-score">分数：0</div>
+<div id="mobile-board"></div>
+
+<div id=url-container class=invisible>地址：<span id=url></span></div>
+<div class=expandable>
+  <button class="help-toggle expand-btn" aria-label="帮助" aria-expanded=false>?</button>
+  <div class="expandable-content hidden">
+    <span class=no-touch-only>使用方向键或 WASD 控制地址栏上的贪吃蛇。</span>
+    <span class=touch-only>按住摇杆拖动控制贪吃蛇。</span>
+    <a id=reveal-url href=#>点此显示</a>页面地址<span id=url-escaping-note class=invisible>（地址显示可能异常：<span id=replacement-char-description></span>）</span>。&nbsp;<button class=collapse-btn aria-label="收起">〈</button>
+  </div>
+</div>
+<div id=max-score-container class="expandable hidden">
+  <button class="high-score-toggle expand-btn" aria-label="最高分" aria-expanded=false>!</button>
+  <div class="expandable-content hidden">
+    你的最高分是 <span id=max-score-points></span>！
+    <span id=max-score-grid></span><a id=share href=#><i class=icon-share>↗</i>分享</a>&nbsp;<button class=collapse-btn aria-label="收起">〈</button><span id=share-note class=invisible></span>
+  </div>
+</div>
+
+<div id="joystick" class="touch-only">
+  <div class="base"></div>
+  <div class="knob"></div>
+  <div class="hint">按住拖动</div>
+</div>
+
+<div class="controls no-touch-only">
+  <button id=up aria-label="上">▲&#xFE0E;</button>
+  <button id=left aria-label="左">◀&#xFE0E;</button>
+  <button id=down aria-label="下">▼&#xFE0E;</button>
+  <button id=right aria-label="右">▶&#xFE0E;</button>
+</div>
+<div id=toast role=status aria-live=polite></div>
+<footer>
+  由 <a href=https://twitter.com/epidemian>@epidemian</a> 制作（⠠⠇） |
+  <a href=https://github.com/epidemian/snake>源码</a>
+</footer>
+<script>
+'use strict';
+
+var GRID_WIDTH = 40;
+var GRID_HEIGHT = 16;           // 16 行 = 4 层 Braille
+var SNAKE_CELL = 1;
+var FOOD_CELL = 2;
+var UP = {x: 0, y: -1};
+var DOWN = {x: 0, y: 1};
+var LEFT = {x: -1, y: 0};
+var RIGHT = {x: 1, y: 0};
+var INITIAL_SNAKE_LENGTH = 4;
+var INITIAL_SNAKE_Y = 8;        // 中间层，上下各 8 行
+var BRAILLE_SPACE = '\u2800';
+
+var grid;
+var snake;
+var currentDirection;
+var moveQueue;
+var hasMoved;
+var gamePaused = false;
+var urlRevealed = false;
+var whitespaceReplacementChar;
+var gameOverCooldown = 0;
+var hashFallbackInProgress = false;
+var isTouchDevice = false;
+
+var safeStorage = {
+  get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+
+function main() {
+  isTouchDevice = document.documentElement.classList.contains('touch');
+  detectBrowserUrlWhitespaceEscaping();
+  cleanUrl();
+  setupEventHandlers();
+  setupJoystick();
+  drawMaxScore();
+  initUrlRevealed();
+  startGame();
+
+  var lastFrameTime = Date.now();
+  window.requestAnimationFrame(function frameHandler() {
+    var now = Date.now();
+    if (!gamePaused && now - lastFrameTime >= tickTime()) {
+      updateWorld();
+      drawWorld();
+      lastFrameTime = now;
+    }
+    window.requestAnimationFrame(frameHandler);
+  });
+
+  window.addEventListener('resize', fitBoardFont);
+  setTimeout(fitBoardFont, 100);
+}
+
+// === 动态计算 4 层 Braille 字号：宽度和层高双重约束 ===
+function fitBoardFont() {
+  var board = document.getElementById('mobile-board');
+  if (!board) return;
+  var layers = board.querySelectorAll('.braille-layer');
+  if (layers.length === 0) return;
+
+  var W = board.clientWidth - 8;
+  var H = board.clientHeight - 16;
+  var layerH = H / 4;  // 每层可用高度
+
+  // 20 个 Braille 字符铺满宽：字号 = W / 20 / 0.6（等宽字符宽 ≈ 0.6 字号）
+  var sizeByW = W / 20 / 0.6;
+  // 每层高度约束：字号不能超过层高
+  var sizeByH = layerH / 1.0;
+
+  var size = Math.min(sizeByW, sizeByH, 40);
+  for (var i = 0; i < layers.length; i++) {
+    layers[i].style.fontSize = size + 'px';
+  }
+}
+
+function detectBrowserUrlWhitespaceEscaping() {
+  try {
+    history.replaceState(null, null, '#' + BRAILLE_SPACE + BRAILLE_SPACE)
+  } catch (e) {}
+  if (location.hash.indexOf(BRAILLE_SPACE) == -1) {
+    var replacementData = pickWhitespaceReplacementChar();
+    whitespaceReplacementChar = replacementData[0];
+    document.getElementById('url-escaping-note').classList.remove('invisible');
+    document.getElementById('replacement-char-description').textContent = replacementData[1];
+  }
+}
+
+function cleanUrl() {
+  try {
+    history.replaceState(null, null, location.pathname.replace(/\b\/$/, ''));
+  } catch (e) {}
+}
+
+function setupEventHandlers() {
+  var directionsByKey = {
+    37: LEFT, 38: UP, 39: RIGHT, 40: DOWN,
+    87: UP, 65: LEFT, 83: DOWN, 68: RIGHT,
+    75: UP, 72: LEFT, 74: DOWN, 76: RIGHT
+  };
+  document.onkeydown = function (event) {
+    var key = event.keyCode;
+    if (key in directionsByKey) {
+      event.preventDefault();
+      changeDirection(directionsByKey[key]);
+    }
+  };
+
+  document.addEventListener('visibilitychange', function () {
+    gamePaused = document.hidden;
+  });
+  window.onblur = function () { gamePaused = true; };
+  window.onfocus = function () { gamePaused = false; drawWorld(); };
+
+  document.getElementById('reveal-url').onclick = function (e) {
+    e.preventDefault();
+    setUrlRevealed(!urlRevealed);
+  };
+
+  document.querySelectorAll('.expandable').forEach(function (expandable) {
+    var expand = expandable.querySelector('.expand-btn');
+    var collapse = expandable.querySelector('.collapse-btn');
+    var content = expandable.querySelector('.expandable-content');
+    expand.onclick = collapse.onclick = function () {
+      expand.classList.remove('hidden');
+      content.classList.remove('hidden');
+      expandable.classList.toggle('expanded');
+      expand.setAttribute('aria-expanded', expandable.classList.contains('expanded'));
+    };
+    expandable.ontransitionend = function () {
+      var expanded = expandable.classList.contains('expanded');
+      expand.classList.toggle('hidden', expanded);
+      content.classList.toggle('hidden', !expanded);
+    };
+  });
+}
+
+function setupJoystick() {
+  var joy = document.getElementById('joystick');
+  if (!joy) return;
+  var knob = joy.querySelector('.knob');
+  var active = false;
+  var centerX = 0, centerY = 0;
+  var maxRadius = 0;
+  var lockedDir = null;
+  var DEADZONE = 18;
+  var SWITCH_ANGLE = 1.1;
+
+  function getCenter() {
+    var rect = joy.getBoundingClientRect();
+    centerX = rect.left + rect.width / 2;
+    centerY = rect.top + rect.height / 2;
+    maxRadius = rect.width * 0.42;
+  }
+  function setKnob(dx, dy) {
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > maxRadius) { dx = dx / dist * maxRadius; dy = dy / dist * maxRadius; }
+    knob.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+  }
+  function resetKnob() {
+    knob.style.transform = 'translate(0, 0)';
+    joy.classList.remove('active');
+    lockedDir = null;
+  }
+  function normalizeAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+  function resolveDir(dx, dy) {
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < DEADZONE) return null;
+    var angle = Math.atan2(dy, dx);
+    var candidates = [
+      {dir: RIGHT, angle: 0},
+      {dir: DOWN, angle: Math.PI / 2},
+      {dir: LEFT, angle: Math.PI},
+      {dir: UP, angle: -Math.PI / 2}
+    ];
+    var best = null, bestDiff = Infinity;
+    for (var i = 0; i < candidates.length; i++) {
+      var diff = Math.abs(normalizeAngle(angle - candidates[i].angle));
+      if (diff < bestDiff) { bestDiff = diff; best = candidates[i].dir; }
+    }
+    if (lockedDir && lockedDir !== best) {
+      var lockedAngle = 0;
+      for (var j = 0; j < candidates.length; j++) {
+        if (candidates[j].dir === lockedDir) { lockedAngle = candidates[j].angle; break; }
+      }
+      if (Math.abs(normalizeAngle(angle - lockedAngle)) < SWITCH_ANGLE) {
+        return lockedDir;
+      }
+    }
+    return best;
+  }
+  function handleMove(clientX, clientY) {
+    var dx = clientX - centerX;
+    var dy = clientY - centerY;
+    setKnob(dx, dy);
+    var dir = resolveDir(dx, dy);
+    if (!dir) return;
+    if (dir === lockedDir) return;
+    lockedDir = dir;
+    changeDirection(dir);
+  }
+  joy.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    active = true;
+    joy.classList.add('active');
+    joy.setPointerCapture(e.pointerId);
+    getCenter();
+    lockedDir = null;
+    handleMove(e.clientX, e.clientY);
+  }, {passive: false});
+  joy.addEventListener('pointermove', function (e) {
+    if (!active) return;
+    e.preventDefault();
+    handleMove(e.clientX, e.clientY);
+  }, {passive: false});
+  function end() { if (!active) return; active = false; resetKnob(); }
+  joy.addEventListener('pointerup', end, {passive: true});
+  joy.addEventListener('pointercancel', end, {passive: true});
+  joy.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  joy.addEventListener('touchstart', function (e) { e.preventDefault(); }, {passive: false});
+  window.addEventListener('resize', function () { if (!active) getCenter(); });
+}
+
+function initUrlRevealed() {
+  setUrlRevealed(Boolean(safeStorage.get('urlRevealed')));
+}
+function setUrlRevealed(value) {
+  urlRevealed = value;
+  document.getElementById('url-container').classList.toggle('invisible', !urlRevealed);
+  if (urlRevealed) safeStorage.set('urlRevealed', 'y');
+  else safeStorage.del('urlRevealed');
+}
+
+function startGame() {
+  grid = new Array(GRID_WIDTH * GRID_HEIGHT);
+  snake = [];
+  for (var x = 0; x < INITIAL_SNAKE_LENGTH; x++) {
+    snake.unshift({x: x, y: INITIAL_SNAKE_Y});
+    setCellAt(x, INITIAL_SNAKE_Y, SNAKE_CELL);
+  }
+  currentDirection = RIGHT;
+  moveQueue = [];
+  hasMoved = false;
+  dropFood();
+}
+
+function updateWorld() {
+  if (moveQueue.length) currentDirection = moveQueue.shift();
+  var head = snake[0];
+  var tail = snake[snake.length - 1];
+  var newX = head.x + currentDirection.x;
+  var newY = head.y + currentDirection.y;
+  var outOfBounds = newX < 0 || newX >= GRID_WIDTH || newY < 0 || newY >= GRID_HEIGHT;
+  var collidesWithSelf = !outOfBounds && cellAt(newX, newY) === SNAKE_CELL
+    && !(newX === tail.x && newY === tail.y);
+  if (outOfBounds || collidesWithSelf) {
+    flashBoardDead();
+    endGame();
+    startGame();
+    return;
+  }
+  var eatsFood = cellAt(newX, newY) === FOOD_CELL;
+  if (!eatsFood) {
+    snake.pop();
+    setCellAt(tail.x, tail.y, null);
+  }
+  setCellAt(newX, newY, SNAKE_CELL);
+  snake.unshift({x: newX, y: newY});
+  if (eatsFood) dropFood();
+}
+
+function flashBoardDead() {
+  var board = document.getElementById('mobile-board');
+  if (!board) return;
+  board.classList.add('dead');
+  setTimeout(function () { board.classList.remove('dead'); }, 400);
+}
+
+function endGame() {
+  var score = currentScore();
+  var maxScore = parseInt(safeStorage.get('maxScore') || 0, 10);
+  var isNew = score > 0 && score > maxScore && hasMoved;
+  if (isNew) {
+    safeStorage.set('maxScore', score);
+    safeStorage.set('maxScoreGrid', gridString());
+    drawMaxScore();
+    showMaxScore();
+  }
+  showToast(isNew ? '🎉 新纪录！' + score + ' 分' : '💥 撞墙！得分：' + score);
+  gameOverCooldown = Date.now() + 600;
+}
+
+function drawWorld() {
+  var hash = '#|' + gridString() + '|[score:' + currentScore() + ']';
+  if (urlRevealed) {
+    document.getElementById('url').textContent = location.href.replace(/#.*$/, '') + hash;
+  }
+  if (isTouchDevice) renderMobileBoard();
+  if (whitespaceReplacementChar) hash = hash.replace(/\u2800/g, whitespaceReplacementChar);
+  try { history.replaceState(null, null, hash); } catch (e) {}
+  if (!hashFallbackInProgress && decodeURIComponent(location.hash) !== hash) {
+    hashFallbackInProgress = true;
+    try { location.hash = hash; } catch (e) {}
+    setTimeout(function () { hashFallbackInProgress = false; }, 50);
+  }
+}
+
+// === 放大镜：4 层 Braille，每层一个 div，拉开显示 ===
+function renderMobileBoard() {
+  var board = document.getElementById('mobile-board');
+  if (!board) return;
+
+  var layers = board.querySelectorAll('.braille-layer');
+  if (layers.length !== GRID_HEIGHT / 4) {
+    // 首次创建 4 层
+    board.innerHTML = '';
+    for (var i = 0; i < GRID_HEIGHT / 4; i++) {
+      var div = document.createElement('div');
+      div.className = 'braille-layer';
+      board.appendChild(div);
+    }
+    layers = board.querySelectorAll('.braille-layer');
+  }
+
+  for (var l = 0; l < layers.length; l++) {
+    layers[l].textContent = gridStringLayer(l * 4);
+  }
+
+  // 首帧计算字号
+  if (!board.dataset.fitted) {
+    fitBoardFont();
+    board.dataset.fitted = '1';
+  }
+
+  var max = safeStorage.get('maxScore');
+  document.getElementById('mobile-score').textContent =
+    '分数：' + currentScore() + (max ? ' ｜ 最高：' + max : '');
+}
+
+// 地址栏：所有层拼一串（原版风格）
+function gridString() {
+  var str = '';
+  for (var layer = 0; layer < GRID_HEIGHT / 4; layer++) {
+    str += gridStringLayer(layer * 4);
+  }
+  return str;
+}
+
+// 单层编码：从 startY 开始的 4 行 → 20 个 Braille 字符
+function gridStringLayer(startY) {
+  var str = '';
+  for (var x = 0; x < GRID_WIDTH; x += 2) {
+    var n = 0
+      | bitAt(x, startY + 0) << 0
+      | bitAt(x, startY + 1) << 1
+      | bitAt(x, startY + 2) << 2
+      | bitAt(x + 1, startY + 0) << 3
+      | bitAt(x + 1, startY + 1) << 4
+      | bitAt(x + 1, startY + 2) << 5
+      | bitAt(x, startY + 3) << 6
+      | bitAt(x + 1, startY + 3) << 7;
+    str += String.fromCharCode(0x2800 + n);
+  }
+  return str;
+}
+
+function tickTime() {
+  var start = 130, end = 70;
+  var t = Math.min(1, (snake.length - INITIAL_SNAKE_LENGTH) / 30);
+  return start + (end - start) * t;
+}
+function currentScore() { return snake.length - INITIAL_SNAKE_LENGTH; }
+function cellAt(x, y) {
+  if (y < 0 || y >= GRID_HEIGHT) return null;
+  return grid[x % GRID_WIDTH + y * GRID_WIDTH];
+}
+function bitAt(x, y) { return cellAt(x, y) ? 1 : 0; }
+function setCellAt(x, y, c) { grid[x % GRID_WIDTH + y * GRID_WIDTH] = c; }
+
+function dropFood() {
+  var candidates = [];
+  for (var y = 1; y < GRID_HEIGHT - 1; y++) {
+    for (var x = 1; x < GRID_WIDTH - 1; x++) {
+      var i = x + y * GRID_WIDTH;
+      if (grid[i] !== SNAKE_CELL && grid[i] !== FOOD_CELL) candidates.push(i);
+    }
+  }
+  if (candidates.length === 0) {
+    for (var i2 = 0; i2 < grid.length; i2++) {
+      if (grid[i2] !== SNAKE_CELL && grid[i2] !== FOOD_CELL) candidates.push(i2);
+    }
+  }
+  if (candidates.length === 0) return;
+  grid[candidates[Math.floor(Math.random() * candidates.length)]] = FOOD_CELL;
+}
+
+function changeDirection(newDir) {
+  if (Date.now() < gameOverCooldown) return;
+  var lastDir = moveQueue[moveQueue.length - 1] || currentDirection;
+  if (newDir === lastDir) return;
+  var opposite = newDir.x + lastDir.x === 0 && newDir.y + lastDir.y === 0;
+  if (!opposite) moveQueue.push(newDir);
+  hasMoved = true;
+}
+
+function drawMaxScore() {
+  var maxScore = safeStorage.get('maxScore');
+  if (maxScore == null) return;
+  var pts = maxScore == 1 ? '1 分' : maxScore + ' 分';
+  var g = safeStorage.get('maxScoreGrid');
+  document.getElementById('max-score-points').textContent = pts;
+  document.getElementById('max-score-grid').textContent = g;
+  document.getElementById('max-score-container').classList.remove('hidden');
+  document.getElementById('share').onclick = function (e) {
+    e.preventDefault();
+    shareScore(pts, g);
+  };
+}
+function showMaxScore() {
+  if (document.querySelector('#max-score-container.expanded')) return;
+  document.querySelector('#max-score-container .expand-btn').click();
+}
+function shareScore(pts, grid) {
+  var message = '|' + grid + '| 我在浏览器地址栏上玩这个沙雕贪吃蛇游戏拿到了 ' + pts + '！';
+  var url = document.querySelector('link[rel=canonical]').href;
+  if (navigator.share) navigator.share({text: message, url: url});
+  else if (navigator.clipboard) navigator.clipboard.writeText(message + '\n' + url)
+    .then(function () { showShareNote('已复制到剪贴板') })
+    .catch(function () { showShareNote('复制失败') });
+  else showShareNote('剪贴板不可用');
+}
+function showShareNote(m) {
+  var n = document.getElementById('share-note');
+  n.textContent = m;
+  n.classList.remove('invisible');
+  setTimeout(function () { n.classList.add('invisible'); }, 1000);
+}
+var toastTimer = null;
+function showToast(m) {
+  var el = document.getElementById('toast');
+  el.textContent = m;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.classList.remove('show'); }, 1200);
+}
+function pickWhitespaceReplacementChar() {
+  return ['░', '淡雾状符号'];
+}
+
+main();
+</script>
+</body>
+</html>

@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang=zh-CN>
+<head>
+<meta charset=utf-8>
+<title>URL 贪吃蛇！</title>
+<meta name=description content="在浏览器地址栏上玩经典贪吃蛇游戏。"/>
+<meta name=viewport content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="theme-color" content="#222"/>
+<style>
+html, body, h1, p { margin: 0; padding: 0; }
+* { box-sizing: border-box; }
+html {
+  height: 100%;
+  font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", Arial, sans-serif;
+  color: #222;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+body {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom));
+  overflow-x: hidden;
+}
+a { color: #3473ee; }
+
+#mobile-board {
+  display: none;
+  width: 100%;
+  font-size: min(6.5vw, 30px);
+  text-align: center;
+  font-family: monospace;
+  line-height: 1.45;
+  letter-spacing: 0;
+  background: #8881;
+  border-radius: 10px;
+  padding: 16px 0;
+  margin-bottom: 4px;
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: pre;
+  overflow: hidden;
+  min-height: 9em;
+  font-weight: 500;
+  border: 2px solid #0bc3ff;
+  box-shadow: inset 0 0 0 3px #0bc3ff22;
+  transition: border-color .15s, box-shadow .15s;
+}
+#mobile-board.dead {
+  border-color: #ff4d4d;
+  box-shadow: inset 0 0 0 3px #ff4d4d44;
+}
+#mobile-score {
+  display: none;
+  width: 100%;
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #0bc3ff;
+  margin-bottom: 4px;
+  user-select: none;
+}
+:root.touch #mobile-board { display: block; }
+:root.touch #mobile-score { display: block; }
+:root.touch #url-container { display: none !important; }
+
+.controls {
+  display: grid;
+  grid-template-areas: ".    up   ."
+                       "left down right";
+  gap: 5px;
+  width: min(86vw, 320px);
+  height: min(44vw, 170px);
+  margin: 2px auto 0;
+  touch-action: none;
+}
+#up { grid-area: up; }
+#down { grid-area: down; }
+#left { grid-area: left; }
+#right { grid-area: right; }
+
+.controls button {
+  color: #888;
+  font-size: clamp(30px, 8.5vw, 44px);
+  background: #8881;
+  border: 2px solid #8886;
+  margin: 0;
+  border-radius: 13px;
+  transition: background .08s, transform .05s;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+.controls button:focus { outline: none; }
+.controls button:active,
+.controls button.pressed {
+  background: #0bc3ff55;
+  border-color: #0bc3ff;
+  transform: scale(0.93);
+}
+
+@media (min-width: 10cm) and (min-height: 10cm) and (hover: hover) {
+  .controls {
+    position: absolute;
+    width: 7.5cm;
+    height: 5cm;
+    bottom: 1.5cm;
+    right: 1.5cm;
+    gap: 4px;
+  }
+  .controls button {
+    font-size: 0.8cm;
+    border-radius: 0.5cm;
+  }
+}
+
+#url, #max-score-grid {
+  background: #8883;
+  padding: 2px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+#share { display: inline-block; }
+footer { margin-top: auto; font-size: 0.85rem; padding-top: 4px; }
+.invisible { display: none !important; }
+.hidden { visibility: hidden; }
+:root.touch .no-touch-only,
+:root:not(.touch) .touch-only { display: none; }
+
+.expand-btn, .collapse-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  width: 1rem;
+}
+.expand-btn, .expandable {
+  transition: transform, opacity;
+  transition-duration: .4s;
+}
+.expandable {
+  display: inline-block;
+  position: relative;
+  height: 1.5rem;
+  transform: translateX(-100%);
+  padding-right: 10px;
+}
+.expand-btn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform: translateX(100%);
+  opacity: 1;
+}
+.help-toggle { color: #0bc3ff; }
+.high-score-toggle { color: #ff8c0b; }
+.collapse-btn { color: #aaa; }
+.expandable.expanded {
+  height: auto;
+  transform: none;
+}
+.expandable.expanded .expand-btn { opacity: 0; }
+#share-note { padding-left: 0.5rem; }
+#share-note.invisible {
+  transition: opacity 0.4s ease-in-out, display 0s ease-out 0.4s;
+  transition-behavior: allow-discrete;
+  opacity: 0;
+  display: none;
+}
+
+#toast {
+  position: fixed;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%) scale(0.9);
+  background: #222e;
+  color: #fff;
+  padding: .7em 1.4em;
+  border-radius: .6em;
+  font-weight: bold;
+  font-size: 1.1rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+  z-index: 100;
+  white-space: nowrap;
+}
+#toast.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  html { background: #222; color: #eee; }
+  #url, #max-score-grid { background: #fff2; }
+  a { color: #6fa0ff; }
+  .controls button {
+    color: #ccc;
+    background: #fff1;
+    border-color: #fff3;
+  }
+  #mobile-board { background: #fff1; }
+}
+</style>
+<script>
+  if ('ontouchstart' in document.documentElement) {
+    document.documentElement.classList.add('touch')
+  }
+</script>
+</head>
+<noscript>⚠ 抱歉，本游戏需要启用 JavaScript。</noscript>
+
+<div id="mobile-score">分数：0</div>
+<div id="mobile-board"></div>
+
+<div id=url-container class=invisible>地址：<span id=url></span></div>
+<div class=expandable>
+  <button class="help-toggle expand-btn" aria-label="帮助" aria-expanded=false>?</button>
+  <div class="expandable-content hidden">
+    <span class=no-touch-only>使用方向键或 WASD 控制地址栏上的贪吃蛇。</span>
+    <span class=touch-only>使用下方方向按钮或在游戏板上滑动控制贪吃蛇。</span>
+    <a id=reveal-url href=#>点此显示</a>页面地址<span id=url-escaping-note class=invisible>（地址显示可能异常：<span id=replacement-char-description></span>）</span>。&nbsp;<button class=collapse-btn aria-label="收起">〈</button>
+  </div>
+</div>
+<div id=max-score-container class="expandable hidden">
+  <button class="high-score-toggle expand-btn" aria-label="最高分" aria-expanded=false>!</button>
+  <div class="expandable-content hidden">
+    你的最高分是 <span id=max-score-points></span>！
+    <span id=max-score-grid></span><a id=share href=#><i class=icon-share>↗</i>分享</a>&nbsp;<button class=collapse-btn aria-label="收起">〈</button><span id=share-note class=invisible></span>
+  </div>
+</div>
+
+<div class="controls touch-only">
+  <button id=up aria-label="上">▲&#xFE0E;</button>
+  <button id=left aria-label="左">◀&#xFE0E;</button>
+  <button id=down aria-label="下">▼&#xFE0E;</button>
+  <button id=right aria-label="右">▶&#xFE0E;</button>
+</div>
+<div id=toast role=status aria-live=polite></div>
+<footer>
+  由 <a href=https://twitter.com/epidemian>@epidemian</a> 制作（⠠⠇） |
+  <a href=https://github.com/epidemian/snake>源码</a>
+</footer>
+<script>
+'use strict';
+
+var GRID_WIDTH = 40;
+var GRID_HEIGHT = 4;
+var SNAKE_CELL = 1;
+var FOOD_CELL = 2;
+var UP = {x: 0, y: -1};
+var DOWN = {x: 0, y: 1};
+var LEFT = {x: -1, y: 0};
+var RIGHT = {x: 1, y: 0};
+var INITIAL_SNAKE_LENGTH = 4;
+var INITIAL_SNAKE_Y = 1;   // === 修改：初始 y=1，上下都有缓冲 ===
+var BRAILLE_SPACE = '\u2800';
+
+var grid;
+var snake;
+var currentDirection;
+var moveQueue;
+var hasMoved;
+var gamePaused = false;
+var urlRevealed = false;
+var whitespaceReplacementChar;
+var gameOverCooldown = 0;
+var hashFallbackInProgress = false;
+var isTouchDevice = false;
+
+var safeStorage = {
+  get: function (k) {
+    try { return localStorage.getItem(k); } catch (e) { return null; }
+  },
+  set: function (k, v) {
+    try { localStorage.setItem(k, v); } catch (e) {}
+  },
+  del: function (k) {
+    try { localStorage.removeItem(k); } catch (e) {}
+  }
+};
+
+function main() {
+  isTouchDevice = document.documentElement.classList.contains('touch');
+  detectBrowserUrlWhitespaceEscaping();
+  cleanUrl();
+  setupEventHandlers();
+  drawMaxScore();
+  initUrlRevealed();
+  startGame();
+
+  var lastFrameTime = Date.now();
+  window.requestAnimationFrame(function frameHandler() {
+    var now = Date.now();
+    if (!gamePaused && now - lastFrameTime >= tickTime()) {
+      updateWorld();
+      drawWorld();
+      lastFrameTime = now;
+    }
+    window.requestAnimationFrame(frameHandler);
+  });
+}
+
+function detectBrowserUrlWhitespaceEscaping() {
+  try {
+    history.replaceState(null, null, '#' + BRAILLE_SPACE + BRAILLE_SPACE)
+  } catch (e) {}
+  if (location.hash.indexOf(BRAILLE_SPACE) == -1) {
+    var replacementData = pickWhitespaceReplacementChar();
+    whitespaceReplacementChar = replacementData[0];
+    document.getElementById('url-escaping-note').classList.remove('invisible');
+    document.getElementById('replacement-char-description').textContent = replacementData[1];
+  }
+}
+
+function cleanUrl() {
+  try {
+    history.replaceState(null, null, location.pathname.replace(/\b\/$/, ''));
+  } catch (e) {}
+}
+
+function setupEventHandlers() {
+  var directionsByKey = {
+    37: LEFT, 38: UP, 39: RIGHT, 40: DOWN,
+    87: UP, 65: LEFT, 83: DOWN, 68: RIGHT,
+    75: UP, 72: LEFT, 74: DOWN, 76: RIGHT
+  };
+
+  document.onkeydown = function (event) {
+    var key = event.keyCode;
+    if (key in directionsByKey) {
+      event.preventDefault();
+      changeDirection(directionsByKey[key]);
+    }
+  };
+
+  var dirById = {up: UP, down: DOWN, left: LEFT, right: RIGHT};
+  Object.keys(dirById).forEach(function (id) {
+    var btn = document.getElementById(id);
+    var press = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.classList.add('pressed');
+      changeDirection(dirById[id]);
+    };
+    var release = function () { btn.classList.remove('pressed'); };
+    btn.addEventListener('pointerdown', press, {passive: false});
+    btn.addEventListener('pointerup', release, {passive: true});
+    btn.addEventListener('pointercancel', release, {passive: true});
+    btn.addEventListener('pointerleave', release, {passive: true});
+    btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    btn.addEventListener('touchstart', function (e) { e.preventDefault(); }, {passive: false});
+  });
+
+  var board = document.getElementById('mobile-board');
+  var touchStartX = 0, touchStartY = 0, touchTracking = false;
+  board.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) return;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchTracking = true;
+    e.preventDefault();
+  }, {passive: false});
+  board.addEventListener('touchmove', function (e) {
+    if (!touchTracking) return;
+    e.preventDefault();
+  }, {passive: false});
+  board.addEventListener('touchend', function (e) {
+    if (!touchTracking) return;
+    touchTracking = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStartX;
+    var dy = t.clientY - touchStartY;
+    var absX = Math.abs(dx), absY = Math.abs(dy);
+    if (Math.max(absX, absY) < 18) return;
+    if (absX > absY) {
+      changeDirection(dx > 0 ? RIGHT : LEFT);
+    } else {
+      changeDirection(dy > 0 ? DOWN : UP);
+    }
+  }, {passive: false});
+
+  document.addEventListener('visibilitychange', function () {
+    gamePaused = document.hidden;
+  });
+
+  window.onblur = function pauseGame() { gamePaused = true; };
+  window.onfocus = function unpauseGame() {
+    gamePaused = false;
+    drawWorld();
+  };
+
+  document.getElementById('reveal-url').onclick = function (e) {
+    e.preventDefault();
+    setUrlRevealed(!urlRevealed);
+  };
+
+  document.querySelectorAll('.expandable').forEach(function (expandable) {
+    var expand = expandable.querySelector('.expand-btn');
+    var collapse = expandable.querySelector('.collapse-btn');
+    var content = expandable.querySelector('.expandable-content');
+    expand.onclick = collapse.onclick = function () {
+      expand.classList.remove('hidden');
+      content.classList.remove('hidden');
+      expandable.classList.toggle('expanded');
+      expand.setAttribute(
+        'aria-expanded',
+        expandable.classList.contains('expanded')
+      );
+    };
+    expandable.ontransitionend = function () {
+      var expanded = expandable.classList.contains('expanded');
+      expand.classList.toggle('hidden', expanded);
+      content.classList.toggle('hidden', !expanded);
+    };
+  });
+}
+
+function initUrlRevealed() {
+  setUrlRevealed(Boolean(safeStorage.get('urlRevealed')));
+}
+
+function setUrlRevealed(value) {
+  urlRevealed = value;
+  document.getElementById('url-container')
+    .classList.toggle('invisible', !urlRevealed);
+  if (urlRevealed) {
+    safeStorage.set('urlRevealed', 'y');
+  } else {
+    safeStorage.del('urlRevealed');
+  }
+}
+
+function startGame() {
+  grid = new Array(GRID_WIDTH * GRID_HEIGHT);
+  snake = [];
+  for (var x = 0; x < INITIAL_SNAKE_LENGTH; x++) {
+    // === 修改：初始 y 用常量，默认 1 ===
+    snake.unshift({x: x, y: INITIAL_SNAKE_Y});
+    setCellAt(x, INITIAL_SNAKE_Y, SNAKE_CELL);
+  }
+  currentDirection = RIGHT;
+  moveQueue = [];
+  hasMoved = false;
+  dropFood();
+}
+
+// === 核心修复：moveQueue.shift() 而非 pop()，方向立即生效 ===
+// === 撞墙时游戏板红框闪烁 ===
+function updateWorld() {
+  if (moveQueue.length) {
+    currentDirection = moveQueue.shift();   // ★ 关键修复
+  }
+
+  var head = snake[0];
+  var tail = snake[snake.length - 1];
+  var newX = head.x + currentDirection.x;
+  var newY = head.y + currentDirection.y;
+
+  var outOfBounds = newX < 0 || newX >= GRID_WIDTH || newY < 0 || newY >= GRID_HEIGHT;
+  var collidesWithSelf = !outOfBounds && cellAt(newX, newY) === SNAKE_CELL
+    && !(newX === tail.x && newY === tail.y);
+
+  if (outOfBounds || collidesWithSelf) {
+    flashBoardDead();                        // ★ 撞墙红框
+    endGame();
+    startGame();
+    return;
+  }
+
+  var eatsFood = cellAt(newX, newY) === FOOD_CELL;
+  if (!eatsFood) {
+    snake.pop();
+    setCellAt(tail.x, tail.y, null);
+  }
+
+  setCellAt(newX, newY, SNAKE_CELL);
+  snake.unshift({x: newX, y: newY});
+
+  if (eatsFood) {
+    dropFood();
+  }
+}
+
+function flashBoardDead() {
+  var board = document.getElementById('mobile-board');
+  if (!board) return;
+  board.classList.add('dead');
+  setTimeout(function () { board.classList.remove('dead'); }, 400);
+}
+
+function endGame() {
+  var score = currentScore();
+  var maxScore = parseInt(safeStorage.get('maxScore') || 0, 10);
+  var isNew = score > 0 && score > maxScore && hasMoved;
+  if (isNew) {
+    safeStorage.set('maxScore', score);
+    safeStorage.set('maxScoreGrid', gridString());
+    drawMaxScore();
+    showMaxScore();
+  }
+  showToast(isNew ? '🎉 新纪录！' + score + ' 分' : '💥 撞墙！得分：' + score);
+  gameOverCooldown = Date.now() + 600;
+}
+
+function drawWorld() {
+  var hash = '#|' + gridString() + '|[score:' + currentScore() + ']';
+
+  if (urlRevealed) {
+    document.getElementById('url').textContent =
+      location.href.replace(/#.*$/, '') + hash;
+  }
+
+  if (isTouchDevice) {
+    renderMobileBoard();
+  }
+
+  if (whitespaceReplacementChar) {
+    hash = hash.replace(/\u2800/g, whitespaceReplacementChar);
+  }
+
+  try {
+    history.replaceState(null, null, hash);
+  } catch (e) {}
+
+  if (!hashFallbackInProgress && decodeURIComponent(location.hash) !== hash) {
+    hashFallbackInProgress = true;
+    try { location.hash = hash; } catch (e) {}
+    setTimeout(function () { hashFallbackInProgress = false; }, 50);
+  }
+}
+
+function renderMobileBoard() {
+  var board = document.getElementById('mobile-board');
+  if (!board) return;
+  var str = gridString();
+  var rows = [];
+  for (var i = 0; i < str.length; i += 20) {
+    rows.push(str.slice(i, i + 20));
+  }
+  board.textContent = rows.join('\n');
+  var max = safeStorage.get('maxScore');
+  document.getElementById('mobile-score').textContent =
+    '分数：' + currentScore() + (max ? ' ｜ 最高：' + max : '');
+}
+
+function gridString() {
+  var str = '';
+  for (var x = 0; x < GRID_WIDTH; x += 2) {
+    var n = 0
+      | bitAt(x, 0) << 0
+      | bitAt(x, 1) << 1
+      | bitAt(x, 2) << 2
+      | bitAt(x + 1, 0) << 3
+      | bitAt(x + 1, 1) << 4
+      | bitAt(x + 1, 2) << 5
+      | bitAt(x, 3) << 6
+      | bitAt(x + 1, 3) << 7;
+    str += String.fromCharCode(0x2800 + n);
+  }
+  return str;
+}
+
+function tickTime() {
+  var start = 130;
+  var end = 70;
+  var t = Math.min(1, (snake.length - INITIAL_SNAKE_LENGTH) / 30);
+  return start + (end - start) * t;
+}
+
+function currentScore() {
+  return snake.length - INITIAL_SNAKE_LENGTH;
+}
+
+function cellAt(x, y) {
+  return grid[x % GRID_WIDTH + y * GRID_WIDTH];
+}
+
+function bitAt(x, y) {
+  return cellAt(x, y) ? 1 : 0;
+}
+
+function setCellAt(x, y, cellType) {
+  grid[x % GRID_WIDTH + y * GRID_WIDTH] = cellType;
+}
+
+function dropFood() {
+  var candidates = [];
+  for (var y = 1; y < GRID_HEIGHT - 1; y++) {
+    for (var x = 1; x < GRID_WIDTH - 1; x++) {
+      var i = x + y * GRID_WIDTH;
+      if (grid[i] !== SNAKE_CELL && grid[i] !== FOOD_CELL) {
+        candidates.push(i);
+      }
+    }
+  }
+  if (candidates.length === 0) {
+    for (var i2 = 0; i2 < grid.length; i2++) {
+      if (grid[i2] !== SNAKE_CELL && grid[i2] !== FOOD_CELL) {
+        candidates.push(i2);
+      }
+    }
+  }
+  if (candidates.length === 0) return;
+  var pick = candidates[Math.floor(Math.random() * candidates.length)];
+  grid[pick] = FOOD_CELL;
+}
+
+function changeDirection(newDir) {
+  if (Date.now() < gameOverCooldown) return;
+  var lastDir = moveQueue[moveQueue.length - 1] || currentDirection;  // ★ 取最新入队的方向
+  var opposite = newDir.x + lastDir.x === 0 && newDir.y + lastDir.y === 0;
+  if (!opposite) {
+    moveQueue.push(newDir);   // ★ 尾插，配合 shift 使用
+  }
+  hasMoved = true;
+}
+
+function drawMaxScore() {
+  var maxScore = safeStorage.get('maxScore');
+  if (maxScore == null) {
+    return;
+  }
+
+  var maxScorePoints = maxScore == 1 ? '1 分' : maxScore + ' 分';
+  var maxScoreGrid = safeStorage.get('maxScoreGrid');
+
+  document.getElementById('max-score-points').textContent = maxScorePoints;
+  document.getElementById('max-score-grid').textContent = maxScoreGrid;
+  document.getElementById('max-score-container').classList.remove('hidden');
+
+  document.getElementById('share').onclick = function (e) {
+    e.preventDefault();
+    shareScore(maxScorePoints, maxScoreGrid);
+  };
+}
+
+function showMaxScore() {
+  if (document.querySelector('#max-score-container.expanded')) return;
+  document.querySelector('#max-score-container .expand-btn').click();
+}
+
+function shareScore(scorePoints, grid) {
+  var message = '|' + grid + '| 我在浏览器地址栏上玩这个沙雕贪吃蛇游戏拿到了 ' +
+    scorePoints + '！';
+  var url = document.querySelector('link[rel=canonical]').href;
+  if (navigator.share) {
+    navigator.share({text: message, url: url});
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(message + '\n' + url)
+      .then(function () { showShareNote('已复制到剪贴板') })
+      .catch(function () { showShareNote('复制失败') })
+  } else {
+    showShareNote('剪贴板不可用');
+  }
+}
+
+function showShareNote(message) {
+  var note = document.getElementById('share-note');
+  note.textContent = message;
+  note.classList.remove('invisible');
+  setTimeout(function () { note.classList.add('invisible'); }, 1000);
+}
+
+var toastTimer = null;
+function showToast(message) {
+  var el = document.getElementById('toast');
+  el.textContent = message;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.classList.remove('show'); }, 1200);
+}
+
+function pickWhitespaceReplacementChar() {
+  var candidates = [
+    ['૟', '奇怪符号'],
+    ['⟋', '怪异斜线']
+  ];
+
+  var N = 5;
+  var canvas = document.createElement('canvas');
+  var ctx = canvas.getContext('2d');
+  ctx.font = '30px system-ui';
+  var targetWidth = ctx.measureText(BRAILLE_SPACE.repeat(N)).width;
+
+  for (var i = 0; i < candidates.length; i++) {
+    var char = candidates[i][0];
+    var str = char.repeat(N);
+    var width = ctx.measureText(str).width;
+    var similarWidth = Math.abs(targetWidth - width) / targetWidth <= 0.1;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillText(str, 0, 30);
+    var pixelData = ctx.getImageData(0, 0, width, 30).data;
+    var totalPixels = pixelData.length / 4;
+    var coloredPixels = 0;
+    for (var j = 0; j < totalPixels; j++) {
+      var alpha = pixelData[j * 4 + 3];
+      if (alpha != 0) {
+        coloredPixels++;
+      }
+    }
+    var notTooDark = coloredPixels / totalPixels < 0.15;
+
+    if (similarWidth && notTooDark) {
+      return candidates[i];
+    }
+  }
+
+  return ['░', '淡雾状符号'];
+}
+
+main();
+</script>
+</body>
+</html>

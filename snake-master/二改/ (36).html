@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>URL 贪吃蛇 · 性能满血</title>
+  <style>
+    body { margin:0; background:#111; color:#0bc3ff; font-family:monospace,sans-serif; height:100vh; display:flex; flex-direction:column; overflow:hidden; user-select:none; }
+    #score { text-align:center; padding:6px 10px; font-weight:bold; font-size:1.1rem; flex:0 0 auto; letter-spacing:1px; background:#0a0a0a; border-bottom:1px solid #0bc3ff40; }
+    #board { flex:1; display:flex; align-items:center; justify-content:center; font-family:'Cascadia Code','Fira Code','Courier New',monospace; line-height:1; white-space:pre; background:#0a0a0a; margin:4px; border:2px solid #0bc3ff; border-radius:8px; overflow:hidden; box-shadow:0 0 12px #0bc3ff40; }
+    #joystick { width:120px; height:120px; margin:6px auto; border-radius:50%; background:#1e1e1e; position:relative; touch-action:none; border:2px solid #0bc3ff80; flex:0 0 auto; box-shadow:0 0 8px #0bc3ff40; }
+    #knob { width:44px; height:44px; border-radius:50%; background:#0bc3ff; position:absolute; left:38px; top:38px; pointer-events:none; box-shadow:0 0 12px #0bc3ff; will-change:transform; }
+    #menu-btn { position:fixed; top:10px; right:10px; background:#ff8c0b; border:none; border-radius:50%; width:44px; height:44px; font-size:22px; z-index:20; cursor:pointer; box-shadow:0 0 12px #ff8c0b80; }
+    #menu { position:fixed; top:64px; right:10px; background:#111; border:1px solid #ff8c0b; padding:16px; border-radius:10px; display:none; flex-direction:column; gap:10px; z-index:20; box-shadow:0 8px 24px #000c; min-width:200px; }
+    .row { display:flex; justify-content:space-between; align-items:center; gap:16px; font-size:0.9rem; }
+    input[type="checkbox"] { width:18px; height:18px; accent-color:#0bc3ff; }
+    input[type="number"] { width:70px; background:#1e1e1e; color:#0bc3ff; border:1px solid #0bc3ff60; text-align:center; padding:4px; border-radius:4px; font-family:monospace; }
+    .btn { background:#ff8c0b; color:#000; font-weight:bold; border:none; padding:10px; border-radius:6px; margin-top:8px; font-size:1rem; cursor:pointer; letter-spacing:1px; }
+  </style>
+</head>
+<body>
+<div id="score">分数: 0 | 长度: 4</div>
+<div id="board"></div>
+<div id="joystick"><div id="knob"></div></div>
+<button id="menu-btn">⚡</button>
+<div id="menu">
+  <div class="row"><span>不死模式</span><input type="checkbox" id="c-god" checked></div>
+  <div class="row"><span>穿墙模式</span><input type="checkbox" id="c-wrap" checked></div>
+  <div class="row"><span>穿自己</span><input type="checkbox" id="c-self" checked></div>
+  <div class="row"><span>自动吃豆</span><input type="checkbox" id="c-ai" checked></div>
+  <div class="row"><span>速度(格/秒)</span><input type="number" id="c-speed" value="150" min="1" max="1000"></div>
+  <div class="row"><span>当前分数</span><input type="number" id="c-score" value="0" min="0"></div>
+  <button class="btn" onclick="applyCheats()">应用并重开</button>
+</div>
+
+<script>
+// ==================== 极致性能配置 ====================
+const W = 100, H = 100;                 // 100x100 盲文点阵, 每格 2x4
+const SNAKE = 1, FOOD = 2;
+const UP = {x:0,y:-1}, DOWN = {x:0,y:1}, LEFT = {x:-1,y:0}, RIGHT = {x:1,y:0};
+const DIRS = [UP, DOWN, LEFT, RIGHT];
+
+// ---------- 全局状态 ----------
+let grid;                 // 一维 Uint8Array, 0=空,1=蛇,2=食物
+let snake;               // 蛇身坐标数组 [{x,y}, ...]
+let dir;                 // 当前方向
+let queue;               // 手动方向队列 (极简, 只用1个)
+let isDead;
+let currentScore;
+let foodPos;
+let cheats = { god:true, wrap:true, self:true, ai:true, speed:150 };
+let isRunning = false;
+let lastTime = 0;
+let accumulator = 0;
+
+// A* 寻路缓存
+let cachedPath = [];      // 从蛇头到食物的路径 (不包含蛇头)
+let pathCalcCounter = 0;  // 每帧最多计算一次, 避免卡顿
+
+// DOM 缓存
+const boardEl = document.getElementById('board');
+const scoreEl = document.getElementById('score');
+const menuBtn = document.getElementById('menu-btn');
+const menuDiv = document.getElementById('menu');
+
+// 盲文点阵映射: 每2x4像素 -> 一个盲文字符
+// 位映射: 0:左上,1:左中,2:左下,3:右上,4:右中,5:右下,6:左下下,7:右下下
+// 实际使用: 0: (x,y), 1: (x,y+1), 2: (x,y+2), 3: (x+1,y), 4: (x+1,y+1), 5: (x+1,y+2), 6: (x,y+3), 7: (x+1,y+3)
+const BRAILLE_MAP = new Uint8Array(256);
+for (let i=0; i<256; i++) {
+  let n=0;
+  if (i&1) n|=0x01;   // (0,0)
+  if (i&2) n|=0x02;   // (0,1)
+  if (i&4) n|=0x04;   // (0,2)
+  if (i&8) n|=0x40;   // (1,0)
+  if (i&16) n|=0x08;  // (1,1) -- 注意盲文位置: 点4是0x08
+  if (i&32) n|=0x10;  // (1,2) -- 点5是0x10
+  if (i&64) n|=0x20;  // (0,3) -- 点3是0x20? 调整: 盲文点3是0x04? 下面重排
+  if (i&128) n|=0x80; // (1,3) -- 点6? 重新整理更清晰
+}
+// 修正：使用标准盲文点阵映射 (Unicode Braille)
+// 点1(0,0)->0x01, 点2(0,1)->0x02, 点3(0,2)->0x04, 点4(1,0)->0x40, 点5(1,1)->0x08, 点6(1,2)->0x10, 点7(0,3)->0x20, 点8(1,3)->0x80
+// 重新构建快速查找表
+const BRAILLE_LUT = new Uint16Array(256);
+for (let mask=0; mask<256; mask++) {
+  let code = 0;
+  if (mask & 1)   code |= 0x01;  // (0,0)
+  if (mask & 2)   code |= 0x02;  // (0,1)
+  if (mask & 4)   code |= 0x04;  // (0,2)
+  if (mask & 8)   code |= 0x40;  // (1,0)
+  if (mask & 16)  code |= 0x08;  // (1,1)
+  if (mask & 32)  code |= 0x10;  // (1,2)
+  if (mask & 64)  code |= 0x20;  // (0,3)
+  if (mask & 128) code |= 0x80;  // (1,3)
+  BRAILLE_LUT[mask] = 0x2800 + code;
+}
+
+// ---------- 初始化 / 重置 ----------
+function init() {
+  grid = new Uint8Array(W * H);  // 使用 Uint8Array 提升读写性能
+  snake = [];
+  currentScore = 0;
+  foodPos = null;
+  cachedPath = [];
+  const startX = 50, startY = 50;
+  for (let i = 0; i < 4; i++) {
+    const x = startX - i, y = startY;
+    snake.push({x, y});
+    grid[y * W + x] = SNAKE;
+  }
+  dir = RIGHT;
+  queue = [];
+  isDead = false;
+  dropFood();
+  draw();
+  setTimeout(fitBoardFont, 30);
+}
+
+function setCell(x, y, v) {
+  if (x >= 0 && x < W && y >= 0 && y < H) grid[y * W + x] = v;
+}
+function getCell(x, y) {
+  if (x < 0 || x >= W || y < 0 || y >= H) return -1;
+  return grid[y * W + x];
+}
+
+function dropFood() {
+  // 快速随机采样, 避免遍历全部空格(蛇很长时极大提升)
+  const maxAttempts = 300;
+  for (let i = 0; i < maxAttempts; i++) {
+    const x = Math.floor(Math.random() * W);
+    const y = Math.floor(Math.random() * H);
+    if (grid[y * W + x] === 0) {
+      foodPos = {x, y};
+      grid[y * W + x] = FOOD;
+      return;
+    }
+  }
+  // 保底遍历
+  for (let idx = 0; idx < W * H; idx++) {
+    if (grid[idx] === 0) {
+      const x = idx % W, y = Math.floor(idx / W);
+      foodPos = {x, y};
+      grid[idx] = FOOD;
+      return;
+    }
+  }
+}
+
+// ---------- 极致渲染 ----------
+function draw() {
+  const buf = new Array((W/2) * (H/4) + H/4); // 每行字符 + 换行
+  let str = '';
+  for (let y = 0; y < H; y += 4) {
+    for (let x = 0; x < W; x += 2) {
+      let mask = 0;
+      // 快速读取 8 个像素 (2x4)
+      if (grid[y * W + x] > 0)               mask |= 1;
+      if (grid[(y+1) * W + x] > 0)           mask |= 2;
+      if (grid[(y+2) * W + x] > 0)           mask |= 4;
+      if (grid[y * W + x + 1] > 0)           mask |= 8;
+      if (grid[(y+1) * W + x + 1] > 0)       mask |= 16;
+      if (grid[(y+2) * W + x + 1] > 0)       mask |= 32;
+      if (grid[(y+3) * W + x] > 0)           mask |= 64;
+      if (grid[(y+3) * W + x + 1] > 0)       mask |= 128;
+      str += String.fromCharCode(BRAILLE_LUT[mask]);
+    }
+    str += '\n';
+  }
+  boardEl.textContent = str;
+  scoreEl.textContent = `分数: ${currentScore} | 长度: ${snake.length}` + (isDead ? ' (死)' : '');
+  boardEl.style.borderColor = isDead ? '#ff4d4d' : '#0bc3ff';
+}
+
+function fitBoardFont() {
+  const w = boardEl.clientWidth - 16;
+  const h = boardEl.clientHeight - 16;
+  // 每行 (W/2) 个字符, 每列 (H/4) 行
+  const sizeByW = w / (W/2) / 0.62;   // 0.62 是等宽字体宽度经验值
+  const sizeByH = h / (H/4) / 1.15;
+  boardEl.style.fontSize = Math.max(2, Math.min(sizeByW, sizeByH, 28)) + 'px';
+  // 字体大小变化后重新绘制确保对齐
+  draw();
+}
+
+window.addEventListener('resize', () => {
+  fitBoardFont();
+});
+
+// ---------- 辅助函数 ----------
+function getDist(x1, y1, x2, y2) {
+  let dx = Math.abs(x1 - x2);
+  let dy = Math.abs(y1 - y2);
+  if (cheats.wrap) {
+    dx = Math.min(dx, W - dx);
+    dy = Math.min(dy, H - dy);
+  }
+  return dx + dy;
+}
+
+// ---------- AI 寻路 (A* 优化版, 限制计算次数) ----------
+function aiFindPath() {
+  if (!foodPos) return;
+  const head = snake[0];
+  // 如果食物就在旁边, 直接走
+  if (getDist(head.x, head.y, foodPos.x, foodPos.y) <= 1) {
+    let dx = foodPos.x - head.x;
+    let dy = foodPos.y - head.y;
+    if (cheats.wrap) {
+      if (Math.abs(dx) > W/2) dx = dx > 0 ? -1 : 1;
+      if (Math.abs(dy) > H/2) dy = dy > 0 ? -1 : 1;
+    }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      cachedPath = [{x: dx > 0 ? 1 : -1, y: 0}];
+    } else {
+      cachedPath = [{x: 0, y: dy > 0 ? 1 : -1}];
+    }
+    return;
+  }
+
+  // A* 使用简单开放列表 (用数组排序模拟优先队列, 地图100x100足够快)
+  // 为避免长蛇卡顿, 限制最大迭代次数
+  const openList = [{x: head.x, y: head.y, g: 0, f: getDist(head.x, head.y, foodPos.x, foodPos.y), parent: null}];
+  const closedSet = new Uint8Array(W * H);
+  let bestNode = openList[0];
+  const maxIter = 400;  // 严格限制, 避免一帧卡死
+  
+  while (openList.length > 0 && maxIter-- > 0) {
+    // 简单排序取f最小, 小数组性能可接受
+    openList.sort((a, b) => a.f - b.f);
+    const cur = openList.shift();
+    const curIdx = cur.y * W + cur.x;
+    if (closedSet[curIdx]) continue;
+    closedSet[curIdx] = 1;
+
+    if (cur.f < bestNode.f) bestNode = cur;
+
+    // 到达食物
+    if (cur.x === foodPos.x && cur.y === foodPos.y) {
+      let node = cur;
+      cachedPath = [];
+      while (node) {
+        cachedPath.unshift({x: node.x, y: node.y});
+        node = node.parent;
+      }
+      cachedPath.shift(); // 去掉蛇头自己
+      return;
+    }
+
+    for (let d of DIRS) {
+      let nx = cur.x + d.x, ny = cur.y + d.y;
+      if (cheats.wrap) {
+        nx = (nx + W) % W; ny = (ny + H) % H;
+      }
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const nid = ny * W + nx;
+      if (closedSet[nid]) continue;
+
+      // 蛇身阻挡判断 (尾巴可走)
+      if (grid[nid] === SNAKE) {
+        const tail = snake[snake.length - 1];
+        if (nx !== tail.x || ny !== tail.y) continue;
+      }
+
+      const gScore = cur.g + 1;
+      let fScore = gScore + getDist(nx, ny, foodPos.x, foodPos.y);
+      // 非穿墙模式给边界加惩罚
+      if (!cheats.wrap && (nx === 0 || nx === W-1 || ny === 0 || ny === H-1)) fScore += 20;
+
+      openList.push({x: nx, y: ny, g: gScore, f: fScore, parent: cur});
+    }
+  }
+
+  // 没找到完整路径, 使用 bestNode 路径 (贪心靠近)
+  if (bestNode && bestNode.parent !== null) {
+    let node = bestNode;
+    cachedPath = [];
+    while (node) {
+      cachedPath.unshift({x: node.x, y: node.y});
+      node = node.parent;
+    }
+    cachedPath.shift();
+  } else {
+    cachedPath = [];  // 随机方向兜底
+  }
+}
+
+// ---------- 核心步进 (极速版, 无冗余计算) ----------
+function stepOnce() {
+  if (isDead) return false;
+
+  // ----- AI 模式路径跟随 -----
+  if (cheats.ai) {
+    if (cachedPath.length > 0) {
+      const next = cachedPath[0];
+      let dx = next.x - snake[0].x;
+      let dy = next.y - snake[0].y;
+      if (cheats.wrap) {
+        if (Math.abs(dx) > W/2) dx = dx > 0 ? -1 : 1;
+        if (Math.abs(dy) > H/2) dy = dy > 0 ? -1 : 1;
+      }
+      dir = {x: Math.sign(dx), y: Math.sign(dy)};
+      cachedPath.shift();
+    } else {
+      // 每帧只允许计算一次A*, 避免高频调用
+      if (pathCalcCounter <= 0) {
+        aiFindPath();
+        pathCalcCounter = 1;  // 本帧已计算
+      }
+      if (cachedPath.length > 0) {
+        const next = cachedPath[0];
+        let dx = next.x - snake[0].x;
+        let dy = next.y - snake[0].y;
+        if (cheats.wrap) {
+          if (Math.abs(dx) > W/2) dx = dx > 0 ? -1 : 1;
+          if (Math.abs(dy) > H/2) dy = dy > 0 ? -1 : 1;
+        }
+        dir = {x: Math.sign(dx), y: Math.sign(dy)};
+        cachedPath.shift();
+      } else {
+        // 随机方向, 避免撞墙
+        const fallback = DIRS.filter(d => !(d.x + dir.x === 0 && d.y + dir.y === 0));
+        dir = fallback[Math.floor(Math.random() * fallback.length)];
+      }
+    }
+  } else {
+    // 手动模式
+    if (queue.length) dir = queue.shift();
+  }
+
+  // ----- 移动 -----
+  const head = snake[0];
+  let nx = head.x + dir.x, ny = head.y + dir.y;
+
+  if (cheats.wrap) {
+    nx = (nx + W) % W; ny = (ny + H) % H;
+  }
+
+  // 边界检查 (非穿墙模式)
+  if (nx < 0 || nx >= W || ny < 0 || ny >= H) {
+    if (cheats.god) {
+      // 不死模式: 自动找一个可走方向
+      let moved = false;
+      for (let d of DIRS) {
+        let tx = head.x + d.x, ty = head.y + d.y;
+        if (cheats.wrap) {
+          tx = (tx + W) % W; ty = (ty + H) % H;
+        }
+        if (tx >= 0 && tx < W && ty >= 0 && ty < H && getCell(tx, ty) !== SNAKE) {
+          dir = d; nx = tx; ny = ty; moved = true; break;
+        }
+      }
+      if (!moved) {
+        // 实在无路可走, 强制穿墙
+        nx = (nx + W) % W; ny = (ny + H) % H;
+      }
+    } else {
+      isDead = true; return false;
+    }
+  }
+
+  // 撞蛇检查
+  if (getCell(nx, ny) === SNAKE) {
+    const tail = snake[snake.length - 1];
+    const isTail = (nx === tail.x && ny === tail.y);
+    if (!isTail && !cheats.god && !cheats.self) {
+      isDead = true; return false;
+    }
+  }
+
+  // 吃食物?
+  const ate = getCell(nx, ny) === FOOD;
+
+  if (ate) {
+    currentScore++;
+  } else {
+    const tail = snake.pop();
+    setCell(tail.x, tail.y, 0);
+  }
+
+  snake.unshift({x: nx, y: ny});
+  setCell(nx, ny, SNAKE);
+  if (ate) {
+    dropFood();
+    // 吃食物后清除缓存, 重新计算路径
+    cachedPath = [];
+  }
+
+  return true;
+}
+
+// ---------- 游戏循环 (requestAnimationFrame 精确节流) ----------
+function gameLoop(time) {
+  if (!isRunning) return;
+
+  if (!lastTime) lastTime = time;
+  const deltaTime = Math.min(time - lastTime, 100); // 限制最大步进时间, 防止卡顿时"螺旋"
+  lastTime = time;
+
+  pathCalcCounter = 0; // 每帧重置A*计算标志
+
+  if (!isDead) {
+    const interval = 1000 / cheats.speed;
+    accumulator += deltaTime;
+
+    // 限制单帧最大步数防止速度太快卡死
+    let steps = 0;
+    while (accumulator >= interval && steps < 8) {
+      if (!stepOnce()) break;
+      accumulator -= interval;
+      steps++;
+    }
+    draw();
+  } else {
+    draw();
+    isRunning = false;
+    return;
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ---------- 菜单 & 控制 ----------
+menuBtn.onclick = () => {
+  menuDiv.style.display = menuDiv.style.display === 'flex' ? 'none' : 'flex';
+};
+
+function applyCheats() {
+  cheats.god = document.getElementById('c-god').checked;
+  cheats.wrap = document.getElementById('c-wrap').checked;
+  cheats.self = document.getElementById('c-self').checked;
+  cheats.ai = document.getElementById('c-ai').checked;
+  const spd = parseFloat(document.getElementById('c-speed').value);
+  cheats.speed = isNaN(spd) ? 150 : Math.min(1000, Math.max(1, spd));
+  
+  const targetScore = Math.max(0, parseInt(document.getElementById('c-score').value) || 0);
+  
+  // 重置游戏
+  grid = new Uint8Array(W * H);
+  snake = [];
+  dir = RIGHT;
+  queue = [];
+  isDead = false;
+  currentScore = targetScore;
+  foodPos = null;
+  cachedPath = [];
+  
+  const total = 4 + targetScore;
+  const startX = 50, startY = 50;
+  for (let i = 0; i < total; i++) {
+    let x = startX - i;
+    let y = startY;
+    while (x < 0) { x += W; y--; }
+    if (y < 0) y = H - 1;
+    while (y < 0) y += H;
+    snake.push({x, y});
+    grid[y * W + x] = SNAKE;
+  }
+  
+  dropFood();
+  draw();
+  menuDiv.style.display = 'none';
+  
+  isRunning = true;
+  lastTime = 0;
+  accumulator = 0;
+  requestAnimationFrame(gameLoop);
+}
+
+// ---------- 虚拟摇杆 (移动端) ----------
+const joy = document.getElementById('joystick');
+const knob = document.getElementById('knob');
+let dragging = false, cx = 0, cy = 0;
+joy.addEventListener('touchstart', e => {
+  e.preventDefault();
+  dragging = true;
+  const r = joy.getBoundingClientRect();
+  cx = r.left + r.width / 2;
+  cy = r.top + r.height / 2;
+}, { passive: false });
+
+joy.addEventListener('touchmove', e => {
+  if (!dragging) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  let dx = t.clientX - cx, dy = t.clientY - cy;
+  const dist = Math.sqrt(dx*dx + dy*dy);
+  if (dist > 40) { dx = dx/dist*40; dy = dy/dist*40; }
+  knob.style.transform = `translate(${dx}px, ${dy}px)`;
+  
+  if (dist > 15 && !cheats.ai) {
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (dx > 0 && dir !== LEFT) queue = [RIGHT];
+      if (dx < 0 && dir !== RIGHT) queue = [LEFT];
+    } else {
+      if (dy > 0 && dir !== UP) queue = [DOWN];
+      if (dy < 0 && dir !== DOWN) queue = [UP];
+    }
+  }
+}, { passive: false });
+
+joy.addEventListener('touchend', () => {
+  dragging = false;
+  knob.style.transform = 'translate(0px, 0px)';
+});
+joy.addEventListener('touchcancel', () => {
+  dragging = false;
+  knob.style.transform = 'translate(0px, 0px)';
+});
+
+// 键盘控制
+document.onkeydown = e => {
+  if (cheats.ai) return;
+  e.preventDefault();
+  if (e.key === 'ArrowUp' && dir !== DOWN) queue = [UP];
+  if (e.key === 'ArrowDown' && dir !== UP) queue = [DOWN];
+  if (e.key === 'ArrowLeft' && dir !== RIGHT) queue = [LEFT];
+  if (e.key === 'ArrowRight' && dir !== LEFT) queue = [RIGHT];
+};
+
+// ---------- 启动 ----------
+init();
+isRunning = true;
+requestAnimationFrame(gameLoop);
+
+// 初始适配字体 (等DOM完全渲染)
+setTimeout(fitBoardFont, 100);
+</script>
+</body>
+</html>
