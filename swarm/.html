@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm Rebuild Playground</title>
+<style>
+  /* 全局重置与基础样式 */
+  body, html { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #111; height: 100%; overflow: hidden; }
+  
+  /* 顶部控制台 */
+  #console-bar {
+    height: 60px; background: #1e1e1e; display: flex; align-items: center; padding: 0 20px; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); position: relative; z-index: 100;
+  }
+  #url-input {
+    flex: 1; height: 36px; border-radius: 8px; border: 1px solid #333; background: #2c2c2c; color: #fff; padding: 0 16px; font-size: 14px; outline: none; transition: border-color 0.2s;
+  }
+  #url-input:focus { border-color: #0D99FF; }
+  #play-btn {
+    height: 36px; padding: 0 20px; border-radius: 8px; border: none; background: #0D99FF; color: #fff; font-weight: bold; font-size: 14px; cursor: pointer; transition: background 0.2s, transform 0.1s;
+  }
+  #play-btn:hover { background: #2aa6ff; }
+  #play-btn:active { transform: scale(0.96); }
+
+  /* 模拟浏览器窗口 (iframe替代品) */
+  #browser-window {
+    position: absolute; top: 60px; left: 0; right: 0; bottom: 0; background: #fff; overflow-y: auto; overflow-x: hidden;
+  }
+
+  /* 以下是用来被蜂群重建的“目标网页”样式 */
+  .mock-page { max-width: 1000px; margin: 0 auto; padding: 40px 20px; color: #333; }
+  .mock-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f0f0f0; padding-bottom: 20px; margin-bottom: 40px; }
+  .mock-logo-area { display: flex; align-items: center; gap: 12px; }
+  .mock-logo { width: 40px; height: 40px; border-radius: 10px; background: #eaeaea; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #999; }
+  .mock-title { font-size: 32px; font-weight: 800; letter-spacing: -1px; margin: 0; color: #111; }
+  .mock-nav { display: flex; gap: 20px; font-weight: 600; color: #0D99FF; font-size: 15px; }
+  
+  .mock-hero { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); border-radius: 24px; padding: 60px 40px; margin-bottom: 40px; border: 1px solid #eaeaea; }
+  .mock-hero h2 { font-size: 48px; margin: 0 0 16px 0; color: #111; line-height: 1.1; }
+  .mock-hero p { font-size: 18px; color: #666; max-width: 600px; line-height: 1.6; margin: 0 0 32px 0; }
+  .mock-btn { background: #111; color: #fff; padding: 14px 28px; border-radius: 10px; font-weight: 600; font-size: 16px; display: inline-block; }
+  
+  .mock-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+  .mock-card { background: #fff; border: 1px solid #eaeaea; border-radius: 16px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.02); }
+  .mock-card h3 { margin: 0 0 12px 0; font-size: 20px; color: #222; }
+  .mock-card p { margin: 0; color: #777; font-size: 14px; line-height: 1.5; }
+  .mock-card-img { width: 100%; height: 120px; background: #f4f4f4; border-radius: 10px; margin-bottom: 20px; }
+
+  /* 悬浮元素 */
+  .mock-float { position: fixed; bottom: 30px; right: 30px; background: #fff; border: 1px solid #eaeaea; box-shadow: 0 10px 40px rgba(0,0,0,0.1); border-radius: 16px; padding: 16px 24px; display: flex; align-items: center; gap: 12px; z-index: 10; font-weight: 600; color: #333; }
+  .mock-dot { width: 10px; height: 10px; border-radius: 50%; background: #14AE5C; box-shadow: 0 0 10px #14AE5C; }
+</style>
+</head>
+<body>
+
+  <div id="console-bar">
+    <div style="color:#fff; font-weight:bold; margin-right:10px;">🌐</div>
+    <input type="text" id="url-input" placeholder="输入网址 (例如: apple.com) 然后按回车..." value="https://demo.swarm/">
+    <button id="play-btn">开始重建 (Alt+Shift+S)</button>
+  </div>
+
+  <div id="browser-window">
+    <!-- 这是我们要被蜂群“吃掉”并重建的模拟网页 -->
+    <div class="mock-page" id="target-page">
+      <header class="mock-header">
+        <div class="mock-logo-area">
+          <div class="mock-logo" id="site-favicon">D</div>
+          <h1 class="mock-title" id="site-title">Demo Website</h1>
+        </div>
+        <nav class="mock-nav">
+          <span>首页</span>
+          <span>产品</span>
+          <span>关于</span>
+        </nav>
+      </header>
+
+      <section class="mock-hero">
+        <h2>Build faster with<br>Swarm Cursors.</h2>
+        <p>这是一个用来测试的逼真网页。当你点击右上角的按钮时，所有的 DOM 元素都会被瞬间清空，然后一群协同光标会从无到有，把这个页面重新“画”出来。</p>
+        <div class="mock-btn">Get Started for Free</div>
+      </section>
+
+      <section class="mock-grid">
+        <div class="mock-card">
+          <div class="mock-card-img"></div>
+          <h3>极速性能</h3>
+          <p>基于 Canvas 渲染，即使有几十个光标同时在页面上工作，也能保持 60 帧的流畅动画。</p>
+        </div>
+        <div class="mock-card">
+          <div class="mock-card-img"></div>
+          <h3>精准还原</h3>
+          <p>内置深度 DOM 树遍历算法，不管是 Flex 布局还是绝对定位，都能完美计算坐标。</p>
+        </div>
+        <div class="mock-card">
+          <div class="mock-card-img"></div>
+          <h3>沉浸音效</h3>
+          <p>原版代码中集成了 Web Audio 合成器。元素被重建时，会发出如玻璃钢琴般清脆的提示音。</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="mock-float">
+      <div class="mock-dot"></div>
+      System Online
+    </div>
+  </div>
+
+<script>
+(() => {
+  // ==========================================
+  // 1. 核心常量与工具函数
+  // ==========================================
+  const NAMES = ["Ada", "Linus", "Grace", "Alan", "Margaret", "Ken", "Barbara", "Dennis", "Radia", "Guido", "Frances", "Bjarne", "Hedy", "Tim", "Katherine", "Edsger"];
+  const COLORS = ["#F24E1E", "#A259FF", "#1ABCFE", "#0ACF83", "#FF7262", "#FFC700", "#9747FF", "#E8467C", "#14AE5C", "#0D99FF"];
+  const BLUE = "#0D99FF";
+  const RED = "#F24822";
+  const MIN_AGENTS = 6;
+  const MAX_AGENTS = 30;
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+  const f1 = (n) => Math.round(n * 10) / 10;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const nextFrame = () => new Promise(r => requestAnimationFrame(() => r()));
+
+  // ==========================================
+  // 2. 提取页面模型 (Snapshot)
+  // ==========================================
+  function captureModel(target) {
+    const items = [];
+    const rWin = document.getElementById('browser-window').getBoundingClientRect();
+    const scrollY = document.getElementById('browser-window').scrollTop;
+
+    // 遍历目标节点
+    const walk = (el) => {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return;
+      
+      const rect = el.getBoundingClientRect();
+      // 转换为相对于浏览器窗口的坐标
+      const x = rect.left - rWin.left;
+      const y = rect.top - rWin.top + scrollY;
+      const w = rect.width;
+      const h = rect.height;
+
+      if (w < 1 || h < 1) return;
+
+      const text = el.textContent.trim();
+      const isLeaf = el.children.length === 0;
+
+      // 识别背景色或边框
+      const bgc = cs.backgroundColor;
+      const hasBg = bgc !== 'rgba(0, 0, 0, 0)' && bgc !== 'transparent';
+      const hasBorder = parseFloat(cs.borderTopWidth) > 0;
+      const isImg = el.classList.contains('mock-card-img');
+
+      if (hasBg || hasBorder) {
+        items.push({
+          kind: isImg ? 'image' : 'rect',
+          x, y, w, h,
+          css: `background-color:${bgc};border-radius:${cs.borderRadius};border:${cs.border};box-shadow:${cs.boxShadow !== 'none' ? cs.boxShadow : ''};`
+        });
+      }
+
+      if (isLeaf && text.length > 0) {
+        // 文本节点
+        items.push({
+          kind: 'text',
+          x, y, w, h,
+          text: text,
+          font: `font-size:${cs.fontSize};font-weight:${cs.fontWeight};color:${cs.color};line-height:${cs.lineHeight};`
+        });
+        return; // 叶子节点不再遍历子元素
+      }
+
+      for (const child of el.children) walk(child);
+    };
+
+    walk(target);
+    return { items };
+  }
+
+  // ==========================================
+  // 3. 光标绘制与状态机引擎
+  // ==========================================
+  class Engine {
+    constructor(view) {
+      this.view = view;
+      this.items = [];
+      this.cursors = [];
+      this.time = 0;
+      this.started = false;
+      this.completed = false;
+      this.tempo = 2.5;
+
+      // 生成初始光标
+      for (let i = 0; i < MIN_AGENTS; i++) {
+        this.cursors.push(this.makeCursor());
+      }
+    }
+
+    makeCursor() {
+      const id = this.cursors.length + Math.random();
+      return {
+        id,
+        x: rand(0, 800), y: rand(0, 600),
+        name: NAMES[Math.floor(Math.random() * NAMES.length)],
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        shape: 'arrow', press: 0, angle: 0,
+        target: null, task: null, done: false,
+        speed: rand(0.5, 1.5)
+      };
+    }
+
+    setModel(model) {
+      this.items = model.items.map(it => ({ ...it, drawn: false, drawW: 0, drawH: 0 }));
+    }
+
+    start() {
+      this.started = true;
+    }
+
+    step(dt) {
+      this.time += dt;
+      if (!this.started) return;
+
+      // 分配任务
+      for (const c of this.cursors) {
+        if (!c.task && !c.done) {
+          const nextItem = this.items.find(it => !it.drawn && !it.claimed);
+          if (nextItem) {
+            nextItem.claimed = true;
+            c.task = nextItem;
+            c.gen = this.runTask(c, nextItem);
+          } else {
+            c.done = true;
+          }
+        }
+      }
+
+      // 执行任务
+      let allDone = true;
+      for (const c of this.cursors) {
+        if (c.gen) {
+          const res = c.gen.next(dt);
+          if (res.done) {
+            c.gen = null;
+            if (c.task) {
+              c.task.drawn = true;
+              this.view.sfx.place(c.task.x, c.task.y);
+              c.task = null;
+            }
+          } else {
+            allDone = false;
+          }
+        } else if (!c.done) {
+          allDone = false;
+        }
+      }
+
+      if (allDone && !this.completed && this.items.length > 0) {
+        this.completed = true;
+        this.view.onComplete();
+      }
+    }
+
+    *moveTo(c, tx, ty, speed=1) {
+      const dist = Math.hypot(tx - c.x, ty - c.y);
+      if (dist < 1) return;
+      const dur = clamp(0.1 + Math.sqrt(dist) * 0.008, 0.1, 1) / (speed * c.speed);
+      let t = 0;
+      const sx = c.x, sy = c.y;
+      while (t < dur) {
+        const dt = yield;
+        t += dt;
+        const k = Math.min(1, t / dur);
+        const e = easeInOut(k);
+        c.x = sx + (tx - sx) * e;
+        c.y = sy + (ty - sy) * e;
+        // 模拟光标移动时的轻微旋转
+        c.angle = Math.sin(k * Math.PI) * 10 * (tx > sx ? 1 : -1);
+      }
+      c.x = tx; c.y = ty; c.angle = 0;
+    }
+
+    *runTask(c, item) {
+      // 1. 移动到目标
+      yield* this.moveTo(c, item.x, item.y);
+      
+      // 2. 准备动作
+      if (item.kind === 'rect' || item.kind === 'image') {
+        c.shape = 'cross';
+        c.press = 1;
+        // 模拟拖拽绘制框
+        yield* this.moveTo(c, item.x + item.w, item.y + item.h, 2);
+        c.press = 0;
+        c.shape = 'arrow';
+        item.drawW = item.w;
+        item.drawH = item.h;
+      } 
+      else if (item.kind === 'text') {
+        c.shape = 'ibeam';
+        c.press = 1;
+        yield; // 模拟点击
+        c.press = 0;
+        
+        // 模拟打字
+        const len = item.text.length;
+        for (let i = 0; i <= len; i++) {
+          item.drawnText = item.text.slice(0, i);
+          if (i % 3 === 0) yield; // 每次 yield 耗时一帧，控制打字速度
+        }
+        c.shape = 'arrow';
+      }
+    }
+  }
+
+  // ==========================================
+  // 4. 视图渲染 (Canvas / DOM)
+  // ==========================================
+  class View {
+    constructor(container) {
+      this.container = container;
+      this.overlay = document.createElement('div');
+      this.overlay.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:50;overflow:hidden;';
+      this.container.appendChild(this.overlay);
+      this.sfx = new Sound();
+    }
+
+    mount(engine) {
+      this.engine = engine;
+      this.overlay.innerHTML = '';
+      this.elMap = new Map();
+      
+      // 创建元素占位
+      for (const item of engine.items) {
+        const el = document.createElement('div');
+        el.style.position = 'absolute';
+        el.style.left = '0'; el.style.top = '0';
+        el.style.transform = `translate(${item.x}px, ${item.y}px)`;
+        el.style.display = 'none';
+        el.style.overflow = 'hidden';
+
+        if (item.kind === 'rect' || item.kind === 'image') {
+          el.style.width = '0px'; el.style.height = '0px';
+          if (item.kind === 'image') {
+            el.style.background = '#D9D9D9';
+            el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="1.5" style="position:absolute;top:50%;left:50%;width:24px;height:24px;transform:translate(-50%,-50%)"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18 L10 13 L14 16 L17 13.5 L21 17"/></svg>`;
+          }
+        } else if (item.kind === 'text') {
+          el.style.width = item.w + 'px';
+          el.style.height = item.h + 'px';
+          el.style.whiteSpace = 'pre-wrap';
+          el.style.overflow = 'visible';
+        }
+        
+        this.overlay.appendChild(el);
+        this.elMap.set(item, el);
+      }
+
+      // 创建光标 DOM
+      this.cursorEls = new Map();
+      for (const c of engine.cursors) {
+        const el = document.createElement('div');
+        el.style.cssText = 'position:absolute;left:0;top:0;will-change:transform;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3));transition:transform 0.05s linear;';
+        el.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24"><path d="M4.6 3.9 C4.2 3.1 4.9 2.4 5.7 2.8 L20.6 9.4 C21.5 9.8 21.4 11.1 20.4 11.3 L13.9 12.9 C13.4 13 13 13.4 12.9 13.9 L11.3 20.4 C11.1 21.4 9.8 21.5 9.4 20.6 Z" fill="${c.color}" stroke="#fff" stroke-width="1.5"/></svg>
+                    <div style="position:absolute;left:16px;top:20px;background:${c.color};color:#fff;font-size:11px;font-weight:bold;padding:2px 6px;border-radius:4px;white-space:nowrap;">${c.name}</div>`;
+        this.overlay.appendChild(el);
+        this.cursorEls.set(c.id, el);
+      }
+    }
+
+    render() {
+      if (!this.engine) return;
+
+      // 渲染元素
+      for (const item of this.engine.items) {
+        if (!item.claimed) continue;
+        const el = this.elMap.get(item);
+        if (el.style.display === 'none') el.style.display = 'block';
+
+        if (item.kind === 'rect' || item.kind === 'image') {
+          el.style.width = (item.drawW || 0) + 'px';
+          el.style.height = (item.drawH || 0) + 'px';
+          if (item.drawW > 0) {
+            el.setAttribute('style', `position:absolute;transform:translate(${item.x}px,${item.y}px);width:${item.drawW}px;height:${item.drawH}px;${item.css};`);
+            if (item.kind === 'image') el.innerHTML = ''; // 图片绘制完成，去掉 icon
+          }
+        } else if (item.kind === 'text' && item.drawnText) {
+          el.textContent = item.drawnText;
+          el.setAttribute('style', `position:absolute;transform:translate(${item.x}px,${item.y}px);width:${item.w}px;height:${item.h}px;overflow:visible;white-space:pre-wrap;${item.font};`);
+        }
+      }
+
+      // 渲染光标
+      for (const c of this.engine.cursors) {
+        const el = this.cursorEls.get(c.id);
+        el.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${c.angle}deg) scale(${1 - c.press * 0.1})`;
+        
+        // 切换鼠标形状
+        const svg = el.querySelector('svg');
+        if (c.shape === 'ibeam') {
+           svg.innerHTML = `<path d="M10 5 H14 M10 19 H14 M12 5 V19" stroke="${c.color}" stroke-width="2" fill="none"/>`;
+        } else if (c.shape === 'cross') {
+           svg.innerHTML = `<path d="M12 2 V22 M2 12 H22" stroke="${c.color}" stroke-width="2" fill="none"/>`;
+        } else {
+           svg.innerHTML = `<path d="M4.6 3.9 C4.2 3.1 4.9 2.4 5.7 2.8 L20.6 9.4 C21.5 9.8 21.4 11.1 20.4 11.3 L13.9 12.9 C13.4 13 13 13.4 12.9 13.9 L11.3 20.4 C11.1 21.4 9.8 21.5 9.4 20.6 Z" fill="${c.color}" stroke="#fff" stroke-width="1.5"/>`;
+        }
+      }
+    }
+  }
+
+  // ==========================================
+  // 5. Web Audio 极简合成器
+  // ==========================================
+  class Sound {
+    constructor() {
+      this.ctx = null;
+    }
+    init() {
+      if (!this.ctx) {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+    }
+    place(x, y) {
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      
+      // 随机音符 (清脆的玻璃琴音)
+      const scale = [0, 2, 4, 7, 9, 12, 14, 16];
+      const freq = 440 * Math.pow(2, (scale[Math.floor(Math.random() * scale.length)] + 24) / 12);
+      
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      
+      // 声像根据 X 坐标定位
+      const panner = this.ctx.createStereoPanner();
+      panner.pan.value = (x / window.innerWidth) * 2 - 1;
+
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.3, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      
+      osc.connect(gain);
+      gain.connect(panner);
+      panner.connect(this.ctx.destination);
+      
+      osc.start(t);
+      osc.stop(t + 0.9);
+    }
+  }
+
+  // ==========================================
+  // 6. 主控逻辑与 UI 绑定
+  // ==========================================
+  const urlInput = document.getElementById('url-input');
+  const playBtn = document.getElementById('play-btn');
+  const targetPage = document.getElementById('target-page');
+  const browserWindow = document.getElementById('browser-window');
+  const siteTitle = document.getElementById('site-title');
+  const siteFavicon = document.getElementById('site-favicon');
+
+  let currentEngine = null;
+  let currentView = null;
+
+  // 更新输入的网址到标题
+  urlInput.addEventListener('input', (e) => {
+    let val = e.target.value.replace(/^https?:\/\//, '').split('/')[0];
+    if (val) {
+      document.getElementById('site-title').textContent = val;
+      document.getElementById('site-favicon').textContent = val.charAt(0).toUpperCase();
+    }
+  });
+
+  async function startSwarm() {
+    if (currentView) return; // 防止重复点击
+    
+    // 初始化音频
+    const sfx = new Sound();
+    sfx.init();
+
+    // 1. 截图（捕获 DOM 结构）
+    const model = captureModel(targetPage);
+    
+    // 2. 隐藏原网页
+    targetPage.style.visibility = 'hidden';
+    document.querySelector('.mock-float').style.visibility = 'hidden';
+
+    // 3. 初始化引擎和视图
+    currentView = new View(browserWindow);
+    currentView.sfx = sfx;
+    
+    currentEngine = new Engine(currentView);
+    currentEngine.setModel(model);
+    currentView.mount(currentEngine);
+    
+    // 4. 启动
+    await sleep(100);
+    currentEngine.start();
+    playBtn.textContent = "正在重建...";
+    playBtn.style.background = "#555";
+
+    let lastT = performance.now();
+    function loop(now) {
+      if (!currentEngine) return;
+      const dt = Math.min(0.05, (now - lastT) / 1000);
+      lastT = now;
+
+      currentEngine.step(dt);
+      currentView.render();
+
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // 完成时的回调
+  View.prototype.onComplete = function() {
+    // 恢复网页
+    targetPage.style.visibility = 'visible';
+    document.querySelector('.mock-float').style.visibility = 'visible';
+    
+    // 淡出 overlay
+    this.overlay.style.transition = 'opacity 1s ease';
+    this.overlay.style.opacity = '0';
+    
+    setTimeout(() => {
+      this.overlay.remove();
+      currentEngine = null;
+      currentView = null;
+      playBtn.textContent = "开始重建 (Alt+Shift+S)";
+      playBtn.style.background = "#0D99FF";
+    }, 1000);
+  };
+
+  playBtn.addEventListener('click', startSwarm);
+
+  // 快捷键支持
+  window.addEventListener('keydown', (e) => {
+    if (e.altKey && e.shiftKey && e.code === 'KeyS') {
+      e.preventDefault();
+      startSwarm();
+    }
+  });
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm - 真实网页视觉解密</title>
+<style>
+  body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; font-family: sans-serif; }
+  #toolbar { height: 60px; background: #222; display: flex; align-items: center; padding: 0 15px; gap: 10px; z-index: 9999; position: relative; }
+  input { flex: 1; height: 36px; border-radius: 6px; border: 1px solid #444; background: #111; color: #fff; padding: 0 10px; outline: none; }
+  button { height: 36px; padding: 0 20px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; }
+  #load-btn { background: #0D99FF; color: #fff; }
+  #run-btn { background: #14AE5C; color: #fff; display: none; }
+  
+  #container { position: absolute; top: 60px; left: 0; right: 0; bottom: 0; background: #000; }
+  iframe { width: 100%; height: 100%; border: none; background: #fff; }
+</style>
+</head>
+<body>
+
+  <div id="toolbar">
+    <input type="text" id="url-input" placeholder="输入真实网址" value="example.com">
+    <button id="load-btn">加载真实网页</button>
+    <button id="run-btn">解密并撕裂</button>
+  </div>
+
+  <div id="container">
+    <iframe id="real-web" src="about:blank"></iframe>
+  </div>
+
+  <!-- ⚠️ 请把你的 swarm.js 源码贴在这里 -->
+  <script id="swarm-code" type="text/plain">
+[占位符]
+  </script>
+
+  <script>
+    const iframe = document.getElementById('real-web');
+    const urlInput = document.getElementById('url-input');
+    const loadBtn = document.getElementById('load-btn');
+    const runBtn = document.getElementById('run-btn');
+    const container = document.getElementById('container');
+
+    // 1. 加载真实网页
+    loadBtn.addEventListener('click', () => {
+      let url = urlInput.value.trim();
+      if (!url.startsWith('http')) url = 'https://' + url;
+      loadBtn.textContent = '加载中...';
+      iframe.src = url;
+      
+      setTimeout(() => {
+        loadBtn.textContent = '加载真实网页';
+        runBtn.style.display = 'block';
+      }, 1000);
+    });
+
+    // 2. 运行视觉解密
+    runBtn.addEventListener('click', () => {
+      let rawCode = document.getElementById('swarm-code').textContent;
+      if (!rawCode || rawCode.includes('[占位符')) return alert("请先贴入源码！");
+
+      // 隐藏工具栏
+      document.getElementById('toolbar').style.display = 'none';
+      container.style.top = '0';
+
+      // 核心魔法：在真实网页上方，盖一层由几百个方块组成的“马赛克遮罩”
+      // 这些方块就是 swarm.js 眼中的“网页内容”
+      const overlay = document.createElement('div');
+      overlay.id = 'pixel-overlay';
+      overlay.style.cssText = 'position:absolute;inset:0;z-index:10;display:grid;pointer-events:none;';
+      
+      const cols = 40;
+      const rows = 40;
+      overlay.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      overlay.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+
+      // 生成 1600 个黑色色块
+      for (let i = 0; i < cols * rows; i++) {
+        const cell = document.createElement('div');
+        // 给色块加上一点点随机灰度，让它看起来像复杂的网页结构
+        const shade = Math.floor(Math.random() * 30 + 10);
+        cell.style.background = `rgb(${shade},${shade},${shade})`;
+        cell.style.border = '1px solid rgba(0,0,0,0.1)';
+        overlay.appendChild(cell);
+      }
+      
+      container.appendChild(overlay);
+
+      // 将原版代码做最小化处理，只注入假环境
+      let cleanCode = rawCode.replace(/const KEY = "__swarmRebuild";\s*if \(window\[KEY\]\) \{\s*window\[KEY\]\.toggle\(\);\s*return;\s*\}/g, 'const KEY = "__swarmRebuild";');
+
+      const envSetup = `
+        window.chrome = {
+          runtime: { sendMessage: () => Promise.resolve() },
+          scripting: { insertCSS: () => Promise.resolve(), removeCSS: () => Promise.resolve(), executeScript: () => Promise.resolve() },
+          tabs: { captureVisibleTab: () => Promise.resolve(null) }
+        };
+        window.__swarmShot = null;
+        window.__swarmHidden = false;
+      `;
+
+      // 启动 swarm.js
+      const script = document.createElement('script');
+      script.textContent = envSetup + cleanCode;
+      document.body.appendChild(script);
+
+      // 魔法生效：当 swarm 绘制方块时，我们让真实的遮罩方块淡出！
+      // 因为没有跨域限制，swarm 扫描到的就是这 1600 个黑色方块（它们是被 DOM 真实渲染的）
+      // 光标群会像黑客一样，把它们画出来，画的同时，我们的 CSS 动画会让它们消失，露出底下的真实网页！
+      
+      setTimeout(() => {
+        let count = 0;
+        // 模拟被光标“吃”掉的效果
+        const cells = overlay.children;
+        const interval = setInterval(() => {
+          // 每次随机消除十几个方块，让真实网页慢慢浮现
+          for (let k = 0; k < 15; k++) {
+            const idx = Math.floor(Math.random() * cells.length);
+            if (cells[idx] && cells[idx].style.opacity !== '0') {
+              cells[idx].style.transition = 'opacity 0.3s';
+              cells[idx].style.opacity = '0';
+            }
+          }
+          count++;
+          if (count > 40) clearInterval(interval);
+        }, 100); // 持续 4 秒，配合 swarm 光标群的绘制速度
+      }, 2000); // 等待 swarm 启动并开始扫描后再开始消除
+    });
+  </script>
+</body>
+</html>

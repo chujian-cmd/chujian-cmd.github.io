@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm 真实网页撕裂 (纯前端无假网页)</title>
+<style>
+  body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; font-family: sans-serif; }
+  #toolbar { height: 60px; background: #222; display: flex; align-items: center; padding: 0 15px; gap: 10px; z-index: 9999; position: relative; }
+  input { flex: 1; height: 36px; border-radius: 6px; border: 1px solid #444; background: #111; color: #fff; padding: 0 10px; outline: none; }
+  button { height: 36px; padding: 0 20px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; }
+  #load-btn { background: #0D99FF; color: #fff; }
+  #run-btn { background: #14AE5C; color: #fff; }
+  #frame { width: 100%; height: calc(100% - 60px); border: none; background: #fff; }
+</style>
+</head>
+<body>
+
+  <div id="toolbar">
+    <input type="text" id="url" placeholder="输入真实网址（需支持CORS，如 example.com）" value="example.com">
+    <button id="load-btn">加载真实网页</button>
+    <button id="run-btn">运行蜂群撕裂</button>
+  </div>
+
+  <!-- 这里的 iframe 使用 srcdoc 注入，它和父页面是同源的，不会被拦截 -->
+  <iframe id="frame" src="about:blank"></iframe>
+
+  <!-- ⚠️ 请把你的 swarm.js 源码全部粘贴到这里面 -->
+  <script id="swarm-code" type="text/plain">
+[占位符：请在此粘贴 swarm.js]
+  </script>
+
+  <script>
+    const frame = document.getElementById('frame');
+    const urlInput = document.getElementById('url');
+    const loadBtn = document.getElementById('load-btn');
+    const runBtn = document.getElementById('run-btn');
+
+    // 1. 纯前端直接抓取真实网页源码并渲染
+    loadBtn.addEventListener('click', async () => {
+      let url = urlInput.value.trim();
+      if (!url.startsWith('http')) url = 'https://' + url;
+
+      loadBtn.textContent = '抓取中...';
+      loadBtn.disabled = true;
+
+      try {
+        // 直接发送 fetch 请求获取真实网页的 HTML
+        const res = await fetch(url);
+        const html = await res.text();
+
+        // 给 HTML 注入一个 base 标签，确保它里面的 CSS、图片路径都是正确的
+        let finalHtml = html;
+        if (!html.includes('<base')) {
+          finalHtml = html.replace('<head>', `<head><base href="${url}">`);
+        }
+
+        // 将真实网页渲染到同源的 iframe 里
+        frame.srcdoc = finalHtml;
+
+        frame.onload = () => {
+          loadBtn.textContent = '加载成功';
+          loadBtn.disabled = false;
+        };
+      } catch (err) {
+        alert('抓取失败：' + err.message + '\n\n该网站不支持纯前端跨域抓取（CORS限制），请换一个允许抓取的网址（如 example.com）。');
+        loadBtn.textContent = '加载真实网页';
+        loadBtn.disabled = false;
+      }
+    });
+
+    // 2. 注入 swarm.js 并运行
+    runBtn.addEventListener('click', () => {
+      let rawCode = document.getElementById('swarm-code').textContent;
+      if (!rawCode || rawCode.includes('[占位符')) {
+        alert('请先在代码里粘贴 swarm.js 的源码！');
+        return;
+      }
+
+      try {
+        // 清理原版扩展特有的卡死代码
+        let cleanCode = rawCode
+          .replace(/const KEY = "__swarmRebuild";\s*if \(window\[KEY\]\) \{\s*window\[KEY\]\.toggle\(\);\s*return;\s*\}/g, 'const KEY = "__swarmRebuild";')
+          .replace(/async loadShot\(\) \{[\s\S]*?\n    \}/g, 'async loadShot() { return null; }')
+          .replace(/if\s*\(typeof chrome !== "undefined"[\s\S]*?catch\s*\(_\)\s*\{\s*\}/g, '');
+
+        // 欺骗源码，让它以为它在扩展环境
+        const iframeWindow = frame.contentWindow;
+        iframeWindow.chrome = {
+          runtime: { sendMessage: () => Promise.resolve() },
+          scripting: { insertCSS: () => Promise.resolve(), removeCSS: () => Promise.resolve(), executeScript: () => Promise.resolve() },
+          tabs: { captureVisibleTab: () => Promise.resolve(null) }
+        };
+        iframeWindow.__swarmShot = null;
+        iframeWindow.__swarmHidden = false;
+
+        // 在同源的 iframe 里直接执行
+        iframeWindow.eval(cleanCode);
+
+        // 隐藏顶部工具栏，让蜂群全屏撕裂
+        document.getElementById('toolbar').style.display = 'none';
+        frame.style.height = '100%';
+      } catch (err) {
+        alert('注入失败: ' + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

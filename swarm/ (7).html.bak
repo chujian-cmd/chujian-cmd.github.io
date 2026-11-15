@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm 魔法书签生成器</title>
+<style>
+  body { padding: 20px; font-family: system-ui, sans-serif; background: #1e1e1e; color: #fff; }
+  textarea { width: 100%; height: 150px; background: #2d2d2d; color: #9cdcfe; border: 1px solid #444; padding: 10px; font-family: monospace; font-size: 12px; margin-bottom: 15px; border-radius: 6px; }
+  button { padding: 10px 20px; background: #0D99FF; color: #fff; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; width: 100%; }
+  #result { margin-top: 20px; display: none; }
+  #link-box { display: block; padding: 15px; background: #000; color: #14AE5C; text-decoration: none; word-break: break-all; border: 1px dashed #14AE5C; border-radius: 8px; font-family: monospace; font-size: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+  <h2 style="color:#0D99FF; margin-top:0;">1. 粘贴 swarm.js 源码</h2>
+  <textarea id="source" placeholder="把你的 swarm.js 源码粘贴在这里..."></textarea>
+
+  <button id="gen-btn">2. 生成魔法书签</button>
+
+  <div id="result">
+    <h2 style="color:#14AE5C;">3. 怎么用？（超简单）</h2>
+    <p style="font-size:14px; line-height:1.5; color:#ccc;">
+      1. 长按下面的绿色链接，选择<b>“复制链接”</b>或<b>“添加到书签”</b>。<br>
+      2. 随便打开一个你喜欢的真实网站（比如维基百科）。<br>
+      3. 在地址栏输入 <b>javascript:</b> 然后粘贴刚才复制的代码，回车。<br>
+      （如果你保存成了书签，在网页里直接点这个书签，瞬间爆炸！）
+    </p>
+    <a id="link-box" href="#">等待生成...</a>
+  </div>
+
+  <script>
+    document.getElementById('gen-btn').addEventListener('click', () => {
+      const rawCode = document.getElementById('source').value.trim();
+      if (!rawCode) return alert("请先粘贴源码！");
+
+      try {
+        // 1. 移除卡死逻辑和扩展依赖
+        let cleanCode = rawCode
+          .replace(/const KEY = "__swarmRebuild";\s*if \(window\[KEY\]\) \{\s*window\[KEY\]\.toggle\(\);\s*return;\s*\}/g, 'const KEY = "__swarmRebuild";')
+          .replace(/async loadShot\(\) \{[\s\S]*?\n    \}/g, 'async loadShot() { return null; }')
+          .replace(/if\s*\(typeof chrome !== "undefined"[\s\S]*?catch\s*\(_\)\s*\{\s*\}/g, '');
+
+        // 2. 注入假环境
+        const envSetup = `
+          window.chrome = {
+            runtime: { sendMessage: () => Promise.resolve() },
+            scripting: { insertCSS: () => Promise.resolve(), removeCSS: () => Promise.resolve(), executeScript: () => Promise.resolve() },
+            tabs: { captureVisibleTab: () => Promise.resolve(null) }
+          };
+          window.__swarmShot = null;
+          window.__swarmHidden = false;
+        `;
+
+        // 3. 拼接最终代码
+        const finalScript = envSetup + cleanCode;
+
+        // 4. URL 编码并生成 Bookmarklet
+        const bookmarklet = "javascript:" + encodeURIComponent(finalScript);
+
+        // 5. 渲染到页面
+        const linkBox = document.getElementById('link-box');
+        linkBox.href = bookmarklet;
+        linkBox.textContent = bookmarklet.substring(0, 100) + "... (点击或长按复制)";
+        document.getElementById('result').style.display = 'block';
+
+      } catch (err) {
+        alert("生成失败：" + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

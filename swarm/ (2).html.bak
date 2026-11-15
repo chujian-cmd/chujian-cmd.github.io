@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swarm 真实网页运行器 (终极修复版)</title>
+<style>
+  body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; overflow: hidden; }
+  #toolbar { height: 60px; background: #222; display: flex; align-items: center; padding: 0 15px; gap: 10px; z-index: 999; position: relative; }
+  input { flex: 1; height: 36px; border-radius: 6px; border: 1px solid #444; background: #111; color: #fff; padding: 0 10px; outline: none; }
+  button { height: 36px; padding: 0 20px; border-radius: 6px; border: none; font-weight: bold; cursor: pointer; }
+  #load-btn { background: #0D99FF; color: #fff; }
+  #run-btn { background: #14AE5C; color: #fff; }
+  iframe { width: 100%; height: calc(100% - 60px); border: none; background: #fff; position: absolute; top: 60px; left: 0; }
+</style>
+</head>
+<body>
+
+  <div id="toolbar">
+    <input type="text" id="url-input" placeholder="输入真实网址（如 https://example.com）" value="https://example.com">
+    <button id="load-btn">加载网页</button>
+    <button id="run-btn">运行蜂群</button>
+  </div>
+
+  <iframe id="real-frame" src="about:blank"></iframe>
+
+  <!-- ========================================================= -->
+  <!-- ⚠️ 请把完整的 swarm.js 源码粘贴到下面的 [占位符] 处 -->
+  <!-- ========================================================= -->
+  <script id="swarm-source" type="text/javascript">
+    [占位符：请在此粘贴 swarm.js 源码]
+  </script>
+  <!-- ========================================================= -->
+
+  <script>
+    const frame = document.getElementById('real-frame');
+    const urlInput = document.getElementById('url-input');
+    const loadBtn = document.getElementById('load-btn');
+    const runBtn = document.getElementById('run-btn');
+
+    // 1. 加载真实网页
+    loadBtn.addEventListener('click', () => {
+      let url = urlInput.value.trim();
+      if (!url.startsWith('http')) url = 'https://' + url;
+      frame.src = url;
+    });
+
+    // 2. 运行注入
+    runBtn.addEventListener('click', () => {
+      const rawCode = document.getElementById('swarm-source').textContent;
+      
+      if (!rawCode || rawCode.includes('[占位符')) {
+        alert("请先在代码里的 [占位符] 处粘贴 swarm.js 的源码！");
+        return;
+      }
+
+      const iframeWindow = frame.contentWindow;
+      const iframeDoc = frame.contentDocument || iframeWindow.document;
+
+      try {
+        // 清理代码：用最保守的方式替换掉会导致报错的扩展 API
+        let cleanedCode = rawCode
+          .replace(/chrome\.runtime\.sendMessage\([^)]*\)/g, 'Promise.resolve()')
+          .replace(/chrome\.(scripting|tabs|action)[^;]*;/g, '');
+
+        // 给 iframe 注入假环境
+        iframeWindow.chrome = {
+          runtime: { sendMessage: () => Promise.resolve() },
+          scripting: { insertCSS: () => Promise.resolve(), removeCSS: () => Promise.resolve(), executeScript: () => Promise.resolve() }
+        };
+        
+        iframeWindow.__swarmShot = null;
+        iframeWindow.__swarmHidden = false;
+
+        // 在 iframe 里直接执行清理后的代码
+        const script = iframeDoc.createElement('script');
+        script.textContent = cleanedCode;
+        iframeDoc.body.appendChild(script);
+
+        // 隐藏工具栏全屏
+        document.getElementById('toolbar').style.display = 'none';
+        frame.style.top = '0';
+        frame.style.height = '100%';
+        
+      } catch (err) {
+        console.error(err);
+        alert("注入失败：" + err.message + "\n如果页面没反应，可能是目标网站有严格的安全策略(CSP)拦截了脚本。");
+      }
+    });
+  </script>
+</body>
+</html>
