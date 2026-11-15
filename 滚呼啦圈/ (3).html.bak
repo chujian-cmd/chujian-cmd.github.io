@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>滚呼啦圈 双人对战</title>
+<script>
+// 配置前置
+const CONFIG = {
+  W: 480,
+  H: 540,
+  COUNTDOWN: 1.8,
+  FIELD: { x: 20, y: 90, w: 440, h: 450 },
+  PLAYER: { w: 64, h: 14, speed: 140, minX: 52, maxX: 428, y1: 533, y2: 97 },
+  RING: { r: 14, minSpeed: 90, maxSpeed: 310, friction: 55, stopSpeed: 20, wallBounce: 0.82 },
+  CHARGE: { max: 1.2, tap: 0.12, cooldown: 0.4 },
+  BALANCE: { cooldown: 0.25, damp: 0.82, phasePull: 0.15 },
+  TILT: { freq: 5.5, growthBase: 0.05, growthSpeed: 0.03, threshold: 0.52, hold: 0.1, fallTime: 0.6 },
+  ANGLE: { offsetMax: 0.18, devDeg: 3, limit: 0.23, lateral: 0.5 },
+  COLORS: {
+    black: '#000000',
+    white: '#FFFFFF',
+    c333: '#333333',
+    c666: '#666666',
+    c999: '#999999',
+    cCCC: '#CCCCCC',
+    cE5: '#E5E5E5',
+    cF5: '#F5F5F5'
+  },
+  FONT: '-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+};
+</script>
+<style>
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent !important;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: #000000;
+  background-color: #F5F5F5;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding:
+    calc(20px + env(safe-area-inset-top))
+    calc(20px + env(safe-area-inset-right))
+    calc(20px + env(safe-area-inset-bottom))
+    calc(20px + env(safe-area-inset-left));
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.card {
+  width: 100%;
+  max-width: 480px;
+  margin: auto;
+  background-color: #FFFFFF;
+  border: 1.5px solid #000000;
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  margin-bottom: 12px;
+}
+h1 {
+  font-size: 22px;
+  line-height: 1.3;
+  margin: 0 0 2px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.subtitle {
+  font-size: 13px;
+  color: #666666;
+  margin: 0;
+}
+.stage {
+  display: block;
+}
+.screen {
+  display: block;
+}
+canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 58vh;
+  max-height: 58dvh;
+  margin: 0 auto;
+  touch-action: manipulation;
+}
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.btn {
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+  outline: none;
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1.5px solid #000000;
+  border-radius: 50px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.24s cubic-bezier(0.4, 0, 0.2, 1), color 0.24s cubic-bezier(0.4, 0, 0.2, 1), transform 0.24s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: block;
+}
+.btn-primary {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+.btn-primary:active {
+  background-color: #FFFFFF;
+  color: #000000;
+  transform: scale(0.96);
+}
+.btn-secondary {
+  background-color: #FFFFFF;
+  color: #000000;
+}
+.btn-secondary:active {
+  background-color: #000000;
+  color: #FFFFFF;
+  transform: scale(0.96);
+}
+.btn:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: 2px;
+}
+.btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.btn-primary:disabled:active {
+  background-color: #000000;
+  color: #FFFFFF;
+  transform: none;
+}
+.btn-secondary:disabled:active {
+  background-color: #FFFFFF;
+  color: #000000;
+  transform: none;
+}
+.pad {
+  display: none;
+  width: clamp(120px, 17vw, 170px);
+  flex: 0 0 auto;
+  grid-template-rows: 1fr auto;
+  gap: 6px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pad-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+.pad-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+  outline: none;
+  border: 1.5px solid #000000;
+  border-radius: 16px;
+  background-color: #FFFFFF;
+  color: #000000;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.pad-btn svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.pad-btn.primary {
+  background-color: #000000;
+  color: #FFFFFF;
+  flex-direction: column;
+  font-size: 14px;
+  min-height: 0;
+}
+.pad-tag {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.75;
+  letter-spacing: 0.04em;
+}
+.pad-btn:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: 2px;
+}
+.pad-btn.pressed {
+  transform: scale(0.96);
+}
+.pad-btn:not(.primary).pressed {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+.pad-btn.primary.pressed {
+  background-color: #FFFFFF;
+  color: #000000;
+}
+.rules {
+  margin-top: 16px;
+  border-top: 1.5px solid #E5E5E5;
+  padding-top: 8px;
+}
+.rules-toggle {
+  -webkit-appearance: none;
+  appearance: none;
+  touch-action: manipulation;
+  outline: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border: none;
+  border-radius: 8px;
+  background-color: #FFFFFF;
+  color: #000000;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rules-toggle:active {
+  transform: scale(0.96);
+}
+.rules-toggle:focus-visible {
+  outline: 2px solid #000000;
+  outline-offset: 2px;
+}
+.chevron {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rules-toggle[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+.rules-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rules-body.open {
+  grid-template-rows: 1fr;
+}
+.rules-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+li {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #333333;
+  padding: 6px 0;
+  border-bottom: 1px solid #E5E5E5;
+}
+li:last-child {
+  border-bottom: none;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rules-body.open li {
+  animation: rise 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.rules-body.open li:nth-child(1) { animation-delay: 0.02s; }
+.rules-body.open li:nth-child(2) { animation-delay: 0.05s; }
+.rules-body.open li:nth-child(3) { animation-delay: 0.08s; }
+.rules-body.open li:nth-child(4) { animation-delay: 0.11s; }
+.rules-body.open li:nth-child(5) { animation-delay: 0.14s; }
+.rules-body.open li:nth-child(6) { animation-delay: 0.17s; }
+.rules-body.open li:nth-child(7) { animation-delay: 0.20s; }
+.rotate-hint {
+  display: none;
+}
+@media (max-width: 420px) {
+  body {
+    padding:
+      calc(12px + env(safe-area-inset-top))
+      calc(12px + env(safe-area-inset-right))
+      calc(12px + env(safe-area-inset-bottom))
+      calc(12px + env(safe-area-inset-left));
+  }
+  .card {
+    padding: 14px;
+    border-radius: 14px;
+  }
+  h1 {
+    font-size: 20px;
+  }
+  .toolbar {
+    gap: 6px;
+  }
+  .btn {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+  li {
+    font-size: 13px;
+  }
+}
+@media (orientation: landscape) and (max-height: 640px) {
+  body {
+    height: 100dvh;
+    min-height: 100dvh;
+    padding:
+      calc(6px + env(safe-area-inset-top))
+      calc(6px + env(safe-area-inset-right))
+      calc(6px + env(safe-area-inset-bottom))
+      calc(6px + env(safe-area-inset-left));
+    align-items: stretch;
+    overflow: hidden;
+  }
+  .card {
+    max-width: none;
+    width: 100%;
+    margin: 0;
+    padding: 8px;
+    border-radius: 12px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "top tools"
+      "stage stage";
+    gap: 6px 10px;
+  }
+  .topbar {
+    grid-area: top;
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  h1 {
+    font-size: 17px;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .subtitle {
+    display: none;
+  }
+  .toolbar {
+    grid-area: tools;
+    margin: 0;
+    display: flex;
+    gap: 6px;
+  }
+  .toolbar .btn {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 12px;
+    gap: 4px;
+  }
+  .toolbar .btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  .stage {
+    grid-area: stage;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: 10px;
+    min-height: 0;
+  }
+  .screen {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+  }
+  canvas {
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    margin: 0;
+  }
+  .pad {
+    display: grid;
+  }
+  .rules {
+    display: none;
+  }
+}
+@media (orientation: portrait) and (pointer: coarse) {
+  .rotate-hint {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background-color: #F5F5F5;
+  }
+  .rotate-hint svg {
+    width: 40px;
+    height: 40px;
+  }
+  .rotate-hint p {
+    margin: 0;
+    font-size: 16px;
+    color: #333333;
+  }
+}
+</style>
+</head>
+<body>
+<main class="card">
+  <header class="topbar">
+    <h1>滚呼啦圈</h1>
+    <p class="subtitle">双人同屏对战</p>
+  </header>
+  <div class="stage">
+    <div class="pad pad1" aria-label="P1 触控">
+      <button class="pad-btn primary" type="button" data-key="KeyW" aria-label="P1 蓄力或平衡">
+        <span class="pad-tag">P1</span>
+        <span>蓄力</span>
+      </button>
+      <div class="pad-row">
+        <button class="pad-btn" type="button" data-key="KeyA" aria-label="P1 左移">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 5 8 12 15 19"/></svg>
+        </button>
+        <button class="pad-btn" type="button" data-key="KeyS" aria-label="P1 取消或弃圈">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+        <button class="pad-btn" type="button" data-key="KeyD" aria-label="P1 右移">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 5 16 12 9 19"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="screen">
+      <canvas id="game" width="480" height="540" aria-label="游戏画面"></canvas>
+    </div>
+    <div class="pad pad2" aria-label="P2 触控">
+      <button class="pad-btn primary" type="button" data-key="ArrowUp" aria-label="P2 蓄力或平衡">
+        <span class="pad-tag">P2</span>
+        <span>蓄力</span>
+      </button>
+      <div class="pad-row">
+        <button class="pad-btn" type="button" data-key="ArrowLeft" aria-label="P2 左移">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 5 8 12 15 19"/></svg>
+        </button>
+        <button class="pad-btn" type="button" data-key="ArrowDown" aria-label="P2 取消或弃圈">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+        <button class="pad-btn" type="button" data-key="ArrowRight" aria-label="P2 右移">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 5 16 12 9 19"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="toolbar">
+    <button id="pauseBtn" class="btn btn-secondary" type="button" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>
+      <span>暂停</span>
+    </button>
+    <button id="endBtn" class="btn btn-secondary" type="button" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      <span>结束本局</span>
+    </button>
+    <button id="restartBtn" class="btn btn-primary" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6.3"/><polyline points="20 5 20 11 14 11"/></svg>
+      <span>开始</span>
+    </button>
+  </div>
+  <div class="rules">
+    <button id="rulesToggle" class="rules-toggle" type="button" aria-expanded="false">
+      <span>玩法规则</span>
+      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="rules-body" id="rulesBody">
+      <div class="rules-inner">
+        <ul>
+          <li>P1 使用 A D 左右移动，W 蓄力或平衡，S 取消或弃圈。</li>
+          <li>P2 使用左右方向键移动，上方向键蓄力或平衡，下方向键取消或弃圈。</li>
+          <li>横屏手机可用左右两侧触控区操作，P1 在左，P2 在右。</li>
+          <li>场上只有一个呼啦圈，双方轮流发射，开局发射权随机。</li>
+          <li>防守方角色碰到圈，防守方加 1 分。</li>
+          <li>圈越过防守方底线，防守方减 1 分，分数允许为负。</li>
+          <li>圈自然倒下或发射者主动弃圈不得分，发射权交给对方。</li>
+          <li>发射瞬间存在左右各 3 度的手不稳偏差，平衡脉冲可降低摆幅。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</main>
+<div class="rotate-hint" aria-hidden="true">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+  <p>请横屏游玩</p>
+</div>
+<script>
+(function () {
+  'use strict';
+  const C = CONFIG.COLORS;
+  const F = CONFIG.FONT;
+  const clamp = function (v, a, b) { return Math.max(a, Math.min(b, v)); };
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  let DPR = 1;
+
+  function resizeCanvas() {
+    // 画布高清适配
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = CONFIG.W * DPR;
+    canvas.height = CONFIG.H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  const pauseBtn = document.getElementById('pauseBtn');
+  const endBtn = document.getElementById('endBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const rulesToggle = document.getElementById('rulesToggle');
+  const rulesBody = document.getElementById('rulesBody');
+
+  let state = 'READY';
+  let score = [0, 0];
+  let owner = 1;
+  let p1 = { x: CONFIG.W / 2 };
+  let p2 = { x: CONFIG.W / 2 };
+  let ring = null;
+  let chargeActive = false;
+  let chargePlayer = 1;
+  let chargeTime = 0;
+  let fireCooldown = 0;
+  let balanceCooldown = 0;
+  let countdown = 0;
+  let keys = {};
+  let justPressed = {};
+  let lastTime = performance.now();
+
+  function updateButtons() {
+    const canPause = state === 'PLAYING' || state === 'PAUSED';
+    const canEnd = state === 'PLAYING' || state === 'PAUSED' || state === 'COUNTDOWN';
+    pauseBtn.disabled = !canPause;
+    endBtn.disabled = !canEnd;
+    pauseBtn.querySelector('span').textContent = state === 'PAUSED' ? '继续' : '暂停';
+    restartBtn.querySelector('span').textContent = state === 'READY' ? '开始' : '重新开始';
+  }
+
+  function clearInput() {
+    keys = {};
+    justPressed = {};
+    const pressed = document.querySelectorAll('.pad-btn.pressed');
+    for (let i = 0; i < pressed.length; i++) pressed[i].classList.remove('pressed');
+  }
+
+  function startGame() {
+    score = [0, 0];
+    p1.x = CONFIG.W / 2;
+    p2.x = CONFIG.W / 2;
+    ring = null;
+    chargeActive = false;
+    chargeTime = 0;
+    fireCooldown = 0;
+    balanceCooldown = 0;
+    owner = Math.random() < 0.5 ? 1 : 2;
+    countdown = CONFIG.COUNTDOWN;
+    state = 'COUNTDOWN';
+    clearInput();
+    updateButtons();
+  }
+
+  function fireRing(player) {
+    const t = chargeTime;
+    const speed = t < CONFIG.CHARGE.tap
+      ? CONFIG.RING.minSpeed
+      : CONFIG.RING.minSpeed + (t / CONFIG.CHARGE.max) * (CONFIG.RING.maxSpeed - CONFIG.RING.minSpeed);
+    const px = player === 1 ? p1.x : p2.x;
+    const offset = ((px - CONFIG.W / 2) / 188) * CONFIG.ANGLE.offsetMax;
+    const dev = (Math.random() * 2 - 1) * (CONFIG.ANGLE.devDeg * Math.PI / 180);
+    const angle = clamp(offset + dev, -CONFIG.ANGLE.limit, CONFIG.ANGLE.limit);
+    const amp = Math.abs(angle) + 0.06;
+    const dir = player === 1 ? -1 : 1;
+    ring = {
+      x: px,
+      y: player === 1 ? 512 : 118,
+      vx: Math.sin(angle) * speed * CONFIG.ANGLE.lateral,
+      vy: Math.cos(angle) * speed * dir,
+      owner: player,
+      phase: Math.asin(clamp(angle / amp, -1, 1)),
+      amplitude: amp,
+      tilt: angle,
+      fallTimer: 0,
+      falling: false,
+      fallT: 0,
+      spin: 0
+    };
+    chargeActive = false;
+    chargeTime = 0;
+    fireCooldown = 0;
+  }
+
+  function endRing() {
+    ring = null;
+    owner = 3 - owner;
+    fireCooldown = CONFIG.CHARGE.cooldown;
+    balanceCooldown = 0;
+    chargeActive = false;
+    chargeTime = 0;
+  }
+
+  function impulse() {
+    ring.amplitude *= CONFIG.BALANCE.damp;
+    const k = Math.round(ring.phase / Math.PI);
+    ring.phase += (k * Math.PI - ring.phase) * CONFIG.BALANCE.phasePull;
+    balanceCooldown = CONFIG.BALANCE.cooldown;
+  }
+
+  function update(dt) {
+    fireCooldown = Math.max(0, fireCooldown - dt);
+    balanceCooldown = Math.max(0, balanceCooldown - dt);
+
+    const p1dir = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+    p1.x = clamp(p1.x + p1dir * CONFIG.PLAYER.speed * dt, CONFIG.PLAYER.minX, CONFIG.PLAYER.maxX);
+    const p2dir = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+    p2.x = clamp(p2.x + p2dir * CONFIG.PLAYER.speed * dt, CONFIG.PLAYER.minX, CONFIG.PLAYER.maxX);
+
+    if (chargeActive) {
+      chargeTime = Math.min(chargeTime + dt, CONFIG.CHARGE.max);
+      const key = chargePlayer === 1 ? 'KeyW' : 'ArrowUp';
+      const cancel = chargePlayer === 1 ? 'KeyS' : 'ArrowDown';
+      if (justPressed[cancel]) {
+        chargeActive = false;
+        chargeTime = 0;
+      } else if (!keys[key]) {
+        fireRing(chargePlayer);
+      }
+    } else if (!ring && fireCooldown <= 0) {
+      if (owner === 1 && justPressed.KeyW) {
+        chargeActive = true;
+        chargePlayer = 1;
+        chargeTime = 0;
+      } else if (owner === 2 && justPressed.ArrowUp) {
+        chargeActive = true;
+        chargePlayer = 2;
+        chargeTime = 0;
+      }
+    }
+
+    if (ring && !ring.falling && !chargeActive && balanceCooldown <= 0) {
+      if (ring.owner === 1 && justPressed.KeyW) impulse();
+      else if (ring.owner === 2 && justPressed.ArrowUp) impulse();
+    }
+
+    if (ring && !ring.falling && !chargeActive) {
+      if (ring.owner === 1 && justPressed.KeyS) endRing();
+      else if (ring.owner === 2 && justPressed.ArrowDown) endRing();
+    }
+
+    if (ring) updateRing(dt);
+  }
+
+  function updateRing(dt) {
+    if (ring.falling) {
+      ring.fallT += dt;
+      if (ring.fallT >= CONFIG.TILT.fallTime) endRing();
+      return;
+    }
+
+    const sp = Math.hypot(ring.vx, ring.vy);
+    if (sp > 0) {
+      const ns = sp - CONFIG.RING.friction * dt;
+      if (ns < CONFIG.RING.stopSpeed) {
+        ring.vx = 0;
+        ring.vy = 0;
+      } else {
+        const k = ns / sp;
+        ring.vx *= k;
+        ring.vy *= k;
+      }
+    }
+
+    ring.x += ring.vx * dt;
+    ring.y += ring.vy * dt;
+
+    const left = CONFIG.FIELD.x + CONFIG.RING.r;
+    const right = CONFIG.FIELD.x + CONFIG.FIELD.w - CONFIG.RING.r;
+    if (ring.x < left) {
+      ring.x = left;
+      ring.vx = Math.abs(ring.vx) * CONFIG.RING.wallBounce;
+      ring.amplitude += 0.01;
+    } else if (ring.x > right) {
+      ring.x = right;
+      ring.vx = -Math.abs(ring.vx) * CONFIG.RING.wallBounce;
+      ring.amplitude += 0.01;
+    }
+
+    const spNow = Math.hypot(ring.vx, ring.vy);
+    ring.amplitude += (CONFIG.TILT.growthBase + CONFIG.TILT.growthSpeed * (spNow / CONFIG.RING.maxSpeed)) * dt;
+    ring.phase += CONFIG.TILT.freq * dt;
+    ring.tilt = ring.amplitude * Math.sin(ring.phase);
+    ring.spin = (ring.spin + spNow * 0.02 * dt) % (Math.PI * 2);
+
+    if (Math.abs(ring.tilt) > CONFIG.TILT.threshold) {
+      ring.fallTimer += dt;
+      if (ring.fallTimer >= CONFIG.TILT.hold) {
+        ring.falling = true;
+        ring.fallT = 0;
+      }
+    } else {
+      ring.fallTimer = 0;
+    }
+
+    if (ring.falling) return;
+
+    const defender = ring.owner === 1 ? 2 : 1;
+    const dx = defender === 1 ? p1.x : p2.x;
+    const dy = defender === 1 ? CONFIG.PLAYER.y1 : CONFIG.PLAYER.y2;
+    if (circleRect(ring.x, ring.y, CONFIG.RING.r, dx - CONFIG.PLAYER.w / 2, dy - CONFIG.PLAYER.h / 2, CONFIG.PLAYER.w, CONFIG.PLAYER.h)) {
+      score[defender - 1] += 1;
+      endRing();
+      return;
+    }
+
+    if (ring.owner === 1 && ring.y - CONFIG.RING.r <= CONFIG.FIELD.y) {
+      score[1] -= 1;
+      endRing();
+      return;
+    }
+    if (ring.owner === 2 && ring.y + CONFIG.RING.r >= CONFIG.FIELD.y + CONFIG.FIELD.h) {
+      score[0] -= 1;
+      endRing();
+      return;
+    }
+  }
+
+  function circleRect(cx, cy, r, rx, ry, rw, rh) {
+    const nx = clamp(cx, rx, rx + rw);
+    const ny = clamp(cy, ry, ry + rh);
+    const dx = cx - nx;
+    const dy = cy - ny;
+    return dx * dx + dy * dy <= r * r;
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawField() {
+    const f = CONFIG.FIELD;
+    ctx.fillStyle = C.white;
+    ctx.fillRect(f.x, f.y, f.w, f.h);
+    ctx.strokeStyle = C.black;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(f.x, f.y, f.w, f.h);
+    ctx.fillStyle = C.black;
+    ctx.fillRect(f.x, f.y, f.w, 3);
+    ctx.fillRect(f.x, f.y + f.h - 3, f.w, 3);
+    ctx.strokeStyle = C.cCCC;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(f.x, f.y + f.h / 2);
+    ctx.lineTo(f.x + f.w, f.y + f.h / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawPlayers() {
+    ctx.fillStyle = C.black;
+    ctx.strokeStyle = C.white;
+    ctx.lineWidth = 1.5;
+    roundRect(p1.x - CONFIG.PLAYER.w / 2, CONFIG.PLAYER.y1 - CONFIG.PLAYER.h / 2, CONFIG.PLAYER.w, CONFIG.PLAYER.h, 7);
+    ctx.fill();
+    ctx.stroke();
+    roundRect(p2.x - CONFIG.PLAYER.w / 2, CONFIG.PLAYER.y2 - CONFIG.PLAYER.h / 2, CONFIG.PLAYER.w, CONFIG.PLAYER.h, 7);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  function drawRing() {
+    if (!ring) return;
+    const f = CONFIG.FIELD;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(f.x, f.y, f.w, f.h);
+    ctx.clip();
+
+    let alpha = 1;
+    let extra = 1;
+    if (ring.falling) {
+      const p = Math.min(ring.fallT / CONFIG.TILT.fallTime, 1);
+      alpha = 1 - p;
+      extra = 1 - p * 0.95;
+    }
+    const squash = 1 - Math.min(Math.abs(ring.tilt) * 0.6, 0.5);
+
+    ctx.save();
+    ctx.translate(ring.x, ring.y);
+    ctx.rotate(ring.tilt * 0.8);
+    ctx.scale(1, squash * extra);
+    ctx.globalAlpha = alpha;
+
+    ctx.strokeStyle = ring.falling ? C.c666 : C.black;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, CONFIG.RING.r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = ring.falling ? C.c999 : C.c666;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, CONFIG.RING.r - 4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = ring.falling ? C.c666 : C.black;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(0, 0, CONFIG.RING.r - 2, ring.spin, ring.spin + 0.7);
+    ctx.stroke();
+
+    ctx.restore();
+    ctx.restore();
+  }
+
+  function drawCharge(x, y, w, h, active, t) {
+    ctx.fillStyle = C.cE5;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = C.c333;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    if (active) {
+      ctx.fillStyle = C.black;
+      ctx.fillRect(x + 1, y + 1, (w - 2) * (t / CONFIG.CHARGE.max), h - 2);
+    }
+  }
+
+  function drawBalance(x, y, w, h, active) {
+    ctx.fillStyle = C.cE5;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = C.c333;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    const cx = x + w / 2;
+    if (active && ring) {
+      const half = w / 2 - 4;
+      const ampW = Math.min(ring.amplitude / CONFIG.TILT.threshold, 1) * half;
+      ctx.fillStyle = C.cCCC;
+      ctx.fillRect(cx - ampW, y + 1, ampW * 2, h - 2);
+      const off = clamp(ring.tilt / CONFIG.TILT.threshold, -1, 1) * half;
+      ctx.beginPath();
+      ctx.arc(cx + off, y + h / 2, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = C.black;
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.moveTo(cx, y - 2);
+    ctx.lineTo(cx, y + h + 2);
+    ctx.strokeStyle = C.c333;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  function drawHUD() {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = C.c666;
+    ctx.font = '12px ' + F;
+    ctx.fillText('P1', 20, 20);
+    ctx.textAlign = 'right';
+    ctx.fillText('P2', 460, 20);
+
+    ctx.fillStyle = C.black;
+    ctx.font = '700 26px ' + F;
+    ctx.textAlign = 'left';
+    ctx.fillText(String(score[0]), 20, 48);
+    ctx.textAlign = 'right';
+    ctx.fillText(String(score[1]), 460, 48);
+
+    let label = '准备';
+    if (state === 'ROUND_OVER') label = '结束';
+    else if (state !== 'READY') label = owner === 1 ? 'P1 发射' : 'P2 发射';
+    ctx.font = '600 12px ' + F;
+    const tw = ctx.measureText(label).width;
+    const bw = tw + 20;
+    const bx = 240 - bw / 2;
+    ctx.fillStyle = C.black;
+    roundRect(bx, 22, bw, 24, 12);
+    ctx.fill();
+    ctx.fillStyle = C.white;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 240, 34);
+    ctx.textBaseline = 'alphabetic';
+
+    drawCharge(20, 60, 190, 8, chargeActive && chargePlayer === 1, chargeTime);
+    drawCharge(270, 60, 190, 8, chargeActive && chargePlayer === 2, chargeTime);
+    drawBalance(20, 76, 190, 8, !!(ring && ring.owner === 1));
+    drawBalance(270, 76, 190, 8, !!(ring && ring.owner === 2));
+  }
+
+  function drawOverlay() {
+    const f = CONFIG.FIELD;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (state === 'READY') {
+      ctx.fillStyle = C.c666;
+      ctx.font = '14px ' + F;
+      ctx.fillText('点击下方开始', 240, 315);
+    } else if (state === 'COUNTDOWN') {
+      ctx.fillStyle = C.white;
+      ctx.fillRect(f.x, f.y, f.w, f.h);
+      ctx.strokeStyle = C.black;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(f.x, f.y, f.w, f.h);
+      ctx.fillStyle = C.black;
+      ctx.font = '700 72px ' + F;
+      ctx.fillText(String(Math.ceil(countdown)), 240, 300);
+      ctx.fillStyle = C.c666;
+      ctx.font = '14px ' + F;
+      ctx.fillText('准备', 240, 365);
+    } else if (state === 'PAUSED') {
+      ctx.fillStyle = C.cF5;
+      ctx.fillRect(f.x, f.y, f.w, f.h);
+      ctx.strokeStyle = C.black;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(f.x, f.y, f.w, f.h);
+      ctx.fillStyle = C.black;
+      ctx.font = '700 28px ' + F;
+      ctx.fillText('已暂停', 240, 290);
+      ctx.fillStyle = C.c666;
+      ctx.font = '14px ' + F;
+      ctx.fillText('点击继续', 240, 335);
+    } else if (state === 'ROUND_OVER') {
+      ctx.fillStyle = C.white;
+      ctx.fillRect(f.x, f.y, f.w, f.h);
+      ctx.strokeStyle = C.black;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(f.x, f.y, f.w, f.h);
+      ctx.fillStyle = C.black;
+      ctx.font = '700 28px ' + F;
+      ctx.fillText('本局结束', 240, 250);
+      ctx.font = '700 40px ' + F;
+      ctx.fillText(String(score[0]) + ' : ' + String(score[1]), 240, 315);
+      ctx.fillStyle = C.c666;
+      ctx.font = '14px ' + F;
+      ctx.fillText('点击重新开始', 240, 375);
+    }
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  function render() {
+    ctx.clearRect(0, 0, CONFIG.W, CONFIG.H);
+    drawField();
+    drawPlayers();
+    drawRing();
+    drawHUD();
+    drawOverlay();
+  }
+
+  function loop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    if (state === 'COUNTDOWN') {
+      countdown -= dt;
+      if (countdown <= 0) {
+        state = 'PLAYING';
+        updateButtons();
+      }
+    } else if (state === 'PLAYING') {
+      update(dt);
+    }
+
+    render();
+    justPressed = {};
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(e.code) !== -1) {
+      e.preventDefault();
+    }
+    if (!keys[e.code]) justPressed[e.code] = true;
+    keys[e.code] = true;
+  });
+
+  window.addEventListener('keyup', function (e) {
+    keys[e.code] = false;
+  });
+
+  // 触控按住
+  const padButtons = document.querySelectorAll('.pad-btn');
+  for (let i = 0; i < padButtons.length; i++) {
+    (function (btn) {
+      const code = btn.getAttribute('data-key');
+      let active = false;
+      function down(e) {
+        e.preventDefault();
+        if (active) return;
+        active = true;
+        if (btn.setPointerCapture && e.pointerId !== undefined) {
+          try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+        }
+        btn.classList.add('pressed');
+        if (!keys[code]) justPressed[code] = true;
+        keys[code] = true;
+      }
+      function up() {
+        if (!active) return;
+        active = false;
+        btn.classList.remove('pressed');
+        keys[code] = false;
+      }
+      btn.addEventListener('pointerdown', down);
+      btn.addEventListener('pointerup', up);
+      btn.addEventListener('pointercancel', up);
+      btn.addEventListener('lostpointercapture', up);
+      btn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    })(padButtons[i]);
+  }
+
+  pauseBtn.addEventListener('click', function () {
+    if (state === 'PLAYING') {
+      state = 'PAUSED';
+      clearInput();
+      updateButtons();
+    } else if (state === 'PAUSED') {
+      state = 'PLAYING';
+      clearInput();
+      updateButtons();
+    }
+  });
+
+  endBtn.addEventListener('click', function () {
+    if (state !== 'READY' && state !== 'ROUND_OVER') {
+      state = 'ROUND_OVER';
+      clearInput();
+      updateButtons();
+    }
+  });
+
+  restartBtn.addEventListener('click', startGame);
+
+  rulesToggle.addEventListener('click', function () {
+    const open = rulesBody.classList.toggle('open');
+    rulesToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  updateButtons();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

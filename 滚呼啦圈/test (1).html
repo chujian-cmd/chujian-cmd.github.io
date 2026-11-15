@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>滚呼啦圈 · 传球对战</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{
+    width:100%;height:100%;background:#000;overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-user-select:none;user-select:none;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:none;
+  }
+  #game{display:block;width:100%;height:100%;background:#000;}
+
+  .pad{
+    position:fixed;bottom:0;height:84px;display:flex;gap:8px;
+    padding:8px 12px;align-items:center;z-index:10;
+  }
+  #pad1{left:0;width:50%;}
+  #pad2{right:0;width:50%;}
+  .btn{
+    flex:1;height:64px;border-radius:14px;
+    border:1px solid rgba(255,255,255,0.18);
+    background:rgba(255,255,255,0.05);
+    color:rgba(255,255,255,0.75);
+    font-size:18px;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;
+    touch-action:none;cursor:pointer;
+    transition:background .08s,transform .08s;
+  }
+  .btn.active{background:rgba(255,255,255,0.16);transform:scale(0.96);}
+  #pad1 .btn{border-color:rgba(56,232,255,0.35);color:#38e8ff;}
+  #pad2 .btn{border-color:rgba(255,79,216,0.35);color:#ff4fd8;}
+  .btn.charge{font-weight:600;letter-spacing:2px;}
+
+  @media (hover:hover) and (pointer:fine){
+    .pad{opacity:0.4;}
+  }
+
+  #rotate-tip{
+    position:fixed;inset:0;background:#000;color:rgba(255,255,255,0.7);
+    display:none;align-items:center;justify-content:center;
+    font-size:16px;letter-spacing:2px;z-index:100;
+  }
+  @media (orientation:portrait){
+    #rotate-tip{display:flex;}
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div class="pad" id="pad1">
+  <div class="btn" data-p="p1" data-k="up">▲</div>
+  <div class="btn charge" data-p="p1" data-k="action">蓄力</div>
+  <div class="btn" data-p="p1" data-k="down">▼</div>
+</div>
+<div class="pad" id="pad2">
+  <div class="btn" data-p="p2" data-k="up">▲</div>
+  <div class="btn charge" data-p="p2" data-k="action">蓄力</div>
+  <div class="btn" data-p="p2" data-k="down">▼</div>
+</div>
+
+<div id="rotate-tip">请横屏游玩</div>
+
+<script>
+(function(){
+'use strict';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+/* ---------- 常量 ---------- */
+const R = 20;                 // 呼啦圈半径
+const CATCH_TOL = 50;         // 接球纵向容差
+const CATCH_WINDOW = 100;     // 距接球线多近开始判定
+const SPEED_MIN = 520;        // 最小飞行速度
+const SPEED_MAX = 1450;       // 最大飞行速度
+const MOVE_SPEED = 560;       // 接球点移动速度
+const PAD_H = 84;             // 底部虚拟按键高度
+const MARGIN = 16;            // 场地边距
+const CHARGE_RATE = 1.5;      // 蓄力速度（每秒）
+
+let W = 1, H = 1, DPR = 1;
+
+/* ---------- 输入 ---------- */
+const input = {
+  p1: { up:false, down:false, action:false },
+  p2: { up:false, down:false, action:false }
+};
+
+/* ---------- 玩家 ---------- */
+function mkPlayer(id, color, side){
+  return {
+    id, color, side,
+    line: 0,          // 接球线 x 坐标
+    catchY: 0,        // 接球点 y 坐标
+    power: 0,
+    charging: false
+  };
+}
+
+const P1 = mkPlayer(1, '#38e8ff', 'left');
+const P2 = mkPlayer(2, '#ff4fd8', 'right');
+const ALL = [P1, P2];
+
+/* ---------- 呼啦圈 ---------- */
+const hoop = { x:0, y:0, vx:0, vy:0, rot:0 };
+
+/* ---------- 游戏状态 ---------- */
+const G = {
+  phase: 'aiming',    // aiming | flying | over
+  holder: P1,
+  result: '',
+  subResult: '',
+  overTimer: 0
+};
+
+/* ---------- 尺寸 ---------- */
+function resize(){
+  const nw = Math.max(1, canvas.clientWidth);
+  const nh = Math.max(1, canvas.clientHeight);
+  const changed = Math.abs(nw - W) > 40 || Math.abs(nh - H) > 40;
+
+  W = nw; H = nh;
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  canvas.width  = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  if (changed) layout();
+}
+
+function fieldRect(){
+  return {
+    x: MARGIN,
+    y: MARGIN,
+    w: W - MARGIN * 2,
+    h: H - MARGIN * 2 - PAD_H
+  };
+}
+
+function clampY(y){
+  const f = fieldRect();
+  const minY = f.y + R + 16;
+  const maxY = f.y + f.h - R - 16;
+  if (maxY < minY) return (minY + maxY) / 2;
+  return Math.max(minY, Math.min(maxY, y));
+}
+
+function layout(){
+  const f = fieldRect();
+
+  P1.line = f.x + Math.max(70, f.w * 0.12);
+  P2.line = f.x + f.w - Math.max(70, f.w * 0.12);
+
+  resetRound();
+}
+
+/* ---------- 回合 ---------- */
+function resetRound(){
+  G.phase = 'aiming';
+  G.holder = P1;
+  G.result = '';
+  G.subResult = '';
+  G.overTimer = 0;
+
+  const f = fieldRect();
+  const midY = f.y + f.h / 2;
+
+  for (const p of ALL){
+    p.power = 0;
+    p.charging = false;
+    p.catchY = clampY(midY);
+  }
+
+  for (const k in input){
+    input[k].up = input[k].down = input[k].action = false;
+  }
+  document.querySelectorAll('.btn.active').forEach(el => el.classList.remove('active'));
+
+  hoop.x = P1.line;
+  hoop.y = P1.catchY;
+  hoop.vx = 0; hoop.vy = 0; hoop.rot = 0;
+}
+
+/* ---------- 投掷 ---------- */
+function launch(p){
+  const dir = p.side === 'left' ? 1 : -1;
+  const power = Math.max(0.06, p.power);
+  const speed = SPEED_MIN + (SPEED_MAX - SPEED_MIN) * power;
+
+  // 随机偏移系数 0.1 ~ 0.3（横向分量相对速度的比例）
+  const offFactor = 0.1 + Math.random() * 0.2;
+  const offSign = Math.random() < 0.5 ? -1 : 1;
+
+  hoop.x = p.line;
+  hoop.y = p.catchY;
+  hoop.vx = dir * speed;
+  hoop.vy = offSign * offFactor * speed;
+
+  p.power = 0;
+  p.charging = false;
+
+  G.phase = 'flying';
+}
+
+/* ---------- 接球成功 ---------- */
+function catchSuccess(receiver){
+  G.holder = receiver;
+  G.phase = 'aiming';
+
+  hoop.x = receiver.line;
+  hoop.y = receiver.catchY;
+  hoop.vx = 0; hoop.vy = 0; hoop.rot = 0;
+
+  receiver.power = 0;
+  receiver.charging = false;
+}
+
+/* ---------- 漏接 ---------- */
+function miss(receiver){
+  if (G.phase !== 'flying') return;
+
+  const winner = receiver === P1 ? P2 : P1;
+  G.phase = 'over';
+  G.result = 'P' + receiver.id + ' 没接住';
+  G.subResult = 'P' + winner.id + ' 胜';
+  G.overTimer = 0;
+}
+
+/* ---------- 更新 ---------- */
+function updateMovement(p, inp, dt){
+  let dy = 0;
+  if (inp.up) dy -= 1;
+  if (inp.down) dy += 1;
+  if (dy !== 0){
+    p.catchY = clampY(p.catchY + dy * MOVE_SPEED * dt);
+  }
+}
+
+function update(dt){
+  if (G.phase === 'over'){
+    G.overTimer += dt;
+
+    // 呼啦圈继续飞
+    hoop.x += hoop.vx * dt;
+    hoop.y += hoop.vy * dt;
+    hoop.rot += (Math.abs(hoop.vx) + Math.abs(hoop.vy)) * dt * 0.02;
+
+    if (G.overTimer > 2.4) resetRound();
+    return;
+  }
+
+  updateMovement(P1, input.p1, dt);
+  updateMovement(P2, input.p2, dt);
+
+  if (G.phase === 'aiming'){
+    const h = G.holder;
+    const inp = input[h === P1 ? 'p1' : 'p2'];
+
+    if (inp.action){
+      h.charging = true;
+      h.power = Math.min(1, h.power + dt * CHARGE_RATE);
+    } else if (h.charging){
+      launch(h);
+    }
+
+    if (G.phase === 'aiming'){
+      hoop.x = h.line;
+      hoop.y = h.catchY;
+    }
+  }
+  else if (G.phase === 'flying'){
+    hoop.x += hoop.vx * dt;
+    hoop.y += hoop.vy * dt;
+    hoop.rot += (Math.abs(hoop.vx) + Math.abs(hoop.vy)) * dt * 0.02;
+
+    checkCatch();
+  }
+}
+
+function checkCatch(){
+  const f = fieldRect();
+  const receiver = G.holder === P1 ? P2 : P1;
+  const inp = input[receiver === P1 ? 'p1' : 'p2'];
+
+  // 飞出场地上下边界
+  if (hoop.y < f.y - R || hoop.y > f.y + f.h + R){
+    miss(receiver);
+    return;
+  }
+
+  const movingRight = hoop.vx > 0;
+  const dist = movingRight ? (receiver.line - hoop.x) : (hoop.x - receiver.line);
+
+  // 已越过接球线
+  if (dist < 0){
+    miss(receiver);
+    return;
+  }
+
+  // 进入接球窗口
+  if (dist <= CATCH_WINDOW){
+    if (inp.action && Math.abs(hoop.y - receiver.catchY) <= CATCH_TOL){
+      catchSuccess(receiver);
+    }
+  }
+}
+
+/* ---------- 渲染 ---------- */
+function render(){
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  const f = fieldRect();
+
+  // 场地边框
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(f.x + 0.5, f.y + 0.5, f.w - 1, f.h - 1);
+
+  // 中线
+  ctx.save();
+  ctx.setLineDash([5, 12]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.beginPath();
+  ctx.moveTo(W / 2, f.y + 6);
+  ctx.lineTo(W / 2, f.y + f.h - 6);
+  ctx.stroke();
+  ctx.restore();
+
+  drawCatcher(P1);
+  drawCatcher(P2);
+  drawHoop();
+
+  if (G.phase === 'over') drawResult();
+
+  drawLabels();
+}
+
+function drawCatcher(p){
+  const x = p.line;
+  const y = p.catchY;
+  const h = CATCH_TOL;
+
+  const active = (G.phase === 'flying' && G.holder !== p);
+
+  ctx.save();
+  ctx.globalAlpha = active ? 0.75 : 0.4;
+  ctx.strokeStyle = p.color;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = p.color;
+  ctx.shadowBlur = active ? 14 : 6;
+
+  ctx.beginPath();
+  ctx.moveTo(x, y - h);
+  ctx.lineTo(x, y + h);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x - 9, y - h);
+  ctx.lineTo(x + 9, y - h);
+  ctx.moveTo(x - 9, y + h);
+  ctx.lineTo(x + 9, y + h);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawHoop(){
+  const x = hoop.x, y = hoop.y;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // 蓄力环
+  if (G.phase === 'aiming' && G.holder.power > 0){
+    const power = G.holder.power;
+    const rr = R + 14 + power * 8;
+
+    ctx.save();
+    ctx.strokeStyle = G.holder.color;
+    ctx.lineCap = 'round';
+
+    ctx.globalAlpha = 0.18;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(0, 0, rr, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.arc(0, 0, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * power);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 圆环
+  ctx.shadowColor = '#ffffff';
+  ctx.shadowBlur = 18;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(0, 0, R, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 圆周标记点（滚动感）
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 4; i++){
+    const a = hoop.rot + i * Math.PI / 2;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * R, Math.sin(a) * R, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawLabels(){
+  const f = fieldRect();
+
+  ctx.save();
+  ctx.font = '600 14px -apple-system,"PingFang SC",sans-serif';
+  ctx.textBaseline = 'top';
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = P1.color;
+  ctx.fillText('P1', f.x + 10, f.y + 8);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = P2.color;
+  ctx.fillText('P2', f.x + f.w - 10, f.y + 8);
+
+  // 提示
+  ctx.font = '500 11px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.textAlign = 'left';
+  ctx.fillText('W 蓄力/接球 · A/D 上下', f.x + 10, f.y + f.h - 22);
+
+  ctx.textAlign = 'right';
+  ctx.fillText('↑ 蓄力/接球 · ←/→ 上下', f.x + f.w - 10, f.y + f.h - 22);
+
+  ctx.restore();
+}
+
+function drawResult(){
+  const t = Math.min(1, G.overTimer / 0.22);
+  const cy = H / 2 - PAD_H / 2;
+
+  ctx.save();
+  ctx.globalAlpha = t;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.font = '700 32px -apple-system,"PingFang SC",sans-serif';
+  ctx.shadowColor = '#ffffff';
+  ctx.shadowBlur = 24;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(G.result, W / 2, cy - 14);
+
+  ctx.shadowBlur = 0;
+  ctx.font = '600 16px -apple-system,"PingFang SC",sans-serif';
+  ctx.globalAlpha = 0.7 * t;
+  ctx.fillText(G.subResult, W / 2, cy + 24);
+
+  ctx.globalAlpha = 0.35 * t;
+  ctx.font = '500 12px -apple-system,"PingFang SC",sans-serif';
+  ctx.fillText('即将开始下一回合', W / 2, cy + 54);
+
+  ctx.restore();
+}
+
+/* ---------- 主循环 ---------- */
+let last = 0;
+function loop(now){
+  if (!last) last = now;
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* ---------- 键盘 ---------- */
+const keyMap = {
+  KeyW: ['p1', 'action'],
+  KeyA: ['p1', 'up'],
+  KeyD: ['p1', 'down'],
+  KeyS: ['p1', 'down'],
+  ArrowUp:    ['p2', 'action'],
+  ArrowLeft:  ['p2', 'up'],
+  ArrowRight: ['p2', 'down'],
+  ArrowDown:  ['p2', 'down']
+};
+
+window.addEventListener('keydown', e => {
+  const m = keyMap[e.code];
+  if (m){
+    e.preventDefault();
+    input[m[0]][m[1]] = true;
+  }
+  if (e.code === 'KeyR' && !e.repeat) resetRound();
+}, { passive: false });
+
+window.addEventListener('keyup', e => {
+  const m = keyMap[e.code];
+  if (m){
+    e.preventDefault();
+    input[m[0]][m[1]] = false;
+  }
+}, { passive: false });
+
+window.addEventListener('blur', () => {
+  for (const k in input){
+    input[k].up = input[k].down = input[k].action = false;
+  }
+});
+
+/* ---------- 虚拟按键 ---------- */
+document.querySelectorAll('.btn').forEach(el => {
+  const pk = el.dataset.p;
+  const key = el.dataset.k;
+
+  const press = e => {
+    e.preventDefault();
+    input[pk][key] = true;
+    el.classList.add('active');
+  };
+  const release = e => {
+    if (e) e.preventDefault();
+    input[pk][key] = false;
+    el.classList.remove('active');
+  };
+
+  el.addEventListener('pointerdown', press);
+  el.addEventListener('pointerup', release);
+  el.addEventListener('pointercancel', release);
+  el.addEventListener('pointerleave', release);
+});
+
+/* ---------- 启动 ---------- */
+resize();
+window.addEventListener('resize', resize);
+requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
