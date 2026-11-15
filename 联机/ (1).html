@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>联机控制灯 · 自动同步</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #111; min-height: 100vh; display: flex;
+            justify-content: center; align-items: center;
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 16px; margin: 0;
+        }
+        .card {
+            background: #1e1e1e; border-radius: 48px; padding: 36px 28px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6), 0 0 0 2px #2a2a2a inset;
+            width: 100%; max-width: 440px; text-align: center;
+        }
+        h1 {
+            font-size: 1.7rem; font-weight: 500; letter-spacing: 1px;
+            color: #ddd; margin-bottom: 8px;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+        }
+        .sub { color: #777; font-size: 0.9rem; margin-bottom: 32px; border-bottom: 1px solid #333; padding-bottom: 16px; }
+        .lamp {
+            margin: 20px auto; width: 200px; height: 200px; border-radius: 50%;
+            background: #2a2a2a;
+            box-shadow: 0 0 0 12px #1a1a1a, 0 0 40px 8px rgba(0,0,0,0.8);
+            display: flex; justify-content: center; align-items: center;
+            transition: background 0.3s, box-shadow 0.4s;
+        }
+        .lamp.on { background: #ffdd44; box-shadow: 0 0 0 12px #1a1a1a, 0 0 60px 20px rgba(255,220,80,0.7); }
+        .bulb-icon { font-size: 5rem; line-height: 1; filter: drop-shadow(0 0 12px rgba(255,255,180,0.8)); transition: filter 0.3s, transform 0.2s; }
+        .lamp.on .bulb-icon { filter: drop-shadow(0 0 30px #fff9b0) brightness(1.4); transform: scale(1.02); }
+        .status-badge {
+            display: inline-block; background: #2a2a2a; color: #bbb;
+            padding: 8px 20px; border-radius: 40px; font-size: 0.95rem;
+            font-weight: 500; margin: 16px 0 8px; border: 1px solid #3a3a3a;
+            transition: all 0.2s;
+        }
+        .status-badge.on { background: #2c3e2f; color: #b3ffb3; border-color: #4a7a4a; }
+        button {
+            background: #2d2d2d; border: none; color: white;
+            padding: 18px 36px; font-size: 1.4rem; font-weight: 600;
+            border-radius: 80px; cursor: pointer; margin: 24px 0 12px;
+            width: 100%; letter-spacing: 0.5px;
+            box-shadow: 0 10px 0 #0a0a0a, 0 8px 20px rgba(0,0,0,0.5);
+            transition: transform 0.08s, box-shadow 0.12s, background 0.2s;
+            -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+            border: 1px solid #444;
+        }
+        button:active {
+            transform: translateY(6px);
+            box-shadow: 0 4px 0 #0a0a0a, 0 8px 18px rgba(0,0,0,0.5);
+            background: #3d3d3d;
+        }
+        .hint {
+            font-size: 0.8rem; color: #666; margin-top: 16px;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+        }
+        .sync-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: #3a7a3a; display: inline-block;
+            animation: pulse 1.8s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.6; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0.6; transform: scale(0.9); }
+        }
+        .player-tag {
+            color: #888; font-size: 0.8rem; background: #222;
+            padding: 6px 14px; border-radius: 30px;
+            display: inline-block; margin-top: 8px; border: 1px solid #333;
+        }
+        .conn-indicator {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.7rem; color: #888; margin-top: 6px;
+        }
+        .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #666; transition: background 0.2s; }
+        .conn-dot.connected { background: #3a7a3a; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1><span>💡</span> 联机控制灯</h1>
+        <div class="sub">自动连接 · 实时同步</div>
+
+        <div class="lamp" id="lamp">
+            <div class="bulb-icon">💡</div>
+        </div>
+
+        <div class="status-badge" id="statusBadge">灯是关着的</div>
+        <button id="toggleBtn">切换灯</button>
+
+        <div class="hint">
+            <span class="sync-dot"></span> 双方操作实时同步
+        </div>
+        <div class="player-tag" id="playerTag">正在连接...</div>
+        <div class="conn-indicator">
+            <span class="conn-dot" id="connDot"></span>
+            <span id="connText">连接中...</span>
+        </div>
+    </div>
+
+    <!-- 引入 Yjs 和 y-websocket -->
+    <script src="https://cdn.jsdelivr.net/npm/yjs@13/dist/yjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/y-websocket@1/dist/y-websocket.min.js"></script>
+    <script>
+        (function() {
+            // 固定房间名：所有人打开这个页面都进同一个房间
+            const ROOM = 'lamp-demo-global-v1';
+            // Yjs 官方演示服务，专门给原型/测试用[citation:1]
+            const SERVER_URL = 'wss://demos.yjs.dev/ws';
+
+            // 创建 Yjs 文档和共享变量
+            const doc = new Y.Doc();
+            // 用一个 Y.Map 来存灯的状态
+            const lampMap = doc.getMap('lamp');
+            // 初始化为关（只有本地没有值时，第一次设）
+            if (!lampMap.has('isOn')) {
+                lampMap.set('isOn', false);
+            }
+
+            // DOM
+            const lampDiv = document.getElementById('lamp');
+            const statusBadge = document.getElementById('statusBadge');
+            const toggleBtn = document.getElementById('toggleBtn');
+            const playerTag = document.getElementById('playerTag');
+            const connDot = document.getElementById('connDot');
+            const connText = document.getElementById('connText');
+
+            // 显示房间信息（不需要玩家 ID 了，因为 Yjs 自己管理 clientID）
+            playerTag.textContent = `房间: 公共演示 · 直接使用`;
+
+            // ---------- 连接 Yjs 演示服务 ----------
+            const provider = new Ywebsocket.WebsocketProvider(SERVER_URL, ROOM, doc);
+
+            // 监听连接状态
+            provider.on('status', event => {
+                const connected = (event.status === 'connected');
+                if (connected) {
+                    connDot.classList.add('connected');
+                    connText.textContent = '已连接';
+                } else {
+                    connDot.classList.remove('connected');
+                    connText.textContent = '断开，重连中...';
+                }
+            });
+
+            // ---------- 更新 UI ----------
+            function updateUI() {
+                const isOn = lampMap.get('isOn') || false;
+                if (isOn) {
+                    lampDiv.classList.add('on');
+                    statusBadge.classList.add('on');
+                    statusBadge.textContent = '💡 灯是开着的';
+                } else {
+                    lampDiv.classList.remove('on');
+                    statusBadge.classList.remove('on');
+                    statusBadge.textContent = '灯是关着的';
+                }
+            }
+
+            // 监听 Y.Map 的变化（无论是本地还是远程）
+            lampMap.observe(() => {
+                updateUI();
+            });
+
+            // 首次渲染
+            updateUI();
+
+            // ---------- 按钮点击：切换灯 ----------
+            toggleBtn.addEventListener('click', () => {
+                const current = lampMap.get('isOn') || false;
+                // Yjs 会自动把这次修改同步给同房间的其他人
+                lampMap.set('isOn', !current);
+            });
+
+            // 页面关闭时断开
+            window.addEventListener('beforeunload', () => {
+                provider.destroy();
+            });
+        })();
+    </script>
+</body>
+</html>

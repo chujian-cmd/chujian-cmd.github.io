@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>联机控制灯</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #111; min-height: 100vh; display: flex; justify-content: center; align-items: center; font-family: system-ui, sans-serif; padding: 16px; margin: 0; }
+        .card { background: #1e1e1e; border-radius: 48px; padding: 36px 28px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); width: 100%; max-width: 440px; text-align: center; }
+        h1 { font-size: 1.7rem; font-weight: 500; color: #ddd; margin-bottom: 24px; }
+        .lamp { margin: 20px auto; width: 200px; height: 200px; border-radius: 50%; background: #2a2a2a; box-shadow: 0 0 0 12px #1a1a1a; display: flex; justify-content: center; align-items: center; transition: all 0.4s; }
+        .lamp.on { background: #ffdd44; box-shadow: 0 0 0 12px #1a1a1a, 0 0 60px 20px rgba(255,220,80,0.7); }
+        .bulb-icon { font-size: 5rem; transition: all 0.3s; filter: drop-shadow(0 0 12px rgba(255,255,180,0.8)); }
+        .lamp.on .bulb-icon { transform: scale(1.02); filter: drop-shadow(0 0 30px #fff9b0) brightness(1.4); }
+        .status-badge { display: inline-block; background: #2a2a2a; color: #bbb; padding: 8px 20px; border-radius: 40px; font-size: 0.95rem; margin: 16px 0 8px; border: 1px solid #3a3a3a; transition: 0.2s; }
+        .status-badge.on { background: #2c3e2f; color: #b3ffb3; border-color: #4a7a4a; }
+        button { background: #2d2d2d; border: none; color: white; padding: 18px 36px; font-size: 1.4rem; font-weight: 600; border-radius: 80px; cursor: pointer; margin: 24px 0 12px; width: 100%; box-shadow: 0 10px 0 #0a0a0a; transition: 0.08s; border: 1px solid #444; }
+        button:active { transform: translateY(6px); box-shadow: 0 4px 0 #0a0a0a; background: #3d3d3d; }
+        .player-tag { color: #888; font-size: 0.8rem; background: #222; padding: 6px 14px; border-radius: 30px; display: inline-block; margin-top: 8px; border: 1px solid #333; word-break: break-all; }
+        .conn-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 0.7rem; color: #888; margin-top: 6px; }
+        .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #666; transition: 0.2s; }
+        .conn-dot.connected { background: #3a7a3a; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1><span>💡</span> 联机控制灯</h1>
+        <div class="lamp" id="lamp"><div class="bulb-icon">💡</div></div>
+        <div class="status-badge" id="statusBadge">灯是关着的</div>
+        <button id="toggleBtn">切换灯</button>
+        <div class="player-tag" id="playerTag">等待连接...</div>
+        <div class="conn-indicator">
+            <span class="conn-dot" id="connDot"></span>
+            <span id="connText">连接中...</span>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ⚠️⚠️⚠️ 修改这里！把下面这串 IP 换成你 Termux 里打印出来的那个 IP ⚠️⚠️⚠️
+            const SERVER_IP = '192.168.2.104';  // <--- 改我！
+            
+            const SERVER_URL = `ws://${SERVER_IP}:8765`;
+
+            let ws = null;
+            let reconnectTimer = null;
+
+            const lampDiv = document.getElementById('lamp');
+            const statusBadge = document.getElementById('statusBadge');
+            const toggleBtn = document.getElementById('toggleBtn');
+            const connDot = document.getElementById('connDot');
+            const connText = document.getElementById('connText');
+            const playerTag = document.getElementById('playerTag');
+
+            playerTag.textContent = `服务器: ${SERVER_IP}`;
+
+            function updateUI(isOn) {
+                if (isOn) {
+                    lampDiv.classList.add('on');
+                    statusBadge.classList.add('on');
+                    statusBadge.textContent = '💡 灯是开着的';
+                } else {
+                    lampDiv.classList.remove('on');
+                    statusBadge.classList.remove('on');
+                    statusBadge.textContent = '灯是关着的';
+                }
+            }
+
+            function setConnected(connected) {
+                if (connected) {
+                    connDot.classList.add('connected');
+                    connText.textContent = '已连接';
+                } else {
+                    connDot.classList.remove('connected');
+                    connText.textContent = '断开，重连中...';
+                }
+            }
+
+            function connect() {
+                if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+                ws = new WebSocket(SERVER_URL);
+
+                ws.onopen = () => { setConnected(true); };
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'init' || msg.type === 'state') updateUI(msg.state);
+                    } catch (e) {}
+                };
+                ws.onclose = () => {
+                    setConnected(false);
+                    if (reconnectTimer) clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(connect, 2000);
+                };
+                ws.onerror = () => { setConnected(false); };
+            }
+
+            toggleBtn.addEventListener('click', () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'toggle' }));
+                }
+            });
+
+            updateUI(false);
+            connect();
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>联机控制灯 · 自动同步</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #111;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            padding: 16px;
+            margin: 0;
+            transition: background 0.2s;
+        }
+
+        .card {
+            background: #1e1e1e;
+            border-radius: 48px;
+            padding: 36px 28px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 0 2px #2a2a2a inset;
+            width: 100%;
+            max-width: 440px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 1.7rem;
+            font-weight: 500;
+            letter-spacing: 1px;
+            color: #ddd;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .sub {
+            color: #777;
+            font-size: 0.9rem;
+            margin-bottom: 32px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 16px;
+        }
+
+        .lamp {
+            margin: 20px auto;
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            background: #2a2a2a;
+            box-shadow: 0 0 0 12px #1a1a1a, 0 0 40px 8px rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.3s, box-shadow 0.4s;
+        }
+
+        .lamp.on {
+            background: #ffdd44;
+            box-shadow: 0 0 0 12px #1a1a1a, 0 0 60px 20px rgba(255, 220, 80, 0.7);
+        }
+
+        .bulb-icon {
+            font-size: 5rem;
+            line-height: 1;
+            filter: drop-shadow(0 0 12px rgba(255, 255, 180, 0.8));
+            transition: filter 0.3s, transform 0.2s;
+        }
+
+        .lamp.on .bulb-icon {
+            filter: drop-shadow(0 0 30px #fff9b0) brightness(1.4);
+            transform: scale(1.02);
+        }
+
+        .status-badge {
+            display: inline-block;
+            background: #2a2a2a;
+            color: #bbb;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin: 16px 0 8px;
+            border: 1px solid #3a3a3a;
+            transition: all 0.2s;
+        }
+
+        .status-badge.on {
+            background: #2c3e2f;
+            color: #b3ffb3;
+            border-color: #4a7a4a;
+        }
+
+        button {
+            background: #2d2d2d;
+            border: none;
+            color: white;
+            padding: 18px 36px;
+            font-size: 1.4rem;
+            font-weight: 600;
+            border-radius: 80px;
+            cursor: pointer;
+            margin: 24px 0 12px;
+            width: 100%;
+            letter-spacing: 0.5px;
+            box-shadow: 0 10px 0 #0a0a0a, 0 8px 20px rgba(0, 0, 0, 0.5);
+            transition: transform 0.08s, box-shadow 0.12s, background 0.2s;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            border: 1px solid #444;
+        }
+
+        button:active {
+            transform: translateY(6px);
+            box-shadow: 0 4px 0 #0a0a0a, 0 8px 18px rgba(0, 0, 0, 0.5);
+            background: #3d3d3d;
+        }
+
+        .hint {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .sync-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #3a7a3a;
+            display: inline-block;
+            animation: pulse 1.8s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.6; transform: scale(0.9); }
+            50% { opacity: 1; transform: scale(1.2); }
+            100% { opacity: 0.6; transform: scale(0.9); }
+        }
+
+        .player-tag {
+            color: #888;
+            font-size: 0.8rem;
+            background: #222;
+            padding: 6px 14px;
+            border-radius: 30px;
+            display: inline-block;
+            margin-top: 8px;
+            border: 1px solid #333;
+        }
+
+        .card, button {
+            user-select: none;
+        }
+
+        /* 连接状态指示 */
+        .conn-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.7rem;
+            color: #888;
+            margin-top: 6px;
+        }
+        .conn-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+            transition: background 0.2s;
+        }
+        .conn-dot.connected {
+            background: #3a7a3a;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>
+            <span>💡</span> 联机控制灯
+        </h1>
+        <div class="sub">自动连接 · 实时同步</div>
+
+        <!-- 灯本体 -->
+        <div class="lamp" id="lamp">
+            <div class="bulb-icon" id="bulbIcon">💡</div>
+        </div>
+
+        <!-- 状态指示器 -->
+        <div class="status-badge" id="statusBadge">灯是关着的</div>
+
+        <!-- 主按钮 -->
+        <button id="toggleBtn">切换灯</button>
+
+        <!-- 同步提示 -->
+        <div class="hint">
+            <span class="sync-dot"></span> 双方操作实时同步
+        </div>
+        <div class="player-tag" id="playerTag">等待连接...</div>
+        <div class="conn-indicator">
+            <span class="conn-dot" id="connDot"></span>
+            <span id="connText">连接中...</span>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ============================================================
+            // 核心思路：使用一个固定的公共房间（所有打开本页面的人都在同一房间）
+            // 这样只要两个玩家都打开页面，就自动连接并同步，无需任何配置。
+            // ============================================================
+
+            // 固定的房间名（写死，所有人共用）
+            const ROOM = 'lamp_global_room_v1';
+
+            // 生成一个简短的玩家ID用于区分消息来源
+            const playerId = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+            // 灯的状态
+            let lampOn = false;
+
+            // WebSocket 连接
+            let ws = null;
+            let reconnectTimer = null;
+            let isConnected = false;
+
+            // DOM 元素
+            const lampDiv = document.getElementById('lamp');
+            const statusBadge = document.getElementById('statusBadge');
+            const toggleBtn = document.getElementById('toggleBtn');
+            const playerTag = document.getElementById('playerTag');
+            const connDot = document.getElementById('connDot');
+            const connText = document.getElementById('connText');
+
+            // 显示玩家信息
+            playerTag.textContent = `你: ${playerId} · 房间: 公共`;
+
+            // ---------- 更新UI ----------
+            function updateUI() {
+                if (lampOn) {
+                    lampDiv.classList.add('on');
+                    statusBadge.classList.add('on');
+                    statusBadge.textContent = '💡 灯是开着的';
+                } else {
+                    lampDiv.classList.remove('on');
+                    statusBadge.classList.remove('on');
+                    statusBadge.textContent = '灯是关着的';
+                }
+            }
+
+            // ---------- 连接状态更新 ----------
+            function setConnected(connected) {
+                isConnected = connected;
+                if (connected) {
+                    connDot.classList.add('connected');
+                    connText.textContent = '已连接';
+                } else {
+                    connDot.classList.remove('connected');
+                    connText.textContent = '连接断开，重连中...';
+                }
+            }
+
+            // ---------- 应用灯状态（不发送网络消息）----------
+            function applyLampState(newState) {
+                if (lampOn === newState) return;
+                lampOn = newState;
+                updateUI();
+            }
+
+            // ---------- 发送状态到网络 ----------
+            function sendStateToNetwork() {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    console.warn('WebSocket 未连接，无法发送');
+                    return;
+                }
+                const message = JSON.stringify({
+                    type: 'lamp_state',
+                    room: ROOM,
+                    state: lampOn,
+                    sender: playerId,
+                    timestamp: Date.now()
+                });
+                try {
+                    ws.send(message);
+                    console.log('发送:', message);
+                } catch (e) {
+                    console.error('发送失败', e);
+                }
+            }
+
+            // ---------- 处理远程消息 ----------
+            function handleRemoteMessage(data) {
+                try {
+                    const msg = JSON.parse(data);
+                    // 只处理相同房间的灯状态消息
+                    if (msg.type === 'lamp_state' && msg.room === ROOM) {
+                        // 忽略自己发送的消息（因为是广播，自己也会收到）
+                        if (msg.sender === playerId) {
+                            return;
+                        }
+                        console.log('收到远程状态:', msg.state);
+                        // 应用远程状态
+                        applyLampState(msg.state);
+                    }
+                } catch (e) {
+                    // 忽略非JSON消息
+                }
+            }
+
+            // ============================================================
+            // WebSocket 连接
+            // 使用 Piesocket 免费演示频道（公共广播）
+            // 注意：这个演示 key 是公共的，可能会有其他人使用，
+            // 但我们通过 ROOM 字段过滤，只处理同一房间的消息。
+            // ============================================================
+            function connectWebSocket() {
+                if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                    return;
+                }
+
+                // Piesocket 免费演示 key（公共可用）
+                const wsUrl = 'wss://demo.piesocket.com/v3/1?api_key=VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV&notify_self';
+                
+                try {
+                    ws = new WebSocket(wsUrl);
+                } catch (e) {
+                    console.error('WebSocket 创建失败', e);
+                    setConnected(false);
+                    scheduleReconnect();
+                    return;
+                }
+
+                ws.onopen = () => {
+                    console.log('WebSocket 已连接');
+                    setConnected(true);
+                    // 连接成功后，发送当前状态？不发送，避免覆盖他人状态。
+                    // 但可以让对方知道我们在线？不需要。
+                    // 如果本地灯是开着的，而且我们刚连上，要不要同步给对方？
+                    // 为了简单，不自动发送。由用户操作触发同步。
+                };
+
+                ws.onmessage = (event) => {
+                    handleRemoteMessage(event.data);
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket 错误', error);
+                    setConnected(false);
+                };
+
+                ws.onclose = (event) => {
+                    console.log('WebSocket 关闭', event.code);
+                    setConnected(false);
+                    scheduleReconnect();
+                };
+            }
+
+            function scheduleReconnect() {
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(() => {
+                    console.log('尝试重新连接...');
+                    connectWebSocket();
+                }, 2000);
+            }
+
+            // ---------- 切换灯（本地操作）----------
+            function toggleLamp() {
+                lampOn = !lampOn;
+                updateUI();
+                sendStateToNetwork();
+            }
+
+            // ---------- 绑定事件 ----------
+            toggleBtn.addEventListener('click', toggleLamp);
+
+            // 触摸优化
+            toggleBtn.addEventListener('touchstart', (e) => {
+                // 不做额外处理
+            }, { passive: true });
+
+            // 初始化
+            updateUI();
+            connectWebSocket();
+
+            // 页面关闭时清理
+            window.addEventListener('beforeunload', () => {
+                if (ws) ws.close();
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+            });
+
+            // 为了更好的体验，每隔一段时间检查连接状态（可选）
+            setInterval(() => {
+                if (ws && ws.readyState !== WebSocket.OPEN && !reconnectTimer) {
+                    // 如果断开且没有重连定时器，则尝试重连
+                    if (!isConnected) {
+                        scheduleReconnect();
+                    }
+                }
+            }, 5000);
+        })();
+    </script>
+</body>
+</html>
