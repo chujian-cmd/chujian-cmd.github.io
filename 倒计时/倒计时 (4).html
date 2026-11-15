@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>极简倒计时 · 19:00</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    color: #fff;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .countdown {
+    display: flex;
+    align-items: center;
+    gap: 0.1em;
+    font-size: clamp(2rem, 15vw, 8rem);
+    font-weight: 300;
+    line-height: 1;
+  }
+  .digit {
+    position: relative;
+    display: inline-block;
+    width: 0.6em;
+    height: 1em;
+  }
+  .digit svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .digit path {
+    fill: #fff;
+    stroke: none;
+    transition: d 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  .colon { display: inline-block; }
+</style>
+</head>
+<body>
+<div class="countdown" id="countdown"></div>
+<script>
+(function () {
+  'use strict';
+
+  const digitPaths = {
+    '0': 'M 50 5 C 25 5 15 30 15 50 C 15 70 25 95 50 95 C 75 95 85 70 85 50 C 85 30 75 5 50 5 Z M 50 20 C 62 20 68 35 68 50 C 68 65 62 80 50 80 C 38 80 32 65 32 50 C 32 35 38 20 50 20 Z',
+    '1': 'M 40 30 L 60 5 L 60 95 L 40 95 L 40 40 L 25 50 L 20 32 L 40 30 Z',
+    '2': 'M 18 35 C 18 15 32 5 50 5 C 70 5 82 18 82 35 C 82 52 70 62 50 78 L 30 90 L 82 90 L 82 95 L 12 95 L 12 90 L 45 65 C 62 52 68 45 68 35 C 68 22 60 15 50 15 C 40 15 32 22 32 35 Z',
+    '3': 'M 15 25 L 75 25 L 45 55 C 65 55 82 65 82 80 C 82 92 68 95 50 95 C 32 95 18 90 12 78 L 28 72 C 32 82 40 85 50 85 C 62 85 68 80 68 72 C 68 62 58 58 42 58 L 35 58 L 35 48 L 55 30 L 15 30 Z',
+    '4': 'M 55 95 L 55 70 L 12 70 L 12 58 L 62 5 L 75 5 L 75 58 L 88 58 L 88 70 L 75 70 L 75 95 Z M 55 58 L 55 25 L 30 58 Z',
+    '5': 'M 78 5 L 22 5 L 18 50 L 30 45 C 40 42 52 45 60 52 C 68 60 70 68 70 78 C 70 88 60 92 50 92 C 38 92 30 88 28 80 L 12 84 C 16 95 32 98 50 98 C 68 98 85 90 85 75 C 85 60 72 48 55 45 L 38 45 L 42 20 L 78 20 Z',
+    '6': 'M 50 5 C 28 5 15 22 15 50 C 15 78 28 95 50 95 C 70 95 82 82 82 65 C 82 48 68 38 52 38 C 40 38 30 44 25 55 C 25 35 32 18 50 18 C 58 18 65 22 68 30 L 82 25 C 76 12 65 5 50 5 Z M 50 82 C 40 82 32 75 32 65 C 32 55 40 50 50 50 C 60 50 68 55 68 65 C 68 75 60 82 50 82 Z',
+    '7': 'M 12 5 L 88 5 L 88 20 L 50 95 L 32 95 L 68 20 L 12 20 Z',
+    '8': 'M 50 5 C 30 5 20 15 20 28 C 20 40 28 48 38 52 C 25 58 15 68 15 78 C 15 90 28 95 50 95 C 72 95 85 90 85 78 C 85 68 75 58 62 52 C 72 48 80 40 80 28 C 80 15 70 5 50 5 Z M 50 18 C 60 18 66 22 66 30 C 66 38 60 42 50 42 C 40 42 34 38 34 30 C 34 22 40 18 50 18 Z M 50 55 C 62 55 70 62 70 76 C 70 85 62 88 50 88 C 38 88 30 85 30 76 C 30 62 38 55 50 55 Z',
+    '9': 'M 50 5 C 72 5 85 22 85 50 C 85 78 72 95 50 95 C 30 95 18 82 18 65 C 18 48 32 38 48 38 C 60 38 70 44 75 55 C 75 35 68 18 50 18 C 42 18 35 22 32 30 L 18 25 C 24 12 35 5 50 5 Z M 50 50 C 40 50 32 55 32 65 C 32 75 40 82 50 82 C 60 82 68 75 68 65 C 68 55 60 50 50 50 Z'
+  };
+
+  const prev = {};
+  const countdownEl = document.getElementById('countdown');
+
+  function makeDigit(key, value) {
+    let wrap = countdownEl.querySelector('[data-key="' + key + '"]');
+    if (!wrap) {
+      wrap = document.createElement('span');
+      wrap.className = 'digit';
+      wrap.dataset.key = key;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 100 100');
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', digitPaths[value]);
+      svg.appendChild(path);
+      wrap.appendChild(svg);
+      prev[key] = value;
+      return wrap;
+    }
+    const path = wrap.querySelector('path');
+    if (prev[key] !== value) {
+      path.setAttribute('d', digitPaths[value]);
+      prev[key] = value;
+    }
+    return wrap;
+  }
+
+  function makeColon() {
+    const span = document.createElement('span');
+    span.className = 'colon';
+    span.textContent = ':';
+    return span;
+  }
+
+  function updateCountdown() {
+    const now = new Date();
+    const target = new Date(now);
+    target.setHours(19, 0, 0, 0);
+    if (now >= target) target.setDate(target.getDate() + 1);
+
+    const totalSeconds = Math.floor((target - now) / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const h = String(hours);
+    const m = String(minutes).padStart(2, '0');
+    const s = String(seconds).padStart(2, '0');
+
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < h.length; i++) frag.appendChild(makeDigit('h' + i, h[i]));
+    frag.appendChild(makeColon());
+    frag.appendChild(makeDigit('m0', m[0]));
+    frag.appendChild(makeDigit('m1', m[1]));
+    frag.appendChild(makeColon());
+    frag.appendChild(makeDigit('s0', s[0]));
+    frag.appendChild(makeDigit('s1', s[1]));
+
+    countdownEl.replaceChildren(frag);
+  }
+
+  updateCountdown();
+  const intervalId = setInterval(updateCountdown, 200);
+  window.addEventListener('beforeunload', () => clearInterval(intervalId));
+})();
+</script>
+</body>
+</html>
