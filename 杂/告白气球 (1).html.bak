@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>告白气球 · 手账播放器</title>
+    <style>
+        /* 去AI味：拒绝蓝紫渐变、拒绝Inter字体、拒绝居中三卡片、拒绝emoji泛滥 */
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=Quicksand:wght@400;500;600&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            background: #1e1a17; /* 深暖灰，非蓝紫 */
+            background-image: 
+                radial-gradient(circle at 20% 30%, rgba(210, 180, 140, 0.08) 0%, transparent 30%),
+                radial-gradient(circle at 85% 70%, rgba(180, 140, 100, 0.06) 0%, transparent 35%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Quicksand', 'Noto Serif SC', serif;
+            padding: 24px;
+        }
+
+        /* 主容器：不对称，偏心布局 */
+        .player {
+            width: 100%;
+            max-width: 960px;
+            background: #2a2421;
+            border-radius: 28px 8px 28px 8px; /* 不对称圆角 */
+            box-shadow: 
+                0 24px 48px -12px rgba(0, 0, 0, 0.7),
+                inset 0 1px 0 rgba(255, 235, 200, 0.06);
+            display: flex;
+            flex-wrap: wrap;
+            overflow: hidden;
+            border: 1px solid #3d332e;
+        }
+
+        /* 左侧：封面 + 控制，略微下沉 */
+        .left-panel {
+            flex: 0 0 340px;
+            background: #211d1a;
+            padding: 32px 24px 28px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px dashed #3d332e;
+        }
+
+        /* 封面区域 - 用CSS画出旧唱片/气球感，不是圆角卡片+阴影 */
+        .cover-wrap {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1/1;
+            margin-bottom: 28px;
+        }
+
+        .cover-art {
+            width: 100%;
+            height: 100%;
+            border-radius: 2px 16px 2px 16px; /* 极不规则的角 */
+            background: 
+                linear-gradient(145deg, #4d3e34 0%, #2f2621 100%);
+            box-shadow: 
+                6px 6px 0 #151210,
+                inset 0 0 0 1px rgba(220, 190, 150, 0.15);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 手绘气球元素 */
+        .balloon {
+            position: absolute;
+            width: 60px;
+            height: 70px;
+            border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+            background: radial-gradient(circle at 30% 30%, #e8d5b5, #b89a7a);
+            opacity: 0.25;
+            transform: rotate(-15deg);
+            top: 20%;
+            left: 15%;
+        }
+
+        .balloon::after {
+            content: '';
+            position: absolute;
+            bottom: -18px;
+            left: 50%;
+            width: 1px;
+            height: 24px;
+            background: rgba(220, 190, 150, 0.25);
+            transform: translateX(-50%);
+        }
+
+        .balloon2 {
+            width: 42px;
+            height: 50px;
+            top: 60%;
+            left: 65%;
+            transform: rotate(25deg);
+            opacity: 0.18;
+            background: radial-gradient(circle at 40% 30%, #f0e0c8, #c4a882);
+        }
+
+        .cover-title {
+            position: relative;
+            z-index: 2;
+            text-align: center;
+            color: #f0e6d8;
+        }
+
+        .cover-title h1 {
+            font-family: 'Noto Serif SC', serif;
+            font-weight: 700;
+            font-size: 2rem;
+            letter-spacing: 6px;
+            margin-bottom: 6px;
+            text-shadow: 2px 2px 0 #1a1614;
+        }
+
+        .cover-title span {
+            font-family: 'Quicksand', sans-serif;
+            font-size: 0.75rem;
+            letter-spacing: 4px;
+            color: #b8a48c;
+            text-transform: uppercase;
+        }
+
+        /* 控制区 - 粗粝按钮 */
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+
+        .ctrl-btn {
+            background: none;
+            border: 1.5px solid #52453c;
+            color: #d9c9b6;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.2s ease;
+            font-size: 1.1rem;
+        }
+
+        .ctrl-btn:hover {
+            background: #3d332e;
+            color: #fff6e6;
+            border-color: #8a7868;
+        }
+
+        .ctrl-btn.play {
+            width: 64px;
+            height: 64px;
+            background: #d9c9b6;
+            color: #211d1a;
+            border: none;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 0 #8a7868;
+        }
+
+        .ctrl-btn.play:hover {
+            background: #f0e6d8;
+            box-shadow: 0 4px 0 #a8947c;
+        }
+
+        .ctrl-btn.play:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #8a7868;
+        }
+
+        /* 进度条 - 细线，不像标准 input range */
+        .progress-area {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .time-display {
+            display: flex;
+            justify-content: space-between;
+            color: #7a6b5e;
+            font-size: 0.7rem;
+            font-family: 'Quicksand', monospace;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 3px;
+            background: #3d332e;
+            border-radius: 2px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #b89a7a;
+            border-radius: 2px;
+            position: relative;
+            transition: width 0.1s linear;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            right: -4px;
+            top: -3.5px;
+            width: 10px;
+            height: 10px;
+            background: #d9c9b6;
+            border-radius: 50%;
+            box-shadow: 0 0 0 2px #211d1a;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+
+        .progress-bar-bg:hover .progress-fill::after {
+            opacity: 1;
+        }
+
+        /* 右侧：歌词区，手写笔记感 */
+        .right-panel {
+            flex: 1;
+            min-width: 300px;
+            padding: 32px 28px 28px;
+            display: flex;
+            flex-direction: column;
+            background: #2a2421;
+        }
+
+        .lyrics-header {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 20px;
+            border-bottom: 1px dashed #4d3e34;
+            padding-bottom: 12px;
+        }
+
+        .lyrics-header .label {
+            font-family: 'Quicksand', sans-serif;
+            font-size: 0.65rem;
+            letter-spacing: 3px;
+            color: #8a7868;
+            text-transform: uppercase;
+        }
+
+        .lyrics-header .song-info {
+            font-family: 'Noto Serif SC', serif;
+            font-size: 0.9rem;
+            color: #c4b09a;
+            margin-left: auto;
+        }
+
+        .lyrics-scroll {
+            flex: 1;
+            overflow-y: auto;
+            max-height: 380px;
+            padding-right: 8px;
+            scrollbar-width: thin;
+            scrollbar-color: #4d3e34 transparent;
+        }
+
+        .lyrics-scroll::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        .lyrics-scroll::-webkit-scrollbar-thumb {
+            background: #4d3e34;
+            border-radius: 3px;
+        }
+
+        .lyric-line {
+            font-family: 'Noto Serif SC', serif;
+            font-size: 0.95rem;
+            line-height: 2.2;
+            color: #7a6b5e;
+            transition: color 0.2s, font-weight 0.2s;
+            padding: 1px 0;
+        }
+
+        .lyric-line.active {
+            color: #f0e6d8;
+            font-weight: 600;
+            text-shadow: 0 0 20px rgba(220, 190, 150, 0.15);
+        }
+
+        /* 播放状态微动效 */
+        .player.playing .cover-art {
+            animation: subtle-pulse 3s ease-in-out infinite;
+        }
+
+        @keyframes subtle-pulse {
+            0%, 100% { box-shadow: 6px 6px 0 #151210, inset 0 0 0 1px rgba(220, 190, 150, 0.15); }
+            50% { box-shadow: 6px 6px 0 #151210, inset 0 0 0 1px rgba(220, 190, 150, 0.3); }
+        }
+
+        /* 响应式 */
+        @media (max-width: 720px) {
+            .player {
+                flex-direction: column;
+                border-radius: 20px 6px 20px 6px;
+            }
+            .left-panel {
+                flex: auto;
+                border-right: none;
+                border-bottom: 1px dashed #3d332e;
+                padding: 24px 20px;
+            }
+            .cover-wrap {
+                max-width: 220px;
+                margin: 0 auto 20px;
+            }
+            .right-panel {
+                padding: 20px;
+            }
+            .lyrics-scroll {
+                max-height: 260px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="player" id="player">
+        <!-- 左：封面+控制 -->
+        <div class="left-panel">
+            <div class="cover-wrap">
+                <div class="cover-art">
+                    <div class="balloon"></div>
+                    <div class="balloon balloon2"></div>
+                    <div class="cover-title">
+                        <h1>告白气球</h1>
+                        <span>周杰伦 · 2016</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="ctrl-btn" id="prevBtn" title="上一首（无）" disabled style="opacity:0.4;">⏮</button>
+                <button class="ctrl-btn play" id="playBtn">▶</button>
+                <button class="ctrl-btn" id="nextBtn" title="下一首（无）" disabled style="opacity:0.4;">⏭</button>
+            </div>
+
+            <div class="progress-area">
+                <div class="time-display">
+                    <span id="currentTime">0:00</span>
+                    <span id="duration">0:00</span>
+                </div>
+                <div class="progress-bar-bg" id="progressBar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右：歌词 -->
+        <div class="right-panel">
+            <div class="lyrics-header">
+                <span class="label">LYRICS</span>
+                <span class="song-info">词：方文山 / 曲：周杰伦</span>
+            </div>
+            <div class="lyrics-scroll" id="lyricsScroll">
+                <!-- 歌词由 JS 动态插入，带时间戳 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 音频：使用可用的公开直链（网易云/酷狗来源，若失效请换源） -->
+    <audio id="audio" preload="metadata" src="https://music.163.com/song/media/outer/url?id=418603077.mp3"></audio>
+
+    <script>
+        (function(){
+            const audio = document.getElementById('audio');
+            const playBtn = document.getElementById('playBtn');
+            const progressBar = document.getElementById('progressBar');
+            const progressFill = document.getElementById('progressFill');
+            const currentTimeEl = document.getElementById('currentTime');
+            const durationEl = document.getElementById('duration');
+            const lyricsScroll = document.getElementById('lyricsScroll');
+            const player = document.getElementById('player');
+
+            // 歌词数据（带时间戳，秒）
+            const lyricsData = [
+                { time: 0, text: "告白气球 - 周杰伦" },
+                { time: 5.89, text: "词：方文山 曲：周杰伦" },
+                { time: 11.79, text: "编曲：林迈可" },
+                { time: 23.59, text: "塞纳河畔 左岸的咖啡" },
+                { time: 26.16, text: "我手一杯 品尝你的美" },
+                { time: 29.33, text: "留下唇印的嘴" },
+                { time: 34.27, text: "花店玫瑰 名字写错谁" },
+                { time: 36.90, text: "告白气球 风吹到对街" },
+                { time: 40.01, text: "微笑在天上飞" },
+                { time: 44.01, text: "你说你有点难追" },
+                { time: 46.57, text: "想让我知难而退" },
+                { time: 49.22, text: "礼物不需挑最贵" },
+                { time: 51.89, text: "只要香榭的落叶" },
+                { time: 54.56, text: "喔 营造浪漫的约会" },
+                { time: 57.26, text: "不害怕搞砸一切" },
+                { time: 59.93, text: "拥有你就拥有全世界" },
+                { time: 65.01, text: "亲爱的 爱上你 从那天起" },
+                { time: 71.33, text: "甜蜜的很轻易" },
+                { time: 75.69, text: "亲爱的 别任性 你的眼睛" },
+                { time: 81.94, text: "在说我愿意" },
+                { time: 108.90, text: "塞纳河畔 左岸的咖啡" },
+                { time: 111.46, text: "我手一杯 品尝你的美" },
+                { time: 114.43, text: "留下唇印的嘴" },
+                { time: 119.56, text: "花店玫瑰 名字写错谁" },
+                { time: 122.14, text: "告白气球 风吹到对街" },
+                { time: 125.23, text: "微笑在天上飞" },
+                { time: 129.29, text: "你说你有点难追" },
+                { time: 131.90, text: "想让我知难而退" },
+                { time: 134.60, text: "礼物不需挑最贵" },
+                { time: 137.26, text: "只要香榭的落叶" },
+                { time: 139.93, text: "喔 营造浪漫的约会" },
+                { time: 142.65, text: "不害怕搞砸一切" },
+                { time: 145.27, text: "拥有你就拥有全世界" },
+                { time: 150.31, text: "亲爱的 爱上你 从那天起" },
+                { time: 156.60, text: "甜蜜的很轻易" },
+                { time: 160.94, text: "亲爱的 别任性 你的眼睛" },
+                { time: 167.26, text: "在说我愿意" },
+                { time: 171.76, text: "亲爱的 爱上你 恋爱日记" },
+                { time: 177.93, text: "飘香水的回忆" },
+                { time: 182.33, text: "一整瓶 的梦境 全都有你" },
+                { time: 188.64, text: "搅拌在一起" },
+                { time: 193.02, text: "亲爱的别任性 你的眼睛" },
+                { time: 201.31, text: "在说我愿意" }
+            ];
+
+            // 渲染歌词
+            function renderLyrics() {
+                lyricsScroll.innerHTML = '';
+                lyricsData.forEach((item, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'lyric-line';
+                    div.dataset.time = item.time;
+                    div.dataset.index = index;
+                    div.textContent = item.text;
+                    lyricsScroll.appendChild(div);
+                });
+            }
+
+            // 格式化时间
+            function formatTime(sec) {
+                if (isNaN(sec)) return '0:00';
+                const m = Math.floor(sec / 60);
+                const s = Math.floor(sec % 60);
+                return `${m}:${s < 10 ? '0' : ''}${s}`;
+            }
+
+            // 高亮歌词
+            let activeIndex = -1;
+            function highlightLyric(currentTime) {
+                let newIndex = -1;
+                for (let i = 0; i < lyricsData.length; i++) {
+                    if (currentTime >= lyricsData[i].time - 0.3) {
+                        newIndex = i;
+                    } else {
+                        break;
+                    }
+                }
+                if (newIndex === activeIndex) return;
+                activeIndex = newIndex;
+
+                const lines = lyricsScroll.querySelectorAll('.lyric-line');
+                lines.forEach((line, idx) => {
+                    line.classList.toggle('active', idx === newIndex);
+                });
+
+                // 滚动到当前歌词
+                if (newIndex >= 0 && lines[newIndex]) {
+                    const container = lyricsScroll;
+                    const line = lines[newIndex];
+                    const containerRect = container.getBoundingClientRect();
+                    const lineRect = line.getBoundingClientRect();
+                    if (lineRect.top < containerRect.top + 60 || lineRect.bottom > containerRect.bottom - 60) {
+                        line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }
+            }
+
+            // 播放/暂停
+            function togglePlay() {
+                if (audio.paused) {
+                    audio.play().catch(e => {
+                        console.warn('播放失败，音源可能需要刷新页面或更换链接', e);
+                        // 尝试备用源（酷狗/网易云不同 API，实际使用请确保 CORS 或直接链接）
+                    });
+                    playBtn.textContent = '⏸';
+                    player.classList.add('playing');
+                } else {
+                    audio.pause();
+                    playBtn.textContent = '▶';
+                    player.classList.remove('playing');
+                }
+            }
+
+            // 更新进度
+            function updateProgress() {
+                const ct = audio.currentTime;
+                const dur = audio.duration || 0;
+
+                if (dur > 0) {
+                    const percent = (ct / dur) * 100;
+                    progressFill.style.width = percent + '%';
+                }
+                currentTimeEl.textContent = formatTime(ct);
+                if (dur > 0 && !isNaN(dur)) {
+                    durationEl.textContent = formatTime(dur);
+                }
+
+                highlightLyric(ct);
+            }
+
+            // 点击进度条跳转
+            function seek(e) {
+                const rect = progressBar.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const percent = Math.max(0, Math.min(1, x / rect.width));
+                if (audio.duration) {
+                    audio.currentTime = percent * audio.duration;
+                    updateProgress();
+                }
+            }
+
+            // 初始化
+            function init() {
+                renderLyrics();
+
+                audio.addEventListener('timeupdate', updateProgress);
+                audio.addEventListener('loadedmetadata', () => {
+                    durationEl.textContent = formatTime(audio.duration);
+                });
+                audio.addEventListener('ended', () => {
+                    playBtn.textContent = '▶';
+                    player.classList.remove('playing');
+                    progressFill.style.width = '0%';
+                    audio.currentTime = 0;
+                    activeIndex = -1;
+                    highlightLyric(0);
+                });
+
+                playBtn.addEventListener('click', togglePlay);
+                progressBar.addEventListener('click', seek);
+
+                // 预加载元数据后尝试显示时长
+                if (audio.readyState >= 1) {
+                    durationEl.textContent = formatTime(audio.duration);
+                }
+
+                // 首次高亮第一行
+                highlightLyric(0);
+
+                // 监听音频加载错误
+                audio.addEventListener('error', () => {
+                    durationEl.textContent = '—:—';
+                    console.warn('音频加载失败，请检查网络或更换音源链接。当前链接：网易云音乐外链。');
+                });
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>

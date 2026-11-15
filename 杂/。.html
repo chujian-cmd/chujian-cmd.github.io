@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>烟花聚字 3D</title>
+  <style>
+    html, body { margin: 0; overflow: hidden; background: #000; }
+    canvas { display: block; }
+    #info {
+      position: fixed; left: 12px; top: 12px;
+      color: #0f0; font-size: 13px;
+      font-family: monospace;
+      z-index: 1000;
+      background: rgba(0,0,0,0.7);
+      padding: 6px 10px;
+      border-radius: 6px;
+      line-height: 1.5;
+    }
+    #hint {
+      position: fixed; left: 50%; bottom: 20px;
+      transform: translateX(-50%);
+      color: #fff; font-size: 14px;
+      opacity: 0.6;
+      z-index: 1000;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="info">
+  目标点: <span id="cnt">?</span> · 已填: <span id="filled">0</span><br>
+  火箭: <span id="rk">0</span> · 火星: <span id="sh">0</span> · 爆炸: <span id="ex">0</span>
+</div>
+<div id="hint">点屏幕 → 放烟花</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./node_modules/three/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+  import * as THREE from 'three';
+
+  // ============================================================
+  // 1. 场景
+  // ============================================================
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+
+  const camera = new THREE.PerspectiveCamera(
+    50, window.innerWidth / window.innerHeight, 0.1, 1000
+  );
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  document.body.appendChild(renderer.domElement);
+
+  // ============================================================
+  // 2. 取字（和纯 Canvas 版一模一样）
+  // ============================================================
+  const TEXT_LINES = ['中国万岁', '国庆快乐'];
+  const FONT_SIZE = 160;
+  const FIDELITY = 8;
+  const LINE_GAP = 40;
+
+  const off = document.createElement('canvas');
+  const offCtx = off.getContext('2d', { willReadFrequently: true });
+  const fontStr = `900 ${FONT_SIZE}px sans-serif`;
+  offCtx.font = fontStr;
+
+  let maxLineWidth = 0;
+  for (const line of TEXT_LINES) {
+    const w = offCtx.measureText(line).width;
+    if (w > maxLineWidth) maxLineWidth = w;
+  }
+  if (maxLineWidth < 10) maxLineWidth = FONT_SIZE * 4;
+
+  const padding = 20;
+  const offW = Math.ceil(maxLineWidth) + padding * 2;
+  const offH = TEXT_LINES.length * FONT_SIZE
+             + (TEXT_LINES.length - 1) * LINE_GAP
+             + padding * 2;
+
+  off.width = offW;
+  off.height = offH;
+  offCtx.font = fontStr;
+  offCtx.fillStyle = '#fff';
+  offCtx.textBaseline = 'top';
+  offCtx.textAlign = 'center';
+
+  for (let i = 0; i < TEXT_LINES.length; i++) {
+    const y = padding + i * (FONT_SIZE + LINE_GAP);
+    offCtx.fillText(TEXT_LINES[i], offW / 2, y);
+  }
+
+  const imgData = offCtx.getImageData(0, 0, offW, offH);
+  const data = imgData.data;
+
+  const rawTargets = [];
+  for (let y = 0; y < offH; y += FIDELITY) {
+    for (let x = 0; x < offW; x += FIDELITY) {
+      const idx = (y * offW + x) * 4;
+      if (data[idx + 3] > 128) {
+        rawTargets.push({ x, y });
+      }
+    }
+  }
+
+  document.getElementById('cnt').textContent = rawTargets.length;
+
+  // ============================================================
+  // 3. 像素 → 世界坐标
+  // ============================================================
+  // 屏幕像素 1:1 映射到世界单位，相机放在 z 距离上，透视刚好合适
+  // 世界高度 = 屏幕像素高度，相机 z 根据 FOV 反算
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const worldHeight = 2 * Math.tan(fovRad / 2);  // 距离 1 时的可视高度
+  // 我们想让屏幕高度 = offH 像素对应的世界高度，但字要占屏幕大部分
+  // 直接让世界坐标 = 屏幕坐标，相机放在合适距离
+  const CAM_DIST = 800;
+
+  camera.position.set(0, 0, CAM_DIST);
+  camera.lookAt(0, 0, 0);
+
+  // 屏幕像素 → 世界：屏幕 (0,0) 左上 → 世界 (-w/2, h/2)
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+
+  const offsetX = W / 2 - offW / 2;
+  const offsetY = H / 2 - offH / 2;
+
+  const targets = rawTargets.map(p => ({
+    x: p.x + offsetX - W / 2,
+    y: -(p.y + offsetY - H / 2),
+    z: (Math.random() - 0.5) * 2,
+    taken: false,
+    filled: false
+  }));
+
+  // ============================================================
+  // 4. InstancedMesh
+  // ============================================================
+  const MAX_BALLS = 4000;
+  const BALL_R = 3.5;
+  const ballGeo = new THREE.SphereGeometry(BALL_R, 6, 5);
+  const ballMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+
+  const instanced = new THREE.InstancedMesh(ballGeo, ballMat, MAX_BALLS);
+  instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  instanced.instanceColor = new THREE.InstancedBufferAttribute(
+    new Float32Array(MAX_BALLS * 3), 3
+  );
+  scene.add(instanced);
+
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+
+  // ============================================================
+  // 5. 火星 / 火箭
+  // ============================================================
+  const shards = [];
+  const rockets = [];
+  let explodeCount = 0;
+
+  function claimTarget() {
+    const N = targets.length;
+    if (N === 0) return null;
+    const start = Math.floor(Math.random() * N);
+    for (let k = 0; k < N; k++) {
+      const t = targets[(start + k) % N];
+      if (!t.taken && !t.filled) {
+        t.taken = true;
+        return t;
+      }
+    }
+    return null;
+  }
+
+  function spawnShard(x, y, hue) {
+    if (shards.length >= MAX_BALLS - 100) return;
+    const target = claimTarget();
+    if (!target) return;
+
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 4 + Math.random() * 10;
+
+    shards.push({
+      x, y, z: 0,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      vz: (Math.random() - 0.5) * 2,
+      target, hue,
+      lightness: 55,
+      size: 1,
+      timer: 0,
+      ttl: 70
+    });
+  }
+
+  function spawnRocket() {
+    const startY = -H / 2 - 20;
+    const targetY = -H / 2 + H * 0.35 + Math.random() * H * 0.2;
+    const frames = 60 + Math.random() * 40;
+    const vy = (targetY - startY) / frames;
+
+    rockets.push({
+      x: (Math.random() - 0.5) * W * 0.6,
+      y: startY,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: vy,
+      hue: Math.random() * 360,
+      explodeY: targetY,
+      exploded: false
+    });
+  }
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  spawnRocket(); spawnRocket(); spawnRocket();
+
+  // ============================================================
+  // 6. 主循环
+  // ============================================================
+  let frame = 0;
+  let filledCount = 0;
+
+  function animate() {
+    requestAnimationFrame(animate);
+    frame++;
+
+    if (frame % 25 === 0 && shards.length < MAX_BALLS * 0.85) {
+      spawnRocket();
+    }
+
+    // ---- 火箭 ----
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      const r = rockets[i];
+      r.x += r.vx;
+      r.y += r.vy;
+
+      if (r.y >= r.explodeY && !r.exploded) {
+        r.exploded = true;
+        explodeCount++;
+        document.getElementById('ex').textContent = explodeCount;
+        for (let k = 0; k < 50; k++) spawnShard(r.x, r.y, r.hue);
+        rockets.splice(i, 1);
+        continue;
+      }
+      if (r.y > H / 2 + 30) rockets.splice(i, 1);
+    }
+
+    // ---- 火星 ----
+    for (let i = shards.length - 1; i >= 0; i--) {
+      const s = shards[i];
+
+      if (s.target) {
+        const tx = s.target.x;
+        const ty = s.target.y;
+
+        const dx = tx - s.x;
+        const dy = ty - s.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        const a = Math.atan2(dy, dx);
+        const tvx = Math.cos(a) * 8;
+        const tvy = Math.sin(a) * 8;
+
+        if (dist < 4) {
+          s.lightness = lerp(s.lightness, 100, 0.15);
+          s.vx = s.vy = s.vz = 0;
+          s.x = lerp(s.x, tx, 0.25);
+          s.y = lerp(s.y, ty, 0.25);
+          s.timer += 1;
+          s.size = lerp(s.size, 0.7, 0.1);
+
+          if (s.timer >= s.ttl) {
+            s.target.filled = true;
+            s.target.taken = false;
+            filledCount++;
+            document.getElementById('filled').textContent = filledCount;
+            shards.splice(i, 1);
+            continue;
+          }
+        } else if (dist < 40) {
+          s.lightness = lerp(s.lightness, 100, 0.06);
+          s.vx = lerp(s.vx, tvx, 0.12);
+          s.vy = lerp(s.vy, tvy, 0.12);
+          s.timer += 0.4;
+          s.size = lerp(s.size, 0.8, 0.08);
+        } else {
+          const k = 0.04;
+          s.vx = lerp(s.vx, dx * 0.05, k);
+          s.vy = lerp(s.vy, dy * 0.05, k);
+        }
+      } else {
+        s.vy -= 1.5;
+        s.size = lerp(s.size, 0.4, 0.06);
+        if (s.y < -H / 2 - 50) {
+          shards.splice(i, 1);
+          continue;
+        }
+      }
+
+      s.x += s.vx;
+      s.y += s.vy;
+      s.z += s.vz;
+    }
+
+    // ---- 写入 InstancedMesh ----
+    let idx = 0;
+
+    // 已填目标
+    for (const tg of targets) {
+      if (tg.filled) {
+        if (idx >= MAX_BALLS) break;
+        dummy.position.set(tg.x, tg.y, tg.z);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+        instanced.setMatrixAt(idx, dummy.matrix);
+        color.setHSL(0, 0, 1);
+        instanced.setColorAt(idx, color);
+        idx++;
+      }
+    }
+
+    // 活跃火星
+    for (const s of shards) {
+      if (idx >= MAX_BALLS) break;
+      dummy.position.set(s.x, s.y, s.z);
+      dummy.scale.setScalar(s.size);
+      dummy.updateMatrix();
+      instanced.setMatrixAt(idx, dummy.matrix);
+      color.setHSL((s.hue % 360) / 360, 1, s.lightness / 100);
+      instanced.setColorAt(idx, color);
+      idx++;
+    }
+
+    // 隐藏剩余
+    for (let k = idx; k < MAX_BALLS; k++) {
+      dummy.position.set(0, 0, 0);
+      dummy.scale.setScalar(0);
+      dummy.updateMatrix();
+      instanced.setMatrixAt(k, dummy.matrix);
+    }
+
+    instanced.count = idx;
+    instanced.instanceMatrix.needsUpdate = true;
+    if (instanced.instanceColor) {
+      instanced.instanceColor.needsUpdate = true;
+    }
+
+    // 相机轻微晃动
+    camera.position.x = Math.sin(frame * 0.005) * 5;
+    camera.position.y = Math.sin(frame * 0.007) * 3;
+    camera.lookAt(0, 0, 0);
+
+    renderer.render(scene, camera);
+
+    document.getElementById('rk').textContent = rockets.length;
+    document.getElementById('sh').textContent = shards.length;
+  }
+
+  animate();
+
+  // ============================================================
+  // 7. 交互
+  // ============================================================
+  window.addEventListener('pointerdown', () => {
+    spawnRocket(); spawnRocket();
+  });
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+
+</body>
+</html>
