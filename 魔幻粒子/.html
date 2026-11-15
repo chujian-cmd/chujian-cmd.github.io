@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2D 魔幻粒子 · 星灵幻境</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #0a0a1a;
+      color: white;
+      font-family: 'Arial', sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    .info {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      color: rgba(200, 200, 255, 0.6);
+      font-size: 14px;
+      letter-spacing: 2px;
+      text-shadow: 0 0 10px rgba(100, 100, 255, 0.5);
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="magicCanvas"></canvas>
+  <div class="info">✨ 魔幻粒子 · 2D 星灵幻境 ✨</div>
+
+  <script>
+    (function() {
+      const canvas = document.getElementById('magicCanvas');
+      const ctx = canvas.getContext('2d');
+
+      // 粒子系统参数
+      let width, height;
+      let particles = [];
+      const PARTICLE_COUNT = 180;      // 粒子数量
+      const CONNECT_DISTANCE = 140;    // 连线最大距离
+      const MAX_SPEED = 0.8;           // 最大速度
+
+      // 色彩配置 (魔幻风格)
+      const HUES = [180, 210, 250, 290, 330, 20]; // 青蓝紫粉橙
+
+      // 鼠标交互
+      const mouse = {
+        x: null,
+        y: null,
+        radius: 150,
+        active: false
+      };
+
+      // 窗口尺寸调整
+      function resizeCanvas() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        canvas.width = width;
+        canvas.height = height;
+        // 重新初始化粒子（保持位置比例？简单重新生成）
+        initParticles();
+      }
+
+      // 粒子类
+      class Particle {
+        constructor() {
+          this.x = Math.random() * width;
+          this.y = Math.random() * height;
+          // 速度方向随机
+          const angle = Math.random() * Math.PI * 2;
+          const speed = Math.random() * MAX_SPEED + 0.2;
+          this.vx = Math.cos(angle) * speed;
+          this.vy = Math.sin(angle) * speed;
+          this.radius = Math.random() * 2.8 + 1.2; // 2~4 左右
+          // 基础色相
+          this.hue = HUES[Math.floor(Math.random() * HUES.length)];
+          // 每个粒子轻微色相偏移
+          this.hueShift = Math.random() * 20 - 10;
+          // 闪烁相位
+          this.phase = Math.random() * Math.PI * 2;
+          this.phaseSpeed = 0.02 + Math.random() * 0.03;
+          // 亮度波动
+          this.brightness = 0.7 + Math.random() * 0.5;
+        }
+
+        // 更新位置
+        update() {
+          // 边界碰撞 (弹性)
+          if (this.x < 0) { this.x = 0; this.vx *= -1; }
+          if (this.x > width) { this.x = width; this.vx *= -1; }
+          if (this.y < 0) { this.y = 0; this.vy *= -1; }
+          if (this.y > height) { this.y = height; this.vy *= -1; }
+
+          // 移动
+          this.x += this.vx;
+          this.y += this.vy;
+
+          // 轻微随机扰动，增加灵动感
+          this.vx += (Math.random() - 0.5) * 0.04;
+          this.vy += (Math.random() - 0.5) * 0.04;
+
+          // 限制速度范围
+          const sp = Math.hypot(this.vx, this.vy);
+          const maxSp = MAX_SPEED * 1.2;
+          if (sp > maxSp) {
+            this.vx = (this.vx / sp) * maxSp;
+            this.vy = (this.vy / sp) * maxSp;
+          }
+          if (sp < 0.15) {
+            // 太慢则给一点推力
+            this.vx += (Math.random() - 0.5) * 0.1;
+            this.vy += (Math.random() - 0.5) * 0.1;
+          }
+
+          // 相位更新 (用于颜色/透明度闪烁)
+          this.phase += this.phaseSpeed;
+        }
+
+        // 绘制粒子
+        draw() {
+          // 动态色相：基础色相 + 时间微移 + 闪烁
+          const hue = (this.hue + this.hueShift + Math.sin(this.phase) * 10) % 360;
+          // 动态亮度/透明度
+          const pulse = 0.7 + 0.3 * Math.sin(this.phase * 1.7);
+          const alpha = 0.65 + 0.35 * Math.sin(this.phase * 1.3 + 1.2);
+          const radius = this.radius * (0.9 + 0.2 * Math.sin(this.phase * 2));
+
+          // 光晕效果 (大半径半透明圆)
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, radius * 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = `hsla(${hue}, 90%, 70%, ${alpha * 0.15})`;
+          ctx.fill();
+
+          // 主粒子核心
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
+          // 径向渐变让粒子有发光感
+          const gradient = ctx.createRadialGradient(
+            this.x - radius * 0.3, this.y - radius * 0.3, radius * 0.2,
+            this.x, this.y, radius * 1.8
+          );
+          gradient.addColorStop(0, `hsla(${hue}, 100%, 80%, 1)`);
+          gradient.addColorStop(0.6, `hsla(${hue}, 95%, 65%, 0.9)`);
+          gradient.addColorStop(1, `hsla(${hue}, 90%, 50%, 0.5)`);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+
+          // 中心高光小点
+          ctx.beginPath();
+          ctx.arc(this.x - radius * 0.2, this.y - radius * 0.2, radius * 0.4, 0, Math.PI * 2);
+          ctx.fillStyle = `hsla(${hue}, 100%, 95%, 0.9)`;
+          ctx.fill();
+        }
+      }
+
+      // 初始化所有粒子
+      function initParticles() {
+        particles = [];
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          particles.push(new Particle());
+        }
+      }
+
+      // 绘制连线和光晕
+      function drawConnections() {
+        // 遍历所有粒子对 (i < j)
+        for (let i = 0; i < particles.length; i++) {
+          const p1 = particles[i];
+          for (let j = i + 1; j < particles.length; j++) {
+            const p2 = particles[j];
+            const dx = p1.x - p2.x;
+            const dy = p1.y - p2.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist < CONNECT_DISTANCE) {
+              // 透明度随距离衰减
+              const opacity = (1 - dist / CONNECT_DISTANCE) * 0.45;
+              // 使用两者色相的平均值 (或取p1)
+              const hue = (p1.hue + p2.hue) / 2;
+              // 连线发光
+              ctx.beginPath();
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.strokeStyle = `hsla(${hue}, 90%, 70%, ${opacity})`;
+              ctx.lineWidth = 1.2;
+              ctx.shadowColor = `hsla(${hue}, 100%, 70%, 0.8)`;
+              ctx.shadowBlur = 12;
+              ctx.stroke();
+              // 重置阴影避免影响其他绘制？但粒子绘制也需要阴影，所以不用重置，但粒子绘制时设置了阴影，这里统一开启效果更好
+              // 但每个连线都设置阴影会增加开销，但数量不多可接受
+            }
+          }
+        }
+        // 重置阴影，以免影响后续粒子绘制（粒子内部自己设置渐变，但阴影会叠加，我们想要粒子也有发光，所以保留阴影？）
+        // 为了性能，可以在绘制每个粒子时单独设置阴影，这里就不重置了，但为了粒子绘制干净，在粒子绘制中设置阴影。但连线阴影重叠可能过亮，可以接受。
+        // 但为避免连线阴影干扰粒子核心，粒子绘制时重新设置shadowColor。
+      }
+
+      // 鼠标交互：粒子在鼠标周围会被推开 / 吸引？这里做排斥效果（魔幻排斥场）
+      function applyMouseInfluence() {
+        if (!mouse.active || mouse.x === null || mouse.y === null) return;
+        for (let p of particles) {
+          const dx = p.x - mouse.x;
+          const dy = p.y - mouse.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < mouse.radius && dist > 0.5) {
+            // 排斥力：距离越近力越大
+            const force = (1 - dist / mouse.radius) * 0.9;
+            const angle = Math.atan2(dy, dx);
+            // 轻微改变速度，形成流场
+            p.vx += Math.cos(angle) * force * 0.5;
+            p.vy += Math.sin(angle) * force * 0.5;
+            // 限制最大速度避免飞出去
+            const sp = Math.hypot(p.vx, p.vy);
+            const maxSp = MAX_SPEED * 1.8;
+            if (sp > maxSp) {
+              p.vx = (p.vx / sp) * maxSp;
+              p.vy = (p.vy / sp) * maxSp;
+            }
+          }
+        }
+      }
+
+      // 动画循环
+      function animate() {
+        // 使用 requestAnimationFrame 前需要清理画布，并应用一点拖尾效果？拖尾太模糊，用全清+背景色吧，或者用半透明背景制造轨迹？
+        // 魔幻风格用纯色背景更干净，但有拖尾也许更梦幻。这里采用半透明填充制造轻微拖尾。
+        // 色值为深蓝黑，透明度0.15，可以叠加出柔和尾巴。
+        ctx.fillStyle = 'rgba(10, 10, 26, 0.25)';
+        ctx.fillRect(0, 0, width, height);
+
+        // 但拖尾会让粒子模糊，如果想要更锐利可以改回全清。为了梦幻效果，保留轻微拖尾。
+        // 但注意连线也会被拖尾影响，可接受。你也可以取消注释下面这行改成全清：
+        // ctx.clearRect(0, 0, width, height); // 如果纯清屏，取消上一行填充并启用这行
+
+        // 应用鼠标影响
+        applyMouseInfluence();
+
+        // 更新所有粒子
+        particles.forEach(p => p.update());
+
+        // 绘制连线 (先画连线，让粒子覆盖在上层)
+        // 设置连线阴影效果
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(150, 200, 255, 0.5)';
+        drawConnections();
+
+        // 绘制粒子（粒子自身会设置阴影，我们统一设置一下粒子的阴影）
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = 'rgba(180, 200, 255, 0.7)';
+        particles.forEach(p => p.draw());
+
+        // 重置阴影避免影响其他
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+
+        requestAnimationFrame(animate);
+      }
+
+      // 鼠标事件监听
+      function setupMouseEvents() {
+        window.addEventListener('mousemove', (e) => {
+          mouse.x = e.clientX;
+          mouse.y = e.clientY;
+          mouse.active = true;
+        });
+
+        window.addEventListener('mouseleave', () => {
+          mouse.active = false;
+          mouse.x = null;
+          mouse.y = null;
+        });
+
+        // 触摸设备支持
+        window.addEventListener('touchmove', (e) => {
+          e.preventDefault(); // 防止滚动
+          if (e.touches.length > 0) {
+            mouse.x = e.touches[0].clientX;
+            mouse.y = e.touches[0].clientY;
+            mouse.active = true;
+          }
+        }, { passive: false });
+
+        window.addEventListener('touchend', () => {
+          mouse.active = false;
+          mouse.x = null;
+          mouse.y = null;
+        });
+      }
+
+      // 启动
+      function init() {
+        resizeCanvas();
+        setupMouseEvents();
+        // 首次立即填充黑色背景，避免拖尾初始为空白
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(0, 0, width, height);
+        animate();
+      }
+
+      // 窗口尺寸变化时重置画布和粒子（也可以保留粒子位置但重新初始化简单）
+      window.addEventListener('resize', () => {
+        resizeCanvas();
+        // 重新填充背景
+        ctx.fillStyle = '#0a0a1a';
+        ctx.fillRect(0, 0, width, height);
+      });
+
+      // 开始一切
+      init();
+    })();
+  </script>
+</body>
+</html>
