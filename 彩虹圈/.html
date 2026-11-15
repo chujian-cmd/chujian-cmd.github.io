@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>🌈 彩虹圈</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #ffffff;          /* 纯白背景 */
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+    cursor: default;
+  }
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%);
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #c8c8c8;
+    letter-spacing: 2px;
+    pointer-events: none;
+    user-select: none;
+    transition: opacity .6s ease;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hint" id="hint">按住彩虹圈拖动 · 松手看它弹一弹</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cvs  = document.getElementById('c');
+  var ctx  = cvs.getContext('2d');
+  var hint = document.getElementById('hint');
+
+  /* ---------- 参数 ---------- */
+  var N       = 26;        // 线圈数量
+  var GRAV    = 0.5;       // 重力
+  var DAMP    = 0.982;     // 阻尼
+  var ITER    = 4;         // 约束迭代次数
+  var STIFF   = 0.5;       // 约束刚度
+
+  var W, H, DPR;
+  var R, RY, REST, BASE_Y; // 半径 / 竖向半径 / 圈间距 / 地面高度
+  var nodes = [];
+  var dragIndex = -1;
+  var hoverIndex = -1;
+
+  /* ---------- 初始化 ---------- */
+  function setup() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+
+    cvs.width  = Math.round(W * DPR);
+    cvs.height = Math.round(H * DPR);
+    cvs.style.width  = W + 'px';
+    cvs.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    R = Math.min(W * 0.18, H * 0.13, 108);
+    R = Math.max(R, 28);
+    RY   = R * 0.28;        // 视角俯仰造成的椭圆压扁
+    REST = RY * 0.56;       // 静止时相邻圈的间距
+    BASE_Y = H * 0.87;
+
+    var cx = W / 2;
+    nodes = [];
+    for (var i = 0; i < N; i++) {
+      var y = BASE_Y - i * REST;
+      nodes.push({
+        x: cx, y: y,
+        px: cx, py: y,       // 上一帧位置（Verlet 积分）
+        pinned: (i === 0)    // 最底下那圈固定在地面
+      });
+    }
+
+    dragIndex  = -1;
+    hoverIndex = -1;
+  }
+
+  /* ---------- 物理 ---------- */
+  function step() {
+    var i, n;
+
+    // 1. 积分
+    for (i = 0; i < N; i++) {
+      n = nodes[i];
+      if (n.pinned || i === dragIndex) continue;
+      var vx = (n.x - n.px) * DAMP;
+      var vy = (n.y - n.py) * DAMP;
+      n.px = n.x;
+      n.py = n.y;
+      n.x += vx;
+      n.y += vy + GRAV;
+    }
+
+    // 2. 距离约束（保持圈与圈之间的间距，被拉伸时自然回弹）
+    for (var k = 0; k < ITER; k++) {
+      for (i = 0; i < N - 1; i++) {
+        var a = nodes[i], b = nodes[i + 1];
+        var dx = b.x - a.x;
+        var dy = b.y - a.y;
+        var d  = Math.sqrt(dx * dx + dy * dy);
+        if (d < 1e-6) d = 1e-6;
+
+        var aFixed = a.pinned || i === dragIndex;
+        var bFixed = b.pinned || (i + 1) === dragIndex;
+        if (aFixed && bFixed) continue;
+
+        var diff = ((d - REST) / d) * STIFF;
+
+        if (aFixed) {
+          b.x -= dx * diff; b.y -= dy * diff;
+        } else if (bFixed) {
+          a.x += dx * diff; a.y += dy * diff;
+        } else {
+          var h = diff * 0.5;
+          a.x += dx * h; a.y += dy * h;
+          b.x -= dx * h; b.y -= dy * h;
+        }
+      }
+    }
+  }
+
+  /* ---------- 绘制 ---------- */
+  function drawArc(idx, front, lw) {
+    var n = nodes[idx];
+    var hue = (idx / (N - 1)) * 330;
+    var SEG = 34;
+    var a0 = front ? 0 : Math.PI;
+    var a1 = front ? Math.PI : Math.PI * 2;
+    var s, ang, x, y;
+
+    ctx.beginPath();
+    for (s = 0; s <= SEG; s++) {
+      ang = a0 + (a1 - a0) * (s / SEG);
+      x = n.x + R * Math.cos(ang);
+      y = n.y + RY * Math.sin(ang);
+      if (s === 0) ctx.moveTo(x, y);
+      else         ctx.lineTo(x, y);
+    }
+
+    if (front) {
+      ctx.strokeStyle = 'hsl(' + hue + ', 88%, ' + (idx === hoverIndex ? 64 : 56) + '%)';
+    } else {
+      ctx.strokeStyle = 'hsl(' + hue + ', 48%, 40%)';
+    }
+    ctx.lineWidth  = lw;
+    ctx.lineCap    = 'round';
+    ctx.lineJoin   = 'round';
+    ctx.stroke();
+
+    // 金属高光（只画在前面半圈）
+    if (front) {
+      var rr = R * 0.80, rry = RY * 0.80;
+      ctx.beginPath();
+      for (s = 0; s <= SEG; s++) {
+        ang = a0 + (a1 - a0) * (s / SEG);
+        x = n.x + rr * Math.cos(ang);
+        y = n.y + rry * Math.sin(ang) - lw * 0.4;
+        if (s === 0) ctx.moveTo(x, y);
+        else         ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = 'hsla(' + hue + ', 100%, 84%, 0.42)';
+      ctx.lineWidth   = lw * 0.30;
+      ctx.stroke();
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    var lw = Math.max(2.2, R * 0.042);
+    var i;
+
+    // 先画所有圈的后半弧（背面）
+    for (i = 0; i < N; i++) drawArc(i, false, lw);
+    // 再画前半弧（正面），形成前后遮挡
+    for (i = 0; i < N; i++) drawArc(i, true, lw);
+  }
+
+  /* ---------- 主循环 ---------- */
+  var last = 0, acc = 0;
+  var FIXED = 1000 / 60;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+
+    if (!last) last = now;
+    var dt = now - last;
+    last = now;
+    if (dt > 80) dt = 80;
+
+    acc += dt;
+    var guard = 0;
+    while (acc >= FIXED && guard < 4) {
+      step();
+      acc -= FIXED;
+      guard++;
+    }
+    draw();
+  }
+
+  /* ---------- 交互 ---------- */
+  function localPos(e) {
+    var r = cvs.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  function nearest(p) {
+    var best = -1, bd = Infinity;
+    for (var i = 1; i < N; i++) {
+      var dx = nodes[i].x - p.x;
+      var dy = nodes[i].y - p.y;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return { i: best, d: bd };
+  }
+
+  function grabRadius() {
+    return Math.max(R * 1.05, 52);
+  }
+
+  cvs.addEventListener('pointerdown', function (e) {
+    var p = localPos(e);
+    var near = nearest(p);
+    if (near.i > 0 && near.d < grabRadius()) {
+      dragIndex = near.i;
+      var n = nodes[dragIndex];
+      n.x = p.x; n.y = p.y;
+      n.px = p.x; n.py = p.y;
+      cvs.setPointerCapture(e.pointerId);
+      cvs.style.cursor = 'grabbing';
+      hint.style.opacity = '0';
+    }
+  });
+
+  cvs.addEventListener('pointermove', function (e) {
+    var p = localPos(e);
+
+    if (dragIndex >= 0) {
+      var n = nodes[dragIndex];
+      n.x = p.x;
+      n.y = p.y;
+      n.px = p.x;
+      n.py = p.y;
+      return;
+    }
+
+    var near = nearest(p);
+    hoverIndex = (near.i > 0 && near.d < grabRadius()) ? near.i : -1;
+    cvs.style.cursor = hoverIndex >= 0 ? 'grab' : 'default';
+  });
+
+  function endDrag() {
+    if (dragIndex >= 0) {
+      dragIndex = -1;
+      cvs.style.cursor = 'default';
+    }
+  }
+
+  cvs.addEventListener('pointerup', endDrag);
+  cvs.addEventListener('pointercancel', endDrag);
+  cvs.addEventListener('pointerleave', function () {
+    if (dragIndex < 0) { hoverIndex = -1; cvs.style.cursor = 'default'; }
+  });
+
+  // 双击复位
+  cvs.addEventListener('dblclick', function () { setup(); });
+
+  // 窗口尺寸变化
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(setup, 150);
+  });
+
+  /* ---------- 启动 ---------- */
+  setup();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

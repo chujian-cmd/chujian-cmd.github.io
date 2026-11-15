@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>彩虹圈</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #ffffff;          /* 纯白背景 */
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+  }
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    font: 13px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #cfcfcf;
+    letter-spacing: 3px;
+    pointer-events: none;
+    user-select: none;
+    transition: opacity .6s ease;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hint" id="hint">拖动它 · 拉长 · 松手回弹</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cvs  = document.getElementById('c');
+  var ctx  = cvs.getContext('2d');
+  var hint = document.getElementById('hint');
+
+  /* ---------------- 参数 ---------------- */
+  var N      = 24;          // 弹簧骨架节点数
+  var SEG    = 9;           // 静止时相邻节点的距离（压缩态）
+  var TURNS  = 13;          // 螺旋圈数
+
+  var R      = 58;          // 螺旋半径（水平）
+  var RY     = 24;          // 螺旋半径（纵深压扁后）
+
+  var GRAV   = 0.38;        // 重力
+  var DAMP   = 0.985;       // 阻尼
+  var STIFF  = 0.55;        // 距离约束刚度（越小越能拉伸）
+  var BEND   = 0.14;        // 弯曲刚度（保持挺直）
+  var ITER   = 6;           // 约束迭代次数
+
+  var SAMPLES = 460;        // 螺旋采样点数
+
+  /* ---------------- 状态 ---------------- */
+  var W, H, DPR, CX, GROUND;
+  var nodes = [];
+  var dragIdx = -1;
+  var dragOffX = 0, dragOffY = 0;
+
+  // 预分配缓冲，避免每帧 GC
+  var axisX = new Float32Array(SAMPLES + 1);
+  var axisY = new Float32Array(SAMPLES + 1);
+  var spX   = new Float32Array(SAMPLES + 1);
+  var spY   = new Float32Array(SAMPLES + 1);
+
+  /* ---------------- Catmull-Rom 插值 ---------------- */
+  function catmull(p0, p1, p2, p3, t) {
+    var t2 = t * t, t3 = t2 * t;
+    return 0.5 * (
+      (2 * p1) +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+    );
+  }
+
+  /* ---------------- 初始化 ---------------- */
+  function init() {
+    nodes.length = 0;
+    var baseY = GROUND - RY;
+    for (var i = 0; i < N; i++) {
+      var y = baseY - i * SEG;
+      nodes.push({
+        x: CX, y: y,
+        px: CX, py: y,
+        pin: i === 0          // 最底部那一圈固定在地面
+      });
+    }
+    dragIdx = -1;
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+
+    cvs.width  = Math.round(W * DPR);
+    cvs.height = Math.round(H * DPR);
+    cvs.style.width  = W + 'px';
+    cvs.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    CX     = W / 2;
+    GROUND = H * 0.86;
+
+    // 半径随屏幕自适应
+    R  = Math.max(32, Math.min(W * 0.16, H * 0.095, 66));
+    RY = R * 0.42;
+
+    init();
+  }
+
+  /* ---------------- 物理 ---------------- */
+  function step() {
+    var i, n;
+
+    /* 1. Verlet 积分 */
+    for (i = 0; i < N; i++) {
+      n = nodes[i];
+      if (n.pin || i === dragIdx) continue;
+
+      var vx = (n.x - n.px) * DAMP;
+      var vy = (n.y - n.py) * DAMP;
+
+      n.px = n.x;
+      n.py = n.y;
+      n.x += vx;
+      n.y += vy + GRAV;
+    }
+
+    /* 2. 约束迭代 */
+    for (var k = 0; k < ITER; k++) {
+
+      // 距离约束：保持段长，软约束 → 可拉伸、可回弹
+      for (i = 0; i < N - 1; i++) {
+        var a = nodes[i], b = nodes[i + 1];
+        var dx = b.x - a.x;
+        var dy = b.y - a.y;
+        var d  = Math.sqrt(dx * dx + dy * dy) || 0.0001;
+        var diff = ((d - SEG) / d) * STIFF;
+
+        var af = a.pin || i === dragIdx;
+        var bf = b.pin || (i + 1) === dragIdx;
+        if (af && bf) continue;
+
+        if (af) {
+          b.x -= dx * diff; b.y -= dy * diff;
+        } else if (bf) {
+          a.x += dx * diff; a.y += dy * diff;
+        } else {
+          var h = diff * 0.5;
+          a.x += dx * h; a.y += dy * h;
+          b.x -= dx * h; b.y -= dy * h;
+        }
+      }
+
+      // 弯曲约束：让链条保持挺直（有弹性，可弯曲）
+      for (i = 1; i < N - 1; i++) {
+        if (i === dragIdx) continue;
+        var p = nodes[i - 1], c = nodes[i], q = nodes[i + 1];
+        if (c.pin) continue;
+        c.x += ((p.x + q.x) * 0.5 - c.x) * BEND;
+        c.y += ((p.y + q.y) * 0.5 - c.y) * BEND;
+      }
+    }
+  }
+
+  /* ---------------- 渲染 ---------------- */
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    /* 地面阴影 */
+    ctx.beginPath();
+    ctx.ellipse(CX, GROUND + 3, R * 1.15, R * 0.20, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.055)';
+    ctx.fill();
+
+    var segN = N - 1;
+    var k, i, t, g;
+
+    /* 1. 骨架曲线采样（Catmull-Rom 样条） */
+    for (k = 0; k <= SAMPLES; k++) {
+      g = (k / SAMPLES) * segN;
+      i = Math.floor(g);
+      if (i > segN - 1) i = segN - 1;
+      t = g - i;
+
+      var p0 = nodes[i > 0 ? i - 1 : 0];
+      var p1 = nodes[i];
+      var p2 = nodes[i + 1];
+      var p3 = nodes[i + 2 <= N - 1 ? i + 2 : N - 1];
+
+      axisX[k] = catmull(p0.x, p1.x, p2.x, p3.x, t);
+      axisY[k] = catmull(p0.y, p1.y, p2.y, p3.y, t);
+    }
+
+    /* 2. 沿骨架生成螺旋点 */
+    var TWO_PI_T = 2 * Math.PI * TURNS;
+
+    for (k = 0; k <= SAMPLES; k++) {
+      var kp = k > 0 ? k - 1 : 0;
+      var kn = k < SAMPLES ? k + 1 : SAMPLES;
+
+      // 骨架切线
+      var tx = axisX[kn] - axisX[kp];
+      var ty = axisY[kn] - axisY[kp];
+      var tl = Math.sqrt(tx * tx + ty * ty) || 1;
+      tx /= tl;
+      ty /= tl;
+
+      // 法线
+      var nx = -ty;
+      var ny =  tx;
+
+      var phi = TWO_PI_T * (k / SAMPLES);
+      var cs = Math.cos(phi);
+      var sn = Math.sin(phi);
+
+      // 螺旋点：垂直于骨架方向的圆，投影成椭圆
+      spX[k] = axisX[k] + R * cs * nx + RY * sn * tx;
+      spY[k] = axisY[k] + R * cs * ny + RY * sn * ty;
+    }
+
+    /* 3. 绘制弹簧（分段上色 → 彩虹渐变） */
+    var STEP = 7;
+    var lw = Math.max(3, R * 0.105);
+
+    ctx.lineCap  = 'butt';
+    ctx.lineJoin = 'round';
+
+    for (i = 0; i < SAMPLES; i += STEP) {
+      var e = Math.min(i + STEP, SAMPLES);
+      var hue = (i / SAMPLES) * 290;   // 红 → 紫
+
+      ctx.beginPath();
+      ctx.moveTo(spX[i], spY[i]);
+      for (var j = i + 1; j <= e; j++) {
+        ctx.lineTo(spX[j], spY[j]);
+      }
+      ctx.strokeStyle = 'hsl(' + hue + ', 88%, 55%)';
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+
+    /* 4. 金属高光（左上偏移的细亮线） */
+    var hw = Math.max(1, R * 0.03);
+    for (i = 0; i < SAMPLES; i += STEP) {
+      var e2 = Math.min(i + STEP, SAMPLES);
+      var hue2 = (i / SAMPLES) * 290;
+
+      ctx.beginPath();
+      ctx.moveTo(spX[i] - 1.4, spY[i] - 1.8);
+      for (var j2 = i + 1; j2 <= e2; j2++) {
+        ctx.lineTo(spX[j2] - 1.4, spY[j2] - 1.8);
+      }
+      ctx.strokeStyle = 'hsla(' + hue2 + ', 100%, 80%, 0.5)';
+      ctx.lineWidth = hw;
+      ctx.stroke();
+    }
+  }
+
+  /* ---------------- 交互 ---------------- */
+  function getPos(e) {
+    var r = cvs.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  function nearest(p) {
+    var best = -1, bd = Infinity;
+    for (var i = 1; i < N; i++) {
+      var dx = nodes[i].x - p.x;
+      var dy = nodes[i].y - p.y;
+      var d  = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    return { i: best, d: Math.sqrt(bd) };
+  }
+
+  cvs.addEventListener('pointerdown', function (e) {
+    var p  = getPos(e);
+    var nr = nearest(p);
+    var hitR = R * 1.5;
+
+    if (nr.i > 0 && nr.d < hitR) {
+      dragIdx  = nr.i;
+      dragOffX = nodes[nr.i].x - p.x;
+      dragOffY = nodes[nr.i].y - p.y;
+      cvs.setPointerCapture(e.pointerId);
+      cvs.style.cursor = 'grabbing';
+      hint.style.opacity = '0';
+    }
+  });
+
+  cvs.addEventListener('pointermove', function (e) {
+    var p = getPos(e);
+
+    if (dragIdx >= 0) {
+      var n = nodes[dragIdx];
+      // 保留上一帧位置 → 松手时自然继承速度，实现“甩动”
+      n.px = n.x;
+      n.py = n.y;
+      n.x  = p.x + dragOffX;
+      n.y  = p.y + dragOffY;
+      return;
+    }
+
+    var nr = nearest(p);
+    cvs.style.cursor = (nr.i > 0 && nr.d < R * 1.5) ? 'grab' : 'default';
+  });
+
+  function release() {
+    if (dragIdx >= 0) {
+      dragIdx = -1;
+      cvs.style.cursor = 'default';
+    }
+  }
+
+  cvs.addEventListener('pointerup', release);
+  cvs.addEventListener('pointercancel', release);
+
+  // 双击复位
+  cvs.addEventListener('dblclick', init);
+
+  /* ---------------- 主循环 ---------------- */
+  var last = 0, acc = 0, FIXED = 1000 / 60;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+
+    if (!last) last = now;
+    var dt = now - last;
+    last = now;
+    if (dt > 60) dt = 60;
+
+    acc += dt;
+    var guard = 0;
+    while (acc >= FIXED && guard < 3) {
+      step();
+      acc -= FIXED;
+      guard++;
+    }
+    draw();
+  }
+
+  /* ---------------- 启动 ---------------- */
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 150);
+  });
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
