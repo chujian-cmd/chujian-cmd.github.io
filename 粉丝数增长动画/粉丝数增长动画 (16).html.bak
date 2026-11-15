@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>液态玻璃 · 粉丝数增长</title>
+
+    <!-- 1. 加载壁纸数据 -->
+    <script src="wallpaper.js"></script>
+
+    <style>
+        /* ===== 全局重置 & 背景 ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', Roboto, system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            /* 背景由 JS 动态设置，因为 wallpaper 数据在 JS 里 */
+        }
+
+        /* ===== 玻璃卡片 ===== */
+        .glass-card {
+            position: relative;
+            width: 100%;
+            max-width: 620px;
+            padding: 48px 40px 44px;
+            border-radius: 48px;
+            text-align: center;
+            color: #f0f0ff;
+
+            /* 玻璃效果 */
+            background: rgba(12, 12, 28, 0.45);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04);
+
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .glass-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 40px 80px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.06);
+        }
+
+        /* ===== 内容 ===== */
+        .label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            opacity: 0.5;
+            font-weight: 400;
+            margin-bottom: 6px;
+        }
+
+        .number-display {
+            font-size: clamp(4rem, 14vw, 6.4rem);
+            font-weight: 700;
+            letter-spacing: 2px;
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+            color: transparent;
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-repeat: no-repeat;
+            background-size: 100% 100%;
+            text-shadow: 0 4px 40px rgba(0, 0, 0, 0.2);
+            word-break: break-word;
+            /* 初始渐变色，动画中会动态更新 */
+            background-image: linear-gradient(135deg, #ff7b7b, #7bb7ff);
+        }
+
+        .sub-info {
+            font-size: 0.85rem;
+            opacity: 0.5;
+            letter-spacing: 1px;
+            font-weight: 300;
+            margin-top: 4px;
+            min-height: 1.6em;
+        }
+
+        .status-badge {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 5px 22px;
+            border-radius: 40px;
+            font-size: 0.6rem;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: rgba(255, 255, 255, 0.35);
+            transition: all 0.4s ease;
+        }
+        .status-badge.active {
+            color: #aabbff;
+            border-color: rgba(100, 120, 255, 0.25);
+            background: rgba(100, 120, 255, 0.08);
+        }
+        .status-badge.done {
+            color: #7affb0;
+            border-color: rgba(100, 255, 180, 0.2);
+            background: rgba(100, 255, 180, 0.06);
+        }
+
+        /* ===== 控制按钮 ===== */
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 28px;
+        }
+
+        .btn {
+            padding: 12px 36px;
+            border: none;
+            border-radius: 60px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            background: rgba(255, 255, 255, 0.06);
+            color: #c0c0e0;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(4px);
+            min-width: 120px;
+            flex: 1;
+        }
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            transform: translateY(-2px);
+        }
+        .btn:active {
+            transform: scale(0.96);
+        }
+        .btn-primary {
+            background: #5a5aff;
+            color: #fff;
+            border-color: #5a5aff;
+            box-shadow: 0 8px 24px rgba(90, 90, 255, 0.25);
+        }
+        .btn-primary:hover {
+            background: #7070ff;
+            border-color: #7070ff;
+            box-shadow: 0 12px 32px rgba(90, 90, 255, 0.35);
+        }
+        .btn-primary:active {
+            background: #4a4ae0;
+        }
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.04);
+            border-color: rgba(255, 255, 255, 0.08);
+        }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        /* ===== 响应式 ===== */
+        @media (max-width: 500px) {
+            .glass-card {
+                padding: 32px 22px 28px;
+                border-radius: 32px;
+            }
+            .number-display {
+                font-size: clamp(2.8rem, 14vw, 4rem);
+            }
+            .btn {
+                min-width: 80px;
+                padding: 10px 18px;
+                font-size: 0.8rem;
+            }
+        }
+        @media (max-width: 380px) {
+            .number-display {
+                font-size: 2.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ===== 玻璃卡片 ===== -->
+    <div class="glass-card" id="glassCard">
+        <div class="label">✦ 粉丝数 ✦</div>
+        <div class="number-display" id="numberDisplay">0</div>
+        <div class="sub-info" id="subInfo">🎯 准备就绪</div>
+        <div class="status-badge" id="statusBadge">● 等待开始</div>
+
+        <div class="btn-group">
+            <button class="btn btn-primary" id="startBtn">▶ 开始增长</button>
+            <button class="btn btn-secondary" id="resetBtn">⟳ 重置</button>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            "use strict";
+
+            // ===== 1. 设置壁纸背景 =====
+            // wallpaper.js 提供了 window.LG_WALLPAPER
+            if (typeof window.LG_WALLPAPER !== 'undefined') {
+                document.body.style.backgroundImage = `url(${window.LG_WALLPAPER})`;
+                document.body.style.backgroundSize = 'cover';
+                document.body.style.backgroundPosition = 'center';
+                document.body.style.backgroundAttachment = 'fixed';
+            } else {
+                // 如果 wallpaper.js 没加载成功，用纯色备选
+                document.body.style.background = '#0b0b14';
+                console.warn('wallpaper.js 未加载，使用纯色背景');
+            }
+
+            // ===== 2. DOM 引用 =====
+            const numberDisplay = document.getElementById('numberDisplay');
+            const subInfo = document.getElementById('subInfo');
+            const statusBadge = document.getElementById('statusBadge');
+            const startBtn = document.getElementById('startBtn');
+            const resetBtn = document.getElementById('resetBtn');
+
+            // ===== 3. 颜色配置 =====
+            const COLORS = {
+                startA: '#ff7b7b',
+                startB: '#7bb7ff',
+                endA: '#f9d976',
+                endB: '#ff6f91'
+            };
+
+            // ===== 4. 动画状态 =====
+            const TARGET = 10000;
+            const DURATION = 3200; // 毫秒
+
+            let currentValue = 0;
+            let isRunning = false;
+            let animId = null;
+            let startTime = null;
+            let startValue = 0;
+
+            // ===== 5. 工具函数 =====
+            function lerp(a, b, t) {
+                return a + (b - a) * t;
+            }
+
+            function hexToRgb(hex) {
+                let h = hex.trim();
+                if (h.startsWith('#')) h = h.slice(1);
+                if (h.length === 3) h = h.split('').map(c => c + c).join('');
+                const result = /^([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(h);
+                if (!result) return { r: 0, g: 0, b: 0 };
+                return {
+                    r: parseInt(result[1], 16),
+                    g: parseInt(result[2], 16),
+                    b: parseInt(result[3], 16)
+                };
+            }
+
+            function rgbToCss(r, g, b) {
+                return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+            }
+
+            function lerpColor(hex1, hex2, t) {
+                const c1 = hexToRgb(hex1);
+                const c2 = hexToRgb(hex2);
+                return rgbToCss(
+                    lerp(c1.r, c2.r, t),
+                    lerp(c1.g, c2.g, t),
+                    lerp(c1.b, c2.b, t)
+                );
+            }
+
+            function computeGradient(t) {
+                const a = lerpColor(COLORS.startA, COLORS.startB, t);
+                const b = lerpColor(COLORS.endA, COLORS.endB, t);
+                return `linear-gradient(135deg, ${a}, ${b})`;
+            }
+
+            function formatNumber(n) {
+                if (n >= 10000) {
+                    return (n / 10000).toFixed(1) + 'w';
+                } else if (n >= 1000) {
+                    return (n / 1000).toFixed(1) + 'k';
+                }
+                return Math.round(n).toString();
+            }
+
+            // ===== 6. 更新显示 =====
+            function updateDisplay(value) {
+                const clamped = Math.min(Math.max(value, 0), TARGET);
+                const p = TARGET > 0 ? clamped / TARGET : 0;
+                const t = Math.min(Math.max(p, 0), 1);
+
+                // 数字显示
+                let text;
+                if (clamped >= 1000) {
+                    text = formatNumber(clamped);
+                } else if (Number.isInteger(clamped)) {
+                    text = clamped.toString();
+                } else {
+                    text = clamped.toFixed(1);
+                }
+                numberDisplay.textContent = text;
+
+                // 渐变色
+                const gradient = computeGradient(t);
+                numberDisplay.style.backgroundImage = gradient;
+                numberDisplay.style.backgroundClip = 'text';
+                numberDisplay.style.webkitBackgroundClip = 'text';
+                numberDisplay.style.webkitTextFillColor = 'transparent';
+                numberDisplay.style.color = 'transparent';
+                numberDisplay.style.backgroundRepeat = 'no-repeat';
+                numberDisplay.style.backgroundSize = '100% 100%';
+
+                // 状态信息
+                if (isRunning) {
+                    const progress = Math.round(t * 100);
+                    subInfo.textContent = `🚀 增长中 · ${progress}%`;
+                    statusBadge.textContent = '● 加速中';
+                    statusBadge.className = 'status-badge active';
+                } else if (t >= 1 && currentValue >= TARGET * 0.99) {
+                    subInfo.textContent = `🎉 已达目标 · ${formatNumber(TARGET)}`;
+                    statusBadge.textContent = '✓ 完成';
+                    statusBadge.className = 'status-badge done';
+                    startBtn.textContent = '⟳ 再来一次';
+                } else {
+                    subInfo.textContent = `📈 当前 · ${formatNumber(clamped)}`;
+                    statusBadge.textContent = '● 就绪';
+                    statusBadge.className = 'status-badge';
+                }
+            }
+
+            // ===== 7. 动画循环 =====
+            function animate(timestamp) {
+                if (!isRunning) return;
+
+                if (startTime === null) {
+                    startTime = timestamp;
+                }
+
+                const elapsed = timestamp - startTime;
+                let p = Math.min(elapsed / DURATION, 1);
+                // 缓动：先慢后快 (二次)
+                const eased = p * p;
+                const val = startValue + (TARGET - startValue) * eased;
+                currentValue = val;
+
+                updateDisplay(val);
+
+                if (p < 1) {
+                    animId = requestAnimationFrame(animate);
+                } else {
+                    currentValue = TARGET;
+                    updateDisplay(TARGET);
+                    isRunning = false;
+                    animId = null;
+                    startTime = null;
+                    startBtn.textContent = '⟳ 再来一次';
+                    subInfo.textContent = `🎉 已达目标 · ${formatNumber(TARGET)}`;
+                }
+            }
+
+            // ===== 8. 启动动画 =====
+            function startAnimation() {
+                if (animId) {
+                    cancelAnimationFrame(animId);
+                    animId = null;
+                }
+
+                // 从当前值开始，如果已经达到目标则从0开始
+                if (currentValue >= TARGET) {
+                    startValue = 0;
+                    currentValue = 0;
+                    updateDisplay(0);
+                } else {
+                    startValue = currentValue;
+                }
+
+                isRunning = true;
+                startTime = null;
+                startBtn.textContent = '⏳ 增长中...';
+                subInfo.textContent = '⏩ 加速中 · 从慢到快';
+                statusBadge.className = 'status-badge active';
+                statusBadge.textContent = '● 加速中';
+
+                animId = requestAnimationFrame(animate);
+            }
+
+            // ===== 9. 重置 =====
+            function resetAnimation() {
+                if (animId) {
+                    cancelAnimationFrame(animId);
+                    animId = null;
+                }
+                isRunning = false;
+                startTime = null;
+                currentValue = 0;
+                startBtn.textContent = '▶ 开始增长';
+                updateDisplay(0);
+                subInfo.textContent = '🔄 已重置';
+                statusBadge.className = 'status-badge';
+                statusBadge.textContent = '● 等待开始';
+            }
+
+            // ===== 10. 事件绑定 =====
+            startBtn.addEventListener('click', startAnimation);
+
+            resetBtn.addEventListener('click', function() {
+                resetAnimation();
+                // 重置后稍微延迟一下恢复提示
+                setTimeout(() => {
+                    subInfo.textContent = '📈 已重置 · 点击开始';
+                }, 300);
+            });
+
+            // 键盘快捷键：空格/回车 = 开始，R = 重置
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (!isRunning) startAnimation();
+                }
+                if (e.key === 'r' || e.key === 'R') {
+                    if (!e.ctrlKey && !e.metaKey) {
+                        resetAnimation();
+                    }
+                }
+            });
+
+            // ===== 11. 初始化 =====
+            updateDisplay(0);
+            subInfo.textContent = '✨ 按 Enter/Space 开始 · R 重置';
+
+            console.log('✅ 液态玻璃 · 粉丝数增长动画已加载');
+            console.log('📊 目标:', TARGET, ' 时长:', DURATION + 'ms');
+            console.log('🎨 渐变色:', COLORS);
+        })();
+    </script>
+
+</body>
+</html>
