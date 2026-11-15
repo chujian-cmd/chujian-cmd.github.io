@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>交互粒子 · 灵动网络</title>
+  <style>
+    /* 全局样式 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0b0e14;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+      overflow: hidden;
+      transition: background 0.2s ease;
+    }
+
+    /* 画布容器 */
+    .canvas-wrapper {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 30% 30%, #141a24, #0b0e14);
+      transition: background 0.4s ease;
+      cursor: crosshair;
+    }
+
+    /* 交互控制面板 — 居中但略微偏下 */
+    .controls {
+      position: absolute;
+      bottom: 12%;
+      left: 0;
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+      pointer-events: none; /* 让点击穿透到canvas？不，按钮需要点击 */
+    }
+
+    /* 按钮和交互元素需要 pointer-events: auto */
+    .controls .btn,
+    .controls .indicator {
+      pointer-events: auto;
+    }
+
+    .btn {
+      background: rgba(20, 30, 45, 0.7);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1.5px solid rgba(100, 180, 255, 0.4);
+      color: #e1ecff;
+      padding: 12px 28px;
+      border-radius: 50px;
+      font-size: 1rem;
+      font-weight: 500;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.03);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:hover {
+      background: rgba(40, 70, 110, 0.8);
+      border-color: rgba(140, 210, 255, 0.8);
+      transform: translateY(-2px);
+      box-shadow: 0 15px 30px rgba(0, 80, 200, 0.3), 0 0 15px rgba(70, 160, 255, 0.4);
+      color: #ffffff;
+    }
+
+    .btn:active {
+      transform: translateY(2px);
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
+    }
+
+    /* 状态指示器 */
+    .indicator {
+      background: rgba(10, 18, 28, 0.75);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(100, 180, 255, 0.25);
+      color: #b8d4ff;
+      padding: 10px 24px;
+      border-radius: 40px;
+      font-size: 0.95rem;
+      font-weight: 400;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    .indicator span {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4cd964;
+      box-shadow: 0 0 12px #4cd964;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    /* 小提示 */
+    .hint {
+      position: absolute;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(200, 220, 255, 0.5);
+      font-size: 0.85rem;
+      background: rgba(10, 20, 30, 0.5);
+      backdrop-filter: blur(5px);
+      padding: 8px 18px;
+      border-radius: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      pointer-events: none;
+      white-space: nowrap;
+      letter-spacing: 0.5px;
+      transition: opacity 0.3s;
+    }
+
+    /* 主题切换 —— 深色 / 亮色 (仅改变canvas背景和粒子颜色通过JS控制) */
+    body.light-mode canvas {
+      background: radial-gradient(circle at 30% 30%, #eef4ff, #d9e3f0);
+    }
+
+    body.light-mode .hint {
+      color: rgba(30, 50, 80, 0.7);
+      background: rgba(220, 235, 255, 0.7);
+      border-color: rgba(0, 0, 0, 0.05);
+    }
+
+    body.light-mode .btn {
+      background: rgba(240, 248, 255, 0.8);
+      border-color: rgba(70, 130, 220, 0.5);
+      color: #1a2a44;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+    }
+
+    body.light-mode .btn:hover {
+      background: rgba(220, 240, 255, 0.95);
+      border-color: #3a7bd5;
+      color: #0a1a2a;
+    }
+
+    body.light-mode .indicator {
+      background: rgba(230, 242, 255, 0.8);
+      border-color: rgba(70, 130, 220, 0.4);
+      color: #1f3a5f;
+    }
+  </style>
+</head>
+<body>
+  <div class="canvas-wrapper">
+    <canvas id="networkCanvas"></canvas>
+
+    <!-- 顶部提示 -->
+    <div class="hint">✨ 鼠标移动吸引粒子 · 点击切换主题 ✨</div>
+
+    <!-- 底部控制区 -->
+    <div class="controls">
+      <button class="btn" id="themeBtn">
+        <span>🌓</span> 切换主题
+      </button>
+      <div class="indicator">
+        <span id="statusDot"></span>
+        <span id="statusText">深色模式</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const canvas = document.getElementById('networkCanvas');
+      const ctx = canvas.getContext('2d');
+      const themeBtn = document.getElementById('themeBtn');
+      const statusDot = document.getElementById('statusDot');
+      const statusText = document.getElementById('statusText');
+
+      // ---------- 配置 ----------
+      const PARTICLE_COUNT = 90;          // 粒子数量（根据屏幕大小自适应，稍后调整）
+      const CONNECT_DIST = 140;           // 粒子连接距离
+      const MOUSE_RADIUS = 180;           // 鼠标吸引半径
+      const MOUSE_FORCE = 0.12;           // 吸引力强度
+
+      // 当前主题状态
+      let isDarkMode = true;
+
+      // 粒子数组
+      let particles = [];
+
+      // 鼠标位置 (默认在屏幕外，避免初始吸引)
+      let mouse = { x: null, y: null, active: false };
+
+      // 画布尺寸 (CSS像素)
+      let width = 0, height = 0;
+
+      // 设备像素比
+      let dpr = window.devicePixelRatio || 1;
+
+      // ---------- 粒子类 ----------
+      class Particle {
+        constructor() {
+          // 位置 (CSS像素坐标)
+          this.x = Math.random() * width;
+          this.y = Math.random() * height;
+          // 速度
+          this.vx = (Math.random() - 0.5) * 0.6;
+          this.vy = (Math.random() - 0.5) * 0.6;
+          // 基础半径
+          this.radius = Math.random() * 2.2 + 1.2;
+          // 为了颜色偏移 (深色/浅色下有不同的颜色变化)
+          this.hue = Math.random() * 40 + 200; // 蓝青范围 200~240
+        }
+
+        // 更新位置 (边界反弹，鼠标吸引)
+        update() {
+          // 鼠标吸引逻辑
+          if (mouse.active && mouse.x !== null && mouse.y !== null) {
+            const dx = mouse.x - this.x;
+            const dy = mouse.y - this.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < MOUSE_RADIUS && dist > 0.5) {
+              // 吸引力与距离成反比，但限制最大值
+              const force = (1 - dist / MOUSE_RADIUS) * MOUSE_FORCE;
+              const directionX = dx / dist;
+              const directionY = dy / dist;
+              this.vx += directionX * force;
+              this.vy += directionY * force;
+            }
+          }
+
+          // 速度限制 (防止飞得太快)
+          const maxSpeed = 2.2;
+          const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+          if (speed > maxSpeed) {
+            this.vx = (this.vx / speed) * maxSpeed;
+            this.vy = (this.vy / speed) * maxSpeed;
+          }
+
+          // 移动
+          this.x += this.vx;
+          this.y += this.vy;
+
+          // 边界反弹 (损耗一点点能量，让运动更自然)
+          const bounce = 0.95;
+          if (this.x < 0) {
+            this.x = 0;
+            this.vx = -this.vx * bounce;
+          } else if (this.x > width) {
+            this.x = width;
+            this.vx = -this.vx * bounce;
+          }
+          if (this.y < 0) {
+            this.y = 0;
+            this.vy = -this.vy * bounce;
+          } else if (this.y > height) {
+            this.y = height;
+            this.vy = -this.vy * bounce;
+          }
+
+          // 微小的随机扰动，让运动更生动 (避免完全静止)
+          this.vx += (Math.random() - 0.5) * 0.02;
+          this.vy += (Math.random() - 0.5) * 0.02;
+
+          // 轻微摩擦力，防止速度累积过大
+          this.vx *= 0.998;
+          this.vy *= 0.998;
+        }
+
+        // 根据当前主题绘制粒子
+        draw() {
+          // 根据主题调整颜色和发光
+          let color, glowColor;
+          if (isDarkMode) {
+            // 深色模式: 明亮的青蓝
+            const lightness = 65 + Math.sin(this.hue) * 5;
+            color = `hsl(${this.hue}, 80%, ${lightness}%)`;
+            glowColor = `hsla(${this.hue}, 90%, 70%, 0.5)`;
+          } else {
+            // 浅色模式: 深蓝/紫罗兰
+            color = `hsl(${this.hue}, 65%, 45%)`;
+            glowColor = `hsla(${this.hue}, 70%, 55%, 0.4)`;
+          }
+
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          // 添加一点小光晕
+          ctx.shadowColor = glowColor;
+          ctx.shadowBlur = isDarkMode ? 12 : 6;
+          ctx.fill();
+          // 重置阴影避免影响后续绘制
+          ctx.shadowBlur = 0;
+          ctx.shadowColor = 'transparent';
+        }
+      }
+
+      // ---------- 初始化粒子 ----------
+      function initParticles() {
+        particles = [];
+        // 根据面积动态调整粒子数量 (在移动端稍微少一点)
+        const area = width * height;
+        let count = Math.floor(area / 14000); // 大约每14000像素一个粒子
+        count = Math.min(130, Math.max(50, count)); // 限制在50~130之间
+        // 但我们需要性能良好，稍微调整
+        const finalCount = Math.min(110, count);
+
+        for (let i = 0; i < finalCount; i++) {
+          particles.push(new Particle());
+        }
+      }
+
+      // ---------- 调整画布大小 (考虑DPR) ----------
+      function resizeCanvas() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+
+        // 设置画布的物理像素尺寸
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+
+        // 缩放上下文，使后续绘制使用CSS像素坐标
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // 重新初始化粒子位置 (基于新尺寸)
+        // 但为了保持视觉连续性，可以重新生成粒子，或者调整已有粒子位置
+        // 这里选择重新生成粒子（更简单，且适应新尺寸）
+        initParticles();
+      }
+
+      // ---------- 绘制连接线 ----------
+      function drawLines() {
+        // 遍历所有粒子对
+        for (let i = 0; i < particles.length; i++) {
+          const p1 = particles[i];
+          for (let j = i + 1; j < particles.length; j++) {
+            const p2 = particles[j];
+            const dx = p1.x - p2.x;
+            const dy = p1.y - p2.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < CONNECT_DIST) {
+              // 根据距离计算透明度 (越近越亮)
+              const opacity = 1 - dist / CONNECT_DIST;
+
+              if (isDarkMode) {
+                // 深色模式：青蓝色线条，带一点发光
+                ctx.strokeStyle = `rgba(100, 200, 255, ${opacity * 0.45})`;
+                ctx.lineWidth = 1.0;
+              } else {
+                // 浅色模式：深灰蓝线条
+                ctx.strokeStyle = `rgba(40, 80, 140, ${opacity * 0.35})`;
+                ctx.lineWidth = 1.0;
+              }
+
+              ctx.beginPath();
+              ctx.moveTo(p1.x, p1.y);
+              ctx.lineTo(p2.x, p2.y);
+              ctx.stroke();
+            }
+          }
+        }
+      }
+
+      // ---------- 绘制鼠标周围的高亮 (可选，增加互动感) ----------
+      function drawMouseGlow() {
+        if (!mouse.active || mouse.x === null || mouse.y === null) return;
+
+        const radius = MOUSE_RADIUS * 0.8;
+        const gradient = ctx.createRadialGradient(
+          mouse.x, mouse.y, 0,
+          mouse.x, mouse.y, radius
+        );
+
+        if (isDarkMode) {
+          gradient.addColorStop(0, 'rgba(120, 220, 255, 0.15)');
+          gradient.addColorStop(0.6, 'rgba(80, 160, 240, 0.05)');
+          gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        } else {
+          gradient.addColorStop(0, 'rgba(70, 130, 220, 0.12)');
+          gradient.addColorStop(0.6, 'rgba(50, 100, 180, 0.04)');
+          gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        }
+
+        ctx.beginPath();
+        ctx.arc(mouse.x, mouse.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = gradient;
+        ctx.fill();
+      }
+
+      // ---------- 动画循环 ----------
+      function animate() {
+        // 清空画布 (用透明清空，因为背景在CSS中)
+        ctx.clearRect(0, 0, width, height);
+
+        // 先绘制鼠标光晕 (在底层)
+        drawMouseGlow();
+
+        // 更新所有粒子
+        particles.forEach(p => p.update());
+
+        // 绘制连接线 (在粒子下层)
+        drawLines();
+
+        // 绘制所有粒子 (在上层)
+        particles.forEach(p => p.draw());
+
+        requestAnimationFrame(animate);
+      }
+
+      // ---------- 鼠标/触摸事件处理 ----------
+      function handleMouseMove(e) {
+        // 获取相对于画布的坐标 (CSS像素)
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = width / rect.width;   // 通常为1，但以防万一
+        const scaleY = height / rect.height;
+
+        let clientX, clientY;
+        if (e.touches) {
+          // 触摸事件
+          clientX = e.touches[0].clientX;
+          clientY = e.touches[0].clientY;
+          e.preventDefault(); // 防止滚动
+        } else {
+          clientX = e.clientX;
+          clientY = e.clientY;
+        }
+
+        mouse.x = (clientX - rect.left) * scaleX;
+        mouse.y = (clientY - rect.top) * scaleY;
+        mouse.active = true;
+      }
+
+      function handleMouseLeave() {
+        // 鼠标离开窗口/画布时，取消吸引力
+        mouse.active = false;
+        mouse.x = null;
+        mouse.y = null;
+      }
+
+      function handleTouchEnd(e) {
+        // 触摸结束后取消吸引力
+        mouse.active = false;
+        mouse.x = null;
+        mouse.y = null;
+        // 不阻止默认，以免影响按钮点击 (但按钮在canvas上层，通常不影响)
+        // 但防止页面缩放之类的，可以宽松处理
+      }
+
+      // ---------- 主题切换 ----------
+      function toggleTheme() {
+        isDarkMode = !isDarkMode;
+
+        // 切换body类以控制CSS样式
+        if (isDarkMode) {
+          document.body.classList.remove('light-mode');
+          statusText.textContent = '深色模式';
+          statusDot.style.background = '#4cd964';
+          statusDot.style.boxShadow = '0 0 12px #4cd964';
+        } else {
+          document.body.classList.add('light-mode');
+          statusText.textContent = '浅色模式';
+          statusDot.style.background = '#ffb347';
+          statusDot.style.boxShadow = '0 0 12px #ffb347';
+        }
+
+        // 粒子颜色和线条颜色由动画循环中的isDarkMode控制，无需额外操作
+        // 但为了平滑，我们只需让下一帧生效即可。
+      }
+
+      // ---------- 初始化事件监听 ----------
+      function initEvents() {
+        // 鼠标在canvas上移动
+        canvas.addEventListener('mousemove', handleMouseMove);
+        // 鼠标离开canvas
+        canvas.addEventListener('mouseleave', handleMouseLeave);
+        // 触摸事件
+        canvas.addEventListener('touchmove', handleMouseMove, { passive: false });
+        canvas.addEventListener('touchend', handleTouchEnd);
+        canvas.addEventListener('touchcancel', handleTouchEnd);
+        // 鼠标离开窗口时重置
+        window.addEventListener('blur', handleMouseLeave);
+
+        // 主题切换按钮
+        themeBtn.addEventListener('click', toggleTheme);
+
+        // 窗口尺寸变化
+        window.addEventListener('resize', () => {
+          // 更新DPR (可能变化，比如移动到不同DPI屏幕)
+          dpr = window.devicePixelRatio || 1;
+          resizeCanvas();
+        });
+      }
+
+      // ---------- 启动 ----------
+      function init() {
+        // 设置DPR并调整画布
+        dpr = window.devicePixelRatio || 1;
+        resizeCanvas();
+
+        // 初始化粒子 (在resizeCanvas中已经调用initParticles)
+        // 但确保画布尺寸正确后粒子已经生成
+
+        // 初始化事件
+        initEvents();
+
+        // 启动动画
+        animate();
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>
