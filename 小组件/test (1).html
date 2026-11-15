@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>指针拖拽测试 - 修复版</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; color: #fff; font-family: sans-serif; }
+
+        /* 顶部滑动容器 */
+        #pages {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scroll-snap-type: x mandatory;
+            scroll-behavior: smooth;
+            scrollbar-width: none; 
+        }
+        #pages::-webkit-scrollbar { display: none; }
+
+        /* 每一页 */
+        .page {
+            flex: 0 0 100vw;
+            width: 100vw;
+            height: 100vh;
+            scroll-snap-align: center;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        .page:nth-child(1) { background: linear-gradient(135deg, #ff4757, #ff6b81); }
+        .page:nth-child(2) { background: linear-gradient(135deg, #2ed573, #7bed9f); }
+        .page:nth-child(3) { background: linear-gradient(135deg, #1e90ff, #70a1ff); }
+
+        /* 底部控制条大容器 */
+        #control-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            
+            /* 绝对禁止默认手势 */
+            touch-action: none; 
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* 真实的圆点容器 */
+        #dots-track {
+            display: flex;
+            gap: 15px;
+            padding: 15px 25px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+            cursor: grab;
+        }
+        #dots-track:active { cursor: grabbing; }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: transform 0.2s, background 0.2s;
+        }
+        .dot.active {
+            background: #fff;
+            transform: scale(1.3);
+        }
+
+        /* 拖拽时强制取消吸附 */
+        #pages.is-dragging {
+            scroll-snap-type: none;
+            scroll-behavior: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 顶部页面 -->
+    <div id="pages">
+        <div class="page">Page 1</div>
+        <div class="page">Page 2</div>
+        <div class="page">Page 3</div>
+    </div>
+
+    <!-- 底部控制条 -->
+    <div id="control-bar">
+        <div id="dots-track">
+            <div class="dot active"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+    </div>
+
+    <script>
+        const pages = document.getElementById('pages');
+        const dotsTrack = document.getElementById('dots-track');
+        const dots = document.querySelectorAll('.dot');
+        const pageCount = dots.length;
+        let pageWidth = window.innerWidth;
+
+        let isDragging = false;
+        let startX = 0;
+        let startScrollLeft = 0;
+        let hasMoved = false;
+
+        // ==========================================
+        // 核心逻辑：监听并强制接管事件
+        // ==========================================
+        
+        function dragStart(clientX) {
+            isDragging = true;
+            hasMoved = false;
+            startX = clientX;
+            startScrollLeft = pages.scrollLeft;
+            pages.classList.add('is-dragging');
+        }
+
+        function dragMove(clientX) {
+            if (!isDragging) return;
+            const walk = clientX - startX;
+            if (Math.abs(walk) > 5) hasMoved = true;
+            
+            // 1.2 灵敏度
+            pages.scrollLeft = startScrollLeft - (walk * 1.2);
+        }
+
+        function dragEnd(clientX) {
+            if (!isDragging) return;
+            isDragging = false;
+            pages.classList.remove('is-dragging');
+
+            let targetIndex = Math.round(pages.scrollLeft / pageWidth);
+            targetIndex = Math.max(0, Math.min(targetIndex, pageCount - 1));
+
+            pages.scrollTo({ left: targetIndex * pageWidth, behavior: 'smooth' });
+
+            if (!hasMoved) {
+                handleDotClick(clientX);
+            }
+        }
+
+        // --- 1. 触摸事件 (移动端 Edge / Via) ---
+        dotsTrack.addEventListener('touchstart', (e) => {
+            // 记录触点
+            dragStart(e.touches[0].clientX);
+            e.preventDefault(); // 阻止原生滚动
+            e.stopPropagation();
+        }, { passive: false }); // 必须是 false 才能阻止默认行为
+
+        dotsTrack.addEventListener('touchmove', (e) => {
+            dragMove(e.touches[0].clientX);
+            e.preventDefault(); 
+            e.stopPropagation();
+        }, { passive: false });
+
+        dotsTrack.addEventListener('touchend', (e) => {
+            // touchend 时 touches 为空，需要从 changedTouches 获取
+            dragEnd(e.changedTouches[0].clientX);
+            e.preventDefault();
+            e.stopPropagation();
+        }, { passive: false });
+
+        // --- 2. 鼠标事件 (电脑端 Edge) ---
+        dotsTrack.addEventListener('mousedown', (e) => {
+            dragStart(e.clientX);
+            e.preventDefault();
+        });
+
+        // 鼠标移动绑定在 window 上，防止拖出轨道后丢失事件
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            dragMove(e.clientX);
+            e.preventDefault();
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
+            dragEnd(e.clientX);
+        });
+
+
+        // ==========================================
+        // 辅助功能：点击圆点、更新状态
+        // ==========================================
+        function handleDotClick(clientX) {
+            const rect = dotsTrack.getBoundingClientRect();
+            const clickX = clientX - rect.left;
+            
+            const dotWidth = 12;
+            const gap = 15;
+            const paddingLeft = 25; 
+            
+            for (let i = 0; i < pageCount; i++) {
+                const dotStart = paddingLeft + i * (dotWidth + gap);
+                const dotEnd = dotStart + dotWidth;
+                if (clickX >= dotStart - gap/2 && clickX <= dotEnd + gap/2) {
+                    pages.scrollTo({ left: i * pageWidth, behavior: 'smooth' });
+                    break;
+                }
+            }
+        }
+
+        pages.addEventListener('scroll', () => {
+            const index = Math.round(pages.scrollLeft / pageWidth);
+            dots.forEach((dot, i) => {
+                if (i === index) dot.classList.add('active');
+                else dot.classList.remove('active');
+            });
+        });
+
+        // 修复：只在窗口尺寸真正改变时更新变量，绝不刷新页面
+        window.addEventListener('resize', () => {
+            pageWidth = window.innerWidth;
+            // 重新对齐当前页面，不加动画
+            const index = Math.round(pages.scrollLeft / pageWidth);
+            pages.scrollTo({ left: index * pageWidth, behavior: 'auto' });
+        });
+    </script>
+</body>
+</html>

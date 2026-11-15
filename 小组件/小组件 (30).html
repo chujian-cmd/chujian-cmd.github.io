@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>多组件 · 可拖拽排序 · 日历时钟便签</title>
+<style>
+    * {
+        margin: 0; padding: 0; box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    }
+
+    html, body {
+        width: 100%; height: 100%;
+        overflow: hidden; background: #000; color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft Yahei", Tahoma, Simsun, sans-serif;
+        touch-action: none; overscroll-behavior: none;
+    }
+
+    #pages-viewport {
+        width: 100vw; height: 100vh;
+        overflow: hidden; position: relative;
+        touch-action: none;
+    }
+
+    #pages-track {
+        display: flex; height: 100%;
+        transform: translate3d(0, 0, 0);
+        will-change: transform;
+        touch-action: none;
+    }
+
+    .page {
+        width: 100vw; height: 100%;
+        flex-shrink: 0;
+        display: flex; flex-wrap: wrap;
+        justify-content: center; align-content: center;
+        gap: clamp(16px, 4vw, 30px);
+        padding: 40px;
+        box-sizing: border-box;
+        touch-action: none;
+        position: relative;
+    }
+
+    /* --- 通用卡片样式 --- */
+    .widget-card {
+        position: relative;
+        width: 100%;
+        max-width: 460px;
+        flex: 1 1 300px;
+        max-height: 45vh;
+        border-radius: 24px;
+        padding: clamp(20px, 4vw, 32px) clamp(20px, 5vw, 40px);
+        overflow: hidden;
+        background:
+            linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+            radial-gradient(circle at 0% 100%, rgba(0, 80, 50, 0.9) 0%, rgba(0, 40, 25, 0.4) 40%, transparent 70%),
+            radial-gradient(circle at 100% 80%, rgba(60, 20, 100, 0.6) 0%, transparent 60%),
+            #040408;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+
+        transition: transform 0.35s cubic-bezier(0.34, 1.4, 0.64, 1), opacity 0.35s ease, box-shadow 0.35s ease;
+        transform-origin: center center;
+        will-change: transform, opacity;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        touch-action: none;
+    }
+
+    .widget-card.clock-card {
+        background:
+            linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+            radial-gradient(circle at 100% 0%, rgba(0, 100, 150, 0.5) 0%, transparent 60%),
+            radial-gradient(circle at 0% 100%, rgba(80, 20, 120, 0.5) 0%, transparent 60%),
+            #040408;
+    }
+
+    .widget-card.note-card {
+        background:
+            linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+            radial-gradient(circle at 20% 90%, rgba(120, 80, 20, 0.6) 0%, transparent 60%),
+            radial-gradient(circle at 90% 10%, rgba(20, 80, 100, 0.4) 0%, transparent 60%),
+            #040408;
+    }
+
+    /* 拖动中的卡片 */
+    .widget-card.is-dragging {
+        transition: none !important;
+        z-index: 999;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), 0 0 0 2px rgba(0, 255, 136, 0.6);
+        opacity: 0.95;
+        cursor: grabbing;
+    }
+
+    .animate-pop-in {
+        animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+    }
+
+    @keyframes popIn {
+        0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+        100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .widget-card.is-minimized {
+        transform: scale(0.9) translate3d(0, 0, 0);
+        opacity: 0.85;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.6);
+    }
+
+    .widget-card.is-hidden {
+        transform: scale(0.5) translate3d(0, 50px, 0);
+        opacity: 0;
+        pointer-events: none;
+        transition: transform 0.3s ease-in, opacity 0.3s ease-in;
+    }
+
+    .close-btn {
+        position: absolute; top: 16px; right: 16px;
+        width: 32px; height: 32px; border-radius: 50%;
+        background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex; justify-content: center; align-items: center;
+
+        opacity: 0; visibility: hidden; transform: scale(0.5);
+        transition: transform 0.3s ease, opacity 0.3s ease, visibility 0.3s;
+        will-change: transform, opacity;
+        pointer-events: none; z-index: 20;
+    }
+
+    .widget-card.is-minimized .close-btn {
+        opacity: 1; visibility: visible; transform: scale(1);
+        transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+        pointer-events: auto;
+    }
+
+    .close-btn::before { content: ''; width: 12px; height: 2px; background-color: #fff; border-radius: 1px; }
+
+    .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: clamp(16px, 3vw, 24px); }
+    .title { color: #fff; font-size: clamp(34px, 6vw, 54px); font-weight: 400; line-height: 1; letter-spacing: 1px; }
+    .subtitle { color: rgba(255, 255, 255, 0.45); font-size: clamp(10px, 2vw, 12px); font-weight: 300; letter-spacing: 2px; margin-bottom: 6px; }
+
+    /* 日历网格 */
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: clamp(10px, 2vw, 16px); text-align: center; }
+    .weekday { color: rgba(255, 255, 255, 0.35); font-size: clamp(12px, 2vw, 14px); font-weight: 300; }
+    .day { color: #fff; font-size: clamp(14px, 2.5vw, 18px); font-weight: 300; width: 100%; max-width: 40px; aspect-ratio: 1; display: flex; justify-content: center; align-items: center; margin: 0 auto; }
+    .day.active { border: 1px solid rgba(160, 130, 255, 0.5); border-radius: 50%; background: rgba(120, 90, 255, 0.08); font-weight: 400; }
+
+    /* 时钟内部 */
+    .clock-time {
+        font-size: clamp(48px, 12vw, 82px);
+        font-weight: 300;
+        letter-spacing: 4px;
+        line-height: 1;
+        margin-top: 8px;
+        font-variant-numeric: tabular-nums;
+    }
+    .clock-seconds {
+        font-size: clamp(18px, 3vw, 26px);
+        color: rgba(255, 255, 255, 0.6);
+        margin-left: 8px;
+        font-weight: 300;
+    }
+    .clock-date {
+        color: rgba(255, 255, 255, 0.5);
+        font-size: clamp(13px, 2.2vw, 17px);
+        letter-spacing: 2px;
+        margin-top: 12px;
+        font-weight: 300;
+    }
+
+    /* 便签内部 */
+    .note-text {
+        font-size: clamp(16px, 3.2vw, 22px);
+        font-weight: 300;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.9);
+        word-break: break-word;
+        max-height: 160px;
+        overflow-y: auto;
+        scrollbar-width: none;
+        cursor: text;
+        min-height: 2em;
+        outline: none;
+        border-radius: 8px;
+        padding: 4px 8px;
+        margin: -4px -8px;
+        transition: background 0.2s;
+    }
+    .note-text:focus {
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .note-text:empty::before {
+        content: '点击输入便签内容…';
+        color: rgba(255, 255, 255, 0.3);
+        pointer-events: none;
+    }
+    .note-text::-webkit-scrollbar { display: none; }
+    .note-tag {
+        display: inline-block;
+        margin-top: 16px;
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: rgba(255, 200, 100, 0.7);
+        border: 1px solid rgba(255, 200, 100, 0.3);
+        padding: 4px 12px;
+        border-radius: 20px;
+    }
+
+    /* 底部控制条 */
+    #control-bar {
+        position: fixed; bottom: 0; left: 0; width: 100%; height: 100px;
+        display: flex; justify-content: center; align-items: center; z-index: 10; pointer-events: none;
+    }
+    #dots-track {
+        position: relative; display: flex; align-items: center; gap: 24px; padding: 18px 28px;
+        background: rgba(255,255,255,0.12); border-radius: 40px; backdrop-filter: blur(10px);
+        pointer-events: auto; touch-action: none;
+        transition: opacity 0.3s ease;
+    }
+
+    .dot {
+        width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,0.35); flex-shrink: 0;
+        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s;
+    }
+    .dot.is-shrink { transform: scale(0); opacity: 0; }
+
+    #slider {
+        position: absolute; top: 50%; width: 22px; height: 22px; margin-top: -11px; margin-left: -11px;
+        border-radius: 50%; background: #fff; box-shadow: 0 0 16px rgba(255,255,255,0.6), 0 2px 8px rgba(0,0,0,0.3);
+        pointer-events: none; left: 0; transform: scale(1); will-change: left, transform;
+        transition: transform 0.22s ease;
+    }
+    #slider.dragging { transform: scale(1.3); }
+
+    /* 浮动添加按钮 */
+    .global-add-btn {
+        position: fixed; bottom: 40px; right: 40px; width: 60px; height: 60px; border-radius: 50%;
+        background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%); box-shadow: 0 10px 30px rgba(0, 255, 136, 0.4);
+        display: flex; justify-content: center; align-items: center;
+
+        opacity: 0; visibility: hidden; transform: scale(0.5) translateY(20px);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s, opacity 0.3s ease 0.1s, visibility 0.3s ease 0.1s;
+        will-change: transform, opacity;
+        z-index: 100; cursor: pointer; touch-action: none;
+    }
+
+    .global-add-btn.show {
+        opacity: 1; visibility: visible; transform: scale(1) translateY(0);
+        transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0s, opacity 0.4s ease 0s, visibility 0.4s ease 0s;
+    }
+
+    .global-add-btn::before, .global-add-btn::after { content: ''; position: absolute; background-color: #000; border-radius: 2px; }
+    .global-add-btn::before { width: 20px; height: 3px; }
+    .global-add-btn::after { width: 3px; height: 20px; }
+
+    .widget-card::after {
+        content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 3px;
+        background: linear-gradient(90deg, #00ff88 0%, #00ccff 30%, #6b21a8 100%);
+        box-shadow: 0 -2px 10px rgba(0, 255, 136, 0.5); border-bottom-left-radius: 24px; border-bottom-right-radius: 24px;
+    }
+    .widget-card.clock-card::after {
+        background: linear-gradient(90deg, #00ccff 0%, #3b82f6 50%, #a855f7 100%);
+        box-shadow: 0 -2px 10px rgba(0, 200, 255, 0.5);
+    }
+    .widget-card.note-card::after {
+        background: linear-gradient(90deg, #f59e0b 0%, #f97316 50%, #ef4444 100%);
+        box-shadow: 0 -2px 10px rgba(245, 158, 11, 0.5);
+    }
+
+    /* 类型选择弹窗 */
+    .type-picker-overlay {
+        position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+        backdrop-filter: blur(6px); z-index: 200;
+        display: flex; justify-content: center; align-items: center;
+        opacity: 0; visibility: hidden;
+        transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+    .type-picker-overlay.show { opacity: 1; visibility: visible; }
+
+    .type-picker {
+        background: #14141c; border-radius: 28px;
+        padding: 28px 24px 24px;
+        width: min(90vw, 380px);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+        transform: scale(0.85) translateY(20px);
+        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .type-picker-overlay.show .type-picker { transform: scale(1) translateY(0); }
+
+    .type-picker h3 {
+        font-size: 18px; font-weight: 500; letter-spacing: 1px;
+        margin-bottom: 20px; text-align: center; color: rgba(255,255,255,0.9);
+    }
+
+    .type-options { display: flex; flex-direction: column; gap: 10px; }
+
+    .type-option {
+        display: flex; align-items: center; gap: 14px;
+        padding: 14px 16px; border-radius: 16px;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.06);
+        cursor: pointer; transition: background 0.2s, border-color 0.2s;
+    }
+    .type-option:active { background: rgba(255,255,255,0.12); }
+    .type-option:hover { border-color: rgba(0, 255, 136, 0.4); }
+
+    .type-option .icon {
+        width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0;
+        display: flex; justify-content: center; align-items: center;
+        font-size: 20px;
+    }
+    .type-option .icon.cal { background: rgba(0, 255, 136, 0.15); color: #00ff88; }
+    .type-option .icon.clk { background: rgba(0, 200, 255, 0.15); color: #00ccff; }
+    .type-option .icon.nt  { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+
+    .type-option .label { display: flex; flex-direction: column; gap: 2px; }
+    .type-option .label strong { font-size: 15px; font-weight: 500; color: #fff; }
+    .type-option .label span { font-size: 12px; color: rgba(255,255,255,0.4); }
+
+    .picker-cancel {
+        margin-top: 16px; width: 100%; padding: 12px;
+        background: transparent; border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 14px; color: rgba(255,255,255,0.6);
+        font-size: 14px; cursor: pointer; transition: background 0.2s;
+    }
+    .picker-cancel:active { background: rgba(255,255,255,0.06); }
+</style>
+</head>
+<body>
+
+    <div id="pages-viewport">
+        <div id="pages-track"></div>
+    </div>
+
+    <div class="global-add-btn" id="addBtn"></div>
+
+    <div id="control-bar">
+        <div id="dots-track">
+            <div id="slider"></div>
+        </div>
+    </div>
+
+    <!-- 类型选择弹窗 -->
+    <div class="type-picker-overlay" id="typePickerOverlay">
+        <div class="type-picker">
+            <h3>添加组件</h3>
+            <div class="type-options">
+                <div class="type-option" data-type="calendar">
+                    <div class="icon cal">📅</div>
+                    <div class="label"><strong>日历</strong><span>本周日期一览</span></div>
+                </div>
+                <div class="type-option" data-type="clock">
+                    <div class="icon clk">🕐</div>
+                    <div class="label"><strong>时钟</strong><span>实时时间与日期</span></div>
+                </div>
+                <div class="type-option" data-type="note">
+                    <div class="icon nt">📝</div>
+                    <div class="label"><strong>便签</strong><span>点击输入便签内容</span></div>
+                </div>
+            </div>
+            <button class="picker-cancel" id="pickerCancel">取消</button>
+        </div>
+    </div>
+
+<script>
+(function() {
+    'use strict';
+
+    const pagesTrack = document.getElementById('pages-track');
+    const dotsTrack = document.getElementById('dots-track');
+    const slider = document.getElementById('slider');
+    const addBtn = document.getElementById('addBtn');
+    const typePickerOverlay = document.getElementById('typePickerOverlay');
+    const pickerCancel = document.getElementById('pickerCancel');
+
+    let pagesData = [];
+    let PAGE_COUNT = 0;
+    let pageWidth = window.innerWidth;
+    let isEditingMode = false;
+    let wasLongPressed = false;
+
+    let progress = 0, targetProgress = 0, currentPage = 0;
+    let rafId = null, dragging = false, dragSource = null;
+    let startX = 0, startY = 0, startProgress = 0, startTime = 0;
+    let isPressing = false, longPressTimer = null, pressedDotIndex = -1;
+    let activeTouchId = null, lastTouchTime = 0;
+    let dotCenters = [], dotSpacing = 1;
+    let lastNearestIdx = -1;
+
+    // ---------- 拖拽排序相关 ----------
+    let dragCard = null;                 // 当前拖拽的卡片 DOM
+    let dragCardData = null;             // { pageIdx, cardIdx, pageEl }
+    let dragStartRect = null;            // 拖拽起始时卡片 rect
+    let dragOffsetX = 0, dragOffsetY = 0; // 手指相对卡片左上角的偏移
+    let dragPlaceholder = null;          // 占位元素（保持布局）
+    let dragCurrentPointer = { x: 0, y: 0 };
+    let dragOtherRects = new Map();      // 拖拽开始时其他卡片的 rect
+    let dragOriginalPage = -1;
+    let dragOriginalIndex = -1;
+    let dragTargetIndex = -1;
+    let dragTargetPage = -1;
+    let dragCardNaturalWidth = 0, dragCardNaturalHeight = 0;
+
+    // ---------- 数据生成 ----------
+    function getCalendarData() {
+        const today = new Date();
+        const weekdaysChinese = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay());
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(startOfWeek);
+            d.setDate(startOfWeek.getDate() + i);
+            days.push({
+                num: d.getDate(),
+                isToday: d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear()
+            });
+        }
+        return { weekdayTitle: weekdaysChinese[today.getDay()], days };
+    }
+
+    function getClockData() {
+        const now = new Date();
+        const h = String(now.getHours()).padStart(2, '0');
+        const m = String(now.getMinutes()).padStart(2, '0');
+        const s = String(now.getSeconds()).padStart(2, '0');
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const weekdays = ['周日','周一','周二','周三','周四','周五','周六'];
+        return { time: `${h}:${m}`, seconds: s, date: `${year}.${month}.${day} ${weekdays[now.getDay()]}` };
+    }
+
+    // ---------- 创建组件卡片 ----------
+    function createCardElement(type, animate = true, initialText = '') {
+        const card = document.createElement('div');
+        card.className = 'widget-card ' + type + '-card' + (animate ? ' animate-pop-in' : '');
+        card.dataset.widgetType = type;
+
+        if (type === 'calendar') {
+            const { weekdayTitle, days } = getCalendarData();
+            card.innerHTML = `
+                <div class="close-btn"></div>
+                <div class="header">
+                    <div class="title">${weekdayTitle}</div>
+                    <div class="subtitle">CALENDAR</div>
+                </div>
+                <div class="calendar-grid">
+                    <div class="weekday">日</div><div class="weekday">一</div>
+                    <div class="weekday">二</div><div class="weekday">三</div>
+                    <div class="weekday">四</div><div class="weekday">五</div><div class="weekday">六</div>
+                </div>
+            `;
+            const grid = card.querySelector('.calendar-grid');
+            days.forEach(day => {
+                const dayDiv = document.createElement('div');
+                dayDiv.className = `day ${day.isToday ? 'active' : ''}`;
+                dayDiv.textContent = day.num;
+                grid.appendChild(dayDiv);
+            });
+        } else if (type === 'clock') {
+            const clock = getClockData();
+            card.innerHTML = `
+                <div class="close-btn"></div>
+                <div class="header">
+                    <div class="title">此刻</div>
+                    <div class="subtitle">CLOCK</div>
+                </div>
+                <div class="clock-time">${clock.time}<span class="clock-seconds">${clock.seconds}</span></div>
+                <div class="clock-date">${clock.date}</div>
+            `;
+        } else if (type === 'note') {
+            card.innerHTML = `
+                <div class="close-btn"></div>
+                <div class="header">
+                    <div class="title">便签</div>
+                    <div class="subtitle">NOTE</div>
+                </div>
+                <div class="note-text" contenteditable="true" spellcheck="false">${initialText}</div>
+            `;
+            const noteText = card.querySelector('.note-text');
+            // 阻止便签编辑时触发拖拽
+            noteText.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+            });
+            noteText.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+            }, { passive: true });
+            noteText.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+            });
+            // 确保 contenteditable 在移动端可正常输入
+            noteText.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // 允许换行用 shift+enter，普通 enter 换行
+                    document.execCommand('insertLineBreak');
+                }
+            });
+        }
+
+        const closeBtn = card.querySelector('.close-btn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteCard(card);
+            });
+        }
+        return card;
+    }
+
+    // 定时更新所有时钟卡片
+    let clockUpdateInterval = null;
+    function startClockUpdates() {
+        if (clockUpdateInterval) clearInterval(clockUpdateInterval);
+        clockUpdateInterval = setInterval(() => {
+            document.querySelectorAll('.widget-card.clock-card').forEach(card => {
+                const timeEl = card.querySelector('.clock-time');
+                const dateEl = card.querySelector('.clock-date');
+                if (!timeEl) return;
+                const clock = getClockData();
+                timeEl.innerHTML = `${clock.time}<span class="clock-seconds">${clock.seconds}</span>`;
+                if (dateEl) dateEl.textContent = clock.date;
+            });
+        }, 1000);
+    }
+
+    // ---------- 布局与测量 ----------
+    function measure() {
+        pageWidth = window.innerWidth;
+        const trackRect = dotsTrack.getBoundingClientRect();
+        const dots = dotsTrack.querySelectorAll('.dot');
+        dotCenters = [];
+
+        dots.forEach(d => {
+            const r = d.getBoundingClientRect();
+            dotCenters.push(r.left - trackRect.left + r.width / 2);
+        });
+
+        dotSpacing = dotCenters.length > 1
+            ? (dotCenters[dotCenters.length - 1] - dotCenters[0]) / (dotCenters.length - 1)
+            : 1;
+
+        if (PAGE_COUNT <= 1) {
+            dotsTrack.style.opacity = '0';
+            dotsTrack.style.pointerEvents = 'none';
+        } else {
+            dotsTrack.style.opacity = '1';
+            dotsTrack.style.pointerEvents = 'auto';
+        }
+    }
+
+    function getCardRects() {
+        const map = new Map();
+        document.querySelectorAll('.widget-card').forEach(c => {
+            map.set(c, c.getBoundingClientRect());
+        });
+        return map;
+    }
+
+    function applyFlip(oldRects, excludeCard) {
+        document.querySelectorAll('.widget-card').forEach(c => {
+            if (c === excludeCard) return;
+            const oldRect = oldRects.get(c);
+            if (!oldRect) return;
+
+            const newRect = c.getBoundingClientRect();
+            const dx = oldRect.left - newRect.left;
+            const dy = oldRect.top - newRect.top;
+
+            if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+                const isMin = c.classList.contains('is-minimized');
+
+                c.style.transition = 'none';
+                c.style.transform = `translate3d(${dx}px, ${dy}px, 0) ${isMin ? 'scale(0.9)' : ''}`;
+
+                void c.offsetWidth;
+
+                c.style.transition = 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                c.style.transform = isMin ? 'scale(0.9) translate3d(0, 0, 0)' : 'translate3d(0, 0, 0)';
+
+                setTimeout(() => {
+                    c.style.transition = '';
+                    c.style.transform = '';
+                }, 400);
+            }
+        });
+    }
+
+    // ---------- 添加 / 删除卡片 ----------
+    function addNewCard(type, initialText) {
+        if (pagesData.length === 0) pagesData.push([]);
+        let lastPageIdx = pagesData.length - 1;
+
+        const wasNewPage = pagesData[lastPageIdx].length >= 3;
+
+        if (wasNewPage) {
+            lastPageIdx++;
+            pagesData.push([]);
+            const newPageDOM = document.createElement('div');
+            newPageDOM.className = 'page';
+            pagesTrack.appendChild(newPageDOM);
+
+            const newDot = document.createElement('div');
+            newDot.className = 'dot';
+            dotsTrack.insertBefore(newDot, slider);
+
+            PAGE_COUNT++;
+            pagesTrack.style.width = (PAGE_COUNT * 100) + 'vw';
+        }
+
+        const oldRects = getCardRects();
+
+        const newCard = createCardElement(type, true, initialText);
+        pagesData[lastPageIdx].push(newCard);
+        pagesTrack.children[lastPageIdx].appendChild(newCard);
+
+        if (isEditingMode) newCard.classList.add('is-minimized');
+
+        measure();
+
+        if (!wasNewPage) {
+            pagesTrack.style.transition = 'none';
+            pagesTrack.style.transform = `translate3d(${-currentPage * pageWidth}px, 0, 0)`;
+            progress = currentPage; targetProgress = currentPage;
+
+            applyFlip(oldRects, newCard);
+            renderSlider();
+        } else {
+            settleTo(lastPageIdx);
+        }
+    }
+
+    function deleteCard(card) {
+        card.classList.add('is-hidden');
+
+        setTimeout(() => {
+            let pageIdx = -1, cardIdx = -1;
+            for (let i = 0; i < pagesData.length; i++) {
+                const idx = pagesData[i].indexOf(card);
+                if (idx > -1) { pageIdx = i; cardIdx = idx; break; }
+            }
+
+            if (pageIdx > -1) {
+                const oldRects = getCardRects();
+
+                card.remove();
+                pagesData[pageIdx].splice(cardIdx, 1);
+
+                let pageRemoved = false;
+                if (pagesData[pageIdx].length === 0 && pagesData.length > 1) {
+                    pagesTrack.children[pageIdx].remove();
+                    pagesData.splice(pageIdx, 1);
+
+                    const dots = dotsTrack.querySelectorAll('.dot');
+                    if (dots[pageIdx]) dots[pageIdx].remove();
+
+                    PAGE_COUNT--;
+                    pagesTrack.style.width = (PAGE_COUNT * 100) + 'vw';
+                    pageRemoved = true;
+
+                    if (currentPage >= PAGE_COUNT) {
+                        currentPage = PAGE_COUNT - 1;
+                    }
+                }
+
+                if (pagesData.length === 0) {
+                    pagesData.push([]);
+                    const newPageDOM = document.createElement('div');
+                    newPageDOM.className = 'page';
+                    pagesTrack.appendChild(newPageDOM);
+                    PAGE_COUNT = 1;
+                    pagesTrack.style.width = '100vw';
+
+                    const newDot = document.createElement('div');
+                    newDot.className = 'dot';
+                    dotsTrack.insertBefore(newDot, slider);
+                    currentPage = 0;
+                }
+
+                measure();
+
+                if (pageRemoved) {
+                    settleTo(currentPage);
+                } else {
+                    pagesTrack.style.transition = 'none';
+                    pagesTrack.style.transform = `translate3d(${-currentPage * pageWidth}px, 0, 0)`;
+                    progress = currentPage; targetProgress = currentPage;
+
+                    applyFlip(oldRects);
+                    renderSlider();
+                }
+            }
+        }, 300);
+    }
+
+    // ---------- 渲染与滑动 ----------
+    function renderPage() {
+        pagesTrack.style.transform = 'translate3d(' + (-progress * pageWidth) + 'px, 0, 0)';
+    }
+
+    function renderSlider() {
+        if (PAGE_COUNT <= 1) return;
+
+        let p = progress;
+        if (p < 0) p = 0;
+        if (p > PAGE_COUNT - 1) p = PAGE_COUNT - 1;
+
+        const i1 = Math.floor(p);
+        const i2 = Math.min(i1 + 1, PAGE_COUNT - 1);
+        const t = p - i1;
+        const cx = dotCenters[i1] + (dotCenters[i2] - dotCenters[i1]) * t;
+
+        slider.style.left = cx + 'px';
+
+        const nearestIdx = Math.round(p);
+        if (nearestIdx !== lastNearestIdx) {
+            lastNearestIdx = nearestIdx;
+            const dots = dotsTrack.querySelectorAll('.dot');
+            dots.forEach((dot, idx) => {
+                if (idx === nearestIdx) dot.classList.add('is-shrink');
+                else dot.classList.remove('is-shrink');
+            });
+        }
+    }
+
+    function lerpLoop() {
+        const diff = targetProgress - progress;
+        if (Math.abs(diff) < 0.0008) {
+            progress = targetProgress;
+            renderPage();
+            renderSlider();
+            rafId = null;
+            return;
+        }
+        progress += diff * 0.18;
+        renderPage();
+        renderSlider();
+        rafId = requestAnimationFrame(lerpLoop);
+    }
+
+    function startLerp() { if (!rafId) rafId = requestAnimationFrame(lerpLoop); }
+    function stopLerp() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } }
+
+    function settleTo(idx) {
+        idx = Math.max(0, Math.min(idx, PAGE_COUNT - 1));
+        currentPage = idx;
+        targetProgress = idx;
+        startLerp();
+    }
+
+    function nearestDotIndex(localX) {
+        let best = 0, bestDist = Infinity;
+        for (let i = 0; i < dotCenters.length; i++) {
+            const d = Math.abs(dotCenters[i] - localX);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        return best;
+    }
+
+    // ---------- 长按编辑 ----------
+    function clearLP() {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    }
+
+    function enterEditMode() {
+        if (isEditingMode) return;
+        isEditingMode = true;
+        wasLongPressed = true;
+
+        requestAnimationFrame(() => {
+            addBtn.classList.add('show');
+            document.querySelectorAll('.widget-card').forEach(c => c.classList.add('is-minimized'));
+        });
+
+        if (navigator.vibrate) navigator.vibrate(10);
+    }
+
+    function exitEditMode() {
+        if (!isEditingMode) return;
+        isEditingMode = false;
+        addBtn.classList.remove('show');
+        document.querySelectorAll('.widget-card').forEach(c => c.classList.remove('is-minimized'));
+    }
+
+    // ---------- 拖拽排序核心 ----------
+    function startDragCard(card, clientX, clientY) {
+        // 找到卡片所在页码和索引
+        let pageIdx = -1, cardIdx = -1;
+        for (let i = 0; i < pagesData.length; i++) {
+            const idx = pagesData[i].indexOf(card);
+            if (idx > -1) { pageIdx = i; cardIdx = idx; break; }
+        }
+        if (pageIdx === -1) return;
+
+        dragCard = card;
+        dragCardData = { pageIdx, cardIdx, pageEl: pagesTrack.children[pageIdx] };
+        dragOriginalPage = pageIdx;
+        dragOriginalIndex = cardIdx;
+        dragTargetIndex = cardIdx;
+        dragTargetPage = pageIdx;
+
+        const rect = card.getBoundingClientRect();
+        dragStartRect = rect;
+        dragCardNaturalWidth = rect.width;
+        dragCardNaturalHeight = rect.height;
+
+        // 手指相对卡片左上角偏移
+        dragOffsetX = clientX - rect.left;
+        dragOffsetY = clientY - rect.top;
+
+        // 记录其他卡片位置
+        dragOtherRects = getCardRects();
+        dragOtherRects.delete(card);
+
+        // 创建占位元素
+        dragPlaceholder = document.createElement('div');
+        dragPlaceholder.className = 'widget-card drag-placeholder';
+        dragPlaceholder.style.width = rect.width + 'px';
+        dragPlaceholder.style.height = rect.height + 'px';
+        dragPlaceholder.style.maxWidth = rect.width + 'px';
+        dragPlaceholder.style.maxHeight = rect.height + 'px';
+        dragPlaceholder.style.flex = '0 0 auto';
+        dragPlaceholder.style.margin = '0';
+        dragPlaceholder.style.padding = '0';
+        dragPlaceholder.style.opacity = '0';
+        dragPlaceholder.style.pointerEvents = 'none';
+        dragPlaceholder.style.position = 'absolute';
+        dragPlaceholder.style.left = (rect.left) + 'px';
+        dragPlaceholder.style.top = (rect.top) + 'px';
+        dragPlaceholder.style.zIndex = '-1';
+        dragPlaceholder.style.transition = 'none';
+        // 修正：占位符直接放在页面里，但使用 fixed 相对视口定位
+        dragPlaceholder.style.position = 'fixed';
+        document.body.appendChild(dragPlaceholder);
+
+        // 卡片改为 fixed 定位跟随手指
+        card.classList.add('is-dragging');
+        card.style.position = 'fixed';
+        card.style.left = rect.left + 'px';
+        card.style.top = rect.top + 'px';
+        card.style.width = rect.width + 'px';
+        card.style.height = rect.height + 'px';
+        card.style.maxWidth = 'none';
+        card.style.maxHeight = 'none';
+        card.style.flex = 'none';
+        card.style.margin = '0';
+        card.style.transform = 'translate3d(0,0,0)';
+
+        // 从原页面移除卡片（但数据保留，稍后插入）
+        // 注意：先不要从 pagesData 移除，等拖拽结束再处理
+        // 但 DOM 需要移除以让其他卡片重新布局
+        // 我们把卡片从父元素移除，但保留引用
+        if (card.parentNode) {
+            card.parentNode.removeChild(card);
+        }
+
+        // 重新计算其他卡片位置（因为卡片移除了）
+        // 但占位符是 fixed 定位，不影响布局，所以其他卡片会收缩
+        // 我们记录新的位置作为目标位置
+        // 等待布局稳定
+        requestAnimationFrame(() => {
+            dragOtherRects.forEach((oldRect, el) => {
+                // 实际上这里需要更新为移除卡片后的新位置
+                // 但 applyFlip 需要旧位置 -> 新位置
+                // 旧位置已经记录，新位置在拖拽结束时获取
+            });
+        });
+
+        // 让页面其他卡片平滑过渡到新位置
+        applyFlip(dragOtherRects, card);
+
+        // 更新手指位置
+        dragCurrentPointer.x = clientX;
+        dragCurrentPointer.y = clientY;
+
+        // 更新卡片位置
+        updateDragCardPosition(clientX, clientY);
+
+        // 设置占位符位置为卡片当前位置（视觉上占位）
+        dragPlaceholder.style.left = rect.left + 'px';
+        dragPlaceholder.style.top = rect.top + 'px';
+
+        // 计算目标索引
+        computeDragTarget(clientX, clientY);
+    }
+
+    function updateDragCardPosition(clientX, clientY) {
+        if (!dragCard) return;
+        const x = clientX - dragOffsetX;
+        const y = clientY - dragOffsetY;
+        dragCard.style.left = x + 'px';
+        dragCard.style.top = y + 'px';
+        dragCurrentPointer.x = clientX;
+        dragCurrentPointer.y = clientY;
+    }
+
+    function computeDragTarget(clientX, clientY) {
+        if (!dragCard) return;
+
+        // 计算卡片中心点
+        const cardCenterX = clientX - dragOffsetX + dragCardNaturalWidth / 2;
+        const cardCenterY = clientY - dragOffsetY + dragCardNaturalHeight / 2;
+
+        // 遍历所有页面，找到最近的卡片位置
+        let bestDist = Infinity;
+        let bestPage = -1;
+        let bestIdx = -1;
+
+        // 先获取所有页面中卡片的 rect
+        // 但由于当前卡片已移除，其他卡片位置是最终布局
+        for (let p = 0; p < pagesData.length; p++) {
+            const pageEl = pagesTrack.children[p];
+            const cards = pagesData[p];
+            // 注意：cards 数组中可能还包含正在拖拽的卡片（数据未移除），但 DOM 已移除
+            // 所以我们要检查卡片是否还在 DOM 中
+            for (let i = 0; i < cards.length; i++) {
+                const c = cards[i];
+                if (c === dragCard) continue;
+                if (!c.parentNode) continue; // 不在 DOM 中跳过
+
+                const r = c.getBoundingClientRect();
+                // 计算卡片中心
+                const cx = r.left + r.width / 2;
+                const cy = r.top + r.height / 2;
+                const dist = Math.sqrt((cardCenterX - cx) ** 2 + (cardCenterY - cy) ** 2);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestPage = p;
+                    bestIdx = i;
+                }
+            }
+
+            // 如果页面没有卡片，也考虑（但一般不会）
+        }
+
+        // 如果没有找到任何卡片（比如所有页面都空了），则放到最后一个页面末尾
+        if (bestPage === -1) {
+            bestPage = pagesData.length - 1;
+            bestIdx = pagesData[bestPage].length;
+        }
+
+        // 判断是插入到卡片前面还是后面
+        // 获取最近卡片的 rect，比较中心
+        let insertIdx = bestIdx;
+        if (bestPage >= 0 && bestIdx < pagesData[bestPage].length) {
+            const targetCard = pagesData[bestPage][bestIdx];
+            if (targetCard && targetCard !== dragCard && targetCard.parentNode) {
+                const r = targetCard.getBoundingClientRect();
+                const targetCenterX = r.left + r.width / 2;
+                const targetCenterY = r.top + r.height / 2;
+                // 如果拖拽卡片中心在目标卡片中心右侧或下方，则插入到后面
+                if (cardCenterX > targetCenterX || cardCenterY > targetCenterY) {
+                    insertIdx = bestIdx + 1;
+                }
+            }
+        }
+
+        dragTargetPage = bestPage;
+        dragTargetIndex = insertIdx;
+
+        // 更新占位符位置（视觉反馈可选）
+    }
+
+    function endDragCard() {
+        if (!dragCard) return;
+
+        const card = dragCard;
+        const targetPage = dragTargetPage;
+        const targetIdx = dragTargetIndex;
+
+        // 清理样式
+        card.classList.remove('is-dragging');
+        card.style.position = '';
+        card.style.left = '';
+        card.style.top = '';
+        card.style.width = '';
+        card.style.height = '';
+        card.style.maxWidth = '';
+        card.style.maxHeight = '';
+        card.style.flex = '';
+        card.style.margin = '';
+        card.style.transform = '';
+        card.style.transition = '';
+
+        // 从原页面数据移除
+        const origPage = dragOriginalPage;
+        const origIdx = dragOriginalIndex;
+        if (origPage >= 0 && origIdx >= 0) {
+            const origArr = pagesData[origPage];
+            if (origArr[origIdx] === card) {
+                origArr.splice(origIdx, 1);
+            }
+        }
+
+        // 插入到目标位置
+        if (targetPage >= 0) {
+            // 确保目标页面存在
+            while (pagesData.length <= targetPage) {
+                pagesData.push([]);
+                const newPageDOM = document.createElement('div');
+                newPageDOM.className = 'page';
+                pagesTrack.appendChild(newPageDOM);
+                const newDot = document.createElement('div');
+                newDot.className = 'dot';
+                dotsTrack.insertBefore(newDot, slider);
+                PAGE_COUNT++;
+                pagesTrack.style.width = (PAGE_COUNT * 100) + 'vw';
+            }
+            const targetArr = pagesData[targetPage];
+            let idx = Math.max(0, Math.min(targetIdx, targetArr.length));
+            targetArr.splice(idx, 0, card);
+
+            // 确保页面 DOM 存在
+            while (pagesTrack.children.length <= targetPage) {
+                const newPageDOM = document.createElement('div');
+                newPageDOM.className = 'page';
+                pagesTrack.appendChild(newPageDOM);
+            }
+
+            // 添加到页面 DOM
+            const pageEl = pagesTrack.children[targetPage];
+            // 找到正确的插入位置
+            const childCards = Array.from(pageEl.querySelectorAll('.widget-card'));
+            let refNode = null;
+            // 找到在 targetArr 中 idx 位置后的第一个卡片
+            for (let i = idx + 1; i < targetArr.length; i++) {
+                const c = targetArr[i];
+                if (c.parentNode === pageEl) {
+                    refNode = c;
+                    break;
+                }
+            }
+            if (refNode) {
+                pageEl.insertBefore(card, refNode);
+            } else {
+                pageEl.appendChild(card);
+            }
+        }
+
+        // 移除占位符
+        if (dragPlaceholder && dragPlaceholder.parentNode) {
+            dragPlaceholder.remove();
+        }
+        dragPlaceholder = null;
+
+        // 清理空页面
+        for (let i = pagesData.length - 1; i >= 0; i--) {
+            if (pagesData[i].length === 0) {
+                pagesData.splice(i, 1);
+                if (pagesTrack.children[i]) pagesTrack.children[i].remove();
+                const dots = dotsTrack.querySelectorAll('.dot');
+                if (dots[i]) dots[i].remove();
+                PAGE_COUNT--;
+                if (currentPage >= PAGE_COUNT && PAGE_COUNT > 0) {
+                    currentPage = PAGE_COUNT - 1;
+                }
+            }
+        }
+        if (pagesData.length === 0) {
+            pagesData.push([]);
+            const newPageDOM = document.createElement('div');
+            newPageDOM.className = 'page';
+            pagesTrack.appendChild(newPageDOM);
+            PAGE_COUNT = 1;
+            pagesTrack.style.width = '100vw';
+            const newDot = document.createElement('div');
+            newDot.className = 'dot';
+            dotsTrack.insertBefore(newDot, slider);
+            currentPage = 0;
+        }
+
+        pagesTrack.style.width = (PAGE_COUNT * 100) + 'vw';
+        measure();
+
+        // 重新计算所有卡片位置并平滑过渡
+        const newRects = getCardRects();
+        // 使用 FLIP 动画：从之前记录的位置（或卡片原有位置）到新位置
+        // 这里简单处理：直接让卡片从当前视觉位置过渡到最终位置
+        // 由于卡片刚被插入，可能位置突变，我们用 FLIP
+        // 记录插入后瞬间的位置
+        requestAnimationFrame(() => {
+            document.querySelectorAll('.widget-card').forEach(c => {
+                if (c === card) return;
+                // 卡片最终位置
+                const finalRect = c.getBoundingClientRect();
+                // 我们无法知道之前位置，但可以用 transform 从拖拽前的位置过渡
+                // 简化：直接重置
+            });
+            // 确保当前页面正确
+            settleTo(currentPage);
+            renderSlider();
+            // 重新应用编辑模式样式
+            if (isEditingMode) {
+                card.classList.add('is-minimized');
+            }
+        });
+
+        // 重置拖拽状态
+        dragCard = null;
+        dragCardData = null;
+        dragStartRect = null;
+        dragOtherRects = new Map();
+        dragOriginalPage = -1;
+        dragOriginalIndex = -1;
+        dragTargetPage = -1;
+        dragTargetIndex = -1;
+    }
+
+    // ---------- 手势处理 ----------
+    function begin(x, y, source, dotIdx, targetCard) {
+        stopLerp();
+        startX = x; startY = y;
+        startTime = Date.now();
+        startProgress = progress;
+        targetProgress = progress;
+        dragSource = source; dragging = false; isPressing = true;
+        pressedDotIndex = dotIdx != null ? dotIdx : -1;
+        wasLongPressed = false;
+
+        clearLP();
+
+        // 长按卡片 -> 进入拖拽排序模式
+        if (targetCard && source === 'page') {
+            longPressTimer = setTimeout(() => {
+                if (isPressing && !dragging) {
+                    enterEditMode();
+                    // 开始拖拽
+                    startDragCard(targetCard, x, y);
+                    pressedDotIndex = -1;
+                    // 拖拽时不视为普通长按
+                    wasLongPressed = false; // 后续由拖拽结束处理
+                }
+            }, 500);
+        } else {
+            longPressTimer = setTimeout(() => {
+                if (isPressing && !dragging) {
+                    enterEditMode();
+                    pressedDotIndex = -1;
+                }
+            }, 500);
+        }
+    }
+
+    function move(x, y, e) {
+        if (!isPressing) return;
+
+        // 如果正在拖拽卡片
+        if (dragCard) {
+            if (e && e.cancelable) e.preventDefault();
+            updateDragCardPosition(x, y);
+            computeDragTarget(x, y);
+            return;
+        }
+
+        const dx = x - startX;
+        const dy = y - startY;
+
+        if (!dragging) {
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLP();
+            if (Math.abs(dx) > 5 && Math.abs(dx) > Math.abs(dy)) {
+                dragging = true;
+                pressedDotIndex = -1;
+                slider.classList.add('dragging');
+            }
+        }
+
+        if (!dragging) return;
+        if (e && e.cancelable) e.preventDefault();
+
+        let p;
+        if (dragSource === 'page') {
+            p = startProgress - dx / pageWidth;
+        } else {
+            p = startProgress + dx / dotSpacing;
+        }
+
+        targetProgress = Math.max(0, Math.min(p, PAGE_COUNT - 1));
+        startLerp();
+    }
+
+    function end(x, y) {
+        clearLP();
+
+        // 如果正在拖拽卡片，结束拖拽
+        if (dragCard) {
+            endDragCard();
+            isPressing = false;
+            dragging = false;
+            pressedDotIndex = -1;
+            slider.classList.remove('dragging');
+            return;
+        }
+
+        if (!isPressing) return;
+
+        if (wasLongPressed) {
+            isPressing = false;
+            dragging = false;
+            return;
+        }
+
+        if (dragging) {
+            const dx = x - startX;
+            const time = Date.now() - startTime;
+            const velocity = dx / time;
+
+            let target = Math.round(targetProgress);
+
+            if (Math.abs(velocity) > 0.5) {
+                if (velocity > 0 && currentPage > 0) target = currentPage - 1;
+                if (velocity < 0 && currentPage < PAGE_COUNT - 1) target = currentPage + 1;
+            }
+
+            settleTo(target);
+        } else if (pressedDotIndex >= 0) {
+            settleTo(pressedDotIndex);
+        } else {
+            const el = document.elementFromPoint(x, y);
+            const isClickingCard = el && (el.closest('.widget-card') || el.closest('.global-add-btn') || el.closest('.type-picker-overlay'));
+            if (isEditingMode && !isClickingCard) {
+                exitEditMode();
+            }
+        }
+
+        dragging = false;
+        isPressing = false;
+        pressedDotIndex = -1;
+        slider.classList.remove('dragging');
+    }
+
+    function cancel() {
+        clearLP();
+
+        // 如果正在拖拽卡片，取消拖拽（放回原位）
+        if (dragCard) {
+            // 简单处理：直接结束拖拽，但尽量回到原位
+            // 为了简化，这里直接调用 endDragCard 但目标位置设为原位
+            dragTargetPage = dragOriginalPage;
+            dragTargetIndex = dragOriginalIndex;
+            endDragCard();
+            isPressing = false;
+            dragging = false;
+            pressedDotIndex = -1;
+            slider.classList.remove('dragging');
+            return;
+        }
+
+        if (!isPressing) return;
+        dragging = false; isPressing = false; pressedDotIndex = -1;
+        slider.classList.remove('dragging');
+        stopLerp();
+        settleTo(currentPage);
+    }
+
+    // ---------- 全局事件 ----------
+    document.addEventListener('touchstart', function(e) {
+        if (activeTouchId !== null || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        activeTouchId = t.identifier;
+        lastTouchTime = Date.now();
+
+        const targetCard = e.target.closest('.widget-card');
+
+        if (e.target.closest('#dots-track') && PAGE_COUNT > 1) {
+            const rect = dotsTrack.getBoundingClientRect();
+            const idx = nearestDotIndex(t.clientX - rect.left);
+            begin(t.clientX, t.clientY, 'slider', idx, null);
+        } else {
+            begin(t.clientX, t.clientY, 'page', -1, targetCard);
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+        if (activeTouchId === null) return;
+        for (let i = 0; i < e.touches.length; i++) {
+            if (e.touches[i].identifier === activeTouchId) {
+                move(e.touches[i].clientX, e.touches[i].clientY, e);
+                break;
+            }
+        }
+    }, { passive: false });
+
+    document.addEventListener('touchend', function(e) {
+        if (activeTouchId === null) return;
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            if (e.changedTouches[i].identifier === activeTouchId) {
+                end(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+                activeTouchId = null;
+                lastTouchTime = Date.now();
+                break;
+            }
+        }
+    });
+
+    document.addEventListener('touchcancel', function() {
+        activeTouchId = null;
+        cancel();
+    });
+
+    document.addEventListener('mousedown', function(e) {
+        if (e.button !== 0 || Date.now() - lastTouchTime < 500) return;
+        const targetCard = e.target.closest('.widget-card');
+        if (e.target.closest('#dots-track') && PAGE_COUNT > 1) {
+            const rect = dotsTrack.getBoundingClientRect();
+            const idx = nearestDotIndex(e.clientX - rect.left);
+            begin(e.clientX, e.clientY, 'slider', idx, null);
+        } else {
+            begin(e.clientX, e.clientY, 'page', -1, targetCard);
+        }
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isPressing) return;
+        move(e.clientX, e.clientY, e);
+    });
+
+    document.addEventListener('mouseup', function(e) {
+        if (!isPressing) return;
+        end(e.clientX, e.clientY);
+    });
+
+    // 添加按钮：弹出类型选择
+    addBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        typePickerOverlay.classList.add('show');
+    });
+
+    // 类型选择
+    document.querySelectorAll('.type-option').forEach(opt => {
+        opt.addEventListener('click', function() {
+            const type = this.dataset.type;
+            typePickerOverlay.classList.remove('show');
+            addNewCard(type);
+        });
+    });
+
+    pickerCancel.addEventListener('click', function() {
+        typePickerOverlay.classList.remove('show');
+    });
+
+    typePickerOverlay.addEventListener('click', function(e) {
+        if (e.target === this) this.classList.remove('show');
+    });
+
+    window.addEventListener('resize', function() {
+        measure();
+        progress = currentPage; targetProgress = currentPage; lastNearestIdx = -1;
+        renderPage(); renderSlider();
+    });
+
+    // ---------- 初始化 ----------
+    function init() {
+        pagesTrack.innerHTML = '';
+        dotsTrack.querySelectorAll('.dot').forEach(d => d.remove());
+        pagesData = []; PAGE_COUNT = 0; currentPage = 0;
+        lastNearestIdx = -1;
+
+        const firstPage = document.createElement('div');
+        firstPage.className = 'page';
+        pagesTrack.appendChild(firstPage);
+        pagesData.push([]);
+
+        const firstDot = document.createElement('div');
+        firstDot.className = 'dot';
+        dotsTrack.insertBefore(firstDot, slider);
+        PAGE_COUNT = 1;
+        pagesTrack.style.width = '100vw';
+
+        // 初始添加一些示例组件
+        addNewCard('calendar');
+        addNewCard('clock');
+        addNewCard('note', '点击便签可编辑内容');
+        addNewCard('calendar');
+        addNewCard('clock');
+        addNewCard('note', '长按卡片可拖动排序');
+
+        settleTo(0);
+        startClockUpdates();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();
+</script>
+</body>
+</html>

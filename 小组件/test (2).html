@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Transform 拖拽测试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; color: #fff; font-family: sans-serif; }
+
+        /* 视口容器，禁止原生滚动 */
+        #pages-viewport {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* 滑动轨道，宽度根据页数动态计算，使用 transform 移动 */
+        #pages-track {
+            display: flex;
+            height: 100%;
+            width: 300vw; /* 3 页 */
+            /* 默认使用过渡动画，实现平滑吸附 */
+            transition: transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+            transform: translateX(0px);
+            will-change: transform;
+        }
+
+        /* 拖拽时关闭过渡动画，保证跟手 */
+        #pages-track.is-dragging {
+            transition: none;
+        }
+
+        .page {
+            width: 100vw;
+            height: 100%;
+            flex-shrink: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        .page:nth-child(1) { background: linear-gradient(135deg, #ff4757, #ff6b81); }
+        .page:nth-child(2) { background: linear-gradient(135deg, #2ed573, #7bed9f); }
+        .page:nth-child(3) { background: linear-gradient(135deg, #1e90ff, #70a1ff); }
+
+        /* 底部控制条 */
+        #control-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            touch-action: none; /* 彻底阻断浏览器手势 */
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #dots-track {
+            display: flex;
+            gap: 15px;
+            padding: 15px 25px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+            cursor: grab;
+        }
+        #dots-track:active { cursor: grabbing; }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: transform 0.2s, background 0.2s;
+        }
+        .dot.active {
+            background: #fff;
+            transform: scale(1.3);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="pages-viewport">
+        <div id="pages-track">
+            <div class="page">Page 1</div>
+            <div class="page">Page 2</div>
+            <div class="page">Page 3</div>
+        </div>
+    </div>
+
+    <div id="control-bar">
+        <div id="dots-track">
+            <div class="dot active"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+    </div>
+
+    <script>
+        const pagesTrack = document.getElementById('pages-track');
+        const dotsTrack = document.getElementById('dots-track');
+        const dots = document.querySelectorAll('.dot');
+        const pageCount = dots.length;
+        let pageWidth = window.innerWidth;
+
+        let currentIndex = 0;
+        let isDragging = false;
+        let startX = 0;
+        let currentTranslateX = 0;
+        let hasMoved = false;
+
+        // 初始化轨道宽度
+        pagesTrack.style.width = `${pageCount * 100}vw`;
+
+        function updateTrackPosition(animate = true) {
+            currentTranslateX = -currentIndex * pageWidth;
+            if (animate) {
+                pagesTrack.classList.remove('is-dragging');
+            } else {
+                pagesTrack.classList.add('is-dragging');
+            }
+            pagesTrack.style.transform = `translateX(${currentTranslateX}px)`;
+            
+            // 更新圆点状态
+            dots.forEach((dot, i) => {
+                dot.classList.toggle('active', i === currentIndex);
+            });
+        }
+
+        // ==========================================
+        // 核心拖拽逻辑 (Transform 版)
+        // ==========================================
+        
+        function dragStart(clientX) {
+            isDragging = true;
+            hasMoved = false;
+            startX = clientX;
+            // 记录当前的 translateX 作为起点
+            currentTranslateX = -currentIndex * pageWidth;
+            pagesTrack.classList.add('is-dragging');
+        }
+
+        function dragMove(clientX) {
+            if (!isDragging) return;
+            const walk = clientX - startX;
+            
+            // 如果移动超过 5px，标记为真实拖拽
+            if (Math.abs(walk) > 5) hasMoved = true;
+
+            // 加上 1.2 倍的物理阻尼感
+            const newTranslateX = currentTranslateX + (walk * 1.2);
+            pagesTrack.style.transform = `translateX(${newTranslateX}px)`;
+        }
+
+        function dragEnd(clientX) {
+            if (!isDragging) return;
+            isDragging = false;
+
+            // 如果没怎么动，算作点击
+            if (!hasMoved) {
+                handleDotClick(clientX);
+                return;
+            }
+
+            // 计算拖拽的距离
+            const walk = clientX - startX;
+            
+            // 计算当前拖拽到了哪里
+            let targetIndex = currentIndex;
+            
+            // 只要滑动超过屏幕的 15%，就切到下一页/上一页
+            const threshold = pageWidth * 0.15;
+            
+            if (walk < -threshold) {
+                targetIndex = Math.min(currentIndex + 1, pageCount - 1);
+            } else if (walk > threshold) {
+                targetIndex = Math.max(currentIndex - 1, 0);
+            }
+
+            // 更新索引并执行平滑吸附
+            currentIndex = targetIndex;
+            updateTrackPosition(true);
+        }
+
+        // --- 1. 触摸事件 ---
+        dotsTrack.addEventListener('touchstart', (e) => {
+            dragStart(e.touches[0].clientX);
+            e.preventDefault(); 
+            e.stopPropagation();
+        }, { passive: false });
+
+        // 绑定在 document 上，防止手指滑出控制条导致丢失事件
+        document.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            dragMove(e.touches[0].clientX);
+            e.preventDefault(); 
+            e.stopPropagation();
+        }, { passive: false });
+
+        document.addEventListener('touchend', (e) => {
+            if (!isDragging) return;
+            dragEnd(e.changedTouches[0].clientX);
+            e.preventDefault();
+            e.stopPropagation();
+        }, { passive: false });
+
+        // --- 2. 鼠标事件 (PC端) ---
+        dotsTrack.addEventListener('mousedown', (e) => {
+            dragStart(e.clientX);
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            dragMove(e.clientX);
+            e.preventDefault();
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (!isDragging) return;
+            dragEnd(e.clientX);
+        });
+
+
+        // ==========================================
+        // 辅助功能：点击圆点判定
+        // ==========================================
+        function handleDotClick(clientX) {
+            const rect = dotsTrack.getBoundingClientRect();
+            const clickX = clientX - rect.left;
+            
+            const dotWidth = 12;
+            const gap = 15;
+            const paddingLeft = 25; 
+            
+            for (let i = 0; i < pageCount; i++) {
+                const dotStart = paddingLeft + i * (dotWidth + gap);
+                const dotEnd = dotStart + dotWidth;
+                if (clickX >= dotStart - gap/2 && clickX <= dotEnd + gap/2) {
+                    currentIndex = i;
+                    updateTrackPosition(true);
+                    break;
+                }
+            }
+        }
+
+        // 窗口尺寸改变时重新对齐
+        window.addEventListener('resize', () => {
+            pageWidth = window.innerWidth;
+            updateTrackPosition(false);
+        });
+    </script>
+</body>
+</html>
