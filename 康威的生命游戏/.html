@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>
+    // 配置: 速度(ms), 存活色, 死亡色
+    window.CONFIG = { speed: 150, aliveColor: '#000000', deadColor: '#FFFFFF' };
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>生命游戏 · 极简黑白</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #F5F5F5;
+      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .panel {
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto;
+      background: #FFFFFF;
+      border-radius: 24px;
+      padding: 24px 20px 28px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: #000000;
+      margin-bottom: 4px;
+      text-align: center;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #666666;
+      margin-bottom: 20px;
+      text-align: center;
+      font-weight: 400;
+      letter-spacing: 0.01em;
+    }
+
+    /* Canvas 容器 */
+    .canvas-wrap {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1.5px solid #E5E5E5;
+      background: #FFFFFF;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 400px;
+      aspect-ratio: 1 / 1;
+      cursor: pointer;
+      touch-action: manipulation;
+      background: #FFFFFF;
+    }
+
+    /* 控制面板内按钮行 */
+    .button-row {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      margin-bottom: 18px;
+    }
+
+    /* 通用按钮样式 */
+    .btn {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      background-color: #000000;
+      color: #FFFFFF;
+      border: 1.5px solid #000000;
+      border-radius: 50px;
+      padding: 12px 0;
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      text-align: center;
+      touch-action: manipulation;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .btn.secondary {
+      background-color: #FFFFFF;
+      color: #000000;
+      border-color: #000000;
+    }
+
+    /* 按压反馈 + 反转 */
+    .btn:active {
+      transform: scale(0.96);
+    }
+
+    .btn:active {
+      background-color: #FFFFFF;
+      color: #000000;
+    }
+
+    .btn.secondary:active {
+      background-color: #000000;
+      color: #FFFFFF;
+    }
+
+    .btn:focus-visible {
+      outline: 2px solid #000000;
+      outline-offset: 2px;
+    }
+
+    /* 滑块区域 */
+    .slider-container {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 6px;
+    }
+
+    .slider-label {
+      font-size: 14px;
+      color: #333333;
+      white-space: nowrap;
+      font-weight: 500;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      flex: 1;
+      height: 1.5px;
+      background: #E5E5E5;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.2s;
+      touch-action: manipulation;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: #000000;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s;
+      box-shadow: 0 0 0 1.5px #FFFFFF, 0 0 0 3px #000000;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: #000000;
+      border-radius: 50%;
+      border: 1.5px solid #FFFFFF;
+      box-shadow: 0 0 0 1.5px #000000;
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s;
+    }
+
+    /* 滑块按压放大 */
+    input[type="range"]:active::-webkit-slider-thumb {
+      transform: scale(1.25);
+      background: #333333;
+    }
+
+    input[type="range"]:active::-moz-range-thumb {
+      transform: scale(1.25);
+      background: #333333;
+    }
+
+    input[type="range"]:focus-visible {
+      outline: 2px solid #000000;
+      outline-offset: 4px;
+    }
+
+    /* 波纹扩散效果通过 canvas 绘制，无需额外 DOM */
+
+    /* 自适应 */
+    @media (max-width: 420px) {
+      .panel {
+        padding: 20px 16px 24px;
+      }
+      h1 {
+        font-size: 22px;
+      }
+      .btn {
+        padding: 10px 0;
+        font-size: 14px;
+      }
+    }
+
+    /* 极简注释: 网格点击波纹 */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .panel > * {
+      animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+    }
+
+    .panel > *:nth-child(1) { animation-delay: 0.02s; }
+    .panel > *:nth-child(2) { animation-delay: 0.06s; }
+    .panel > *:nth-child(3) { animation-delay: 0.10s; }
+    .panel > *:nth-child(4) { animation-delay: 0.14s; }
+    .panel > *:nth-child(5) { animation-delay: 0.18s; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>生命游戏</h1>
+    <div class="subtitle">Conway's Game of Life · 点击格子切换状态</div>
+
+    <div class="canvas-wrap">
+      <canvas id="lifeCanvas" width="400" height="400"></canvas>
+    </div>
+
+    <div class="button-row">
+      <button class="btn" id="playPauseBtn">暂停</button>
+      <button class="btn secondary" id="randomBtn">随机</button>
+      <button class="btn secondary" id="clearBtn">清空</button>
+    </div>
+
+    <div class="slider-container">
+      <span class="slider-label">速度</span>
+      <input type="range" id="speedSlider" min="40" max="500" value="150" step="10">
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const CONFIG = window.CONFIG || { speed: 150, aliveColor: '#000000', deadColor: '#FFFFFF' };
+
+      // 画布与网格配置
+      const canvas = document.getElementById('lifeCanvas');
+      const ctx = canvas.getContext('2d');
+      const COLS = 40;
+      const ROWS = 40;
+      const CELL_SIZE = canvas.width / COLS; // 400/40 = 10
+
+      // 状态数组: 0 死亡(白), 1 存活(黑)
+      let grid = new Array(ROWS).fill(0).map(() => new Array(COLS).fill(0));
+      let isPlaying = true;          // 默认播放状态 (与 CONFIG 一致: 初始演化)
+      let intervalId = null;
+      let currentSpeed = CONFIG.speed; // 150ms
+
+      // 波纹列表: 用于点击扩散效果
+      let ripples = [];
+
+      // 速度滑块元素
+      const speedSlider = document.getElementById('speedSlider');
+      const playPauseBtn = document.getElementById('playPauseBtn');
+
+      // 初始化滑块值
+      speedSlider.value = currentSpeed;
+
+      // 随机初始化网格 (约 30% 存活)
+      function randomizeGrid() {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            grid[r][c] = Math.random() < 0.3 ? 1 : 0;
+          }
+        }
+      }
+
+      // 清空网格
+      function clearGrid() {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            grid[r][c] = 0;
+          }
+        }
+      }
+
+      // 绘制网格 + 波纹
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 1. 绘制格子
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            ctx.fillStyle = grid[r][c] === 1 ? CONFIG.aliveColor : CONFIG.deadColor;
+            ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE - 0.5, CELL_SIZE - 0.5);
+            // 极细网格线(仅用于视觉参考, 颜色极浅灰) 使用 #E5E5E5 宽度 0.5
+            if (grid[r][c] === 0) {
+              ctx.fillStyle = CONFIG.deadColor;
+              ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE - 0.5, CELL_SIZE - 0.5);
+            }
+          }
+        }
+        // 绘制极浅网格分隔线 (1.5px 白色会导致过亮, 用 #E5E5E5 勉强可见, 符合灰度)
+        ctx.strokeStyle = '#E5E5E5';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= COLS; i++) {
+          ctx.beginPath();
+          ctx.moveTo(i * CELL_SIZE, 0);
+          ctx.lineTo(i * CELL_SIZE, canvas.height);
+          ctx.stroke();
+        }
+        for (let i = 0; i <= ROWS; i++) {
+          ctx.beginPath();
+          ctx.moveTo(0, i * CELL_SIZE);
+          ctx.lineTo(canvas.width, i * CELL_SIZE);
+          ctx.stroke();
+        }
+
+        // 2. 绘制波纹 (黑白扩散)
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const rp = ripples[i];
+          const progress = (performance.now() - rp.startTime) / rp.duration;
+          if (progress >= 1) {
+            ripples.splice(i, 1);
+            continue;
+          }
+          const radius = rp.maxRadius * progress;
+          const alpha = 1 - progress;
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, radius, 0, Math.PI * 2);
+          // 波纹颜色: 黑色半透明 (或白色, 根据背景调整) 这里使用黑色描边
+          ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.6})`;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          // 第二层更细的波纹
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, radius * 0.7, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.3})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+
+      // 演化一步
+      function step() {
+        const newGrid = new Array(ROWS).fill(0).map(() => new Array(COLS).fill(0));
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            let neighbors = 0;
+            for (let dr = -1; dr <= 1; dr++) {
+              for (let dc = -1; dc <= 1; dc++) {
+                if (dr === 0 && dc === 0) continue;
+                const nr = (r + dr + ROWS) % ROWS;
+                const nc = (c + dc + COLS) % COLS;
+                neighbors += grid[nr][nc];
+              }
+            }
+            if (grid[r][c] === 1) {
+              newGrid[r][c] = (neighbors === 2 || neighbors === 3) ? 1 : 0;
+            } else {
+              newGrid[r][c] = (neighbors === 3) ? 1 : 0;
+            }
+          }
+        }
+        grid = newGrid;
+        draw();
+      }
+
+      // 开始演化
+      function startEvolution() {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = setInterval(step, currentSpeed);
+      }
+
+      // 停止演化
+      function stopEvolution() {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+
+      // 更新播放/暂停按钮文本和状态
+      function updatePlayPauseUI() {
+        if (isPlaying) {
+          playPauseBtn.textContent = '暂停';
+          playPauseBtn.classList.remove('secondary');
+        } else {
+          playPauseBtn.textContent = '播放';
+          playPauseBtn.classList.add('secondary');
+        }
+      }
+
+      // 切换播放/暂停
+      function togglePlay() {
+        isPlaying = !isPlaying;
+        if (isPlaying) {
+          startEvolution();
+        } else {
+          stopEvolution();
+        }
+        updatePlayPauseUI();
+      }
+
+      // 点击 Canvas 处理 (切换格子 + 波纹)
+      function handleCanvasClick(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const mouseX = (e.clientX - rect.left) * scaleX;
+        const mouseY = (e.clientY - rect.top) * scaleY;
+        const col = Math.floor(mouseX / CELL_SIZE);
+        const row = Math.floor(mouseY / CELL_SIZE);
+        if (col >= 0 && col < COLS && row >= 0 && row < ROWS) {
+          // 切换生死
+          grid[row][col] = grid[row][col] === 1 ? 0 : 1;
+          // 添加波纹 (以格子中心为圆心)
+          const cx = col * CELL_SIZE + CELL_SIZE / 2;
+          const cy = row * CELL_SIZE + CELL_SIZE / 2;
+          ripples.push({
+            x: cx,
+            y: cy,
+            startTime: performance.now(),
+            duration: 350,
+            maxRadius: 30
+          });
+          draw();
+        }
+      }
+
+      // 启动循环重绘波纹 (使用 requestAnimationFrame)
+      let rafId = null;
+      function animationLoop() {
+        if (ripples.length > 0) {
+          draw();
+        }
+        rafId = requestAnimationFrame(animationLoop);
+      }
+      animationLoop();
+
+      // 初始化: 随机填充 + 绘制
+      randomizeGrid();
+      draw();
+      // 初始根据 isPlaying 启动
+      if (isPlaying) {
+        startEvolution();
+      }
+      updatePlayPauseUI();
+
+      // 事件绑定
+      canvas.addEventListener('click', handleCanvasClick);
+      playPauseBtn.addEventListener('click', togglePlay);
+      document.getElementById('randomBtn').addEventListener('click', function() {
+        randomizeGrid();
+        draw();
+      });
+      document.getElementById('clearBtn').addEventListener('click', function() {
+        clearGrid();
+        draw();
+      });
+      speedSlider.addEventListener('input', function(e) {
+        const val = parseInt(e.target.value, 10);
+        currentSpeed = val;
+        if (isPlaying && intervalId) {
+          stopEvolution();
+          startEvolution();
+        }
+      });
+
+      // 清理动画帧 (理论上不需要, 但保留)
+      window.addEventListener('beforeunload', function() {
+        if (rafId) cancelAnimationFrame(rafId);
+        stopEvolution();
+      });
+    })();
+  </script>
+</body>
+</html>

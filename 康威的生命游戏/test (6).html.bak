@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>太阳 → 月亮 变形</title>
+<style>
+  html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="400"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const W = 400, H = 400, CX = 200, CY = 200, R = 120;
+const N = 60;
+const SPEED = 0.005;
+
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+
+function resample(pts, n){
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return Array.from({length:n}, () => ({...pts[0]}));
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  if (total === 0) return Array.from({length:n}, () => ({...pts[0]}));
+  const step = total/(n-1);
+  const out = [{x:pts[0].x, y:pts[0].y}];
+  let segIdx = 0, segStart = pts[0], segEnd = pts[1];
+  let segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++){
+    const target = i*step;
+    let ok = false;
+    while (segIdx < pts.length-1){
+      if (segDone+segLen >= target-1e-9){
+        const t = segLen===0 ? 0 : (target-segDone)/segLen;
+        out.push({x:segStart.x+(segEnd.x-segStart.x)*t, y:segStart.y+(segEnd.y-segStart.y)*t});
+        ok = true; break;
+      }
+      segDone += segLen; segIdx++;
+      if (segIdx >= pts.length-1) break;
+      segStart = pts[segIdx]; segEnd = pts[segIdx+1];
+      segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+    }
+    if (!ok){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  }
+  while (out.length < n){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  return out.slice(0, n);
+}
+
+/* 采样一条弧（从 angleA 到 angleB，圆心 c，半径 r），返回点数组 */
+function arcPoints(cx, cy, r, angleA, angleB, n){
+  const pts = [];
+  for (let i = 0; i < n; i++){
+    const a = angleA + (angleB - angleA) * (i / (n - 1));
+    pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return pts;
+}
+
+/* 太阳：1 个大圆 + 8 条短线，全部作为独立子路径 */
+function buildSunPaths(){
+  const paths = [];
+
+  // 太阳主体圆
+  const bodyR = R * 0.45;
+  paths.push({
+    points: arcPoints(CX, CY, bodyR, 0, Math.PI * 2, N),
+    closed: true
+  });
+
+  // 8 条射线
+  const rayInner = R * 0.60;
+  const rayOuter = R * 0.92;
+  for (let k = 0; k < 8; k++){
+    const a = (k / 8) * Math.PI * 2 - Math.PI/2;
+    const p1 = { x: CX + Math.cos(a) * rayInner, y: CY + Math.sin(a) * rayInner };
+    const p2 = { x: CX + Math.cos(a) * rayOuter, y: CY + Math.sin(a) * rayOuter };
+    paths.push({ points: resample([p1, p2], N), closed: false });
+  }
+
+  return paths; // 9 条
+}
+
+/* 月亮：完整弯月轮廓，按长度均分成 9 段，但第一段给太阳的圆用（整圈），
+   其余 8 段给 8 条射线用 */
+function buildMoonTargets(){
+  const outerR = R * 0.82;
+  const innerR = R * 0.70;
+  const offsetX = R * 0.28;
+
+  // 先构造完整弯月的采样点（闭合）
+  const outerN = 200;
+  const outer = arcPoints(CX, CY, outerR, -Math.PI/2, -Math.PI/2 + Math.PI*2, outerN);
+  const inner = arcPoints(CX + offsetX, CY, innerR, Math.PI*1.5, Math.PI*1.5 - Math.PI*2, outerN);
+  // 完整轮廓：外弧 + 内弧（去掉重复起点）
+  const full = outer.concat(inner.slice(1));
+
+  // 按照总长度均分成 9 段
+  const segCount = 9;
+  let totalLen = 0;
+  const lens = [];
+  for (let i = 1; i < full.length; i++){
+    const d = Math.hypot(full[i].x-full[i-1].x, full[i].y-full[i-1].y);
+    lens.push(d);
+    totalLen += d;
+  }
+
+  const segTargetLen = totalLen / segCount;
+  const segments = [];
+  let curSeg = [full[0]];
+  let curLen = 0;
+  let lastPt = full[0];
+  for (let i = 1; i < full.length; i++){
+    const p = full[i];
+    const d = Math.hypot(p.x-lastPt.x, p.y-lastPt.y);
+    if (curLen + d >= segTargetLen && segments.length < segCount - 1){
+      // 切分：在当前段内插值出精确端点
+      const remain = segTargetLen - curLen;
+      const t = d === 0 ? 0 : remain / d;
+      const cut = { x: lastPt.x + (p.x - lastPt.x) * t, y: lastPt.y + (p.y - lastPt.y) * t };
+      curSeg.push(cut);
+      segments.push(curSeg);
+      curSeg = [cut];
+      curLen = 0;
+      // 从切点开始继续这一段剩余部分
+      const d2 = Math.hypot(p.x-cut.x, p.y-cut.y);
+      if (d2 > 1e-9){
+        curSeg.push({ x: p.x, y: p.y });
+        curLen += d2;
+      }
+    } else {
+      curSeg.push(p);
+      curLen += d;
+    }
+    lastPt = p;
+  }
+  if (curSeg.length >= 2) segments.push(curSeg);
+
+  // 如果不够 9 段，补齐（用最后一段均分）
+  while (segments.length < segCount){
+    const s = segments[segments.length - 1];
+    if (s.length >= 4){
+      const mid = Math.floor(s.length / 2);
+      const a = s.slice(0, mid + 1);
+      const b = s.slice(mid);
+      segments.pop();
+      segments.push(a, b);
+    } else {
+      break;
+    }
+  }
+
+  // 现在 segments 有 9 段，但第一段（太阳的圆）应该对应到月亮上"最圆"的部分 —— 没有，
+  // 所以让太阳的圆对应到月亮第一段，圆不闭合了，变成一段弧。
+  // 为了让圆变形时不显得突兀，我们把第一段的目标弧做特别处理：
+  // 让圆"展开"后变成第一段弧，视觉上是圆被拉开成弧，可以接受。
+
+  // 把每段 resample 到 N 个点
+  return segments.slice(0, 9).map(seg => resample(seg, N));
+}
+
+/* 把 9 个太阳路径与 9 个月亮段一一配对，并做方向对齐 */
+function alignEnd(startPts, endPts){
+  // 让 endPts 起点尽量靠近 startPts 起点
+  const s0 = startPts[0];
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < endPts.length; i++){
+    const d = Math.hypot(endPts[i].x-s0.x, endPts[i].y-s0.y);
+    if (d < bestD){ bestD = d; best = i; }
+  }
+  let arr = endPts.slice(best).concat(endPts.slice(0, best));
+
+  // 比较正向/反向哪个端点更近
+  const dF = Math.hypot(arr[0].x-s0.x, arr[0].y-s0.y);
+  const dR = Math.hypot(arr[arr.length-1].x-s0.x, arr[arr.length-1].y-s0.y);
+  if (dR < dF) arr = arr.slice().reverse();
+  return arr;
+}
+
+let morphPlan = null;
+
+function buildMorphPlan(){
+  const sunPaths = buildSunPaths();          // 9 条
+  const moonSegs = buildMoonTargets();       // 9 段
+
+  // 配对策略：太阳的圆(索引0) → 月亮第 0 段；
+  // 8 条射线 → 月亮第 1..8 段。
+  // 但太阳的圆是闭合的（首尾重合），而月亮第 0 段是弧（首尾不同）。
+  // 为了让圆能平滑变成弧，我们把圆也当作一个"长 N 点的开放弧"处理：
+  // 起始时圆的首尾点相同，插值过程中自然张开成弧。
+  const plans = [];
+  for (let i = 0; i < 9; i++){
+    const start = sunPaths[i].points;
+    const end = alignEnd(start, moonSegs[i]);
+    plans.push({
+      start,
+      end,
+      startClosed: sunPaths[i].closed, // 只用于起始 closePath
+      endClosed: false
+    });
+  }
+  morphPlan = plans;
+}
+
+let progress = 0;
+
+function frame(){
+  progress += SPEED;
+  if (progress >= 1) progress = 1;
+
+  const t = ease(progress);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#171717';
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const sp of morphPlan){
+    ctx.beginPath();
+    for (let i = 0; i < N; i++){
+      const a = sp.start[i], b = sp.end[i];
+      const x = a.x + (b.x-a.x)*t;
+      const y = a.y + (b.y-a.y)*t;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    // 圆在起始阶段闭合，变形到 40% 时闭合消失（圆开始张开成弧）
+    if (sp.startClosed && t < 0.4) ctx.closePath();
+    ctx.stroke();
+  }
+
+  if (progress < 1) requestAnimationFrame(frame);
+  else setTimeout(() => { progress = 0; requestAnimationFrame(frame); }, 800);
+}
+
+buildMorphPlan();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

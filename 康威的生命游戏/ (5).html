@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>
+    // 配置: 速度(ms)
+    window.CONFIG = { speed: 150 };
+  </script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>生命游戏 · 极简黑白</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg: #FFFFFF;
+      --fg: #000000;
+      --fg-secondary: #666666;
+      --border: #E5E5E5;
+      --panel-bg: #FFFFFF;
+      --alive: #000000;
+      --dead: #FFFFFF;
+      --ripple: rgba(0, 0, 0, 0.6);
+      --ripple-secondary: rgba(0, 0, 0, 0.3);
+      --slider-track: #E5E5E5;
+    }
+
+    [data-theme="dark"] {
+      --bg: #000000;
+      --fg: #FFFFFF;
+      --fg-secondary: #999999;
+      --border: #333333;
+      --panel-bg: #000000;
+      --alive: #FFFFFF;
+      --dead: #000000;
+      --ripple: rgba(255, 255, 255, 0.6);
+      --ripple-secondary: rgba(255, 255, 255, 0.3);
+      --slider-track: #333333;
+    }
+
+    body {
+      background: var(--bg);
+      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .panel {
+      width: 100%;
+      max-width: 480px;
+      margin: 0 auto;
+      background: var(--panel-bg);
+      border-radius: 24px;
+      padding: 24px 20px 28px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative;
+      transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+      margin-bottom: 4px;
+      text-align: center;
+      transition: color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: var(--fg-secondary);
+      margin-bottom: 20px;
+      text-align: center;
+      font-weight: 400;
+      letter-spacing: 0.01em;
+      transition: color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* 主题切换按钮 */
+    .theme-toggle {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: transparent;
+      border: 1.5px solid var(--border);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-appearance: none;
+      appearance: none;
+      touch-action: manipulation;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      outline: none;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .theme-toggle:active {
+      transform: scale(0.96);
+      background: var(--fg);
+    }
+
+    .theme-toggle:active svg {
+      stroke: var(--bg);
+    }
+
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--fg);
+      outline-offset: 2px;
+    }
+
+    .theme-toggle svg {
+      width: 22px;
+      height: 22px;
+      stroke: var(--fg);
+      stroke-width: 1.5;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: stroke 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: visible;
+    }
+
+    /* 太阳光芒线条 - 收缩旋转消失 */
+    .theme-toggle .sun-ray {
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-origin: 12px 12px;
+      opacity: 1;
+      transform: rotate(0deg) scale(1);
+    }
+
+    [data-theme="dark"] .theme-toggle .sun-ray {
+      opacity: 0;
+      transform: rotate(90deg) scale(0.2);
+    }
+
+    /* 太阳核心圆 */
+    .theme-toggle .sun-core {
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-origin: 12px 12px;
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    [data-theme="dark"] .theme-toggle .sun-core {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+
+    /* 月亮遮罩层：在圆上咬掉一块，形成月牙 */
+    .theme-toggle .moon-mask {
+      transition: clip-path 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+                  opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      opacity: 0;
+      clip-path: circle(0% at 14px 12px);
+    }
+
+    [data-theme="dark"] .theme-toggle .moon-mask {
+      opacity: 1;
+      clip-path: circle(100% at 14px 12px);
+    }
+
+    .theme-toggle .moon-circle {
+      fill: none;
+      stroke: var(--fg);
+      stroke-width: 1.5;
+      transition: stroke 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Canvas 容器 */
+    .canvas-wrap {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      margin-bottom: 20px;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1.5px solid var(--border);
+      background: var(--dead);
+      transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 400px;
+      aspect-ratio: 1 / 1;
+      cursor: pointer;
+      touch-action: manipulation;
+      background: var(--dead);
+      transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .button-row {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      margin-bottom: 18px;
+    }
+
+    .btn {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      background-color: var(--fg);
+      color: var(--bg);
+      border: 1.5px solid var(--fg);
+      border-radius: 50px;
+      padding: 12px 0;
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      text-align: center;
+      touch-action: manipulation;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .btn.secondary {
+      background-color: var(--bg);
+      color: var(--fg);
+      border-color: var(--fg);
+    }
+
+    .btn:active {
+      transform: scale(0.96);
+      background-color: var(--bg);
+      color: var(--fg);
+    }
+
+    .btn.secondary:active {
+      transform: scale(0.96);
+      background-color: var(--fg);
+      color: var(--bg);
+    }
+
+    .btn:focus-visible {
+      outline: 2px solid var(--fg);
+      outline-offset: 2px;
+    }
+
+    .slider-container {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 6px;
+    }
+
+    .slider-label {
+      font-size: 14px;
+      color: var(--fg-secondary);
+      white-space: nowrap;
+      font-weight: 500;
+      transition: color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      flex: 1;
+      height: 1.5px;
+      background: var(--slider-track);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      touch-action: manipulation;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      background: var(--fg);
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 0 1.5px var(--bg), 0 0 0 3px var(--fg);
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      background: var(--fg);
+      border-radius: 50%;
+      border: 1.5px solid var(--bg);
+      box-shadow: 0 0 0 1.5px var(--fg);
+      cursor: pointer;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    input[type="range"]:active::-webkit-slider-thumb {
+      transform: scale(1.25);
+      background: var(--fg-secondary);
+    }
+
+    input[type="range"]:active::-moz-range-thumb {
+      transform: scale(1.25);
+      background: var(--fg-secondary);
+    }
+
+    input[type="range"]:focus-visible {
+      outline: 2px solid var(--fg);
+      outline-offset: 4px;
+    }
+
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .panel > * {
+      animation: fadeInUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+    }
+
+    .panel > *:nth-child(1) { animation-delay: 0.02s; }
+    .panel > *:nth-child(2) { animation-delay: 0.06s; }
+    .panel > *:nth-child(3) { animation-delay: 0.10s; }
+    .panel > *:nth-child(4) { animation-delay: 0.14s; }
+    .panel > *:nth-child(5) { animation-delay: 0.18s; }
+    .panel > *:nth-child(6) { animation-delay: 0.22s; }
+
+    @media (max-width: 420px) {
+      .panel {
+        padding: 20px 16px 24px;
+      }
+      h1 {
+        font-size: 22px;
+      }
+      .btn {
+        padding: 10px 0;
+        font-size: 14px;
+      }
+      .theme-toggle {
+        top: 16px;
+        right: 16px;
+        width: 32px;
+        height: 32px;
+      }
+      .theme-toggle svg {
+        width: 20px;
+        height: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <button class="theme-toggle" id="themeToggle" aria-label="切换主题">
+      <svg viewBox="0 0 24 24">
+        <!-- 太阳光芒线条 -->
+        <line class="sun-ray" x1="12" y1="1" x2="12" y2="3"/>
+        <line class="sun-ray" x1="12" y1="21" x2="12" y2="23"/>
+        <line class="sun-ray" x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+        <line class="sun-ray" x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+        <line class="sun-ray" x1="1" y1="12" x2="3" y2="12"/>
+        <line class="sun-ray" x1="21" y1="12" x2="23" y2="12"/>
+        <line class="sun-ray" x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+        <line class="sun-ray" x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        
+        <!-- 太阳核心圆 -->
+        <circle class="sun-core" cx="12" cy="12" r="5"/>
+        
+        <!-- 月亮遮罩：clip-path 从左侧咬掉一块形成月牙 -->
+        <g class="moon-mask">
+          <circle class="moon-circle" cx="12" cy="12" r="5"/>
+        </g>
+      </svg>
+    </button>
+
+    <h1>生命游戏</h1>
+    <div class="subtitle">Conway's Game of Life · 点击格子切换状态</div>
+
+    <div class="canvas-wrap">
+      <canvas id="lifeCanvas"></canvas>
+    </div>
+
+    <div class="button-row">
+      <button class="btn" id="playPauseBtn">暂停</button>
+      <button class="btn secondary" id="randomBtn">随机</button>
+      <button class="btn secondary" id="clearBtn">清空</button>
+    </div>
+
+    <div class="slider-container">
+      <span class="slider-label">速度</span>
+      <input type="range" id="speedSlider" min="40" max="500" value="150" step="10">
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const CONFIG = window.CONFIG || { speed: 150 };
+
+      function getThemeColors() {
+        const style = getComputedStyle(document.documentElement);
+        return {
+          alive: style.getPropertyValue('--alive').trim() || '#000000',
+          dead: style.getPropertyValue('--dead').trim() || '#FFFFFF',
+          ripple: style.getPropertyValue('--ripple').trim() || 'rgba(0, 0, 0, 0.6)',
+          rippleSecondary: style.getPropertyValue('--ripple-secondary').trim() || 'rgba(0, 0, 0, 0.3)',
+          border: style.getPropertyValue('--border').trim() || '#E5E5E5'
+        };
+      }
+
+      const canvas = document.getElementById('lifeCanvas');
+      const ctx = canvas.getContext('2d');
+      const COLS = 40;
+      const ROWS = 40;
+
+      // 高清渲染: 根据 devicePixelRatio 缩放
+      const DPR = window.devicePixelRatio || 1;
+      const BASE_SIZE = 400;
+      canvas.width = BASE_SIZE * DPR;
+      canvas.height = BASE_SIZE * DPR;
+      canvas.style.width = BASE_SIZE + 'px';
+      canvas.style.height = BASE_SIZE + 'px';
+      ctx.scale(DPR, DPR);
+
+      const CELL_SIZE = BASE_SIZE / COLS;
+      const LOGICAL_SIZE = BASE_SIZE;
+
+      let grid = new Array(ROWS).fill(0).map(() => new Array(COLS).fill(0));
+      let isPlaying = true;
+      let intervalId = null;
+      let currentSpeed = CONFIG.speed;
+      let ripples = [];
+
+      const speedSlider = document.getElementById('speedSlider');
+      const playPauseBtn = document.getElementById('playPauseBtn');
+      const themeToggle = document.getElementById('themeToggle');
+
+      speedSlider.value = currentSpeed;
+
+      function randomizeGrid() {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            grid[r][c] = Math.random() < 0.3 ? 1 : 0;
+          }
+        }
+      }
+
+      function clearGrid() {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            grid[r][c] = 0;
+          }
+        }
+      }
+
+      function draw() {
+        const colors = getThemeColors();
+        ctx.clearRect(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+
+        // 绘制格子
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            ctx.fillStyle = grid[r][c] === 1 ? colors.alive : colors.dead;
+            ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+          }
+        }
+
+        // 网格线 - 在高分屏下更细腻
+        ctx.strokeStyle = colors.border;
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= COLS; i++) {
+          const x = i * CELL_SIZE;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, LOGICAL_SIZE);
+          ctx.stroke();
+        }
+        for (let i = 0; i <= ROWS; i++) {
+          const y = i * CELL_SIZE;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(LOGICAL_SIZE, y);
+          ctx.stroke();
+        }
+
+        // 波纹
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const rp = ripples[i];
+          const progress = (performance.now() - rp.startTime) / rp.duration;
+          if (progress >= 1) {
+            ripples.splice(i, 1);
+            continue;
+          }
+          const radius = rp.maxRadius * progress;
+          const alpha = 1 - progress;
+          const rgb = colors.ripple.replace(/rgba?\(|\)/g, '').split(',').slice(0, 3).join(',');
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, radius, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${rgb}, ${alpha * 0.6})`;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          const rgb2 = colors.rippleSecondary.replace(/rgba?\(|\)/g, '').split(',').slice(0, 3).join(',');
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, radius * 0.7, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${rgb2}, ${alpha * 0.3})`;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+
+      function step() {
+        const newGrid = new Array(ROWS).fill(0).map(() => new Array(COLS).fill(0));
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            let neighbors = 0;
+            for (let dr = -1; dr <= 1; dr++) {
+              for (let dc = -1; dc <= 1; dc++) {
+                if (dr === 0 && dc === 0) continue;
+                const nr = (r + dr + ROWS) % ROWS;
+                const nc = (c + dc + COLS) % COLS;
+                neighbors += grid[nr][nc];
+              }
+            }
+            if (grid[r][c] === 1) {
+              newGrid[r][c] = (neighbors === 2 || neighbors === 3) ? 1 : 0;
+            } else {
+              newGrid[r][c] = (neighbors === 3) ? 1 : 0;
+            }
+          }
+        }
+        grid = newGrid;
+        draw();
+      }
+
+      function startEvolution() {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = setInterval(step, currentSpeed);
+      }
+
+      function stopEvolution() {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+
+      function updatePlayPauseUI() {
+        if (isPlaying) {
+          playPauseBtn.textContent = '暂停';
+          playPauseBtn.classList.remove('secondary');
+        } else {
+          playPauseBtn.textContent = '播放';
+          playPauseBtn.classList.add('secondary');
+        }
+      }
+
+      function togglePlay() {
+        isPlaying = !isPlaying;
+        if (isPlaying) {
+          startEvolution();
+        } else {
+          stopEvolution();
+        }
+        updatePlayPauseUI();
+      }
+
+      function handleCanvasClick(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = LOGICAL_SIZE / rect.width;
+        const scaleY = LOGICAL_SIZE / rect.height;
+        const mouseX = (e.clientX - rect.left) * scaleX;
+        const mouseY = (e.clientY - rect.top) * scaleY;
+        const col = Math.floor(mouseX / CELL_SIZE);
+        const row = Math.floor(mouseY / CELL_SIZE);
+        if (col >= 0 && col < COLS && row >= 0 && row < ROWS) {
+          grid[row][col] = grid[row][col] === 1 ? 0 : 1;
+          const cx = col * CELL_SIZE + CELL_SIZE / 2;
+          const cy = row * CELL_SIZE + CELL_SIZE / 2;
+          ripples.push({
+            x: cx,
+            y: cy,
+            startTime: performance.now(),
+            duration: 350,
+            maxRadius: 30
+          });
+          draw();
+        }
+      }
+
+      let rafId = null;
+      function animationLoop() {
+        if (ripples.length > 0) {
+          draw();
+        }
+        rafId = requestAnimationFrame(animationLoop);
+      }
+      animationLoop();
+
+      function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        if (current === 'dark') {
+          document.documentElement.removeAttribute('data-theme');
+        } else {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+        draw();
+      }
+
+      // 初始化
+      randomizeGrid();
+      draw();
+      if (isPlaying) {
+        startEvolution();
+      }
+      updatePlayPauseUI();
+
+      canvas.addEventListener('click', handleCanvasClick);
+      playPauseBtn.addEventListener('click', togglePlay);
+      themeToggle.addEventListener('click', toggleTheme);
+      document.getElementById('randomBtn').addEventListener('click', function() {
+        randomizeGrid();
+        draw();
+      });
+      document.getElementById('clearBtn').addEventListener('click', function() {
+        clearGrid();
+        draw();
+      });
+      speedSlider.addEventListener('input', function(e) {
+        currentSpeed = parseInt(e.target.value, 10);
+        if (isPlaying && intervalId) {
+          stopEvolution();
+          startEvolution();
+        }
+      });
+
+      window.addEventListener('beforeunload', function() {
+        if (rafId) cancelAnimationFrame(rafId);
+        stopEvolution();
+      });
+    })();
+  </script>
+</body>
+</html>

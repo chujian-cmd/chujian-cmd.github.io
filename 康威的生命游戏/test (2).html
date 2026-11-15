@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>太阳 → 月亮 变形</title>
+<style>
+  html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="400"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const W = 400, H = 400, CX = 200, CY = 200, R = 120;
+const N = 60;
+const SPEED = 0.006;
+
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+
+function totalLength(pts){
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  return len;
+}
+
+function resample(pts, n){
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return Array.from({length:n}, () => ({...pts[0]}));
+  const total = totalLength(pts);
+  if (total === 0) return Array.from({length:n}, () => ({...pts[0]}));
+  const step = total/(n-1);
+  const out = [{x:pts[0].x, y:pts[0].y}];
+  let segIdx = 0, segStart = pts[0], segEnd = pts[1];
+  let segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++){
+    const target = i*step;
+    let ok = false;
+    while (segIdx < pts.length-1){
+      if (segDone+segLen >= target-1e-9){
+        const t = segLen===0 ? 0 : (target-segDone)/segLen;
+        out.push({x:segStart.x+(segEnd.x-segStart.x)*t, y:segStart.y+(segEnd.y-segStart.y)*t});
+        ok = true; break;
+      }
+      segDone += segLen; segIdx++;
+      if (segIdx >= pts.length-1) break;
+      segStart = pts[segIdx]; segEnd = pts[segIdx+1];
+      segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+    }
+    if (!ok){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  }
+  while (out.length < n){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  return out.slice(0, n);
+}
+
+function resampleClosed(pts, n){
+  if (pts.length < 2) return [];
+  const closed = pts.concat([{...pts[0]}]);
+  const out = resample(closed, n);
+  out[n-1] = {x:out[0].x, y:out[0].y};
+  return out;
+}
+
+function mulMat(m1, m2){
+  return [
+    m1[0]*m2[0]+m1[2]*m2[1], m1[1]*m2[0]+m1[3]*m2[1],
+    m1[0]*m2[2]+m1[2]*m2[3], m1[1]*m2[2]+m1[3]*m2[3],
+    m1[0]*m2[4]+m1[2]*m2[5]+m1[4], m1[1]*m2[4]+m1[3]*m2[5]+m1[5]
+  ];
+}
+
+function parseTransformMatrix(str){
+  if (!str) return null;
+  const re = /(matrix|translate|scale|rotate)\s*\(([^)]*)\)/g;
+  let m, mat = [1,0,0,1,0,0], found = false;
+  while ((m = re.exec(str)) !== null){
+    found = true;
+    const name = m[1];
+    const args = m[2].split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+    let mm;
+    if (name === 'matrix'){
+      if (args.length < 6) continue;
+      mm = args.slice(0, 6);
+    } else if (name === 'translate'){
+      mm = [1,0,0,1, args[0]||0, args[1]||0];
+    } else if (name === 'scale'){
+      const sx = args.length ? args[0] : 1;
+      const sy = args.length > 1 ? args[1] : sx;
+      mm = [sx,0,0,sy,0,0];
+    } else {
+      const a = (args[0]||0)*Math.PI/180;
+      const cs = Math.cos(a), sn = Math.sin(a);
+      const cx = args.length > 1 ? args[1] : 0;
+      const cy = args.length > 2 ? args[2] : 0;
+      mm = [cs,sn,-sn,cs, cx-cx*cs+cy*sn, cy-cx*sn-cy*cs];
+    }
+    mat = mulMat(mat, mm);
+  }
+  return found ? mat : null;
+}
+
+function accumulateTransform(el, svgRoot){
+  const chain = [];
+  let cur = el;
+  while (cur && cur !== svgRoot){ chain.unshift(cur); cur = cur.parentNode; }
+  let mat = [1,0,0,1,0,0], found = false;
+  for (const node of chain){
+    if (!node.getAttribute) continue;
+    const mm = parseTransformMatrix(node.getAttribute('transform'));
+    if (mm){ mat = mulMat(mat, mm); found = true; }
+  }
+  return found ? mat : null;
+}
+
+function applyMat(mat, p){
+  if (!mat) return p;
+  return { x: mat[0]*p.x + mat[2]*p.y + mat[4], y: mat[1]*p.x + mat[3]*p.y + mat[5] };
+}
+
+function svgToSubPaths(svgStr, samples){
+  samples = samples || N;
+  let doc;
+  try { doc = new DOMParser().parseFromString(svgStr, 'image/svg+xml'); }
+  catch(e){ return null; }
+  const svg = doc.querySelector('svg');
+  if (!svg) return null;
+
+  const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  tempSvg.setAttribute('viewBox', '0 0 24 24');
+  tempSvg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none;';
+  document.body.appendChild(tempSvg);
+
+  const subPaths = [];
+  const shapeEls = svg.querySelectorAll('path, circle, rect, line, polyline, polygon, ellipse');
+
+  shapeEls.forEach(el => {
+    try {
+      const mat = accumulateTransform(el, svg);
+
+      if (el.tagName === 'path'){
+        const d = el.getAttribute('d') || '';
+        const indices = [];
+        const mRegex = /[Mm]/g;
+        let m;
+        while ((m = mRegex.exec(d)) !== null) indices.push(m.index);
+        if (indices.length === 0) return;
+
+        for (let k = 0; k < indices.length; k++){
+          const start = indices[k];
+          const end = k+1 < indices.length ? indices[k+1] : d.length;
+          const subD = d.slice(start, end).trim();
+          if (!subD) continue;
+
+          const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          pathEl.setAttribute('d', subD);
+          tempSvg.appendChild(pathEl);
+
+          const len = pathEl.getTotalLength();
+          if (len === 0){ tempSvg.removeChild(pathEl); continue; }
+
+          const pts = [];
+          for (let i = 0; i < samples; i++){
+            const p = pathEl.getPointAtLength((i/samples)*len);
+            pts.push(applyMat(mat, {x:p.x, y:p.y}));
+          }
+          const closed = /[Zz]/.test(subD);
+          subPaths.push({points: pts, closed});
+          tempSvg.removeChild(pathEl);
+        }
+      } else if (el.tagName === 'circle'){
+        const cx = parseFloat(el.getAttribute('cx')||0);
+        const cy = parseFloat(el.getAttribute('cy')||0);
+        const r  = parseFloat(el.getAttribute('r')||0);
+        const pts = [];
+        for (let i = 0; i < samples; i++){
+          const a = (i/samples)*Math.PI*2;
+          pts.push(applyMat(mat, {x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r}));
+        }
+        subPaths.push({points: pts, closed: true});
+      } else if (el.tagName === 'ellipse'){
+        const cx = parseFloat(el.getAttribute('cx')||0);
+        const cy = parseFloat(el.getAttribute('cy')||0);
+        const rx = parseFloat(el.getAttribute('rx')||0);
+        const ry = parseFloat(el.getAttribute('ry')||0);
+        const pts = [];
+        for (let i = 0; i < samples; i++){
+          const a = (i/samples)*Math.PI*2;
+          pts.push(applyMat(mat, {x:cx+Math.cos(a)*rx, y:cy+Math.sin(a)*ry}));
+        }
+        subPaths.push({points: pts, closed: true});
+      } else if (el.tagName === 'rect'){
+        const x = parseFloat(el.getAttribute('x')||0);
+        const y = parseFloat(el.getAttribute('y')||0);
+        const w = parseFloat(el.getAttribute('width')||0);
+        const h = parseFloat(el.getAttribute('height')||0);
+        const per = 2*(w+h);
+        if (per <= 0) return;
+        const corners = [{x,y},{x:x+w,y},{x:x+w,y:y+h},{x,y:y+h}];
+        const pts = [];
+        for (let i = 0; i < samples; i++){
+          const d = (i/samples)*per;
+          let acc = 0;
+          for (let j = 0; j < 4; j++){
+            const a = corners[j], b = corners[(j+1)%4];
+            const segLen = Math.hypot(b.x-a.x, b.y-a.y);
+            if (acc+segLen >= d){
+              const t = (d-acc)/segLen;
+              pts.push(applyMat(mat, {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t}));
+              break;
+            }
+            acc += segLen;
+          }
+        }
+        subPaths.push({points: pts, closed: true});
+      } else if (el.tagName === 'line'){
+        const x1 = parseFloat(el.getAttribute('x1')||0);
+        const y1 = parseFloat(el.getAttribute('y1')||0);
+        const x2 = parseFloat(el.getAttribute('x2')||0);
+        const y2 = parseFloat(el.getAttribute('y2')||0);
+        const pts = [];
+        for (let i = 0; i < samples; i++){
+          const t = i/samples;
+          pts.push(applyMat(mat, {x:x1+(x2-x1)*t, y:y1+(y2-y1)*t}));
+        }
+        subPaths.push({points: pts, closed: false});
+      } else if (el.tagName === 'polyline' || el.tagName === 'polygon'){
+        const raw = (el.getAttribute('points')||'').trim();
+        if (!raw) return;
+        const nums = raw.split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+        const verts = [];
+        for (let i = 0; i+1 < nums.length; i += 2) verts.push({x:nums[i], y:nums[i+1]});
+        if (verts.length < 2) return;
+        const isClosed = el.tagName === 'polygon';
+        const vlist = isClosed ? verts.concat([verts[0]]) : verts;
+        let total = 0;
+        for (let i = 1; i < vlist.length; i++) total += Math.hypot(vlist[i].x-vlist[i-1].x, vlist[i].y-vlist[i-1].y);
+        if (total <= 0) return;
+        const pts = [];
+        for (let i = 0; i < samples; i++){
+          const d = (i/samples)*total;
+          let acc = 0;
+          for (let j = 1; j < vlist.length; j++){
+            const a = vlist[j-1], b = vlist[j];
+            const segLen = Math.hypot(b.x-a.x, b.y-a.y);
+            if (acc+segLen >= d){
+              const t = (d-acc)/segLen;
+              pts.push(applyMat(mat, {x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t}));
+              break;
+            }
+            acc += segLen;
+          }
+        }
+        subPaths.push({points: pts, closed: isClosed});
+      }
+    } catch(e){}
+  });
+
+  document.body.removeChild(tempSvg);
+  if (subPaths.length === 0) return null;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sp of subPaths){
+    for (const p of sp.points){
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (!isFinite(minX)) return null;
+  const cx = (minX+maxX)/2, cy = (minY+maxY)/2;
+  const size = Math.max(maxX-minX, maxY-minY, 0.001);
+  for (const sp of subPaths){
+    sp.points = sp.points.map(p => ({x:(p.x-cx)/size, y:(p.y-cy)/size}));
+  }
+  return subPaths;
+}
+
+function prepareSubPath(startSamples, targetPoints, targetClosed){
+  let endSamples = targetClosed
+    ? resampleClosed(targetPoints, N)
+    : resample(targetPoints, N);
+
+  const first = startSamples[0];
+
+  let bestIdx = 0, bestDist = Infinity;
+  for (let i = 0; i < endSamples.length; i++){
+    const d = Math.hypot(endSamples[i].x-first.x, endSamples[i].y-first.y);
+    if (d < bestDist){ bestDist = d; bestIdx = i; }
+  }
+  if (bestIdx !== 0){
+    endSamples = endSamples.slice(bestIdx).concat(endSamples.slice(0, bestIdx));
+    if (targetClosed) endSamples[endSamples.length-1] = {...endSamples[0]};
+  }
+
+  const dF = Math.hypot(endSamples[0].x-first.x, endSamples[0].y-first.y);
+  const dR = Math.hypot(endSamples[endSamples.length-1].x-first.x, endSamples[endSamples.length-1].y-first.y);
+  if (dR < dF){
+    endSamples.reverse();
+    if (targetClosed) endSamples[endSamples.length-1] = {...endSamples[0]};
+  }
+  return endSamples;
+}
+
+function fitSubPathsToCanvas(subPaths){
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sp of subPaths){
+    for (const p of sp.points){
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const cx = (minX+maxX)/2, cy = (minY+maxY)/2;
+  const size = Math.max(maxX-minX, maxY-minY, 0.001);
+  const scale = (R*2*0.85)/size;
+  return subPaths.map(sp => ({
+    points: sp.points.map(p => ({x:CX+(p.x-cx)*scale, y:CY+(p.y-cy)*scale})),
+    closed: sp.closed
+  }));
+}
+
+/* 太阳 SVG (多元素构成) */
+const SUN_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="5.5" fill="none" stroke="black" stroke-width="1.2"/>
+  <g stroke="black" stroke-width="1.5" stroke-linecap="round">
+    <line x1="12" y1="2" x2="12" y2="5"/>
+    <line x1="12" y1="19" x2="12" y2="22"/>
+    <line x1="2" y1="12" x2="5" y2="12"/>
+    <line x1="19" y1="12" x2="22" y2="12"/>
+    <line x1="4.9" y1="4.9" x2="7" y2="7"/>
+    <line x1="17" y1="17" x2="19.1" y2="19.1"/>
+    <line x1="4.9" y1="19.1" x2="7" y2="17"/>
+    <line x1="17" y1="7" x2="19.1" y2="4.9"/>
+  </g>
+</svg>`;
+
+/* 月亮 SVG (只有弯月，无小圆点) */
+const MOON_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <path d="M15 3 A 9 9 0 1 0 21 12 A 7 7 0 1 1 15 3 Z" fill="none" stroke="black" stroke-width="1.4"/>
+</svg>`;
+
+let morphPlan = null;
+
+function buildMorphPlan(){
+  const sunSubPaths = svgToSubPaths(SUN_SVG, N);
+  const moonSubPaths = svgToSubPaths(MOON_SVG, N);
+
+  if (!sunSubPaths || !moonSubPaths) {
+    console.warn('SVG 解析失败');
+    return;
+  }
+
+  const fittedSun = fitSubPathsToCanvas(sunSubPaths);
+  const fittedMoon = fitSubPathsToCanvas(moonSubPaths);
+
+  // 月亮只有一个弯月子路径
+  const moonTarget = fittedMoon[0];
+  const plans = [];
+
+  // 策略：每个太阳子路径都变形到同一个月亮弯月路径上
+  // 这样多个线条最终汇聚成一个月亮，视觉上很自然
+  for (let i = 0; i < fittedSun.length; i++){
+    const start = fittedSun[i].points;
+    const end = prepareSubPath(start, moonTarget.points, moonTarget.closed);
+    plans.push({ start, end, closed: moonTarget.closed });
+  }
+
+  morphPlan = plans;
+}
+
+let progress = 0;
+
+function frame(){
+  progress += SPEED;
+  if (progress >= 1) progress = 1;
+
+  const t = ease(progress);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#171717';
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const sp of morphPlan){
+    ctx.beginPath();
+    for (let i = 0; i < N; i++){
+      const a = sp.start[i], b = sp.end[i];
+      const x = a.x + (b.x-a.x)*t;
+      const y = a.y + (b.y-a.y)*t;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    if (sp.closed) ctx.closePath();
+    ctx.stroke();
+  }
+
+  if (progress < 1) requestAnimationFrame(frame);
+  else setTimeout(() => { progress = 0; requestAnimationFrame(frame); }, 800);
+}
+
+buildMorphPlan();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

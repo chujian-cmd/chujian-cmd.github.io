@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>太阳 → 月亮 变形</title>
+<style>
+  html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="400"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const W = 400, H = 400, CX = 200, CY = 200, R = 120;
+const N = 120; // 采样点数，越高越圆滑
+const SPEED = 0.01; // 动画速度
+
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+
+// 将点数组等距重采样
+function resample(pts, n){
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return Array.from({length:n}, () => ({...pts[0]}));
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  if (total === 0) return Array.from({length:n}, () => ({...pts[0]}));
+  const step = total/(n-1);
+  const out = [{x:pts[0].x, y:pts[0].y}];
+  let segIdx = 0, segStart = pts[0], segEnd = pts[1];
+  let segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++){
+    const target = i*step;
+    let ok = false;
+    while (segIdx < pts.length-1){
+      if (segDone+segLen >= target-1e-9){
+        const t = segLen===0 ? 0 : (target-segDone)/segLen;
+        out.push({x:segStart.x+(segEnd.x-segStart.x)*t, y:segStart.y+(segEnd.y-segStart.y)*t});
+        ok = true; break;
+      }
+      segDone += segLen; segIdx++;
+      if (segIdx >= pts.length-1) break;
+      segStart = pts[segIdx]; segEnd = pts[segIdx+1];
+      segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+    }
+    if (!ok){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  }
+  while (out.length < n){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  return out.slice(0, n);
+}
+
+// 生成太阳的 9 个形状：1个闭合圆 + 8个独立短线段
+function getSunShapes(){
+  const shapes = [];
+  
+  // 1. 中心圆
+  const circlePts = [];
+  const innerR = R * 0.45;
+  for(let i=0; i<=N; i++){
+    const a = (i/N)*Math.PI*2 - Math.PI/2;
+    circlePts.push({x: CX + Math.cos(a)*innerR, y: CY + Math.sin(a)*innerR});
+  }
+  shapes.push({ points: resample(circlePts, N), closed: true, id: 'circle' });
+
+  // 2. 8条射线
+  for(let k=0; k<8; k++){
+    const a = (k/8)*Math.PI*2 - Math.PI/2;
+    const p1 = {x: CX + Math.cos(a)*R*0.6, y: CY + Math.sin(a)*R*0.6};
+    const p2 = {x: CX + Math.cos(a)*R*0.95, y: CY + Math.sin(a)*R*0.95};
+    shapes.push({ points: resample([p1, p2], N), closed: false, id: 'ray'+k });
+  }
+  
+  return shapes;
+}
+
+// 生成月亮的 9 个形状：严格按比例切割月亮轮廓，与太阳一一对应
+function getMoonShapes(sunShapes){
+  // 先画出完整的月亮轮廓
+  const moonPts = [];
+  const outerR = R * 0.85;
+  const innerR = R * 0.72;
+  const offsetX = R * 0.32; // 偏移量形成弯月
+  const segs = N * 9; // 总共生成大量点
+
+  // 外侧大弧
+  for (let i = 0; i <= segs; i++){
+    const a = -Math.PI/2 + (i / segs) * Math.PI * 2;
+    moonPts.push({ x: CX + Math.cos(a) * outerR, y: CY + Math.sin(a) * outerR });
+  }
+  // 内侧小弧
+  for (let i = 1; i <= segs; i++){
+    const a = Math.PI/2 + (i / segs) * Math.PI * 2; 
+    moonPts.push({ x: CX + offsetX + Math.cos(a) * innerR, y: CY + Math.sin(a) * innerR });
+  }
+
+  // 闭合
+  moonPts.push({...moonPts[0]});
+
+  // 计算月亮总长度
+  let totalLen = 0;
+  const lens = [];
+  for (let i = 1; i < moonPts.length; i++){
+    const d = Math.hypot(moonPts[i].x-moonPts[i-1].x, moonPts[i].y-moonPts[i-1].y);
+    lens.push(d);
+    totalLen += d;
+  }
+
+  // 太阳的线段长度：圆很长，每条射线很短。
+  // 我们按照太阳在“极坐标下占用的角度范围”来分配月亮的轮廓长度。
+  // 圆占 360 度，8 条射线各占约 360/8=45 度。
+  // 因此月亮轮廓分配给圆的部分：一条非常长的弧（约 70%）；射线分剩下的 30%。
+  
+  const moonShapes = [];
+  const circleShare = 0.65; // 圆分走 65% 的长度
+  const rayShare = (1 - circleShare) / 8; // 每条射线分走剩下的部分
+
+  let currentIdx = 0;
+  let accumulatedLen = 0;
+  let currentTargetLen = totalLen * circleShare;
+
+  // 1. 切割给太阳圆的月亮段
+  const circleSeg = [];
+  for (let i = 0; i < moonPts.length; i++){
+    circleSeg.push(moonPts[i]);
+    if (i > 0) accumulatedLen += lens[i-1];
+    if (accumulatedLen >= currentTargetLen && i < moonPts.length - 1){
+      currentIdx = i;
+      break;
+    }
+  }
+  moonShapes.push({ points: resample(circleSeg, N), closed: false }); // 圆变形后是开口的弧
+
+  // 2. 切割给 8 条射线的月亮段
+  for (let k = 0; k < 8; k++){
+    currentTargetLen = totalLen * rayShare;
+    accumulatedLen = 0;
+    const raySeg = [moonPts[currentIdx]];
+    let i = currentIdx + 1;
+    
+    while (i < moonPts.length) {
+      raySeg.push(moonPts[i]);
+      accumulatedLen += lens[i-1];
+      if (accumulatedLen >= currentTargetLen || i === moonPts.length - 1) {
+        currentIdx = i;
+        break;
+      }
+      i++;
+    }
+    moonShapes.push({ points: resample(raySeg, N), closed: false });
+  }
+
+  // 3. 对齐端点，确保线条不交叉
+  const alignedShapes = [];
+  for(let i=0; i<sunShapes.length; i++){
+    const startPts = sunShapes[i].points;
+    const endPts = moonShapes[i].points;
+
+    // 找最近点
+    const firstPt = startPts[0];
+    let bestIdx = 0, minD = Infinity;
+    for(let j=0; j<endPts.length; j++){
+      const d = Math.hypot(endPts[j].x-firstPt.x, endPts[j].y-firstPt.y);
+      if(d < minD){ minD = d; bestIdx = j; }
+    }
+    let alignedEnd = endPts.slice(bestIdx).concat(endPts.slice(0, bestIdx));
+
+    // 判断正向还是反向
+    const dF = Math.hypot(alignedEnd[0].x-firstPt.x, alignedEnd[0].y-firstPt.y);
+    const dR = Math.hypot(alignedEnd[alignedEnd.length-1].x-firstPt.x, alignedEnd[alignedEnd.length-1].y-firstPt.y);
+    if(dR < dF) alignedEnd.reverse();
+
+    alignedShapes.push({
+      start: startPts,
+      end: alignedEnd,
+      startClosed: sunShapes[i].closed
+    });
+  }
+
+  return alignedShapes;
+}
+
+let morphPlan = null;
+
+function buildMorphPlan(){
+  const sunShapes = getSunShapes();
+  morphPlan = getMoonShapes(sunShapes);
+}
+
+let progress = 0;
+
+function frame(){
+  progress += SPEED;
+  if(progress >= 1) progress = 1;
+
+  const t = ease(progress);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#171717';
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for(const shape of morphPlan){
+    ctx.beginPath();
+    for(let i=0; i<N; i++){
+      const a = shape.start[i];
+      const b = shape.end[i];
+      const x = a.x + (b.x - a.x) * t;
+      const y = a.y + (b.y - a.y) * t;
+      if(i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    
+    // 闭合圆在刚开始的一小段时间内保持闭合，随后自然张开
+    if(shape.startClosed && t < 0.2) {
+        ctx.closePath();
+    }
+    ctx.stroke();
+  }
+
+  if(progress < 1) {
+    requestAnimationFrame(frame);
+  } else {
+    setTimeout(() => { progress = 0; requestAnimationFrame(frame); }, 1000);
+  }
+}
+
+buildMorphPlan();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

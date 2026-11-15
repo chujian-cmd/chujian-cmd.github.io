@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>太阳 → 月亮 变形 (布尔差版)</title>
+<style>
+  html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="400"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const W = 400, H = 400, CX = 200, CY = 200, R = 120;
+const N = 160; // 采样点数，越高越平滑
+const SPEED = 0.008;
+
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+
+// 等距重采样函数
+function resample(pts, n){
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return Array.from({length:n}, () => ({...pts[0]}));
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  if (total === 0) return Array.from({length:n}, () => ({...pts[0]}));
+  const step = total/(n-1);
+  const out = [{x:pts[0].x, y:pts[0].y}];
+  let segIdx = 0, segStart = pts[0], segEnd = pts[1];
+  let segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++){
+    const target = i*step;
+    let ok = false;
+    while (segIdx < pts.length-1){
+      if (segDone+segLen >= target-1e-9){
+        const t = segLen===0 ? 0 : (target-segDone)/segLen;
+        out.push({x:segStart.x+(segEnd.x-segStart.x)*t, y:segStart.y+(segEnd.y-segStart.y)*t});
+        ok = true; break;
+      }
+      segDone += segLen; segIdx++;
+      if (segIdx >= pts.length-1) break;
+      segStart = pts[segIdx]; segEnd = pts[segIdx+1];
+      segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+    }
+    if (!ok){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  }
+  while (out.length < n){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  return out.slice(0, n);
+}
+
+// 生成一段圆弧的点集
+function getArc(cx, cy, r, startAngle, endAngle, n) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const a = startAngle + (endAngle - startAngle) * (i / n);
+    pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return pts;
+}
+
+// 端点方向对齐，防止线条变形时翻转
+function alignEnd(startPts, endPts){
+  const s0 = startPts[0];
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < endPts.length; i++){
+    const d = Math.hypot(endPts[i].x-s0.x, endPts[i].y-s0.y);
+    if (d < bestD){ bestD = d; best = i; }
+  }
+  let arr = endPts.slice(best).concat(endPts.slice(0, best));
+  const dF = Math.hypot(arr[0].x-s0.x, arr[0].y-s0.y);
+  const dR = Math.hypot(arr[arr.length-1].x-s0.x, arr[arr.length-1].y-s0.y);
+  if (dR < dF) arr = arr.slice().reverse();
+  return arr;
+}
+
+let morphPlan = null;
+
+function buildMorphPlan(){
+  // ================= 1. 太阳：拆分为“本体圆”与“边界轮廓” =================
+  // 太阳的圆 (起始闭合)
+  const sunCircle = getArc(CX, CY, R*0.45, 0, Math.PI*2, N);
+  
+  // 太阳的 8 条射线：将其首尾相连，构成一个锯齿状的外轮廓折线
+  const sunRays = [];
+  for (let k = 0; k <= 8; k++) {
+    const a = (k % 8) / 8 * Math.PI * 2 - Math.PI/2;
+    // 外端点 (跳过连接点，让折线在内部回弹)
+    if (k < 8) {
+      sunRays.push({ x: CX + Math.cos(a) * R * 0.95, y: CY + Math.sin(a) * R * 0.95 });
+    }
+    if (k < 7) {
+      const nextA = ((k + 1) % 8) / 8 * Math.PI * 2 - Math.PI/2;
+      sunRays.push({ x: CX + Math.cos(nextA) * R * 0.6, y: CY + Math.sin(nextA) * R * 0.6 });
+    }
+  }
+
+  // ================= 2. 月亮 (两圆布尔差) =================
+  // 外圆：半径 R*0.85，圆心 CX, CY
+  // 内圆：半径 R*0.7，圆心 CX + R*0.35, CY (向右偏移形成弯月)
+  // 两个圆的交点角度可以通过三角函数算出
+  const r1 = R * 0.85;
+  const r2 = R * 0.70;
+  const d = R * 0.35; // 圆心距
+  const offsetX = d;
+  
+  // 计算内外圆交点的角度 (余弦定理)
+  const cosAngle = (r1*r1 + d*d - r2*r2) / (2 * r1 * d);
+  const angleOffset = Math.acos(Math.max(-1, Math.min(1, cosAngle)));
+  
+  // 交点角度（相对于外圆圆心）
+  const intersect1 = Math.PI - angleOffset;
+  const intersect2 = Math.PI + angleOffset;
+
+  // 月亮外弧 (顺时针：从下交点经过右侧到上交点)
+  const moonOuter = getArc(CX, CY, r1, intersect2, intersect1 + Math.PI*2, N);
+  
+  // 月亮内弧 (逆时针：从上交点沿着内圆左侧回到下交点)
+  // 内圆上的角度需要根据圆心平移进行转换
+  const innerAngle1 = Math.atan2(CY + Math.sin(intersect1)*r1 - CY, CX + Math.cos(intersect1)*r1 - (CX + offsetX));
+  const innerAngle2 = Math.atan2(CY + Math.sin(intersect2)*r1 - CY, CX + Math.cos(intersect2)*r1 - (CX + offsetX));
+  
+  const moonInner = getArc(CX + offsetX, CY, r2, innerAngle1, innerAngle2, N);
+
+  // ================= 3. 建立映射：太阳圆 -> 月亮外弧；太阳射线 -> 月亮内弧 =================
+  // 太阳本体圆 -> 月亮外弧 (闭合变开口)
+  const startCircle = resample(sunCircle, N);
+  const endOuter = alignEnd(startCircle, resample(moonOuter, N));
+  
+  // 太阳射线轮廓 -> 月亮内弧
+  const startRays = resample(sunRays, N);
+  const endInner = alignEnd(startRays, resample(moonInner, N));
+
+  morphPlan = [
+    { start: startCircle, end: endOuter, isCircle: true },
+    { start: startRays, end: endInner, isCircle: false }
+  ];
+}
+
+let progress = 0;
+
+function frame(){
+  progress += SPEED;
+  if(progress >= 1) progress = 1;
+
+  const t = ease(progress);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#171717';
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for(const shape of morphPlan){
+    ctx.beginPath();
+    for(let i=0; i<N; i++){
+      const a = shape.start[i];
+      const b = shape.end[i];
+      const x = a.x + (b.x - a.x) * t;
+      const y = a.y + (b.y - a.y) * t;
+      if(i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    
+    // 太阳本体圆在起始阶段闭合，展开后变成月亮外弧
+    if(shape.isCircle && t < 0.2) {
+        ctx.closePath();
+    }
+    ctx.stroke();
+  }
+
+  if(progress < 1) {
+    requestAnimationFrame(frame);
+  } else {
+    setTimeout(() => { progress = 0; requestAnimationFrame(frame); }, 1200);
+  }
+}
+
+buildMorphPlan();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

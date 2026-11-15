@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>太阳 → 月亮 变形</title>
+<style>
+  html,body{height:100%;margin:0;display:grid;place-items:center;background:#fff}
+  canvas{display:block}
+</style>
+</head>
+<body>
+<canvas id="c" width="400" height="400"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const W = 400, H = 400, CX = 200, CY = 200, R = 120;
+const N = 40;              // 每个子路径的采样点数
+const SPEED = 0.005;
+
+const ease = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+
+function totalLength(pts){
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x-pts[i-1].x, pts[i].y-pts[i-1].y);
+  return len;
+}
+
+function resample(pts, n){
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return Array.from({length:n}, () => ({...pts[0]}));
+  const total = totalLength(pts);
+  if (total === 0) return Array.from({length:n}, () => ({...pts[0]}));
+  const step = total/(n-1);
+  const out = [{x:pts[0].x, y:pts[0].y}];
+  let segIdx = 0, segStart = pts[0], segEnd = pts[1];
+  let segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+  let segDone = 0;
+  for (let i = 1; i < n; i++){
+    const target = i*step;
+    let ok = false;
+    while (segIdx < pts.length-1){
+      if (segDone+segLen >= target-1e-9){
+        const t = segLen===0 ? 0 : (target-segDone)/segLen;
+        out.push({x:segStart.x+(segEnd.x-segStart.x)*t, y:segStart.y+(segEnd.y-segStart.y)*t});
+        ok = true; break;
+      }
+      segDone += segLen; segIdx++;
+      if (segIdx >= pts.length-1) break;
+      segStart = pts[segIdx]; segEnd = pts[segIdx+1];
+      segLen = Math.hypot(segEnd.x-segStart.x, segEnd.y-segStart.y);
+    }
+    if (!ok){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  }
+  while (out.length < n){ const last = pts[pts.length-1]; out.push({x:last.x, y:last.y}); }
+  return out.slice(0, n);
+}
+
+function prepareSubPath(startSamples, targetPoints, targetClosed){
+  let endSamples = resample(targetPoints, N);
+
+  const first = startSamples[0];
+
+  let bestIdx = 0, bestDist = Infinity;
+  for (let i = 0; i < endSamples.length; i++){
+    const d = Math.hypot(endSamples[i].x-first.x, endSamples[i].y-first.y);
+    if (d < bestDist){ bestDist = d; bestIdx = i; }
+  }
+  if (bestIdx !== 0){
+    endSamples = endSamples.slice(bestIdx).concat(endSamples.slice(0, bestIdx));
+  }
+
+  const dF = Math.hypot(endSamples[0].x-first.x, endSamples[0].y-first.y);
+  const dR = Math.hypot(endSamples[endSamples.length-1].x-first.x, endSamples[endSamples.length-1].y-first.y);
+  if (dR < dF){
+    endSamples.reverse();
+  }
+  return endSamples;
+}
+
+/* ---- 太阳：独立的子路径 ---- */
+function buildSunPaths(){
+  const paths = [];
+
+  // 1 个圆
+  const innerR = R * 0.45;
+  const circlePts = [];
+  const circleN = 60;
+  for (let i = 0; i < circleN; i++){
+    const a = (i / circleN) * Math.PI * 2 - Math.PI/2;
+    circlePts.push({ x: CX + Math.cos(a) * innerR, y: CY + Math.sin(a) * innerR });
+  }
+  circlePts.push({ ...circlePts[0] });
+  paths.push({ points: resample(circlePts, N), closed: true });
+
+  // 8 条射线（各自独立的短线段）
+  const rayCount = 8;
+  const rayInner = R * 0.60;
+  const rayOuter = R * 0.92;
+  for (let k = 0; k < rayCount; k++){
+    const a = (k / rayCount) * Math.PI * 2 - Math.PI/2;
+    const p1 = { x: CX + Math.cos(a) * rayInner, y: CY + Math.sin(a) * rayInner };
+    const p2 = { x: CX + Math.cos(a) * rayOuter, y: CY + Math.sin(a) * rayOuter };
+    paths.push({ points: resample([p1, p2], N), closed: false });
+  }
+
+  return paths;
+}
+
+/* ---- 月亮：把弯月轮廓拆成 9 段（与太阳子路径数一致） ---- */
+function buildMoonSegments(){
+  // 先生成完整弯月轮廓
+  const outerR = R * 0.82;
+  const innerR = R * 0.68;
+  const offsetX = R * 0.30;
+
+  const outerPts = [];
+  const segs = 180;
+  // 外侧大弧
+  for (let i = 0; i <= segs; i++){
+    const a = -Math.PI * 0.5 + (i / segs) * Math.PI * 2;
+    outerPts.push({ x: CX + Math.cos(a) * outerR, y: CY + Math.sin(a) * outerR });
+  }
+  // 内侧小弧（反向）
+  const innerPts = [];
+  for (let i = 0; i <= segs; i++){
+    const a = Math.PI * 1.5 - (i / segs) * Math.PI * 2;
+    innerPts.push({ x: CX + offsetX + Math.cos(a) * innerR, y: CY + Math.sin(a) * innerR });
+  }
+
+  // 拼成完整闭合轮廓
+  const full = outerPts.concat(innerPts.slice(1));
+  full.push({ ...full[0] });
+
+  // 均分 9 段，每段共享端点
+  const count = 9;
+  const total = full.length - 1; // 有效点数
+  const segments = [];
+  for (let s = 0; s < count; s++){
+    const start = Math.floor(s * total / count);
+    const end = Math.floor((s + 1) * total / count);
+    const segPts = full.slice(start, end + 1);
+    if (segPts.length < 2){
+      segments.push([segPts[0], segPts[0]]);
+    } else {
+      segments.push(segPts);
+    }
+  }
+  return segments;
+}
+
+let morphPlan = null;
+
+function buildMorphPlan(){
+  const sunPaths = buildSunPaths();     // 9 个子路径
+  const moonSegs = buildMoonSegments(); // 9 段
+
+  const plans = [];
+
+  for (let i = 0; i < sunPaths.length; i++){
+    const start = sunPaths[i].points;
+    const startClosed = sunPaths[i].closed;
+    const target = moonSegs[i];
+    const end = prepareSubPath(start, target, false);
+
+    plans.push({
+      start,
+      end,
+      // 起始闭合（圆），终点不闭合（弧段），在中间插值时闭合逐渐消失
+      // 这里用 closed 控制最终状态：只有起点是闭合的圆会 closePath，其他不闭合
+      closed: false,
+      startClosed
+    });
+  }
+
+  morphPlan = plans;
+}
+
+let progress = 0;
+
+function frame(){
+  progress += SPEED;
+  if (progress >= 1) progress = 1;
+
+  const t = ease(progress);
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#171717';
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const sp of morphPlan){
+    ctx.beginPath();
+    for (let i = 0; i < N; i++){
+      const a = sp.start[i], b = sp.end[i];
+      const x = a.x + (b.x-a.x)*t;
+      const y = a.y + (b.y-a.y)*t;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    // 只有太阳的圆在起始时是闭合的，变形过程中闭合逐渐"打开"
+    if (sp.startClosed && t < 0.5) ctx.closePath();
+    ctx.stroke();
+  }
+
+  if (progress < 1) requestAnimationFrame(frame);
+  else setTimeout(() => { progress = 0; requestAnimationFrame(frame); }, 800);
+}
+
+buildMorphPlan();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
