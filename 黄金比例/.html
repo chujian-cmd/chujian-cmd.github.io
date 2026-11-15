@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>黄金比例 · 视角跟随</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #06080b; }
+  canvas { display: block; position: fixed; inset: 0; }
+  .hud {
+    position: fixed;
+    bottom: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font: 500 12.5px/1 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    letter-spacing: 1.6px;
+    color: rgba(255, 215, 0, 0.72);
+    padding: 10px 24px;
+    background: rgba(6, 8, 11, 0.55);
+    border: 1px solid rgba(255, 215, 0, 0.1);
+    border-radius: 100px;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+  }
+  .hud .sym {
+    font-size: 17px;
+    color: #ffd700;
+    line-height: 1;
+    text-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+  }
+  .hud .val { color: rgba(255, 240, 170, 0.88); }
+  .hud .divider {
+    width: 1px; height: 12px;
+    background: rgba(255, 215, 0, 0.2);
+    margin: 0 2px;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="hud">
+  <span class="sym">φ</span>
+  <span class="val">1.6180339887498948…</span>
+  <span class="divider"></span>
+  <span>视角跟随</span>
+</div>
+<script>
+(function () {
+  'use strict';
+
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+
+  let W = 0, H = 0, DPR = 1;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ============================================
+  //  黄金比例核心
+  // ============================================
+  const PHI = (1 + Math.sqrt(5)) / 2;
+
+  // 初始视野宽度（世界单位）
+  const BASE_VIEW = 2.5;
+
+  // 标记的世界坐标：φ^k - 1
+  // 这样 k=0 的标记恰好位于原点，与初始点重合
+
+  let t = 0;
+  let prevTime = 0;
+
+  // ============================================
+  //  主循环
+  // ============================================
+  function draw(now) {
+    if (!prevTime) prevTime = now;
+    let dt = now - prevTime;
+    if (dt > 80) dt = 80;
+    prevTime = now;
+
+    t += dt * 0.00035;   // 时间推进
+
+    // ===== 核心坐标变换 =====
+    // 点（视角焦点）世界坐标 : X(t) = φ^t - 1
+    // 视角中心               : camX = X(t)           （完美跟随）
+    // 视野宽度（世界单位）    : viewW = BASE_VIEW·φ^t （按黄金比例扩张）
+    // 像素/世界单位           : scale = W / viewW
+    //
+    // 标记 k 的世界坐标       : x_k = φ^k - 1
+    //
+    // 屏幕 X = (x_k - camX)·scale + W/2
+    //        = (φ^k - φ^t)·W/(BASE_VIEW·φ^t) + W/2
+    //        = (φ^(k-t) - 1)·W/BASE_VIEW + W/2
+    //
+    // 令 j = k - t  =>  screenX = (φ^j - 1)·unit + W/2
+    // 该形式完全避免了巨大数值，精度稳定。
+
+    const halfW = W * 0.5;
+    const halfH = H * 0.5;
+    const unit = W / BASE_VIEW;
+
+    // ---------- 背景 ----------
+    const bgGrad = ctx.createRadialGradient(halfW, halfH, 0, halfW, halfH, Math.max(W, H) * 0.75);
+    bgGrad.addColorStop(0, '#10141b');
+    bgGrad.addColorStop(0.55, '#0a0c11');
+    bgGrad.addColorStop(1, '#050608');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 水平参考轴线
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.045)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, halfH + 0.5);
+    ctx.lineTo(W, halfH + 0.5);
+    ctx.stroke();
+
+    // ---------- 绘制标记 ----------
+    // 只绘制 j ∈ [-18, 8] 对应的 k，足以覆盖整个屏幕
+    const floorT = Math.floor(t);
+    const kStart = floorT - 18;
+    const kEnd = floorT + 8;
+
+    for (let k = kStart; k <= kEnd; k++) {
+      const j = k - t;
+      const x = (Math.pow(PHI, j) - 1) * unit + halfW;
+
+      if (x < -80 || x > W + 80) continue;
+
+      // 基于离中心的距离衰减
+      const d = Math.abs(x - halfW) / (halfW * 1.15);
+      let alpha = 1 - d * d;
+      if (alpha <= 0) continue;
+
+      // 左端淡出（避免标记在汇聚点堆积）
+      const fadeL = Math.min(1, Math.max(0, (x - W * 0.08) / (W * 0.22)));
+      // 右端淡出（让标记从右侧平滑进入）
+      const fadeR = Math.min(1, Math.max(0, (W * 0.95 - x) / (W * 0.18)));
+      alpha *= fadeL * fadeR;
+
+      if (alpha < 0.008) continue;
+
+      const glowR = 6 + 18 * Math.exp(-d * 1.5);
+
+      // 光晕
+      const halo = ctx.createRadialGradient(x, halfH, 0, x, halfH, glowR * 3.5);
+      halo.addColorStop(0, `rgba(255, 215, 0, ${alpha * 0.16})`);
+      halo.addColorStop(0.5, `rgba(255, 200, 60, ${alpha * 0.05})`);
+      halo.addColorStop(1, 'rgba(255, 180, 0, 0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(x, halfH, glowR * 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 竖直刻度线
+      const tickH = 4 + 11 * Math.exp(-d * 1.3);
+      ctx.strokeStyle = `rgba(255, 215, 0, ${alpha * 0.32})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, halfH - tickH);
+      ctx.lineTo(x, halfH + tickH);
+      ctx.stroke();
+
+      // 标记点
+      const dotR = 1.5 + 4 * Math.exp(-d * 1.6);
+      ctx.beginPath();
+      ctx.arc(x, halfH, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255, 232, 130, ${alpha})`;
+      ctx.fill();
+    }
+
+    // ---------- 中心点（视角焦点 / 点本体） ----------
+    const pulse = 1 + 0.14 * Math.sin(now * 0.0028);
+
+    // 外层辉光
+    const coreGlow = ctx.createRadialGradient(halfW, halfH, 0, halfW, halfH, 58 * pulse);
+    coreGlow.addColorStop(0, 'rgba(255, 215, 0, 0.5)');
+    coreGlow.addColorStop(0.2, 'rgba(255, 205, 60, 0.14)');
+    coreGlow.addColorStop(1, 'rgba(255, 180, 0, 0)');
+    ctx.fillStyle = coreGlow;
+    ctx.beginPath();
+    ctx.arc(halfW, halfH, 58 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 脉冲环
+    ctx.beginPath();
+    ctx.arc(halfW, halfH, 13 + 2.5 * Math.sin(now * 0.0028), 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.38)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    // 十字准星
+    const cr = 24;
+    const crIn = 16;
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(halfW - cr, halfH);
+    ctx.lineTo(halfW - crIn, halfH);
+    ctx.moveTo(halfW + crIn, halfH);
+    ctx.lineTo(halfW + cr, halfH);
+    ctx.moveTo(halfW, halfH - cr);
+    ctx.lineTo(halfW, halfH - crIn);
+    ctx.moveTo(halfW, halfH + crIn);
+    ctx.lineTo(halfW, halfH + cr);
+    ctx.stroke();
+
+    // 核心亮点
+    ctx.beginPath();
+    ctx.arc(halfW, halfH, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#fffce8';
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 30;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    requestAnimationFrame(draw);
+  }
+
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
