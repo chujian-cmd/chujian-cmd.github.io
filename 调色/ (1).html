@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>调色</title>
+<style>
+  :root {
+    --bg: #ebebeb;
+    --stage-glow: #f6f6f6;
+    --surface: #ffffff;
+    --surface-2: #f2f2f2;
+    --border: #e5e5e5;
+    --border-strong: #d0d0d0;
+    --text: #121212;
+    --text-2: #666666;
+    --text-3: #9a9a9a;
+    --track: #e0e0e0;
+    --thumb: #121212;
+    --shadow: rgba(0, 0, 0, 0.07);
+    --shadow-lg: rgba(0, 0, 0, 0.12);
+  }
+  [data-theme="dark"] {
+    --bg: #080808;
+    --stage-glow: #131313;
+    --surface: #141414;
+    --surface-2: #1e1e1e;
+    --border: #252525;
+    --border-strong: #3a3a3a;
+    --text: #f2f2f2;
+    --text-2: #a0a0a0;
+    --text-3: #5e5e5e;
+    --track: #2a2a2a;
+    --thumb: #f2f2f2;
+    --shadow: rgba(0, 0, 0, 0.5);
+    --shadow-lg: rgba(0, 0, 0, 0.7);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    transition: background 0.25s, color 0.25s;
+  }
+
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    height: 60px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    transition: background 0.25s, border-color 0.25s;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .brand svg { width: 21px; height: 21px; stroke: var(--text); fill: none; stroke-width: 1.6; }
+  .brand .half { fill: var(--text); stroke: none; }
+
+  .topbar-actions { display: flex; align-items: center; gap: 9px; }
+
+  .btn {
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+  .btn:hover { background: var(--surface-2); border-color: var(--border-strong); }
+  .btn:active { transform: scale(0.97); }
+  .btn.icon { width: 34px; padding: 0; }
+  .btn.block { width: 100%; }
+  .btn svg {
+    width: 15px; height: 15px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  }
+
+  /* ---------- 工作区 ---------- */
+  .workspace { flex: 1; display: flex; min-height: 0; }
+
+  .stage {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 36px;
+    overflow: hidden;
+    background: radial-gradient(ellipse 75% 60% at 50% 42%, var(--stage-glow), transparent 72%), var(--bg);
+    transition: background 0.25s;
+  }
+
+  .dropzone {
+    width: min(400px, 100%);
+    aspect-ratio: 16 / 10;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    cursor: pointer;
+    color: var(--text-3);
+    transition: all 0.18s;
+  }
+  .dropzone:hover,
+  .dropzone.dragover {
+    border-color: var(--text-2);
+    color: var(--text-2);
+    background: var(--surface);
+  }
+  .dropzone svg {
+    width: 38px; height: 38px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .dropzone span { font-size: 13px; letter-spacing: 0.2px; }
+
+  /* 媒体容器 */
+  .media-wrap {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 10px;
+    overflow: hidden;
+    line-height: 0;
+    box-shadow: 0 12px 44px var(--shadow-lg), 0 0 0 1px var(--border);
+    transition: box-shadow 0.25s;
+  }
+  .media-wrap img,
+  .media-wrap video {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 250px);
+    width: auto;
+    height: auto;
+    background: #000;
+  }
+  .media-wrap video { cursor: pointer; }
+
+  /* 效果叠加层 */
+  .fx {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .fx.noise { mix-blend-mode: overlay; background-repeat: repeat; }
+
+  /* ---------- 视频控制条 ---------- */
+  .video-bar {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    width: min(600px, calc(100% - 48px));
+    height: 46px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 10px 36px var(--shadow-lg);
+    z-index: 10;
+    transition: background 0.25s, border-color 0.25s;
+  }
+  .vb-btn {
+    width: 30px; height: 30px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  .vb-btn:hover { background: var(--surface-2); }
+  .vb-btn svg {
+    width: 16px; height: 16px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .vb-btn svg .solid { fill: currentColor; stroke: none; }
+  .vb-time {
+    font-size: 11.5px;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2px;
+    min-width: 38px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .vb-seek { flex: 1; }
+
+  /* ---------- 侧栏 ---------- */
+  .sidebar {
+    width: 304px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    transition: background 0.25s, border-color 0.25s;
+  }
+  .sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 22px 6px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .sidebar-scroll::-webkit-scrollbar { width: 6px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 6px;
+  }
+  .sidebar-foot {
+    padding: 14px 22px 18px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .group-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-3);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin: 20px 0 14px;
+  }
+  .group-title:first-child { margin-top: 2px; }
+
+  .ctl { margin-bottom: 17px; }
+  .ctl-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 7px;
+  }
+  .ctl-label { font-size: 12.5px; color: var(--text-2); font-weight: 450; }
+  .ctl-val {
+    font-size: 11.5px;
+    color: var(--text);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    min-width: 32px;
+    text-align: right;
+  }
+
+  /* ---------- 滑块 ---------- */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 20px;
+    background: transparent;
+    outline: none;
+    cursor: pointer;
+    display: block;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 3px;
+    background: var(--track);
+    border-radius: 3px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5.5px;
+    border-radius: 50%;
+    background: var(--thumb);
+    border: 2px solid var(--surface);
+    box-shadow: 0 0 0 1px var(--border-strong), 0 1px 4px rgba(0, 0, 0, 0.18);
+    transition: transform 0.12s, box-shadow 0.12s;
+  }
+  input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
+  input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 1px var(--border-strong), 0 0 0 5px var(--surface-2);
+  }
+  input[type="range"]::-moz-range-track {
+    height: 3px;
+    background: var(--track);
+    border-radius: 3px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--thumb);
+    border: 2px solid var(--surface);
+    box-shadow: 0 0 0 1px var(--border-strong);
+  }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 880px) {
+    .workspace { flex-direction: column; }
+    .stage {
+      flex: 0 0 46%;
+      padding: 16px;
+    }
+    .media-wrap img,
+    .media-wrap video {
+      max-height: calc(46vh - 90px);
+    }
+    .video-bar { bottom: 12px; height: 42px; }
+    .sidebar {
+      width: 100%;
+      flex: 1;
+      border-left: none;
+      border-top: 1px solid var(--border);
+    }
+    .sidebar-scroll { padding: 16px 18px 4px; }
+    .sidebar-foot { padding: 12px 18px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/>
+        <path class="half" d="M12 3a9 9 0 0 1 0 18z"/>
+      </svg>
+      <span>调色</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn" id="uploadBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>
+        上传
+      </button>
+      <button class="btn icon" id="themeBtn" title="切换主题">
+        <svg id="themeIcon" viewBox="0 0 24 24"></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="stage" id="stage">
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24">
+          <rect x="3" y="3" width="18" height="18" rx="2.5"/>
+          <circle cx="8.5" cy="8.5" r="1.6"/>
+          <path d="M21 15.5l-4.8-4.8L6.5 21"/>
+        </svg>
+        <span>点击或拖拽图片 / 视频到此处</span>
+      </div>
+
+      <div class="media-wrap" id="mediaWrap" hidden>
+        <img id="imgEl" alt="" hidden>
+        <video id="videoEl" playsinline hidden></video>
+        <div class="fx" id="fxTint"></div>
+        <div class="fx" id="fxFade"></div>
+        <div class="fx noise" id="fxNoise"></div>
+        <div class="fx" id="fxVignette"></div>
+      </div>
+
+      <div class="video-bar" id="videoBar" hidden>
+        <button class="vb-btn" id="playBtn">
+          <svg viewBox="0 0 24 24"><path class="solid" d="M7 4l13 8-13 8V4z"/></svg>
+        </button>
+        <span class="vb-time" id="timeNow">0:00</span>
+        <input type="range" class="vb-seek" id="seekBar" min="0" max="1000" value="0" step="1">
+        <span class="vb-time" id="timeTotal">0:00</span>
+        <button class="vb-btn" id="muteBtn">
+          <svg viewBox="0 0 24 24">
+            <path class="solid" d="M11 5L6 9H2v6h4l5 4V5z"/>
+            <path id="volWave1" d="M15.5 8.5a5 5 0 0 1 0 7"/>
+            <path id="volWave2" d="M18.5 6a9 9 0 0 1 0 12"/>
+            <line id="muteSlash1" x1="22" y1="9" x2="16" y2="15" style="display:none"/>
+            <line id="muteSlash2" x1="16" y1="9" x2="22" y2="15" style="display:none"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="sidebar-scroll" id="controls"></div>
+      <div class="sidebar-foot">
+        <button class="btn block" id="resetBtn">重置全部</button>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<input type="file" id="fileInput" accept="image/*,video/*" hidden>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 参数定义 ---------------- */
+  const GROUPS = [
+    { title: '光线', items: [
+      { key: 'exposure',    label: '曝光',   min: -100, max: 100 },
+      { key: 'brightness',  label: '亮度',   min: -100, max: 100 },
+      { key: 'contrast',    label: '对比度', min: -100, max: 100 },
+    ]},
+    { title: '色彩', items: [
+      { key: 'saturation',  label: '饱和度', min: -100, max: 100 },
+      { key: 'hue',         label: '色调',   min: -180, max: 180, suffix: '°' },
+      { key: 'temperature', label: '色温',   min: -100, max: 100 },
+    ]},
+    { title: '细节', items: [
+      { key: 'sharpen',     label: '锐度',   min: 0, max: 100 },
+      { key: 'clarity',     label: '清晰度', min: 0, max: 100 },
+      { key: 'noise',       label: '噪点',   min: 0, max: 100 },
+    ]},
+    { title: '效果', items: [
+      { key: 'vignette',    label: '暗角',   min: 0, max: 100 },
+      { key: 'fade',        label: '褪色',   min: 0, max: 100 },
+    ]},
+  ];
+
+  const ITEMS = {};
+  GROUPS.forEach(g => g.items.forEach(it => { ITEMS[it.key] = it; }));
+
+  const state = {};
+  Object.keys(ITEMS).forEach(k => state[k] = 0);
+
+  /* ---------------- DOM ---------------- */
+  const stage        = document.getElementById('stage');
+  const dropzone     = document.getElementById('dropzone');
+  const mediaWrap    = document.getElementById('mediaWrap');
+  const imgEl        = document.getElementById('imgEl');
+  const videoEl      = document.getElementById('videoEl');
+  const videoBar     = document.getElementById('videoBar');
+  const playBtn      = document.getElementById('playBtn');
+  const muteBtn      = document.getElementById('muteBtn');
+  const seekBar      = document.getElementById('seekBar');
+  const timeNow      = document.getElementById('timeNow');
+  const timeTotal    = document.getElementById('timeTotal');
+  const controlsEl   = document.getElementById('controls');
+  const fileInput    = document.getElementById('fileInput');
+  const resetBtn     = document.getElementById('resetBtn');
+  const themeBtn     = document.getElementById('themeBtn');
+  const themeIcon    = document.getElementById('themeIcon');
+
+  const fxTint       = document.getElementById('fxTint');
+  const fxFade       = document.getElementById('fxFade');
+  const fxNoise      = document.getElementById('fxNoise');
+  const fxVignette   = document.getElementById('fxVignette');
+
+  let currentUrl = null;
+  let isVideo = false;
+
+  /* ---------------- 图标 ---------------- */
+  const ICON_SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+  const ICON_MOON = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
+  const PLAY_SVG = '<svg viewBox="0 0 24 24"><path class="solid" d="M7 4l13 8-13 8V4z"/></svg>';
+  const PAUSE_SVG = '<svg viewBox="0 0 24 24"><rect class="solid" x="6" y="4" width="4" height="16" rx="1"/><rect class="solid" x="14" y="4" width="4" height="16" rx="1"/></svg>';
+
+  /* ---------------- 噪点纹理 ---------------- */
+  (function initNoise() {
+    const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'>" +
+      "<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='3' stitchTiles='stitch'/>" +
+      "<feColorMatrix type='saturate' values='0'/></filter>" +
+      "<rect width='100%' height='100%' filter='url(#n)'/></svg>";
+    fxNoise.style.backgroundImage = 'url("data:image/svg+xml,' + encodeURIComponent(svg) + '")';
+  })();
+
+  /* ---------------- 控件构建 ---------------- */
+  function buildControls() {
+    const frag = document.createDocumentFragment();
+
+    GROUPS.forEach(group => {
+      const title = document.createElement('div');
+      title.className = 'group-title';
+      title.textContent = group.title;
+      frag.appendChild(title);
+
+      group.items.forEach(item => {
+        const ctl = document.createElement('div');
+        ctl.className = 'ctl';
+
+        const top = document.createElement('div');
+        top.className = 'ctl-top';
+
+        const label = document.createElement('span');
+        label.className = 'ctl-label';
+        label.textContent = item.label;
+
+        const val = document.createElement('span');
+        val.className = 'ctl-val';
+        val.textContent = formatVal(0, item);
+
+        top.appendChild(label);
+        top.appendChild(val);
+
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.min = item.min;
+        input.max = item.max;
+        input.value = 0;
+        input.step = 1;
+        input.dataset.key = item.key;
+
+        ctl.appendChild(top);
+        ctl.appendChild(input);
+        frag.appendChild(ctl);
+      });
+    });
+
+    controlsEl.appendChild(frag);
+
+    controlsEl.addEventListener('input', e => {
+      const input = e.target;
+      if (input.type !== 'range' || !input.dataset.key) return;
+      const key = input.dataset.key;
+      const v = parseInt(input.value, 10);
+      state[key] = v;
+      input.parentElement.querySelector('.ctl-val').textContent = formatVal(v, ITEMS[key]);
+      applyEffects();
+    });
+  }
+
+  function formatVal(v, item) {
+    if (item.suffix) return v + item.suffix;
+    if (item.min < 0) return (v > 0 ? '+' : '') + v;
+    return String(v);
+  }
+
+  /* ---------------- 效果应用 ---------------- */
+  function applyEffects() {
+    const b = Math.pow(2, state.exposure / 100) * (1 + state.brightness / 100);
+    const c = 1 + state.contrast / 100 + state.sharpen / 650 + state.clarity / 850;
+    const s = 1 + state.saturation / 100 + state.clarity / 2600;
+    const h = state.hue;
+
+    const filter = 'brightness(' + b.toFixed(3) + ') ' +
+                   'contrast(' + c.toFixed(3) + ') ' +
+                   'saturate(' + s.toFixed(3) + ') ' +
+                   'hue-rotate(' + h + 'deg)';
+
+    imgEl.style.filter = filter;
+    videoEl.style.filter = filter;
+
+    /* 色温：暖橙 / 冷蓝 soft-light 叠加 */
+    const t = state.temperature / 100;
+    if (Math.abs(t) < 0.01) {
+      fxTint.style.opacity = 0;
+    } else {
+      fxTint.style.opacity = 1;
+      fxTint.style.mixBlendMode = 'soft-light';
+      fxTint.style.background = t > 0
+        ? 'rgba(255, 138, 38, ' + (t * 0.55).toFixed(3) + ')'
+        : 'rgba(38, 138, 255, ' + (-t * 0.55).toFixed(3) + ')';
+    }
+
+    /* 褪色：lighten 抬升暗部 */
+    const f = state.fade / 100;
+    if (f < 0.01) {
+      fxFade.style.opacity = 0;
+    } else {
+      fxFade.style.opacity = 1;
+      fxFade.style.mixBlendMode = 'lighten';
+      fxFade.style.background = 'rgba(126, 126, 126, ' + (f * 0.55).toFixed(3) + ')';
+    }
+
+    /* 暗角 */
+    const v = state.vignette / 100;
+    if (v < 0.01) {
+      fxVignette.style.opacity = 0;
+    } else {
+      fxVignette.style.opacity = 1;
+      fxVignette.style.background =
+        'radial-gradient(ellipse at center, transparent ' + (30 + v * 12).toFixed(1) + '%, rgba(0,0,0,' + (v * 0.92).toFixed(3) + ') 100%)';
+    }
+
+    /* 噪点 */
+    const n = state.noise / 100;
+    fxNoise.style.opacity = n < 0.01 ? 0 : (n * 0.9).toFixed(3);
+  }
+
+  /* ---------------- 文件加载 ---------------- */
+  function loadFile(file) {
+    if (!file) return;
+    const type = file.type || '';
+    const isVid = type.startsWith('video/');
+    const isImg = type.startsWith('image/');
+    if (!isVid && !isImg) return;
+
+    if (currentUrl) {
+      URL.revokeObjectURL(currentUrl);
+      currentUrl = null;
+    }
+    currentUrl = URL.createObjectURL(file);
+
+    if (isVid) {
+      isVideo = true;
+      imgEl.hidden = true;
+      imgEl.removeAttribute('src');
+      videoEl.hidden = false;
+      videoEl.src = currentUrl;
+      videoEl.load();
+
+      videoEl.onloadedmetadata = () => {
+        videoBar.hidden = false;
+        timeTotal.textContent = fmtTime(videoEl.duration);
+        updatePlayIcon();
+        videoEl.play().catch(() => {});
+      };
+    } else {
+      isVideo = false;
+      videoEl.pause();
+      videoEl.hidden = true;
+      videoEl.removeAttribute('src');
+      videoBar.hidden = true;
+
+      imgEl.hidden = false;
+      imgEl.onload = () => {
+        applyEffects();
+      };
+      imgEl.src = currentUrl;
+    }
+
+    dropzone.hidden = true;
+    mediaWrap.hidden = false;
+    applyEffects();
+  }
+
+  /* ---------------- 视频控制 ---------------- */
+  function fmtTime(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function updatePlayIcon() {
+    playBtn.innerHTML = videoEl.paused ? PLAY_SVG : PAUSE_SVG;
+  }
+
+  function updateMuteIcon() {
+    const muted = videoEl.muted || videoEl.volume === 0;
+    document.getElementById('volWave1').style.display = muted ? 'none' : '';
+    document.getElementById('volWave2').style.display = muted ? 'none' : '';
+    document.getElementById('muteSlash1').style.display = muted ? '' : 'none';
+    document.getElementById('muteSlash2').style.display = muted ? '' : 'none';
+  }
+
+  playBtn.addEventListener('click', () => {
+    if (!isVideo) return;
+    if (videoEl.paused) videoEl.play().catch(() => {});
+    else videoEl.pause();
+  });
+
+  videoEl.addEventListener('play', updatePlayIcon);
+  videoEl.addEventListener('pause', updatePlayIcon);
+
+  videoEl.addEventListener('click', () => {
+    if (!isVideo) return;
+    if (videoEl.paused) videoEl.play().catch(() => {});
+    else videoEl.pause();
+  });
+
+  videoEl.addEventListener('timeupdate', () => {
+    if (!isVideo) return;
+    const d = videoEl.duration;
+    if (!d || !isFinite(d)) return;
+    timeNow.textContent = fmtTime(videoEl.currentTime);
+    timeTotal.textContent = fmtTime(d);
+    seekBar.value = Math.round((videoEl.currentTime / d) * 1000);
+  });
+
+  videoEl.addEventListener('ended', updatePlayIcon);
+
+  seekBar.addEventListener('input', () => {
+    if (!isVideo) return;
+    const d = videoEl.duration;
+    if (!d || !isFinite(d)) return;
+    videoEl.currentTime = (seekBar.value / 1000) * d;
+  });
+
+  muteBtn.addEventListener('click', () => {
+    if (!isVideo) return;
+    videoEl.muted = !videoEl.muted;
+    updateMuteIcon();
+  });
+
+  /* ---------------- 上传与拖拽 ---------------- */
+  function openPicker() { fileInput.click(); }
+
+  document.getElementById('uploadBtn').addEventListener('click', openPicker);
+  dropzone.addEventListener('click', openPicker);
+
+  fileInput.addEventListener('change', e => {
+    if (e.target.files && e.target.files[0]) loadFile(e.target.files[0]);
+    fileInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach(evt => {
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(evt => {
+    dropzone.addEventListener(evt, e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+    });
+  });
+  dropzone.addEventListener('drop', e => {
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      loadFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  /* ---------------- 重置 ---------------- */
+  resetBtn.addEventListener('click', () => {
+    Object.keys(state).forEach(k => { state[k] = 0; });
+    controlsEl.querySelectorAll('input[data-key]').forEach(input => {
+      input.value = 0;
+      const item = ITEMS[input.dataset.key];
+      input.parentElement.querySelector('.ctl-val').textContent = formatVal(0, item);
+    });
+    applyEffects();
+  });
+
+  /* ---------------- 主题 ---------------- */
+  function setTheme(t) {
+    document.documentElement.dataset.theme = t;
+    localStorage.setItem('color-editor-theme', t);
+    themeIcon.innerHTML = t === 'dark' ? ICON_SUN : ICON_MOON;
+  }
+
+  themeBtn.addEventListener('click', () => {
+    const current = document.documentElement.dataset.theme;
+    setTheme(current === 'dark' ? 'light' : 'dark');
+  });
+
+  /* ---------------- 初始化 ---------------- */
+  buildControls();
+  setTheme(localStorage.getItem('color-editor-theme') || 'light');
+  applyEffects();
+  updateMuteIcon();
+})();
+</script>
+</body>
+</html>

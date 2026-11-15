@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>调色</title>
+<style>
+  :root {
+    --bg: #f2f2f2;
+    --panel: #ffffff;
+    --border: #e0e0e0;
+    --text: #141414;
+    --text-dim: #8a8a8a;
+    --track: #e0e0e0;
+    --thumb: #141414;
+    --preview: #e8e8e8;
+    --hover: #f0f0f0;
+  }
+  [data-theme="dark"] {
+    --bg: #0a0a0a;
+    --panel: #151515;
+    --border: #262626;
+    --text: #f0f0f0;
+    --text-dim: #8a8a8a;
+    --track: #262626;
+    --thumb: #f0f0f0;
+    --preview: #000000;
+    --hover: #1e1e1e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    height: 54px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .brand { font-size: 14px; font-weight: 600; letter-spacing: 0.6px; }
+  .actions { display: flex; align-items: center; gap: 8px; }
+
+  .btn {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn:hover { background: var(--hover); }
+  .btn.icon { width: 32px; padding: 0; }
+  .btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+
+  .preview {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    background: var(--preview);
+    position: relative;
+    transition: background 0.2s;
+  }
+  .preview canvas {
+    display: none;
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 3px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.18);
+  }
+  .dropzone {
+    width: 100%;
+    max-width: 360px;
+    aspect-ratio: 4 / 3;
+    border: 1.5px dashed var(--border);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+  }
+  .dropzone:hover { border-color: var(--text-dim); color: var(--text); }
+  .dropzone svg { width: 34px; height: 34px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .dropzone span { font-size: 13px; }
+  .dropzone.dragover { border-color: var(--text); color: var(--text); background: var(--hover); }
+
+  aside {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .controls {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 20px 10px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--track) transparent;
+  }
+  .controls::-webkit-scrollbar { width: 5px; }
+  .controls::-webkit-scrollbar-thumb { background: var(--track); border-radius: 5px; }
+
+  .control { margin-bottom: 17px; }
+  .control-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 12px;
+    margin-bottom: 8px;
+    color: var(--text-dim);
+  }
+  .control-head .val {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+    min-width: 34px;
+    text-align: right;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--track);
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--thumb);
+    border: none;
+    transition: transform 0.1s;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.18); }
+  input[type="range"]::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--thumb);
+    border: none;
+  }
+
+  .footer {
+    padding: 12px 20px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .footer .btn { width: 100%; }
+
+  @media (max-width: 820px) {
+    main { flex-direction: column; }
+    aside { width: 100%; height: 46%; border-left: none; border-top: 1px solid var(--border); }
+    .preview { padding: 16px; }
+  }
+</style>
+</head>
+<body data-theme="light">
+
+<div class="app">
+  <header>
+    <div class="brand">调色</div>
+    <div class="actions">
+      <button class="btn" id="uploadBtn">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M6 10l6-6 6 6"/><path d="M4 20h16"/></svg>
+        上传
+      </button>
+      <button class="btn icon" id="themeBtn" title="切换主题">
+        <svg id="themeIcon" viewBox="0 0 24 24"></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="preview" id="preview">
+      <div class="dropzone" id="dropzone">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+        <span>点击或拖拽图片到此处</span>
+      </div>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <aside>
+      <div class="controls" id="controls"></div>
+      <div class="footer">
+        <button class="btn" id="resetBtn">重置全部</button>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<input type="file" id="fileInput" accept="image/*" style="display:none">
+
+<script>
+(function () {
+  const CONTROLS = [
+    { key: 'exposure',    label: '曝光',   min: -100, max: 100 },
+    { key: 'brightness',  label: '亮度',   min: -100, max: 100 },
+    { key: 'contrast',    label: '对比度', min: -100, max: 100 },
+    { key: 'highlights',  label: '高光',   min: -100, max: 100 },
+    { key: 'shadows',     label: '阴影',   min: -100, max: 100 },
+    { key: 'saturation',  label: '饱和度', min: -100, max: 100 },
+    { key: 'hue',         label: '色调',   min: -180, max: 180, suffix: '°' },
+    { key: 'temperature', label: '色温',   min: -100, max: 100 },
+    { key: 'sharpen',     label: '锐度',   min: 0,    max: 100 },
+    { key: 'clarity',     label: '清晰度', min: 0,    max: 100 },
+    { key: 'noise',       label: '噪点',   min: 0,    max: 100 },
+    { key: 'vignette',    label: '暗角',   min: 0,    max: 100 },
+    { key: 'fade',        label: '褪色',   min: 0,    max: 100 },
+  ];
+
+  const state = {};
+  CONTROLS.forEach(c => state[c.key] = 0);
+
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const controlsEl = document.getElementById('controls');
+  const themeBtn = document.getElementById('themeBtn');
+  const themeIcon = document.getElementById('themeIcon');
+
+  let sourceData = null;
+  let renderPending = false;
+
+  // ---------- 控件生成 ----------
+  function buildControls() {
+    const frag = document.createDocumentFragment();
+    CONTROLS.forEach(c => {
+      const wrap = document.createElement('div');
+      wrap.className = 'control';
+      wrap.innerHTML =
+        '<div class="control-head"><span>' + c.label + '</span>' +
+        '<span class="val" id="val-' + c.key + '">0' + (c.suffix || '') + '</span></div>' +
+        '<input type="range" min="' + c.min + '" max="' + c.max + '" value="0" step="1" data-key="' + c.key + '">';
+      frag.appendChild(wrap);
+    });
+    controlsEl.appendChild(frag);
+
+    controlsEl.addEventListener('input', e => {
+      const input = e.target;
+      if (input.type !== 'range') return;
+      const key = input.dataset.key;
+      const val = parseInt(input.value, 10);
+      state[key] = val;
+      const def = CONTROLS.find(c => c.key === key);
+      document.getElementById('val-' + key).textContent = val + (def.suffix || '');
+      scheduleRender();
+    });
+  }
+
+  // ---------- 渲染调度 ----------
+  function scheduleRender() {
+    if (renderPending || !sourceData) return;
+    renderPending = true;
+    requestAnimationFrame(() => {
+      renderPending = false;
+      render();
+    });
+  }
+
+  // ---------- 图片处理 ----------
+  function applySharpen(data, w, h, amount) {
+    const out = new Uint8ClampedArray(data);
+    const k = amount;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = (y * w + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const p = data[i + c];
+          const s = 5 * p - data[i + c - 4] - data[i + c + 4] - data[i + c - w * 4] - data[i + c + w * 4];
+          out[i + c] = p + (s - p) * k;
+        }
+      }
+    }
+    data.set(out);
+  }
+
+  function boxBlur(data, w, h, r) {
+    const tmp = new Uint8ClampedArray(data);
+    const out = new Uint8ClampedArray(data);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let R = 0, G = 0, B = 0, n = 0;
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= w) continue;
+          const i = (y * w + nx) * 4;
+          R += tmp[i]; G += tmp[i + 1]; B += tmp[i + 2]; n++;
+        }
+        const i = (y * w + x) * 4;
+        out[i] = R / n; out[i + 1] = G / n; out[i + 2] = B / n;
+      }
+    }
+    const out2 = new Uint8ClampedArray(data);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let R = 0, G = 0, B = 0, n = 0;
+        for (let dy = -r; dy <= r; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= h) continue;
+          const i = (ny * w + x) * 4;
+          R += out[i]; G += out[i + 1]; B += out[i + 2]; n++;
+        }
+        const i = (y * w + x) * 4;
+        out2[i] = R / n; out2[i + 1] = G / n; out2[i + 2] = B / n;
+      }
+    }
+    return out2;
+  }
+
+  function applyClarity(data, w, h, amount) {
+    const blur = boxBlur(data, w, h, 2);
+    const k = amount * 1.4;
+    for (let i = 0; i < data.length; i += 4) {
+      data[i]     += (data[i]     - blur[i])     * k;
+      data[i + 1] += (data[i + 1] - blur[i + 1]) * k;
+      data[i + 2] += (data[i + 2] - blur[i + 2]) * k;
+    }
+  }
+
+  function applyNoise(data, w, h, amount) {
+    const strength = amount * 45;
+    let seed = 20240517;
+    for (let i = 0; i < data.length; i += 4) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const n = (seed / 0x7fffffff - 0.5) * 2 * strength;
+      data[i]     += n;
+      data[i + 1] += n;
+      data[i + 2] += n;
+    }
+  }
+
+  function render() {
+    if (!sourceData) return;
+    const w = sourceData.width;
+    const h = sourceData.height;
+    const src = sourceData.data;
+    const out = new Uint8ClampedArray(src.length);
+
+    const exposure   = Math.pow(2, state.exposure / 100);
+    const brightness = state.brightness * 2.0;
+    const contrast   = (state.contrast + 100) / 100;
+    const sat        = (state.saturation + 100) / 100;
+    const temp       = state.temperature / 100;
+    const hl         = state.highlights / 100;
+    const sh         = state.shadows / 100;
+    const fade       = state.fade / 100;
+    const vig        = state.vignette / 100;
+    const doHue      = state.hue !== 0;
+    const angle      = state.hue * Math.PI / 180;
+    const hc = Math.cos(angle), hs = Math.sin(angle);
+
+    const m00 = 0.213 + hc * 0.787 - hs * 0.213;
+    const m01 = 0.715 - hc * 0.715 - hs * 0.715;
+    const m02 = 0.072 - hc * 0.072 + hs * 0.928;
+    const m10 = 0.213 - hc * 0.213 + hs * 0.143;
+    const m11 = 0.715 + hc * 0.285 + hs * 0.140;
+    const m12 = 0.072 - hc * 0.072 - hs * 0.283;
+    const m20 = 0.213 - hc * 0.213 - hs * 0.787;
+    const m21 = 0.715 - hc * 0.715 + hs * 0.715;
+    const m22 = 0.072 + hc * 0.928 + hs * 0.072;
+
+    const cx = w / 2, cy = h / 2;
+    const maxDist = Math.sqrt(cx * cx + cy * cy);
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        let r = src[i], g = src[i + 1], b = src[i + 2];
+
+        r *= exposure; g *= exposure; b *= exposure;
+        r += brightness; g += brightness; b += brightness;
+        r = (r - 128) * contrast + 128;
+        g = (g - 128) * contrast + 128;
+        b = (b - 128) * contrast + 128;
+
+        if (temp !== 0) {
+          r += temp * 26;
+          b -= temp * 26;
+        }
+
+        if (hl !== 0 || sh !== 0) {
+          const lum = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+          let adj = 0;
+          if (lum > 0.5) adj += hl * (lum - 0.5) * 2 * 70;
+          else adj += sh * (0.5 - lum) * 2 * 70;
+          r += adj; g += adj; b += adj;
+        }
+
+        if (sat !== 1) {
+          const gray = r * 0.299 + g * 0.587 + b * 0.114;
+          r = gray + (r - gray) * sat;
+          g = gray + (g - gray) * sat;
+          b = gray + (b - gray) * sat;
+        }
+
+        if (doHue) {
+          const nr = m00 * r + m01 * g + m02 * b;
+          const ng = m10 * r + m11 * g + m12 * b;
+          const nb = m20 * r + m21 * g + m22 * b;
+          r = nr; g = ng; b = nb;
+        }
+
+        if (fade > 0) {
+          const lift = 255 * fade * 0.09;
+          const kf = 1 - fade * 0.35;
+          r = r * kf + lift;
+          g = g * kf + lift;
+          b = b * kf + lift;
+        }
+
+        if (vig > 0) {
+          const dx = x - cx, dy = y - cy;
+          const d = Math.sqrt(dx * dx + dy * dy) / maxDist;
+          const f = 1 - vig * d * d * 0.95;
+          r *= f; g *= f; b *= f;
+        }
+
+        out[i] = r; out[i + 1] = g; out[i + 2] = b; out[i + 3] = src[i + 3];
+      }
+    }
+
+    if (state.sharpen > 0) applySharpen(out, w, h, state.sharpen / 100);
+    if (state.clarity > 0) applyClarity(out, w, h, state.clarity / 100);
+    if (state.noise > 0) applyNoise(out, w, h, state.noise / 100);
+
+    ctx.putImageData(new ImageData(out, w, h), 0, 0);
+  }
+
+  // ---------- 图片加载 ----------
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 1100;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) > MAX) {
+        const s = MAX / Math.max(w, h);
+        w = Math.round(w * s);
+        h = Math.round(h * s);
+      }
+      canvas.width = w;
+      canvas.height = h;
+      ctx.drawImage(img, 0, 0, w, h);
+      sourceData = ctx.getImageData(0, 0, w, h);
+      URL.revokeObjectURL(url);
+
+      dropzone.style.display = 'none';
+      canvas.style.display = 'block';
+      render();
+    };
+    img.src = url;
+  }
+
+  // ---------- 重置 ----------
+  function resetAll() {
+    CONTROLS.forEach(c => {
+      state[c.key] = 0;
+      const input = document.querySelector('input[data-key="' + c.key + '"]');
+      if (input) input.value = 0;
+      const label = document.getElementById('val-' + c.key);
+      if (label) label.textContent = '0' + (c.suffix || '');
+    });
+    scheduleRender();
+  }
+
+  // ---------- 主题 ----------
+  function setTheme(t) {
+    document.body.dataset.theme = t;
+    localStorage.setItem('theme', t);
+    themeIcon.innerHTML = t === 'dark'
+      ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+      : '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
+  }
+
+  // ---------- 初始化 ----------
+  buildControls();
+  setTheme(localStorage.getItem('theme') || 'light');
+
+  document.getElementById('uploadBtn').addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+    fileInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach(evt =>
+    dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('dragover'); })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('dragover'); })
+  );
+  dropzone.addEventListener('drop', e => {
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', resetAll);
+  themeBtn.addEventListener('click', () => {
+    setTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+})();
+</script>
+</body>
+</html>
