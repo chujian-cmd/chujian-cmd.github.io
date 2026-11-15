@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双页对开 · 自动卷页翻书</title>
+<style>
+  html, body {
+    margin: 0; height: 100%;
+    background: #2b2b2b;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: "Georgia", "Songti SC", serif;
+    overflow: hidden;
+  }
+  #book {
+    position: relative;
+    width: 1000px; height: 620px;
+    max-width: 96vw; max-height: 76vh;
+    box-shadow: 0 24px 70px rgba(0,0,0,.7);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #f5f0e6;
+    user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #pageNum {
+    position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+    color: #8a7f6c; font-size: 13px; font-family: system-ui, sans-serif;
+    pointer-events: none;
+  }
+  #controls {
+    margin-top: 20px;
+    display: flex; gap: 16px; align-items: center;
+    font-family: system-ui, sans-serif;
+  }
+  button {
+    padding: 10px 24px;
+    font-size: 16px;
+    border: none; border-radius: 8px;
+    background: #f0e6d2; color: #3a3228;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+    transition: transform .1s, background .2s;
+  }
+  button:hover { background: #fff6e2; }
+  button:active { transform: scale(.96); }
+  button:disabled { opacity: .35; cursor: default; }
+</style>
+</head>
+<body>
+<div id="book">
+  <canvas id="cv"></canvas>
+  <div id="pageNum"></div>
+</div>
+<div id="controls">
+  <button id="prevBtn">← 上一页</button>
+  <button id="nextBtn">下一页 →</button>
+</div>
+
+<script>
+(() => {
+  const book = document.getElementById('book');
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const pageNumEl = document.getElementById('pageNum');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+
+  // ---------- 内容：每个“对开”是一组左右页 ----------
+  const spreads = [
+    {
+      left:  { title: '第一章 · 起点', lines: [
+        '那是一个安静的下午，',
+        '电脑屏幕泛着微微的光。',
+        '我翻开一本电子书，',
+        '页角从右下角轻轻卷起。'
+      ]},
+      right: { title: '第一章 · 续', lines: [
+        '带着柔和的阴影，',
+        '翻到了下一页。',
+        '左边一页，右边一页，',
+        '像摊开的书本。'
+      ]}
+    },
+    {
+      left:  { title: '第二章 · 卷页', lines: [
+        '纸页不是整块平移，',
+        '而是像被指尖掀起，',
+        '沿着对角线卷曲，',
+        '背面透出淡淡的字影。'
+      ]},
+      right: { title: '第二章 · 续', lines: [
+        '翻过去的页，',
+        '在下一页上投下阴影。',
+        '卷曲的弧度，',
+        '随翻页角度变化。'
+      ]}
+    },
+    {
+      left:  { title: '第三章 · 回翻', lines: [
+        '向左翻时，',
+        '页角从左下角掀起，',
+        '同样带着卷曲与阴影，',
+        '回到上一页。'
+      ]},
+      right: { title: '第三章 · 续', lines: [
+        '这种真实感，',
+        '让人久久难忘。',
+        '一左一右，',
+        '翻页之间。'
+      ]}
+    },
+    {
+      left:  { title: '第四章 · 尾声', lines: [
+        '如今用 HTML 也能还原，',
+        'Canvas 绘制卷页，',
+        '渐变模拟明暗，',
+        '阴影随角度变化。'
+      ]},
+      right: { title: '第四章 · 续', lines: [
+        '翻页之间，',
+        '仿佛又回到那个下午。',
+        '合上书，',
+        '余韵未散。'
+      ]}
+    }
+  ];
+
+  let W = 0, H = 0, DPR = 1;
+  let current = 0;      // 当前对开索引
+  let anim = null;      // { from, to, dir, t }
+  let busy = false;
+
+  function resize() {
+    const r = book.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * DPR);
+    cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    draw();
+  }
+
+  // ---------- 绘制单页内容 ----------
+  function drawPageContent(page, x, y, w, h, pageLabel) {
+    if (!page) return;
+    const pad = Math.round(w * 0.1);
+    ctx.fillStyle = '#3a3228';
+    ctx.font = `bold ${Math.round(w * 0.05)}px Georgia, "Songti SC", serif`;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(page.title, x + pad, y + pad);
+
+    ctx.fillStyle = '#4a4238';
+    ctx.font = `${Math.round(w * 0.038)}px Georgia, "Songti SC", serif`;
+    const lh = Math.round(w * 0.07);
+    page.lines.forEach((line, i) => {
+      ctx.fillText(line, x + pad, y + pad + Math.round(w * 0.1) + i * lh);
+    });
+
+    if (pageLabel) {
+      ctx.fillStyle = '#9a8f7c';
+      ctx.font = `${Math.round(w * 0.03)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(pageLabel, x + w / 2, y + h - pad * 0.6);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // ---------- 纸张底色 ----------
+  function paperFill(x, y, w, h, isLeft) {
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    if (isLeft) {
+      g.addColorStop(0, '#efe7d6');
+      g.addColorStop(1, '#fbf7ee');
+    } else {
+      g.addColorStop(0, '#fbf7ee');
+      g.addColorStop(1, '#efe7d6');
+    }
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+
+    // 书脊阴影（靠中间一侧）
+    const spine = ctx.createLinearGradient(
+      isLeft ? x + w : x, y,
+      isLeft ? x + w - w * 0.08 : x + w * 0.08, y
+    );
+    spine.addColorStop(0, 'rgba(0,0,0,.18)');
+    spine.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = spine;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  // ---------- 画一整页（底色+内容） ----------
+  function drawFullPage(page, x, y, w, h, isLeft, label) {
+    paperFill(x, y, w, h, isLeft);
+    drawPageContent(page, x, y, w, h, label);
+  }
+
+  // ---------- 几何辅助 ----------
+  function lineRectIntersections(cx, cy, nx, ny, x0, y0, x1, y1) {
+    const pts = [];
+    const eps = 1e-6;
+    const edges = [
+      { x: x0, y: y0, dx: x1-x0, dy: 0 },
+      { x: x1, y: y0, dx: 0, dy: y1-y0 },
+      { x: x1, y: y1, dx: x0-x1, dy: 0 },
+      { x: x0, y: y1, dx: 0, dy: y0-y1 }
+    ];
+    for (const e of edges) {
+      const det = nx * (-e.dy) - ny * (-e.dx);
+      if (Math.abs(det) < eps) continue;
+      const rx = e.x - cx, ry = e.y - cy;
+      const t = (rx * (-e.dy) - ry * (-e.dx)) / det;
+      const s = (nx * ry - ny * rx) / det;
+      if (s >= -eps && s <= 1 + eps) {
+        const px = cx + t * nx, py = cy + t * ny;
+        if (px >= x0 - eps && px <= x1 + eps && py >= y0 - eps && py <= y1 + eps) {
+          if (!pts.some(p => Math.hypot(p.x - px, p.y - py) < 0.5)) {
+            pts.push({ x: px, y: py });
+          }
+        }
+      }
+    }
+    return pts;
+  }
+
+  function clipRectByLine(x0, y0, x1, y1, A, B, keepSide) {
+    ctx.beginPath();
+    const side = (x, y) => (x - A.x) * (B.y - A.y) - (y - A.y) * (B.x - A.x);
+    const corners = [
+      { x: x0, y: y0 }, { x: x1, y: y0 },
+      { x: x1, y: y1 }, { x: x0, y: y1 }
+    ];
+    const keepPts = [];
+    for (let i = 0; i < 4; i++) {
+      const p = corners[i], q = corners[(i + 1) % 4];
+      const sp = Math.sign(side(p.x, p.y));
+      const sq = Math.sign(side(q.x, q.y));
+      if (sp === keepSide || sp === 0) keepPts.push(p);
+      if (sp !== sq && sp !== 0 && sq !== 0) {
+        const t = side(p.x, p.y) / (side(p.x, p.y) - side(q.x, q.y));
+        keepPts.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+      }
+    }
+    if (keepPts.length === 0) {
+      ctx.rect(0, 0, 0, 0);
+    } else {
+      ctx.moveTo(keepPts[0].x, keepPts[0].y);
+      for (let i = 1; i < keepPts.length; i++) ctx.lineTo(keepPts[i].x, keepPts[i].y);
+      ctx.closePath();
+    }
+    ctx.clip();
+  }
+
+  function buildFlapPolygon(x0, y0, x1, y1, A, B, cornerX, cornerY, px, py, cornerSide) {
+    const side = (x, y) => (x - A.x) * (B.y - A.y) - (y - A.y) * (B.x - A.x);
+    const corners = [
+      { x: x0, y: y0 }, { x: x1, y: y0 },
+      { x: x1, y: y1 }, { x: x0, y: y1 }
+    ];
+    const pts = [];
+    for (let i = 0; i < 4; i++) {
+      const p = corners[i], q = corners[(i + 1) % 4];
+      const sp = Math.sign(side(p.x, p.y));
+      const sq = Math.sign(side(q.x, q.y));
+      if (sp === cornerSide) pts.push(p);
+      if (sp !== sq && sp !== 0 && sq !== 0) {
+        const t = side(p.x, p.y) / (side(p.x, p.y) - side(q.x, q.y));
+        pts.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+      }
+    }
+    pts.push({ x: px, y: py });
+    const cx = cornerX, cy = cornerY;
+    pts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    return pts;
+  }
+
+  // ---------- 核心：在指定矩形内绘制卷页 ----------
+  // rect: { x, y, w, h }  被翻页所在的半页区域
+  // fromPage: 被翻起的页内容；toPage: 翻出来后下面露出的内容
+  // dir: 1 下一页（右下角卷起），-1 上一页（左下角卷起）
+  // t: 0~1 进度
+  function drawCurlInRect(rect, fromPage, toPage, dir, t, isLeft, labelFrom, labelTo) {
+    const { x: rx, y: ry, w: rw, h: rh } = rect;
+
+    // 1. 先画下层（翻出来后露出的页）
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+    drawFullPage(toPage, rx, ry, rw, rh, isLeft, labelTo);
+    ctx.restore();
+
+    // 2. 卷角起点：下一页在右下角，上一页在左下角
+    const cornerX = dir === 1 ? rx + rw : rx;
+    const cornerY = ry + rh;
+
+    // 3. 自动动画：页角沿对角线向中心卷起
+    const ease = t < 0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+    const maxDist = Math.hypot(rw, rh) * 0.85;
+    const dist = ease * maxDist;
+    const ang = Math.atan2(-rh, dir === 1 ? -rw : rw);
+    const px = cornerX + Math.cos(ang) * dist;
+    const py = cornerY + Math.sin(ang) * dist;
+
+    // 4. 折痕
+    const cx = (cornerX + px) / 2;
+    const cy = (cornerY + py) / 2;
+    const dx = px - cornerX;
+    const dy = py - cornerY;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+
+    const foldPts = lineRectIntersections(cx, cy, nx, ny, rx, ry, rx + rw, ry + rh);
+    if (foldPts.length < 2) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rx, ry, rw, rh);
+      ctx.clip();
+      drawFullPage(fromPage, rx, ry, rw, rh, isLeft, labelFrom);
+      ctx.restore();
+      return;
+    }
+    const [A, B] = foldPts;
+
+    const side = (x, y) => (x - A.x) * (B.y - A.y) - (y - A.y) * (B.x - A.x);
+    const cornerSide = Math.sign(side(cornerX, cornerY));
+
+    // 5. 未翻起部分
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+    ctx.beginPath();
+    clipRectByLine(rx, ry, rx + rw, ry + rh, A, B, -cornerSide);
+    drawFullPage(fromPage, rx, ry, rw, rh, isLeft, labelFrom);
+    ctx.restore();
+
+    // 6. 卷起页片
+    const flapPoly = buildFlapPolygon(rx, ry, rx + rw, ry + rh, A, B, cornerX, cornerY, px, py, cornerSide);
+    const ddx = B.x - A.x, ddy = B.y - A.y;
+    const dlen2 = ddx*ddx + ddy*ddy || 1;
+    const mirror = (x, y) => {
+      const vx = x - A.x, vy = y - A.y;
+      const proj = (vx*ddx + vy*ddy) / dlen2;
+      const projX = A.x + proj*ddx;
+      const projY = A.y + proj*ddy;
+      return { x: 2*projX - x, y: 2*projY - y };
+    };
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+
+    ctx.beginPath();
+    const mirrored = flapPoly.map(p => mirror(p.x, p.y));
+    ctx.moveTo(mirrored[0].x, mirrored[0].y);
+    for (let i = 1; i < mirrored.length; i++) {
+      ctx.lineTo(mirrored[i].x, mirrored[i].y);
+    }
+    ctx.closePath();
+    ctx.clip();
+
+    // 卷页背面底色
+    const bg = ctx.createLinearGradient(A.x, A.y, px, py);
+    bg.addColorStop(0, '#e8dfcc');
+    bg.addColorStop(0.6, '#d8ccb4');
+    bg.addColorStop(1, '#c9bda3');
+    ctx.fillStyle = bg;
+    ctx.fillRect(rx, ry, rw, rh);
+
+    // 背面透印
+    ctx.globalAlpha = 0.16;
+    ctx.fillStyle = '#5a4f3f';
+    ctx.font = `${Math.round(rw * 0.04)}px Georgia, serif`;
+    for (let i = 0; i < 6; i++) {
+      ctx.fillText('透印文字 · 背面', rx + rw * 0.12, ry + rh * 0.22 + i * rw * 0.07);
+    }
+    ctx.globalAlpha = 1;
+
+    // 卷曲明暗
+    const shade = ctx.createLinearGradient(px, py, cx, cy);
+    shade.addColorStop(0, 'rgba(255,255,255,0.5)');
+    shade.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(rx, ry, rw, rh);
+
+    // 卷边高光
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(mirrored[0].x, mirrored[0].y);
+    for (let i = 1; i < mirrored.length; i++) {
+      ctx.lineTo(mirrored[i].x, mirrored[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // 7. 投影（落在下层页上）
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+    ctx.globalCompositeOperation = 'multiply';
+    const shadowGrad = ctx.createLinearGradient(cx, cy, px, py);
+    shadowGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    shadowGrad.addColorStop(0.4, 'rgba(0,0,0,0.14)');
+    shadowGrad.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = shadowGrad;
+    ctx.beginPath();
+    const sh = flapPoly.map(p => mirror(p.x, p.y));
+    ctx.moveTo(sh[0].x, sh[0].y);
+    for (let i = 1; i < sh.length; i++) ctx.lineTo(sh[i].x, sh[i].y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // 8. 折痕
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(B.x, B.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---------- 主绘制 ----------
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const half = W / 2;
+
+    if (anim) {
+      const { from, to, dir, t } = anim;
+      const fromSpread = spreads[from];
+      const toSpread = spreads[to];
+
+      if (dir === 1) {
+        // 下一页：左页保持（新左页 = 当前右页），右页被翻起
+        // 先画基础：左页 = fromSpread.right，右页 = toSpread.right（下层）
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, half, H);
+        ctx.clip();
+        drawFullPage(fromSpread.right, 0, 0, half, H, true, `第 ${from * 2 + 2} 页`);
+        ctx.restore();
+
+        // 右半区卷页：from = fromSpread.right, to = toSpread.right
+        drawCurlInRect(
+          { x: half, y: 0, w: half, h: H },
+          fromSpread.right, toSpread.right,
+          1, t, false,
+          `第 ${from * 2 + 2} 页`, `第 ${to * 2 + 2} 页`
+        );
+      } else {
+        // 上一页：右页保持（新右页 = 当前左页），左页被翻起
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(half, 0, half, H);
+        ctx.clip();
+        drawFullPage(fromSpread.left, half, 0, half, H, false, `第 ${from * 2 + 1} 页`);
+        ctx.restore();
+
+        // 左半区卷页：from = fromSpread.left, to = toSpread.left
+        drawCurlInRect(
+          { x: 0, y: 0, w: half, h: H },
+          fromSpread.left, toSpread.left,
+          -1, t, true,
+          `第 ${from * 2 + 1} 页`, `第 ${to * 2 + 1} 页`
+        );
+      }
+      pageNumEl.textContent = `${from + 1} / ${spreads.length}`;
+    } else {
+      const sp = spreads[current];
+      drawFullPage(sp.left, 0, 0, half, H, true, `第 ${current * 2 + 1} 页`);
+      drawFullPage(sp.right, half, 0, half, H, false, `第 ${current * 2 + 2} 页`);
+      // 中缝
+      ctx.save();
+      const spine = ctx.createLinearGradient(half - 20, 0, half + 20, 0);
+      spine.addColorStop(0, 'rgba(0,0,0,0)');
+      spine.addColorStop(0.5, 'rgba(0,0,0,0.22)');
+      spine.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = spine;
+      ctx.fillRect(half - 20, 0, 40, H);
+      ctx.restore();
+      pageNumEl.textContent = `${current + 1} / ${spreads.length}`;
+    }
+
+    prevBtn.disabled = busy || current === 0;
+    nextBtn.disabled = busy || current === spreads.length - 1;
+  }
+
+  // ---------- 自动翻页 ----------
+  function flip(dir) {
+    if (busy) return;
+    const to = current + dir;
+    if (to < 0 || to >= spreads.length) return;
+    busy = true;
+    anim = { from: current, to, dir, t: 0 };
+    const start = performance.now();
+    const dur = 800;
+    function step(now) {
+      const p = Math.min(1, (now - start) / dur);
+      anim.t = p;
+      draw();
+      if (p < 1) {
+        requestAnimationFrame(step);
+      } else {
+        current = to;
+        anim = null;
+        busy = false;
+        draw();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  nextBtn.addEventListener('click', () => flip(1));
+  prevBtn.addEventListener('click', () => flip(-1));
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') flip(1);
+    if (e.key === 'ArrowLeft') flip(-1);
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+</body>
+</html>

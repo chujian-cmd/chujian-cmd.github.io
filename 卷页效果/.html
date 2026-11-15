@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>卷页翻书效果</title>
+<style>
+  html, body {
+    margin: 0; height: 100%;
+    background: #2b2b2b;
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Georgia", "Songti SC", serif;
+    overflow: hidden;
+  }
+  #book {
+    position: relative;
+    width: 900px; height: 600px;
+    max-width: 96vw; max-height: 90vh;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: grab;
+    user-select: none;
+    background: #f5f0e6;
+  }
+  #book:active { cursor: grabbing; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #hint {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    color: #aaa; font-size: 14px; letter-spacing: 1px;
+    font-family: system-ui, sans-serif;
+    pointer-events: none;
+  }
+  #pageNum {
+    position: absolute; bottom: 14px; right: 24px;
+    color: #888; font-size: 14px; font-family: system-ui, sans-serif;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="book">
+  <canvas id="cv"></canvas>
+  <div id="pageNum"></div>
+</div>
+<div id="hint">拖拽右下角 → 下一页　|　拖拽左下角 → 上一页</div>
+
+<script>
+(() => {
+  const book = document.getElementById('book');
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const pageNumEl = document.getElementById('pageNum');
+
+  // ---------- 页面内容 ----------
+  const pages = [
+    { title: '第一章 · 起点', lines: [
+      '那是一个安静的下午，',
+      '电脑屏幕泛着微微的光。',
+      '我翻开一本电子书，',
+      '页角从右下角轻轻卷起，',
+      '带着柔和的阴影，',
+      '翻到了下一页。'
+    ]},
+    { title: '第二章 · 卷页', lines: [
+      '纸页不是整块平移，',
+      '而是像被指尖掀起，',
+      '沿着对角线卷曲，',
+      '背面透出淡淡的字影。',
+      '翻过去的页，',
+      '在下一页上投下阴影。'
+    ]},
+    { title: '第三章 · 回翻', lines: [
+      '向左翻时，',
+      '页角从左下角掀起，',
+      '同样带着卷曲与阴影，',
+      '回到上一页。',
+      '这种真实感，',
+      '让人久久难忘。'
+    ]},
+    { title: '第四章 · 尾声', lines: [
+      '如今用 HTML 也能还原，',
+      'Canvas 绘制卷页，',
+      '渐变模拟明暗，',
+      '阴影随角度变化。',
+      '翻页之间，',
+      '仿佛又回到那个下午。'
+    ]}
+  ];
+
+  let W = 0, H = 0, DPR = 1;
+  let current = 0;          // 当前页索引
+  let anim = null;          // 当前翻页动画状态
+  let dragging = false;
+  let drag = null;          // 拖拽信息
+
+  function resize() {
+    const r = book.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * DPR);
+    cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    draw();
+  }
+
+  // ---------- 绘制单页 ----------
+  function drawPage(page, x, y, w, h, opts = {}) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+
+    // 纸张底色
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, '#fbf7ee');
+    g.addColorStop(1, '#efe7d6');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+
+    // 页边阴影
+    const edge = ctx.createLinearGradient(x, y, x, y + h);
+    edge.addColorStop(0, 'rgba(0,0,0,.05)');
+    edge.addColorStop(0.1, 'rgba(0,0,0,0)');
+    edge.addColorStop(0.9, 'rgba(0,0,0,0)');
+    edge.addColorStop(1, 'rgba(0,0,0,.08)');
+    ctx.fillStyle = edge;
+    ctx.fillRect(x, y, w, h);
+
+    if (page) {
+      const pad = Math.round(w * 0.08);
+      ctx.fillStyle = '#3a3228';
+      ctx.font = `bold ${Math.round(w * 0.032)}px Georgia, "Songti SC", serif`;
+      ctx.textBaseline = 'top';
+      ctx.fillText(page.title, x + pad, y + pad);
+
+      ctx.fillStyle = '#4a4238';
+      ctx.font = `${Math.round(w * 0.024)}px Georgia, "Songti SC", serif`;
+      const lh = Math.round(w * 0.045);
+      page.lines.forEach((line, i) => {
+        ctx.fillText(line, x + pad, y + pad + Math.round(w * 0.06) + i * lh);
+      });
+
+      // 页码
+      ctx.fillStyle = '#9a8f7c';
+      ctx.font = `${Math.round(w * 0.02)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(String(current + 1), x + w / 2, y + h - pad * 0.7);
+      ctx.textAlign = 'left';
+    }
+    ctx.restore();
+  }
+
+  // ---------- 核心：绘制卷页 ----------
+  // 参数：fromPage（被翻的页）, toPage（翻出来的页）
+  // dir = 1 下一页（右下角卷起），dir = -1 上一页（左下角卷起）
+  // t 从 0 到 1 表示翻页进度
+  function drawCurl(fromPage, toPage, dir, t, dragPoint) {
+    const w = W, h = H;
+
+    // 1. 先画目标页（下一页/上一页）
+    drawPage(toPage, 0, 0, w, h);
+
+    // 2. 计算卷页几何
+    // 卷角起点：下一页在右下角，上一页在左下角
+    const cornerX = dir === 1 ? w : 0;
+    const cornerY = dir === 1 ? h : h;
+
+    // 拖拽点：从角落向对角线方向移动
+    let px, py;
+    if (dragPoint) {
+      px = dragPoint.x; py = dragPoint.y;
+    } else {
+      // 自动动画：从角落沿对角线向中心移动
+      const ease = t < 0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+      const maxDist = Math.sqrt(w*w + h*h) * 0.9;
+      const dist = ease * maxDist;
+      const ang = Math.atan2(-h, dir === 1 ? -w : w); // 朝对角方向
+      px = cornerX + Math.cos(ang) * dist;
+      py = cornerY + Math.sin(ang) * dist;
+    }
+
+    // 限制拖拽点范围，避免卷页出界
+    px = Math.max(0, Math.min(w, px));
+    py = Math.max(0, Math.min(h, py));
+
+    // 3. 计算卷页折线
+    // 折线是角点 (cornerX, cornerY) 到拖拽点 (px, py) 的垂直平分线
+    // 简化：用一条从角点出发、垂直于 "角点->拖拽点" 方向的直线作为折痕
+    const cx = (cornerX + px) / 2;
+    const cy = (cornerY + py) / 2;
+    const dx = px - cornerX;
+    const dy = py - cornerY;
+    const len = Math.hypot(dx, dy) || 1;
+    // 折痕方向（垂直于 dx,dy）
+    let nx = -dy / len;
+    let ny = dx / len;
+    // 折痕要穿过中点 (cx,cy)，向两侧延伸到页面边界
+    // 找折痕与页面边界的两个交点
+    const foldPts = lineRectIntersections(cx, cy, nx, ny, 0, 0, w, h);
+    if (foldPts.length < 2) {
+      // 退化，直接画原页
+      drawPage(fromPage, 0, 0, w, h);
+      return;
+    }
+    const [A, B] = foldPts;
+
+    // 4. 判断被翻起的区域：包含角点 (cornerX, cornerY) 的一侧
+    // 用折痕直线方程判断
+    const side = (x, y) => (x - A.x) * (B.y - A.y) - (y - A.y) * (B.x - A.x);
+    const cornerSide = Math.sign(side(cornerX, cornerY));
+
+    // 5. 绘制被翻起页面的“剩余部分”（未翻起的部分）
+    // 用折痕把 fromPage 裁掉翻起的一侧
+    ctx.save();
+    ctx.beginPath();
+    // 构造裁剪路径：页面矩形 + 折痕切掉角点一侧
+    // 简单方法：用折痕直线把矩形切成两半，保留不含角点的一侧
+    clipRectByLine(0, 0, w, h, A, B, -cornerSide);
+    drawPage(fromPage, 0, 0, w, h);
+    ctx.restore();
+
+    // 6. 绘制卷起的页片（翻转的三角形/多边形）
+    // 页片是折痕与角点围成的区域，绕折痕镜像后绘制
+    // 先构造角点一侧的多边形：折痕两端 + 角点 + 拖拽点（简化）
+    const flapPoly = buildFlapPolygon(0, 0, w, h, A, B, cornerX, cornerY, px, py, cornerSide);
+
+    // 镜像变换：关于折痕直线对称
+    // 折痕直线过 A，方向 d = (B-A)
+    const ddx = B.x - A.x, ddy = B.y - A.y;
+    const dlen2 = ddx*ddx + ddy*ddy || 1;
+    // 关于过 A 点、方向 (ddx,ddy) 的直线做镜像
+    const mirror = (x, y) => {
+      const vx = x - A.x, vy = y - A.y;
+      const proj = (vx*ddx + vy*ddy) / dlen2;
+      const projX = A.x + proj*ddx;
+      const projY = A.y + proj*ddy;
+      return { x: 2*projX - x, y: 2*projY - y };
+    };
+
+    // 绘制卷页背面（镜像后的页片），带渐变阴影
+    ctx.save();
+    ctx.beginPath();
+    const mirrored = flapPoly.map(p => mirror(p.x, p.y));
+    // 构造卷页路径：原页片边缘 + 镜像边缘，形成卷曲的“舌头”
+    // 这里简化：直接画镜像后的多边形作为卷起页
+    ctx.moveTo(mirrored[0].x, mirrored[0].y);
+    for (let i = 1; i < mirrored.length; i++) {
+      ctx.lineTo(mirrored[i].x, mirrored[i].y);
+    }
+    ctx.closePath();
+    ctx.clip();
+
+    // 卷页背面底色（比正面暗，模拟背光）
+    const bg = ctx.createLinearGradient(A.x, A.y, px, py);
+    bg.addColorStop(0, '#e8dfcc');
+    bg.addColorStop(0.6, '#d8ccb4');
+    bg.addColorStop(1, '#c9bda3');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // 背面文字透印（淡淡的反向文字）
+    ctx.globalAlpha = 0.18;
+    ctx.save();
+    // 镜像绘制 fromPage 内容，模拟背面透字
+    ctx.translate(0, 0);
+    // 用镜像变换绘制文字：关于折痕镜像
+    // 简化：直接画淡色文字
+    ctx.fillStyle = '#5a4f3f';
+    ctx.font = `${Math.round(w * 0.022)}px Georgia, serif`;
+    for (let i = 0; i < 6; i++) {
+      ctx.fillText('透印文字 · 背面', w * 0.12, h * 0.25 + i * w * 0.04);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+
+    // 卷页上的明暗渐变（模拟卷曲高光）
+    const shade = ctx.createLinearGradient(px, py, cx, cy);
+    shade.addColorStop(0, 'rgba(255,255,255,0.45)');
+    shade.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.25)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, w, h);
+
+    // 卷边高光
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(mirrored[0].x, mirrored[0].y);
+    for (let i = 1; i < mirrored.length; i++) {
+      ctx.lineTo(mirrored[i].x, mirrored[i].y);
+    }
+    ctx.stroke();
+
+    ctx.restore();
+
+    // 7. 卷页投影：在目标页上投下阴影
+    // 沿折痕和拖拽点方向画一个柔和阴影
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    const shadowGrad = ctx.createLinearGradient(cx, cy, px, py);
+    shadowGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    shadowGrad.addColorStop(0.4, 'rgba(0,0,0,0.12)');
+    shadowGrad.addColorStop(1, 'rgba(0,0,0,0.28)');
+    ctx.fillStyle = shadowGrad;
+    ctx.beginPath();
+    // 阴影区域：折痕到镜像页片的范围
+    const sh = flapPoly.map(p => mirror(p.x, p.y));
+    ctx.moveTo(sh[0].x, sh[0].y);
+    for (let i = 1; i < sh.length; i++) ctx.lineTo(sh[i].x, sh[i].y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // 8. 折痕线（很淡）
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y);
+    ctx.lineTo(B.x, B.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---------- 几何辅助 ----------
+  function lineRectIntersections(cx, cy, nx, ny, x0, y0, x1, y1) {
+    // 直线: (x,y) = (cx,cy) + t*(nx,ny)
+    const pts = [];
+    const eps = 1e-6;
+    // 与四条边求交
+    const edges = [
+      { x: x0, y: y0, dx: x1-x0, dy: 0 }, // 上
+      { x: x1, y: y0, dx: 0, dy: y1-y0 }, // 右
+      { x: x1, y: y1, dx: x0-x1, dy: 0 }, // 下
+      { x: x0, y: y1, dx: 0, dy: y0-y1 }  // 左
+    ];
+    for (const e of edges) {
+      // 解 (cx,cy)+t(n) = (e.x,e.y)+s(e.dx,e.dy)
+      const det = nx * (-e.dy) - ny * (-e.dx);
+      if (Math.abs(det) < eps) continue;
+      const rx = e.x - cx, ry = e.y - cy;
+      const t = (rx * (-e.dy) - ry * (-e.dx)) / det;
+      const s = (nx * ry - ny * rx) / det;
+      if (s >= -eps && s <= 1 + eps) {
+        const px = cx + t * nx, py = cy + t * ny;
+        if (px >= x0 - eps && px <= x1 + eps && py >= y0 - eps && py <= y1 + eps) {
+          // 去重
+          if (!pts.some(p => Math.hypot(p.x - px, p.y - py) < 0.5)) {
+            pts.push({ x: px, y: py });
+          }
+        }
+      }
+    }
+    return pts;
+  }
+
+  function clipRectByLine(x0, y0, x1, y1, A, B, keepSide) {
+    // 用折痕直线裁剪矩形，保留 side 符号为 keepSide 的一侧
+    // 用多边形裁剪：矩形四个角 + 折痕交点
+    // 简化：直接构造裁剪路径
+    ctx.beginPath();
+    // 计算矩形四角在直线哪一侧
+    const side = (x, y) => (x - A.x) * (B.y - A.y) - (y - A.y) * (B.x - A.x);
+    const corners = [
+      { x: x0, y: y0 }, { x: x1, y: y0 },
+      { x: x1, y: y1 }, { x: x0, y: y1 }
+    ];
+    const keepPts = [];
+    for (let i = 0; i < 4; i++) {
+      const p = corners[i], q = corners[(i + 1) % 4];
+      const sp = Math.sign(side(p.x, p.y));
+      const sq = Math.sign(side(q.x, q.y));
+      if (sp === keepSide || sp === 0) keepPts.push(p);
+      if (sp !== sq && sp !== 0 && sq !== 0) {
+        // 求交点
+        const t = side(p.x, p.y) / (side(p.x, p.y) - side(q.x, q.y));
+        keepPts.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+      }
+    }
+    if (keepPts.length === 0) {
+      ctx.rect(0, 0, 0, 0);
+    } else {
+      ctx.moveTo(keepPts[0].x, keepPts[0].y);
+      for (let i = 1; i < keepPts.length; i++) ctx.lineTo(keepPts[i].x, keepPts[i].y);
+      ctx.closePath();
+    }
+    ctx.clip();
+  }
+
+  function buildFlapPolygon(x0, y0, x1, y1, A, B, cornerX, cornerY, px, py, cornerSide) {
+    // 构造被翻起的页片多边形：折痕 + 角点 + 拖拽点
+    // 简化：取矩形在角点一侧的部分，加上拖拽点
+    const side = (x, y) => (x - A.x) * (B.y - A.y) - (y - A.y) * (B.x - A.x);
+    const corners = [
+      { x: x0, y: y0 }, { x: x1, y: y0 },
+      { x: x1, y: y1 }, { x: x0, y: y1 }
+    ];
+    const pts = [];
+    for (let i = 0; i < 4; i++) {
+      const p = corners[i], q = corners[(i + 1) % 4];
+      const sp = Math.sign(side(p.x, p.y));
+      const sq = Math.sign(side(q.x, q.y));
+      if (sp === cornerSide) pts.push(p);
+      if (sp !== sq && sp !== 0 && sq !== 0) {
+        const t = side(p.x, p.y) / (side(p.x, p.y) - side(q.x, q.y));
+        pts.push({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+      }
+    }
+    // 加入拖拽点，形成卷曲的“舌头”
+    pts.push({ x: px, y: py });
+    // 排序：按围绕角点的角度排序，保证多边形不自交
+    const cx = cornerX, cy = cornerY;
+    pts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    return pts;
+  }
+
+  // ---------- 主绘制 ----------
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    if (anim) {
+      const { from, to, dir, t, point } = anim;
+      drawCurl(pages[from], pages[to], dir, t, point);
+      pageNumEl.textContent = `${from + 1} / ${pages.length}`;
+    } else {
+      drawPage(pages[current], 0, 0, W, H);
+      pageNumEl.textContent = `${current + 1} / ${pages.length}`;
+    }
+  }
+
+  // ---------- 动画 ----------
+  function startFlip(dir, dragPoint) {
+    if (anim) return;
+    const from = current;
+    let to = current + dir;
+    if (to < 0 || to >= pages.length) return;
+    anim = { from, to, dir, t: 0, point: dragPoint || null };
+    const start = performance.now();
+    const dur = 700;
+    function step(now) {
+      const p = Math.min(1, (now - start) / dur);
+      anim.t = p;
+      // 拖拽点从角落向对角移动
+      draw();
+      if (p < 1) {
+        requestAnimationFrame(step);
+      } else {
+        current = to;
+        anim = null;
+        draw();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ---------- 交互 ----------
+  function getPos(e) {
+    const r = book.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+
+  function nearCorner(pos) {
+    const th = 80;
+    if (pos.x > W - th && pos.y > H - th) return 1;  // 右下角 → 下一页
+    if (pos.x < th && pos.y > H - th) return -1;      // 左下角 → 上一页
+    return 0;
+  }
+
+  function onDown(e) {
+    if (anim) return;
+    const pos = getPos(e);
+    const dir = nearCorner(pos);
+    if (!dir) return;
+    dragging = true;
+    drag = { dir, start: pos, from: current, to: current + dir };
+    book.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onMove(e) {
+    if (!dragging || !drag) return;
+    const pos = getPos(e);
+    // 计算进度：拖拽点离角落的距离 / 对角线长度
+    const cornerX = drag.dir === 1 ? W : 0;
+    const cornerY = H;
+    const dist = Math.hypot(pos.x - cornerX, pos.y - cornerY);
+    const maxDist = Math.hypot(W, H) * 0.85;
+    const t = Math.min(1, dist / maxDist);
+    anim = { from: drag.from, to: drag.to, dir: drag.dir, t, point: pos };
+    draw();
+    e.preventDefault();
+  }
+
+  function onUp(e) {
+    if (!dragging || !drag) return;
+    dragging = false;
+    const { dir, from, to } = drag;
+    drag = null;
+    // 根据进度决定完成还是回弹
+    const t = anim ? anim.t : 0;
+    anim = null;
+    if (t > 0.35 && to >= 0 && to < pages.length) {
+      // 完成翻页：从当前位置动画到结束
+      const startPoint = anim ? anim.point : null;
+      finishFlip(from, to, dir, t, startPoint);
+    } else {
+      // 回弹
+      draw();
+    }
+  }
+
+  function finishFlip(from, to, dir, startT, startPoint) {
+    const start = performance.now();
+    const dur = 300 * (1 - startT) + 100;
+    function step(now) {
+      const p = Math.min(1, (now - start) / dur);
+      const t = startT + (1 - startT) * p;
+      // 拖拽点继续向对角移动
+      const cornerX = dir === 1 ? W : 0;
+      const cornerY = H;
+      const maxDist = Math.hypot(W, H) * 0.9;
+      const ang = Math.atan2(-H, dir === 1 ? -W : W);
+      const dist = t * maxDist;
+      const point = startPoint ? {
+        x: startPoint.x + (cornerX + Math.cos(ang) * maxDist - startPoint.x) * p,
+        y: startPoint.y + (cornerY + Math.sin(ang) * maxDist - startPoint.y) * p
+      } : null;
+      anim = { from, to, dir, t, point };
+      draw();
+      if (p < 1) {
+        requestAnimationFrame(step);
+      } else {
+        current = to;
+        anim = null;
+        draw();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // 点击左右区域也可翻页（无拖拽）
+  book.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  book.addEventListener('click', (e) => {
+    if (dragging) return;
+    const pos = getPos(e);
+    if (nearCorner(pos)) return;
+    if (pos.x > W * 0.75) startFlip(1);
+    else if (pos.x < W * 0.25) startFlip(-1);
+  });
+  // 键盘
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') startFlip(1);
+    if (e.key === 'ArrowLeft') startFlip(-1);
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双页对开 · 真实跨页翻页</title>
+<style>
+  html, body {
+    margin: 0; height: 100%;
+    background: #3a3a3a;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-family: "Georgia", "Songti SC", serif;
+    overflow: hidden;
+  }
+  #book {
+    position: relative;
+    width: min(780px, 90vw);
+    aspect-ratio: 1.42 / 1;
+    max-height: 78vh;
+    box-shadow: 0 22px 60px rgba(0,0,0,.65);
+    border-radius: 3px;
+    overflow: hidden;
+    background: #fff;
+    user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #pageNum {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    color: #999; font-size: 12px; font-family: system-ui, sans-serif;
+    pointer-events: none;
+  }
+  #controls {
+    margin-top: 20px;
+    display: flex; gap: 16px; align-items: center;
+    font-family: system-ui, sans-serif;
+  }
+  button {
+    padding: 9px 22px;
+    font-size: 15px;
+    border: none; border-radius: 7px;
+    background: #f0e6d2; color: #3a3228;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+    transition: transform .1s, background .2s;
+  }
+  button:hover { background: #fff6e2; }
+  button:active { transform: scale(.96); }
+  button:disabled { opacity: .35; cursor: default; }
+</style>
+</head>
+<body>
+<div id="book">
+  <canvas id="cv"></canvas>
+  <div id="pageNum"></div>
+</div>
+<div id="controls">
+  <button id="prevBtn">← 上一页</button>
+  <button id="nextBtn">下一页 →</button>
+</div>
+
+<script>
+(() => {
+  const book = document.getElementById('book');
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const pageNumEl = document.getElementById('pageNum');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+
+  const spreads = [
+    {
+      left:  { title: '第一章 · 起点', lines: [
+        '那是一个安静的下午，',
+        '电脑屏幕泛着微微的光。',
+        '我翻开一本电子书，',
+        '页角从右下角轻轻卷起。'
+      ]},
+      right: { title: '第一章 · 续', lines: [
+        '带着柔和的阴影，',
+        '翻到了下一页。',
+        '左边一页，右边一页，',
+        '像摊开的书本。'
+      ]}
+    },
+    {
+      left:  { title: '第二章 · 卷页', lines: [
+        '纸页不是整块平移，',
+        '而是像被指尖掀起，',
+        '沿着对角线卷曲，',
+        '背面透出淡淡的字影。'
+      ]},
+      right: { title: '第二章 · 续', lines: [
+        '翻过去的页，',
+        '在下一页上投下阴影。',
+        '卷曲的弧度，',
+        '随翻页角度变化。'
+      ]}
+    },
+    {
+      left:  { title: '第三章 · 回翻', lines: [
+        '向左翻时，',
+        '页角从左下角掀起，',
+        '同样带着卷曲与阴影，',
+        '回到上一页。'
+      ]},
+      right: { title: '第三章 · 续', lines: [
+        '这种真实感，',
+        '让人久久难忘。',
+        '一左一右，',
+        '翻页之间。'
+      ]}
+    },
+    {
+      left:  { title: '第四章 · 尾声', lines: [
+        '如今用 HTML 也能还原，',
+        'Canvas 绘制卷页，',
+        '渐变模拟明暗，',
+        '阴影随角度变化。'
+      ]},
+      right: { title: '第四章 · 续', lines: [
+        '翻页之间，',
+        '仿佛又回到那个下午。',
+        '合上书，',
+        '余韵未散。'
+      ]}
+    }
+  ];
+
+  let W = 0, H = 0, DPR = 1;
+  let current = 0;
+  let anim = null;
+  let busy = false;
+
+  function resize() {
+    const r = book.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = Math.round(W * DPR);
+    cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    draw();
+  }
+
+  function drawPageContent(page, x, y, w, h, label) {
+    if (!page) return;
+    const pad = Math.round(w * 0.1);
+    ctx.fillStyle = '#2a2a2a';
+    ctx.font = `bold ${Math.round(w * 0.048)}px Georgia, "Songti SC", serif`;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(page.title, x + pad, y + pad);
+
+    ctx.fillStyle = '#3a3a3a';
+    ctx.font = `${Math.round(w * 0.036)}px Georgia, "Songti SC", serif`;
+    const lh = Math.round(w * 0.065);
+    page.lines.forEach((line, i) => {
+      ctx.fillText(line, x + pad, y + pad + Math.round(w * 0.095) + i * lh);
+    });
+
+    if (label) {
+      ctx.fillStyle = '#aaa';
+      ctx.font = `${Math.round(w * 0.028)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(label, x + w / 2, y + h - pad * 0.55);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function paperFill(x, y, w, h, isLeft) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, w, h);
+    const spine = ctx.createLinearGradient(
+      isLeft ? x + w : x, y,
+      isLeft ? x + w - w * 0.06 : x + w * 0.06, y
+    );
+    spine.addColorStop(0, 'rgba(0,0,0,.07)');
+    spine.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = spine;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  function drawFullPage(page, x, y, w, h, isLeft, label) {
+    paperFill(x, y, w, h, isLeft);
+    drawPageContent(page, x, y, w, h, label);
+  }
+
+  // ============================================================
+  // 跨页翻页核心：
+  // 把“被翻的页”当作一张可以卷曲的纸，
+  // 从起始侧（右页或左页）沿弧线移动到落点侧，
+  // 卷曲半径随进度变化，阴影跟随。
+  // ============================================================
+
+  // 绘制一张卷曲的纸：给定纸的左下角、宽高、卷曲半径、卷曲方向
+  // 这里用“沿对角线卷起 + 圆柱明暗”来模拟，并允许整页平移/旋转
+  function drawCurledSheet(page, label, rect, curlT, dir, isBack) {
+    // rect: 这张纸当前占据的矩形区域 {x,y,w,h}
+    const { x, y, w, h } = rect;
+    if (w <= 0 || h <= 0) return;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+
+    // 纸面底色（正面纯白，背面偏灰）
+    if (!isBack) {
+      paperFill(x, y, w, h, false);
+      drawPageContent(page, x, y, w, h, label);
+    } else {
+      const bg = ctx.createLinearGradient(x, y, x + w, y + h);
+      bg.addColorStop(0, '#f6f6f6');
+      bg.addColorStop(0.5, '#e8e8e8');
+      bg.addColorStop(1, '#d9d9d9');
+      ctx.fillStyle = bg;
+      ctx.fillRect(x, y, w, h);
+      // 背面透印
+      ctx.globalAlpha = 0.07;
+      ctx.fillStyle = '#444';
+      ctx.font = `${Math.round(w * 0.04)}px Georgia, serif`;
+      for (let i = 0; i < 5; i++) {
+        ctx.fillText('透印文字', x + w * 0.12, y + h * 0.22 + i * w * 0.07);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 卷曲明暗：沿卷起方向做渐变
+    const curlRadius = Math.min(w, h) * 0.5 * curlT;
+    const cx = dir === 1 ? x + w : x;
+    const cy = y + h;
+    const gx = dir === 1 ? x + w - curlRadius : x + curlRadius;
+    const gy = y + h - curlRadius;
+
+    const shade = ctx.createRadialGradient(gx, gy, Math.max(1, curlRadius * 0.15), cx, cy, Math.max(2, curlRadius * 1.6));
+    shade.addColorStop(0, 'rgba(255,255,255,0.55)');
+    shade.addColorStop(0.4, 'rgba(255,255,255,0.05)');
+    shade.addColorStop(0.75, 'rgba(0,0,0,0.10)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.28)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(x, y, w, h);
+
+    // 卷边高光
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(dir === 1 ? x + w : x, y + h);
+    ctx.quadraticCurveTo(
+      dir === 1 ? x + w - curlRadius : x + curlRadius, y + h - curlRadius,
+      dir === 1 ? x + w - curlRadius : x + curlRadius, y + h
+    );
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // 绘制翻页过程中的“整张纸”：
+  // 它从起始页位置，沿弧线移动到目标页位置
+  function drawFlippingSheet(page, label, dir, t) {
+    const half = W / 2;
+    const ease = t < 0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+
+    // 起始矩形与目标矩形
+    let startRect, endRect;
+    if (dir === 1) {
+      startRect = { x: half, y: 0, w: half, h: H };  // 右页
+      endRect   = { x: 0,    y: 0, w: half, h: H };  // 落到左页
+    } else {
+      startRect = { x: 0,    y: 0, w: half, h: H };  // 左页
+      endRect   = { x: half, y: 0, w: half, h: H };  // 落到右页
+    }
+
+    // 当前矩形：插值 + 轻微“抬起”缩放
+    const lift = Math.sin(Math.PI * ease) * 0.06; // 抬起幅度
+    const scale = 1 + lift;
+    const rect = {
+      x: startRect.x + (endRect.x - startRect.x) * ease,
+      y: startRect.y + (endRect.y - startRect.y) * ease,
+      w: startRect.w * scale,
+      h: startRect.h * scale
+    };
+    // 抬起的页稍微上移，模拟离开桌面
+    rect.y -= lift * H * 0.35;
+
+    // 卷曲程度：中间最大，两端较小
+    const curlT = Math.sin(Math.PI * ease) * 0.9 + 0.1;
+
+    // 判断正反面：前半程显示正面，后半程显示背面
+    const isBack = ease > 0.5;
+
+    // 纸的阴影（落在下层）
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    const sh = ctx.createRadialGradient(
+      rect.x + rect.w / 2, rect.y + rect.h,
+      rect.w * 0.1,
+      rect.x + rect.w / 2, rect.y + rect.h,
+      rect.w * 0.9
+    );
+    sh.addColorStop(0, 'rgba(0,0,0,0.25)');
+    sh.addColorStop(0.6, 'rgba(0,0,0,0.10)');
+    sh.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = sh;
+    ctx.beginPath();
+    ctx.ellipse(rect.x + rect.w / 2, rect.y + rect.h * 0.98,
+      rect.w * 0.55, rect.h * 0.08, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 绘制这张纸
+    drawCurledSheet(page, label, rect, curlT, dir, isBack);
+
+    // 纸边缘柔和暗边
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    const half = W / 2;
+
+    if (anim) {
+      const { from, to, dir, t } = anim;
+      const fromSpread = spreads[from];
+      const toSpread = spreads[to];
+
+      if (dir === 1) {
+        // 下一页：底层先画左页（当前右页将成为新左页）
+        // 以及右页下面的下一页右页
+        drawFullPage(fromSpread.right, 0, 0, half, H, true, `第 ${from * 2 + 2} 页`);
+        drawFullPage(toSpread.right, half, 0, half, H, false, `第 ${to * 2 + 2} 页`);
+
+        // 翻起的纸：当前右页
+        drawFlippingSheet(fromSpread.right, `第 ${from * 2 + 2} 页`, 1, t);
+      } else {
+        // 上一页：底层先画右页（当前左页将成为新右页）
+        // 以及左页下面的上一页左页
+        drawFullPage(fromSpread.left, half, 0, half, H, false, `第 ${from * 2 + 1} 页`);
+        drawFullPage(toSpread.left, 0, 0, half, H, true, `第 ${to * 2 + 1} 页`);
+
+        drawFlippingSheet(fromSpread.left, `第 ${from * 2 + 1} 页`, -1, t);
+      }
+      pageNumEl.textContent = `${from + 1} / ${spreads.length}`;
+    } else {
+      const sp = spreads[current];
+      drawFullPage(sp.left, 0, 0, half, H, true, `第 ${current * 2 + 1} 页`);
+      drawFullPage(sp.right, half, 0, half, H, false, `第 ${current * 2 + 2} 页`);
+
+      ctx.save();
+      const spine = ctx.createLinearGradient(half - 18, 0, half + 18, 0);
+      spine.addColorStop(0, 'rgba(0,0,0,0)');
+      spine.addColorStop(0.5, 'rgba(0,0,0,0.13)');
+      spine.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = spine;
+      ctx.fillRect(half - 18, 0, 36, H);
+      ctx.restore();
+
+      pageNumEl.textContent = `${current + 1} / ${spreads.length}`;
+    }
+
+    prevBtn.disabled = busy || current === 0;
+    nextBtn.disabled = busy || current === spreads.length - 1;
+  }
+
+  function flip(dir) {
+    if (busy) return;
+    const to = current + dir;
+    if (to < 0 || to >= spreads.length) return;
+    busy = true;
+    anim = { from: current, to, dir, t: 0 };
+    const start = performance.now();
+    const dur = 900;
+    function step(now) {
+      const p = Math.min(1, (now - start) / dur);
+      anim.t = p;
+      draw();
+      if (p < 1) {
+        requestAnimationFrame(step);
+      } else {
+        current = to;
+        anim = null;
+        busy = false;
+        draw();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  nextBtn.addEventListener('click', () => flip(1));
+  prevBtn.addEventListener('click', () => flip(-1));
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') flip(1);
+    if (e.key === 'ArrowLeft') flip(-1);
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+</body>
+</html>
