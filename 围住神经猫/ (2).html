@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>围住贱贱的棋子 (纯黑白物理版)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff; /* 纯白背景 */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #000000; /* 纯黑文字 */
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #ffffff; /* 纯白画布 */
+            border: 2px solid #000000; /* 纯黑边框，无阴影 */
+            cursor: pointer;
+        }
+        #info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ffffff;
+            color: #000000;
+            border: 2px solid #000000;
+            margin-top: 10px;
+            font-weight: bold;
+            transition: 0.1s;
+        }
+        button:hover { 
+            background-color: #000000; 
+            color: #ffffff;
+        }
+        h2 { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+    <h2>围住那个贱贱的棋子</h2>
+    <div id="info">
+        <span id="status">点击白圈变黑，斜角已封死，不能穿墙！</span>
+        <br>
+        <button onclick="initGame()">重新开始</button>
+    </div>
+    <br>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+
+    // 游戏配置
+    const ROWS = 9;
+    const COLS = 9;
+    const RADIUS = 18;     
+    const SPACING = 42;    
+    const PADDING = 30;    
+
+    canvas.width = COLS * SPACING + PADDING * 2;
+    canvas.height = ROWS * SPACING + PADDING * 2;
+
+    // 状态：0=空地(白), 1=玩家(黑), 2=逃跑的贱棋子
+    let grid = []; 
+    let enemy = { x: 4, y: 4 }; 
+    let gameOver = false;
+
+    // 初始化游戏
+    function initGame() {
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        enemy = { x: 4, y: 4 };
+        grid[enemy.y][enemy.x] = 2;
+        gameOver = false;
+        statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+        draw();
+    }
+
+    // 绘制普通棋子 (纯黑白)
+    function drawPiece(cx, cy, isPlayer) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS, 0, Math.PI * 2);
+        
+        if (isPlayer) {
+            ctx.fillStyle = '#000000'; // 纯黑
+            ctx.fill();
+        } else {
+            ctx.fillStyle = '#ffffff'; // 纯白
+            ctx.fill();
+            ctx.strokeStyle = '#000000'; // 纯黑描边
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    }
+
+    // 绘制那个“贱贱”的逃跑棋子 (纯黑底，白线表情)
+    function drawEnemy(cx, cy) {
+        // 纯黑棋子底
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 2, 0, Math.PI * 2);
+        ctx.fillStyle = '#000000';
+        ctx.fill();
+        
+        // 纯白表情
+        ctx.strokeStyle = '#ffffff';
+        ctx.fillStyle = '#ffffff';
+        ctx.lineWidth = 2;
+
+        // 左眼
+        ctx.beginPath();
+        ctx.arc(cx - 6, cy - 4, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 右眼
+        ctx.beginPath();
+        ctx.arc(cx + 5, cy - 4, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 挑逗的眉毛
+        ctx.beginPath();
+        ctx.moveTo(cx - 10, cy - 10);
+        ctx.lineTo(cx - 3, cy - 9);
+        ctx.moveTo(cx + 2, cy - 9);
+        ctx.lineTo(cx + 9, cy - 12);
+        ctx.stroke();
+
+        // 歪嘴笑 (Smirk)
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy + 6);
+        ctx.quadraticCurveTo(cx + 2, cy + 8, cx + 8, cy + 2);
+        ctx.stroke();
+
+        // 嘴角的小弧线
+        ctx.beginPath();
+        ctx.arc(cx + 8, cy + 2, 2, 0, Math.PI);
+        ctx.stroke();
+    }
+
+    // 绘图主函数
+    function draw() {
+        // 清空画布为纯白
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const cx = PADDING + x * SPACING;
+                const cy = PADDING + y * SPACING;
+
+                if (grid[y][x] === 0) {
+                    drawPiece(cx, cy, false); // 白底黑边
+                } else if (grid[y][x] === 1) {
+                    drawPiece(cx, cy, true);  // 纯黑
+                } else if (grid[y][x] === 2) {
+                    drawEnemy(cx, cy);        // 贱贱黑棋
+                }
+            }
+        }
+    }
+
+    // 检查是否到达边缘
+    function checkEscape(x, y) {
+        return x === 0 || x === COLS - 1 || y === 0 || y === ROWS - 1;
+    }
+
+    // 核心算法：BFS 找最短路径 (加入防穿角逻辑)
+    function getNextMove(startX, startY) {
+        const queue = [{ x: startX, y: startY, path: [] }];
+        const visited = new Set([`${startX},${startY}`]);
+
+        // 4个直线方向
+        const straightDirs = [
+            { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }
+        ];
+        // 4个斜线方向
+        const diagDirs = [
+            { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }
+        ];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            
+            if (checkEscape(current.x, current.y) && current.path.length > 0) {
+                return current.path[0]; 
+            }
+
+            // 1. 尝试走直线 (无限制)
+            for (let d of straightDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    if (grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+
+            // 2. 尝试走斜线 (加入严格的防穿角判定)
+            for (let d of diagDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    // 计算两侧的卡角坐标 (比如向右下走，就要检查右边和下边)
+                    const sideX1 = current.x + d.dx; // 横向邻居
+                    const sideY1 = current.y;        // 纵向保持
+                    const sideX2 = current.x;        // 横向保持
+                    const sideY2 = current.y + d.dy; // 纵向邻居
+
+                    // 只有目标点是空地，且两个直角侧边都是空地，才允许穿过
+                    if (grid[ny][nx] === 0 && 
+                        grid[sideY1][sideX1] === 0 && 
+                        grid[sideY2][sideX2] === 0 && 
+                        !visited.has(`${nx},${ny}`)) {
+                        
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+        }
+        return null; // 无路可走
+    }
+
+    // 玩家点击事件
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameOver) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        const gridX = Math.round((clickX - PADDING) / SPACING);
+        const gridY = Math.round((clickY - PADDING) / SPACING);
+
+        if (gridX >= 0 && gridX < COLS && gridY >= 0 && gridY < ROWS) {
+            if (grid[gridY][gridX] === 0) {
+                grid[gridY][gridX] = 1; 
+                draw();
+                setTimeout(moveEnemy, 100); 
+            }
+        }
+    });
+
+    // 棋子移动逻辑
+    function moveEnemy() {
+        if (gameOver) return;
+
+        if (checkEscape(enemy.x, enemy.y)) {
+            endGame(false);
+            return;
+        }
+
+        const nextStep = getNextMove(enemy.x, enemy.y);
+
+        if (nextStep) {
+            grid[enemy.y][enemy.x] = 0; 
+            enemy.x = nextStep.x;
+            enemy.y = nextStep.y;
+            grid[enemy.y][enemy.x] = 2; 
+            draw();
+
+            if (checkEscape(enemy.x, enemy.y)) {
+                endGame(false);
+            }
+        } else {
+            endGame(true);
+        }
+    }
+
+    // 游戏结束
+    function endGame(isWin) {
+        gameOver = true;
+        if (isWin) {
+            statusText.innerText = "🎉 成功围住！贱棋子无路可走！你赢了！";
+        } else {
+            statusText.innerText = "🏃 棋子逃跑了！它带着贱贱的笑容溜了...你输了！";
+        }
+    }
+
+    initGame();
+</script>
+
+</body>
+</html>

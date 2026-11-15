@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>围住贱贱的棋子 (高清 13x13)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #000000;
+            overflow: hidden;
+            touch-action: manipulation; /* 防止双击放大 */
+        }
+        canvas {
+            background-color: #ffffff;
+            border: 2px solid #000000;
+            cursor: pointer;
+            /* 保证画质清晰 */
+            image-rendering: -webkit-optimize-contrast; 
+        }
+        #info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ffffff;
+            color: #000000;
+            border: 2px solid #000000;
+            margin-top: 10px;
+            font-weight: bold;
+            transition: 0.1s;
+        }
+        button:hover {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        h2 { margin-bottom: 5px; }
+
+        /* 引导模式按钮（右上角黑色按钮） */
+        #hintBtn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            margin: 0;
+            background-color: #000000;
+            color: #ffffff;
+            border: 2px solid #000000;
+            z-index: 100;
+            padding: 8px 14px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.1s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        #hintBtn:hover {
+            background-color: #ffffff;
+            color: #000000;
+        }
+        #hintBtn.active {
+            background-color: #444444;
+            border-color: #444444;
+            color: #ffffff;
+            box-shadow: inset 0 3px 5px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 引导模式按钮 -->
+    <button id="hintBtn" onclick="toggleHint()">引导模式</button>
+
+    <h2>围住那个贱贱的棋子</h2>
+    <div id="info">
+        <span id="status">点击白圈变黑，斜角已封死，不能穿墙！</span>
+        <br>
+        <button onclick="initGame()">重新开始</button>
+    </div>
+    <br>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+    const hintBtn = document.getElementById('hintBtn');
+
+    // --- 高清屏适配核心 ---
+    const dpr = window.devicePixelRatio || 1;
+
+    // 游戏配置 (放大到 13x13)
+    const ROWS = 13;
+    const COLS = 13;
+    
+    // 这里的尺寸是 CSS 视觉尺寸
+    const RADIUS = 16;     // 棋子稍微缩小一点点适应大棋盘
+    const SPACING = 36;    // 格子间距
+    const PADDING = 24;    // 边缘留白
+
+    const cssWidth = COLS * SPACING + PADDING * 2;
+    const cssHeight = ROWS * SPACING + PADDING * 2;
+
+    // 设置 CSS 显示尺寸
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    // 设置 Canvas 实际像素尺寸 (乘以 dpr)
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    // 核心：把画笔缩放，这样后续绘图代码不需要改动，自动适配高清屏
+    ctx.scale(dpr, dpr);
+
+    // 状态：0=空地(白), 1=玩家(黑), 2=逃跑的贱棋子
+    let grid = [];
+    let enemy = { x: 6, y: 6 }; // 13x13 的中心
+    let gameOver = false;
+
+    // 动画状态
+    let animation = null;
+    const MOVE_DURATION = 180;
+
+    // 引导模式状态
+    let hintMode = false;
+    let hintCell = null;
+
+    // 初始化游戏
+    function initGame() {
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        enemy = { x: 6, y: 6 };
+        grid[enemy.y][enemy.x] = 2;
+        gameOver = false;
+        animation = null;
+        hintMode = false;
+        hintCell = null;
+        hintBtn.classList.remove('active');
+        statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+        draw();
+    }
+
+    // 切换引导模式
+    function toggleHint() {
+        if (gameOver || animation) return;
+        hintMode = !hintMode;
+        hintBtn.classList.toggle('active', hintMode);
+        if (hintMode) {
+            statusText.innerText = "AI 正在计算最佳落子...";
+            draw();
+            setTimeout(() => {
+                computeHint();
+                if (!hintCell) {
+                    statusText.innerText = "无解局，随便下吧...";
+                } else {
+                    statusText.innerText = "高亮位置是 AI 推荐点！";
+                }
+                draw();
+            }, 50);
+        } else {
+            hintCell = null;
+            statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+            draw();
+        }
+    }
+
+    // 检查是否到达边缘
+    function checkEscape(x, y) {
+        return x === 0 || x === COLS - 1 || y === 0 || y === ROWS - 1;
+    }
+
+    // 核心算法：BFS 找最短路径
+    function getNextMove(startX, startY) {
+        const queue = [{ x: startX, y: startY, path: [] }];
+        const visited = new Set([`${startX},${startY}`]);
+
+        const straightDirs = [
+            { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }
+        ];
+        const diagDirs = [
+            { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }
+        ];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+
+            if (checkEscape(current.x, current.y) && current.path.length > 0) {
+                return current.path[0];
+            }
+
+            // 直线
+            for (let d of straightDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    if (grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+
+            // 斜线 (防穿角)
+            for (let d of diagDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    const sideX1 = current.x + d.dx;
+                    const sideY1 = current.y;
+                    const sideX2 = current.x;
+                    const sideY2 = current.y + d.dy;
+
+                    if (grid[ny][nx] === 0 && grid[sideY1][sideX1] === 0 && grid[sideY2][sideX2] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+        }
+        return null; // 无路可走
+    }
+
+    // 引导算法：计算当前局面敌人到边缘的最短距离
+    function getEscapeDistance() {
+        if (checkEscape(enemy.x, enemy.y)) return 0;
+        const queue = [{ x: enemy.x, y: enemy.y, dist: 0 }];
+        const visited = new Set([`${enemy.x},${enemy.y}`]);
+        const straightDirs = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
+        const diagDirs = [{ dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            for (let d of straightDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                    visited.add(`${nx},${ny}`);
+                    const nd = current.dist + 1;
+                    if (checkEscape(nx, ny)) return nd;
+                    queue.push({ x: nx, y: ny, dist: nd });
+                }
+            }
+            for (let d of diagDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    const sx1 = current.x + d.dx, sy1 = current.y, sx2 = current.x, sy2 = current.y + d.dy;
+                    if (grid[ny][nx] === 0 && grid[sy1][sx1] === 0 && grid[sy2][sx2] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        const nd = current.dist + 1;
+                        if (checkEscape(nx, ny)) return nd;
+                        queue.push({ x: nx, y: ny, dist: nd });
+                    }
+                }
+            }
+        }
+        return 999; // 被困死了
+    }
+
+    // 计算最佳落子
+    function computeHint() {
+        hintCell = null;
+        if (gameOver || animation) return;
+        if (!getNextMove(enemy.x, enemy.y)) return; // 已经赢了
+
+        let bestScore = -Infinity;
+        let bestCells = [];
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (grid[y][x] !== 0) continue;
+
+                // 模拟下子
+                grid[y][x] = 1;
+
+                // 1. 能否直接绝杀
+                const nextMove = getNextMove(enemy.x, enemy.y);
+                let score = 0;
+
+                if (!nextMove) {
+                    score = 1000000; // 绝杀分
+                } else {
+                    // 2. 计算下子后，敌人逃跑的最短距离
+                    const dist = getEscapeDistance();
+                    // 距离越大越好
+                    score = dist * 100;
+                    
+                    // 3. 离敌人越近越好（形成压迫）
+                    const distToEnemy = Math.abs(x - enemy.x) + Math.abs(y - enemy.y);
+                    score -= distToEnemy * 2;
+                }
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCells = [{ x, y }];
+                } else if (score === bestScore) {
+                    bestCells.push({ x, y });
+                }
+
+                grid[y][x] = 0; // 撤销
+            }
+        }
+
+        // 如果有多个一样好的点，随机选一个
+        if (bestCells.length > 0) {
+            hintCell = bestCells[Math.floor(Math.random() * bestCells.length)];
+        }
+    }
+
+    // 绘制普通棋子
+    function drawPiece(cx, cy, isPlayer) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS, 0, Math.PI * 2);
+        if (isPlayer) {
+            ctx.fillStyle = '#000000';
+            ctx.fill();
+        } else {
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+    }
+
+    // 绘制贱贱棋子
+    function drawEnemy(cx, cy) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 1, 0, Math.PI * 2);
+        ctx.fillStyle = '#000000';
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 16px Arial, sans-serif'; // 适应 13x13 字体
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('^_^', cx, cy + 1);
+    }
+
+    // 绘制引导标记
+    function drawHint(cx, cy) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(150, 150, 150, 0.4)';
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(80, 80, 80, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 画个明显的叉
+        ctx.strokeStyle = 'rgba(60, 60, 60, 0.9)';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, cy - 6);
+        ctx.lineTo(cx + 6, cy + 6);
+        ctx.moveTo(cx + 6, cy - 6);
+        ctx.lineTo(cx - 6, cy + 6);
+        ctx.stroke();
+    }
+
+    // 绘图主函数
+    function draw() {
+        // 注意：清空时使用 CSS 尺寸 (cssWidth, cssHeight) 即可，
+        // 因为 ctx.scale 已经处理了放大。
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+        if (hintCell && !gameOver && !animation) {
+            const cx = PADDING + hintCell.x * SPACING;
+            const cy = PADDING + hintCell.y * SPACING;
+            drawHint(cx, cy);
+        }
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (animation && x === enemy.x && y === enemy.y) continue;
+
+                const cx = PADDING + x * SPACING;
+                const cy = PADDING + y * SPACING;
+
+                if (grid[y][x] === 0) {
+                    drawPiece(cx, cy, false);
+                } else if (grid[y][x] === 1) {
+                    drawPiece(cx, cy, true);
+                } else if (grid[y][x] === 2) {
+                    drawEnemy(cx, cy);
+                }
+            }
+        }
+
+        if (animation) {
+            const now = performance.now();
+            let t = (now - animation.startTime) / animation.duration;
+            if (t > 1) t = 1;
+            const easeT = 1 - (1 - t) * (1 - t);
+            const currentX = animation.fromX + (animation.toX - animation.fromX) * easeT;
+            const currentY = animation.fromY + (animation.toY - animation.fromY) * easeT;
+
+            const cx = PADDING + currentX * SPACING;
+            const cy = PADDING + currentY * SPACING;
+            drawEnemy(cx, cy);
+
+            if (t >= 1) {
+                grid[animation.toY][animation.toX] = 2;
+                animation = null;
+                if (hintMode && !gameOver) {
+                    computeHint();
+                }
+                draw();
+                if (checkEscape(enemy.x, enemy.y)) {
+                    endGame(false);
+                }
+            } else {
+                requestAnimationFrame(draw);
+            }
+        }
+    }
+
+    // 玩家点击事件
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameOver || animation) return;
+
+        const rect = canvas.getBoundingClientRect();
+        // 获取相对 CSS 尺寸的点击位置
+        const clickX = (e.clientX || e.touches[0].clientX) - rect.left;
+        const clickY = (e.clientY || e.touches[0].clientY) - rect.top;
+
+        const gridX = Math.round((clickX - PADDING) / SPACING);
+        const gridY = Math.round((clickY - PADDING) / SPACING);
+
+        // 增加边界判断防误触
+        if (gridX >= 0 && gridX < COLS && gridY >= 0 && gridY < ROWS) {
+            // 距离限制：防止点偏了太远也算
+            const centerX = PADDING + gridX * SPACING;
+            const centerY = PADDING + gridY * SPACING;
+            const distSq = (clickX - centerX) ** 2 + (clickY - centerY) ** 2;
+            
+            // 点击必须落在圆周围附近才生效，防止点格子中间
+            if (distSq < (SPACING / 1.5) ** 2) {
+                if (grid[gridY][gridX] === 0) {
+                    grid[gridY][gridX] = 1;
+                    if (hintMode) hintCell = null;
+                    statusText.innerText = "棋子正在逃窜...";
+                    draw();
+                    setTimeout(() => {
+                        if (!gameOver) moveEnemy();
+                    }, 80);
+                }
+            }
+        }
+    });
+
+    // 棋子移动逻辑
+    function moveEnemy() {
+        if (gameOver || animation) return;
+
+        if (checkEscape(enemy.x, enemy.y)) {
+            endGame(false);
+            return;
+        }
+
+        const nextStep = getNextMove(enemy.x, enemy.y);
+
+        if (nextStep) {
+            const fromX = enemy.x;
+            const fromY = enemy.y;
+            const toX = nextStep.x;
+            const toY = nextStep.y;
+
+            grid[fromY][fromX] = 0;
+            enemy.x = toX;
+            enemy.y = toY;
+
+            animation = {
+                fromX, fromY, toX, toY,
+                startTime: performance.now(),
+                duration: MOVE_DURATION
+            };
+
+            draw();
+        } else {
+            endGame(true);
+        }
+    }
+
+    // 游戏结束
+    function endGame(isWin) {
+        if (gameOver) return;
+        gameOver = true;
+        hintCell = null;
+        hintMode = false;
+        hintBtn.classList.remove('active');
+        if (isWin) {
+            statusText.innerText = "🎉 成功围住！贱棋子无路可走！你赢了！";
+        } else {
+            statusText.innerText = "🏃 棋子逃跑了！它带着贱贱的 ^_^ 笑容溜了...你输了！";
+        }
+        draw();
+    }
+
+    initGame();
+</script>
+
+</body>
+</html>

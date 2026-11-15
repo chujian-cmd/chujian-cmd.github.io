@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>围住贱贱的棋子 (无Bug完美版)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #000000;
+            overflow: hidden;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        canvas {
+            background-color: #ffffff;
+            border: 2px solid #000000;
+            cursor: pointer;
+            image-rendering: -webkit-optimize-contrast; 
+            outline: none;
+        }
+        
+        #info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+        button {
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ffffff;
+            color: #000000;
+            border: 2px solid #000000;
+            margin-top: 10px;
+            font-weight: bold;
+            transition: 0.1s;
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        button:hover {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        h2 { margin-bottom: 5px; }
+
+        #hintBtn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            margin: 0;
+            background-color: #000000;
+            color: #ffffff;
+            border: 2px solid #000000;
+            z-index: 100;
+            padding: 8px 14px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.1s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #hintBtn:hover {
+            background-color: #ffffff;
+            color: #000000;
+        }
+        #hintBtn.active {
+            background-color: #444444;
+            border-color: #444444;
+            color: #ffffff;
+            box-shadow: inset 0 3px 5px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <button id="hintBtn" onclick="toggleHint()">引导模式</button>
+
+    <h2>围住那个贱贱的棋子</h2>
+    <div id="info">
+        <span id="status">点击白圈变黑，斜角已封死，不能穿墙！</span>
+        <br>
+        <button id="restartBtn" onclick="handleRestart()">重新开始</button>
+    </div>
+    <br>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+    const hintBtn = document.getElementById('hintBtn');
+    const restartBtn = document.getElementById('restartBtn');
+
+    const dpr = window.devicePixelRatio || 1;
+    const ROWS = 9;
+    const COLS = 9;
+    const RADIUS = 18;     
+    const SPACING = 42;    
+    const PADDING = 30;    
+
+    const cssWidth = COLS * SPACING + PADDING * 2;
+    const cssHeight = ROWS * SPACING + PADDING * 2;
+
+    canvas.style.width = cssWidth + 'px';
+    canvas.style.height = cssHeight + 'px';
+    canvas.width = cssWidth * dpr;
+    canvas.height = cssHeight * dpr;
+    ctx.scale(dpr, dpr);
+
+    // 状态
+    let grid = [];
+    let enemy = { x: 4, y: 4 };
+    let gameOver = false;
+    
+    // 重新开始动画状态
+    let isRestarting = false;
+    let particles = []; 
+    let restartAnimId = null;
+    let restartPhaseStartTime = 0;
+    const RESTART_PHASE_DURATION = 1500; 
+    
+    // 用于敌人滑回中心的动画
+    let enemySlide = { startX: 4, startY: 4, progress: 0 };
+
+    // 普通移动动画
+    let animation = null;
+    const MOVE_DURATION = 180;
+
+    // 引导与情绪
+    let hintMode = false;
+    let hintCell = null;
+    let enemyEmotion = 'smug';
+    let emotionTimer = null;
+
+    function initGame() {
+        isRestarting = false;
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        enemy = { x: 4, y: 4 };
+        grid[enemy.y][enemy.x] = 2;
+        gameOver = false;
+        animation = null;
+        hintMode = false;
+        hintCell = null;
+        enemyEmotion = 'smug';
+        particles = [];
+        enemySlide = { startX: 4, startY: 4, progress: 1 };
+        
+        if (emotionTimer) clearTimeout(emotionTimer);
+        if (restartAnimId) cancelAnimationFrame(restartAnimId);
+        hintBtn.classList.remove('active');
+        statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+        restartBtn.disabled = false;
+        
+        draw();
+    }
+
+    function handleRestart() {
+        if (isRestarting) return; 
+        isRestarting = true;
+        restartBtn.disabled = true;
+        hintMode = false;
+        hintBtn.classList.remove('active');
+        hintCell = null;
+
+        // 1. 判定局势与情绪
+        let isPlayerWinning = false;
+        let isPlayerLosing = false;
+
+        if (gameOver) {
+            if (enemyEmotion === 'pitiful') isPlayerWinning = true;
+            else isPlayerLosing = true;
+        } else {
+            const nextMove = getNextMove(enemy.x, enemy.y);
+            if (!nextMove) {
+                isPlayerWinning = true;
+            } else {
+                const distToEdge = Math.min(enemy.x, enemy.y, COLS - 1 - enemy.x, ROWS - 1 - enemy.y);
+                if (distToEdge <= 1) isPlayerLosing = true;
+            }
+        }
+
+        if (isPlayerWinning) {
+            setEnemyEmotion('confused', 0);
+            statusText.innerText = "棋子：都要赢了还重开？玩不起是吧...";
+        } else if (isPlayerLosing) {
+            setEnemyEmotion('laughing', 0);
+            statusText.innerText = "棋子：哈哈哈哈，打不过我就重开！";
+        } else {
+            setEnemyEmotion('confused', 0);
+            statusText.innerText = "棋子：干嘛？不玩啦？";
+        }
+
+        // 2. 收集黑子，生成大量小圆点粒子
+        particles = [];
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (grid[y][x] === 1) {
+                    const cx = PADDING + x * SPACING;
+                    const cy = PADDING + y * SPACING;
+                    
+                    // 每个黑子炸裂成 40 个圆点
+                    for (let i = 0; i < 40; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        const r = Math.random() * RADIUS * 1.5;
+                        const px = cx + Math.cos(angle) * r;
+                        const py = cy + Math.sin(angle) * r;
+                        
+                        const screenCx = cssWidth / 2;
+                        const screenCy = cssHeight / 2;
+                        const dirX = px - screenCx + (Math.random() - 0.5) * 100;
+                        const dirY = py - screenCy + (Math.random() - 0.5) * 100;
+                        const distToEdge = Math.hypot(dirX, dirY) || 1;
+                        
+                        const speed = 3 + Math.random() * 5; 
+                        
+                        particles.push({
+                            x: px, y: py,
+                            vx: (dirX / distToEdge) * speed,
+                            vy: (dirY / distToEdge) * speed,
+                            size: 1 + Math.random() * 2.5, 
+                            life: 1.0,
+                            decay: 0.015 + Math.random() * 0.02 
+                        });
+                    }
+                }
+            }
+        }
+
+        // 3. 记录敌人起点
+        enemySlide = { startX: enemy.x, startY: enemy.y, progress: 0 };
+
+        // 4. 清除黑子和敌人，保留全部白圈
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (grid[y][x] === 1 || grid[y][x] === 2) {
+                    grid[y][x] = 0; 
+                }
+            }
+        }
+
+        // 启动动画循环
+        restartPhaseStartTime = performance.now();
+        restartAnimId = requestAnimationFrame(restartLoop);
+    }
+
+    function easeInOutQuad(t) {
+        return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    function restartLoop(timestamp) {
+        if (!isRestarting) return;
+
+        const elapsed = timestamp - restartPhaseStartTime;
+        const progress = Math.min(elapsed / RESTART_PHASE_DURATION, 1);
+
+        // 更新粒子
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vx += (Math.random() - 0.5) * 0.6;
+            p.vy += (Math.random() - 0.5) * 0.6;
+            
+            p.life -= p.decay;
+            if (p.life <= 0) {
+                particles.splice(i, 1);
+            }
+        }
+
+        // 敌人滑回位置
+        let slideProgress = Math.max(0, (progress - 0.2) / 0.8); 
+        const easeT = easeInOutQuad(slideProgress);
+        const curEx = enemySlide.startX + (4 - enemySlide.startX) * easeT;
+        const curEy = enemySlide.startY + (4 - enemySlide.startY) * easeT;
+
+        // 渲染
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+        // 遍历全网格画白圈
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const cx = PADDING + x * SPACING;
+                const cy = PADDING + y * SPACING;
+                drawPieceOnCtx(ctx, cx, cy, false);
+            }
+        }
+
+        // 绘制粒子
+        for (let p of particles) {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fillStyle = '#000000';
+            ctx.globalAlpha = p.life;
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+
+        // 绘制滑回中的敌人
+        const ex = PADDING + curEx * SPACING;
+        const ey = PADDING + curEy * SPACING;
+        drawEnemyOnCtx(ctx, ex, ey);
+
+        if (progress < 1) {
+            restartAnimId = requestAnimationFrame(restartLoop);
+        } else {
+            // 动画完全结束，直接同步重置！绝不闪烁空白
+            isRestarting = false;
+            grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+            enemy = { x: 4, y: 4 };
+            grid[enemy.y][enemy.x] = 2;
+            gameOver = false;
+            animation = null;
+            hintMode = false;
+            hintCell = null;
+            enemyEmotion = 'smug';
+            particles = [];
+            enemySlide = { startX: 4, startY: 4, progress: 1 };
+            restartBtn.disabled = false;
+            hintBtn.classList.remove('active');
+            statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+            
+            restartAnimId = null;
+            draw(); // 立即重绘全新状态
+        }
+    }
+
+    function toggleHint() {
+        if (gameOver || animation || isRestarting) return;
+        hintMode = !hintMode;
+        hintBtn.classList.toggle('active', hintMode);
+        
+        if (hintMode) {
+            setEnemyEmotion('confused', 1500); 
+            statusText.innerText = "AI 正在计算最佳落子...";
+            draw();
+            setTimeout(() => {
+                computeHint();
+                if (!hintCell) {
+                    statusText.innerText = "无解局，随便下吧...";
+                } else {
+                    statusText.innerText = "高亮位置是最佳落子点！";
+                }
+                draw();
+            }, 30);
+        } else {
+            hintCell = null;
+            setEnemyEmotion('smug', 0); 
+            statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+            draw();
+        }
+    }
+
+    function setEnemyEmotion(emotion, duration) {
+        enemyEmotion = emotion;
+        if (emotionTimer) clearTimeout(emotionTimer);
+        if (duration > 0) {
+            emotionTimer = setTimeout(() => {
+                if (!gameOver && !isRestarting) {
+                    enemyEmotion = 'smug';
+                    draw();
+                }
+            }, duration);
+        }
+    }
+
+    function checkEscape(x, y) {
+        return x === 0 || x === COLS - 1 || y === 0 || y === ROWS - 1;
+    }
+
+    function getNextMove(startX, startY) {
+        const queue = [{ x: startX, y: startY, path: [] }];
+        const visited = new Set([`${startX},${startY}`]);
+        const straightDirs = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
+        const diagDirs = [{ dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            if (checkEscape(current.x, current.y) && current.path.length > 0) return current.path[0];
+
+            for (let d of straightDirs) {
+                const nx = current.x + d.dx, ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                    visited.add(`${nx},${ny}`);
+                    queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                }
+            }
+            for (let d of diagDirs) {
+                const nx = current.x + d.dx, ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    const sx1 = current.x + d.dx, sy1 = current.y, sx2 = current.x, sy2 = current.y + d.dy;
+                    if (grid[ny][nx] === 0 && grid[sy1][sx1] === 0 && grid[sy2][sx2] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    function computeHint() {
+        hintCell = null;
+        if (gameOver || animation || isRestarting) return;
+        let empties = [];
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (grid[y][x] === 0) empties.push({ x, y });
+            }
+        }
+        if (empties.length === 0) return;
+
+        let bestCell = null, bestScore = -Infinity;
+        const backupGrid = grid.map(row => [...row]);
+        const backupEnemy = { ...enemy };
+
+        for (let cell of empties) {
+            grid[cell.y][cell.x] = 1;
+            if (!getNextMove(enemy.x, enemy.y)) {
+                bestCell = { x: cell.x, y: cell.y };
+                grid = backupGrid.map(row => [...row]);
+                enemy = { ...backupEnemy };
+                hintCell = bestCell;
+                return;
+            }
+
+            let simGrid = grid.map(row => [...row]);
+            let simEnemy = { ...enemy };
+            const originalGrid = grid;
+            grid = simGrid; 
+
+            let turns = 0, isWin = false;
+            while (turns < 6) {
+                const nextStep = getNextMove(simEnemy.x, simEnemy.y);
+                if (!nextStep) { isWin = true; break; }
+                grid[simEnemy.y][simEnemy.x] = 0;
+                simEnemy.x = nextStep.x; simEnemy.y = nextStep.y;
+                grid[simEnemy.y][simEnemy.x] = 2;
+                if (checkEscape(simEnemy.x, simEnemy.y)) { isWin = false; break; }
+                const enemyNext = getNextMove(simEnemy.x, simEnemy.y);
+                if (enemyNext && grid[enemyNext.y][enemyNext.x] === 0) {
+                    grid[enemyNext.y][enemyNext.x] = 1;
+                } else {
+                    for (let y = 0; y < ROWS; y++) {
+                        for (let x = 0; x < COLS; x++) {
+                            if (grid[y][x] === 0) { grid[y][x] = 1; break; }
+                        }
+                    }
+                }
+                turns++;
+            }
+            grid = originalGrid;
+            let score = isWin ? (100000 - turns * 100) : (turns * 100);
+            const dist = Math.abs(cell.x - enemy.x) + Math.abs(cell.y - enemy.y);
+            score -= dist * 0.1;
+
+            if (score > bestScore) { bestScore = score; bestCell = { x: cell.x, y: cell.y }; }
+            grid = backupGrid.map(row => [...row]);
+            enemy = { ...backupEnemy };
+        }
+        grid = backupGrid.map(row => [...row]);
+        enemy = { ...backupEnemy };
+        hintCell = bestCell;
+    }
+
+    function drawPieceOnCtx(c, cx, cy, isPlayer) {
+        c.beginPath();
+        c.arc(cx, cy, RADIUS, 0, Math.PI * 2);
+        if (isPlayer) {
+            c.fillStyle = '#000000';
+            c.fill();
+        } else {
+            c.fillStyle = '#ffffff';
+            c.fill();
+            c.strokeStyle = '#000000';
+            c.lineWidth = 2;
+            c.stroke();
+        }
+    }
+
+    function drawHintOnCtx(c, cx, cy) {
+        c.beginPath();
+        c.arc(cx, cy, RADIUS + 6, 0, Math.PI * 2);
+        c.fillStyle = 'rgba(180, 180, 180, 0.4)';
+        c.fill();
+        
+        c.beginPath();
+        c.arc(cx, cy, RADIUS + 6, 0, Math.PI * 2);
+        c.strokeStyle = 'rgba(100, 100, 100, 0.8)';
+        c.lineWidth = 2;
+        c.setLineDash([5, 5]);
+        c.stroke();
+        c.setLineDash([]);
+
+        c.strokeStyle = 'rgba(80, 80, 80, 0.7)';
+        c.lineWidth = 3;
+        c.lineCap = 'round';
+        c.beginPath();
+        c.moveTo(cx - 8, cy - 8);
+        c.lineTo(cx + 8, cy + 8);
+        c.moveTo(cx + 8, cy - 8);
+        c.lineTo(cx - 8, cy + 8);
+        c.stroke();
+    }
+
+    function drawEnemyOnCtx(c, cx, cy) {
+        c.beginPath();
+        c.arc(cx, cy, RADIUS + 2, 0, Math.PI * 2);
+        c.fillStyle = '#000000';
+        c.fill();
+
+        c.fillStyle = '#ffffff';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        
+        let faceText = '^_^';
+        if (enemyEmotion === 'confused') faceText = '囧';
+        else if (enemyEmotion === 'pitiful') faceText = '(´• ω •`)';
+        else if (enemyEmotion === 'laughing') faceText = '^0^';
+
+        if (faceText.length > 5) c.font = 'bold 10px Arial, sans-serif';
+        else if (faceText.length > 3) c.font = 'bold 14px Arial, sans-serif';
+        else c.font = 'bold 18px Arial, sans-serif';
+        
+        c.fillText(faceText, cx, cy + 1);
+
+        if (enemyEmotion === 'confused') {
+            c.fillStyle = '#000000';
+            c.font = 'bold 22px Arial, sans-serif';
+            c.fillText('❓', cx + 18, cy - 22);
+        } else if (enemyEmotion === 'pitiful') {
+            c.fillStyle = '#ff0000';
+            c.font = 'bold 24px Arial, sans-serif';
+            c.fillText('❗', cx + 18, cy - 22);
+        }
+    }
+
+    function draw() {
+        if (isRestarting) return; 
+
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+        if (hintCell && !gameOver && !animation && !isRestarting) {
+            const cx = PADDING + hintCell.x * SPACING;
+            const cy = PADDING + hintCell.y * SPACING;
+            drawHintOnCtx(ctx, cx, cy);
+        }
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const cx = PADDING + x * SPACING;
+                const cy = PADDING + y * SPACING;
+                
+                // 关键：无论状态如何，底层的圈一定要画出来！
+                if (animation && x === enemy.x && y === enemy.y) {
+                    drawPieceOnCtx(ctx, cx, cy, false);
+                    continue;
+                }
+                
+                if (grid[y][x] === 0) drawPieceOnCtx(ctx, cx, cy, false);
+                else if (grid[y][x] === 1) drawPieceOnCtx(ctx, cx, cy, true);
+                else if (grid[y][x] === 2) drawPieceOnCtx(ctx, cx, cy, false); // 敌人位置也画白圈底
+            }
+        }
+
+        if (animation) {
+            const now = performance.now();
+            let t = (now - animation.startTime) / animation.duration;
+            if (t > 1) t = 1;
+            const easeT = 1 - (1 - t) * (1 - t); 
+            
+            const currentX = animation.fromX + (animation.toX - animation.fromX) * easeT;
+            const currentY = animation.fromY + (animation.toY - animation.fromY) * easeT;
+
+            const cx = PADDING + currentX * SPACING;
+            const cy = PADDING + currentY * SPACING;
+            
+            drawEnemyOnCtx(ctx, cx, cy);
+
+            if (t >= 1) {
+                grid[animation.toY][animation.toX] = 2;
+                animation = null;
+                if (hintMode && !gameOver) computeHint();
+                draw(); 
+                if (checkEscape(enemy.x, enemy.y)) endGame(false);
+            } else {
+                requestAnimationFrame(draw);
+            }
+        } else {
+            // 只要没在重置，就永远画出敌人（包括游戏结束后）
+            if (!isRestarting) {
+                const cx = PADDING + enemy.x * SPACING;
+                const cy = PADDING + enemy.y * SPACING;
+                drawEnemyOnCtx(ctx, cx, cy);
+            }
+        }
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameOver || animation || isRestarting) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = (e.clientX || e.touches[0].clientX) - rect.left;
+        const clickY = (e.clientY || e.touches[0].clientY) - rect.top;
+
+        const gridX = Math.round((clickX - PADDING) / SPACING);
+        const gridY = Math.round((clickY - PADDING) / SPACING);
+
+        if (gridX >= 0 && gridX < COLS && gridY >= 0 && gridY < ROWS) {
+            const centerX = PADDING + gridX * SPACING;
+            const centerY = PADDING + gridY * SPACING;
+            const dist = Math.hypot(clickX - centerX, clickY - centerY);
+            
+            if (dist <= SPACING * 0.6) {
+                if (grid[gridY][gridX] === 0) {
+                    grid[gridY][gridX] = 1;
+                    if (hintMode) hintCell = null;
+                    setEnemyEmotion('smug', 0);
+                    statusText.innerText = "棋子正在逃窜...";
+                    
+                    draw();
+                    
+                    setTimeout(() => {
+                        if (!gameOver && !isRestarting) moveEnemy();
+                    }, 80);
+                }
+            }
+        }
+    });
+
+    function moveEnemy() {
+        if (gameOver || animation || isRestarting) return;
+
+        if (checkEscape(enemy.x, enemy.y)) {
+            endGame(false);
+            return;
+        }
+
+        const nextStep = getNextMove(enemy.x, enemy.y);
+
+        if (nextStep) {
+            const fromX = enemy.x;
+            const fromY = enemy.y;
+            const toX = nextStep.x;
+            const toY = nextStep.y;
+
+            grid[fromY][fromX] = 0;
+            enemy.x = toX;
+            enemy.y = toY;
+
+            animation = {
+                fromX, fromY, toX, toY,
+                startTime: performance.now(),
+                duration: MOVE_DURATION
+            };
+            
+            requestAnimationFrame(draw);
+        } else {
+            endGame(true);
+        }
+    }
+
+    function endGame(isWin) {
+        if (gameOver) return;
+        gameOver = true;
+        hintCell = null;
+        hintMode = false;
+        hintBtn.classList.remove('active');
+        
+        if (isWin) {
+            setEnemyEmotion('pitiful', 0);
+            statusText.innerText = "🎉 成功围住！贱棋子无路可走！你赢了！";
+        } else {
+            setEnemyEmotion('laughing', 0);
+            statusText.innerText = "🏃 棋子逃跑了！它带着 ^0^ 的表情溜了...你输了！";
+        }
+        draw();
+    }
+
+    initGame();
+</script>
+
+</body>
+</html>

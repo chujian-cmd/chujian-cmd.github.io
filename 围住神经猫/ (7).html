@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>围住贱贱的棋子 (纯黑白物理版)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #000000;
+            overflow: hidden;
+            touch-action: manipulation; /* 防止双击放大 */
+        }
+        canvas {
+            background-color: #ffffff;
+            border: 2px solid #000000;
+            cursor: pointer;
+        }
+        #info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ffffff;
+            color: #000000;
+            border: 2px solid #000000;
+            margin-top: 10px;
+            font-weight: bold;
+            transition: 0.1s;
+        }
+        button:hover {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        h2 { margin-bottom: 5px; }
+
+        /* 引导模式按钮（右上角黑色按钮） */
+        #hintBtn {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            margin: 0;
+            background-color: #000000;
+            color: #ffffff;
+            border: 2px solid #000000;
+            z-index: 100;
+            padding: 8px 14px;
+            font-size: 15px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.1s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        #hintBtn:hover {
+            background-color: #ffffff;
+            color: #000000;
+        }
+        #hintBtn.active {
+            background-color: #444444;
+            border-color: #444444;
+            color: #ffffff;
+            box-shadow: inset 0 3px 5px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 引导模式按钮 -->
+    <button id="hintBtn" onclick="toggleHint()">引导模式</button>
+
+    <h2>围住那个贱贱的棋子</h2>
+    <div id="info">
+        <span id="status">点击白圈变黑，斜角已封死，不能穿墙！</span>
+        <br>
+        <button onclick="initGame()">重新开始</button>
+    </div>
+    <br>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+    const hintBtn = document.getElementById('hintBtn');
+
+    // 游戏配置
+    const ROWS = 9;
+    const COLS = 9;
+    const RADIUS = 18;
+    const SPACING = 42;
+    const PADDING = 30;
+
+    canvas.width = COLS * SPACING + PADDING * 2;
+    canvas.height = ROWS * SPACING + PADDING * 2;
+
+    // 状态：0=空地(白), 1=玩家(黑), 2=逃跑的贱棋子
+    let grid = [];
+    let enemy = { x: 4, y: 4 };
+    let gameOver = false;
+
+    // 动画状态
+    let animation = null;
+    const MOVE_DURATION = 180;
+
+    // 引导模式状态
+    let hintMode = false;
+    let hintCell = null; // { x, y }
+
+    // 初始化游戏
+    function initGame() {
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        enemy = { x: 4, y: 4 };
+        grid[enemy.y][enemy.x] = 2;
+        gameOver = false;
+        animation = null;
+        hintMode = false;
+        hintCell = null;
+        hintBtn.classList.remove('active');
+        statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+        draw();
+    }
+
+    // 切换引导模式
+    function toggleHint() {
+        if (gameOver || animation) return;
+        hintMode = !hintMode;
+        hintBtn.classList.toggle('active', hintMode);
+        if (hintMode) {
+            statusText.innerText = "AI 正在推演局势...";
+            draw();
+            // 延迟一点执行，避免卡住UI
+            setTimeout(() => {
+                computeHint();
+                if (!hintCell) {
+                    statusText.innerText = "AI 已无解，随便下吧...";
+                } else {
+                    statusText.innerText = "淡灰色带叉的位置是最佳落子点！";
+                }
+                draw();
+            }, 50);
+        } else {
+            hintCell = null;
+            statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+            draw();
+        }
+    }
+
+    // 检查是否到达边缘
+    function checkEscape(x, y) {
+        return x === 0 || x === COLS - 1 || y === 0 || y === ROWS - 1;
+    }
+
+    // 核心算法：BFS 找最短路径 (供棋子移动使用，也是模拟的核心)
+    function getNextMove(startX, startY) {
+        const queue = [{ x: startX, y: startY, path: [] }];
+        const visited = new Set([`${startX},${startY}`]);
+
+        const straightDirs = [
+            { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }
+        ];
+        const diagDirs = [
+            { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }
+        ];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+
+            if (checkEscape(current.x, current.y) && current.path.length > 0) {
+                return current.path[0];
+            }
+
+            // 直线
+            for (let d of straightDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    if (grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+
+            // 斜线 (防穿角)
+            for (let d of diagDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    const sideX1 = current.x + d.dx;
+                    const sideY1 = current.y;
+                    const sideX2 = current.x;
+                    const sideY2 = current.y + d.dy;
+
+                    if (grid[ny][nx] === 0 && grid[sideY1][sideX1] === 0 && grid[sideY2][sideX2] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+        }
+        return null; // 无路可走
+    }
+
+    // 超级暴力推演 AI：模拟自己下棋直到把敌人困死或发现防不住
+    function computeHint() {
+        hintCell = null;
+        if (gameOver || animation) return;
+
+        let empties = [];
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (grid[y][x] === 0) empties.push({ x, y });
+            }
+        }
+
+        if (empties.length === 0) return;
+
+        let bestCell = null;
+        let bestScore = -Infinity;
+
+        // 备份现场
+        const backupGrid = grid.map(row => [...row]);
+        const backupEnemy = { ...enemy };
+
+        // 遍历每一个空白点，尝试下子
+        for (let cell of empties) {
+            // 1. 模拟玩家下子
+            grid[cell.y][cell.x] = 1;
+
+            // 2. 看这一步下去，能不能直接把敌人闷死（绝杀）
+            if (!getNextMove(enemy.x, enemy.y)) {
+                bestCell = { x: cell.x, y: cell.y };
+                // 恢复现场并直接返回
+                grid = backupGrid.map(row => [...row]);
+                enemy = { ...backupEnemy };
+                hintCell = bestCell;
+                return;
+            }
+
+            // 3. 如果不能绝杀，开始“左右互搏”模拟推演
+            // 复制一份用于推演的棋盘
+            let simGrid = grid.map(row => [...row]);
+            let simEnemy = { ...enemy };
+            
+            // 把真正的 grid 借给 getNextMove 用，因为里面写死了访问全局 grid
+            const originalGrid = grid;
+            grid = simGrid; 
+
+            let turns = 0;
+            let isWin = false;
+
+            while (turns < 10) { // 模拟 10 步深度，足够判断趋势了
+                // 敌人走一步
+                const nextStep = getNextMove(simEnemy.x, simEnemy.y);
+                if (!nextStep) {
+                    isWin = true;
+                    break; // 敌人无路可走，赢了
+                }
+
+                // 移动敌人
+                grid[simEnemy.y][simEnemy.x] = 0;
+                simEnemy.x = nextStep.x;
+                simEnemy.y = nextStep.y;
+                grid[simEnemy.y][simEnemy.x] = 2;
+
+                if (checkEscape(simEnemy.x, simEnemy.y)) {
+                    isWin = false;
+                    break; // 敌人逃跑了
+                }
+
+                // 玩家再堵一步（贪心策略：堵在敌人下一步的必经之路上）
+                // 找敌人下一步可能去的地方，挑一个堵住
+                const enemyNext = getNextMove(simEnemy.x, simEnemy.y);
+                if (enemyNext && grid[enemyNext.y][enemyNext.x] === 0) {
+                    grid[enemyNext.y][enemyNext.x] = 1;
+                } else {
+                    // 随便找个空地堵
+                    for (let y = 0; y < ROWS; y++) {
+                        for (let x = 0; x < COLS; x++) {
+                            if (grid[y][x] === 0) {
+                                grid[y][x] = 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+                turns++;
+            }
+
+            // 恢复真正的 grid，计算这步棋的得分
+            grid = originalGrid;
+
+            // 计算分数：如果模拟能赢，分数极高。如果防不住，看它能拖延几步
+            let score = 0;
+            if (isWin) {
+                score = 100000 - turns * 100; // 越早赢越好
+            } else {
+                score = turns * 100; // 防不住的话，拖得越久越好
+            }
+
+            // 距离惩罚：如果分数一样，优先下在离敌人近的地方
+            const dist = Math.abs(cell.x - enemy.x) + Math.abs(cell.y - enemy.y);
+            score -= dist * 0.1;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestCell = { x: cell.x, y: cell.y };
+            }
+
+            // 恢复现场，准备试下一个点
+            grid = backupGrid.map(row => [...row]);
+            enemy = { ...backupEnemy };
+        }
+
+        // 结束推演，恢复全局状态
+        grid = backupGrid.map(row => [...row]);
+        enemy = { ...backupEnemy };
+        hintCell = bestCell;
+    }
+
+    // 绘制普通棋子
+    function drawPiece(cx, cy, isPlayer) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS, 0, Math.PI * 2);
+        if (isPlayer) {
+            ctx.fillStyle = '#000000';
+            ctx.fill();
+        } else {
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    }
+
+    // 绘制那个“贱贱”的逃跑棋子
+    function drawEnemy(cx, cy) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 2, 0, Math.PI * 2);
+        ctx.fillStyle = '#000000';
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px Arial, sans-serif'; 
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('^_^', cx, cy + 1);
+    }
+
+    // 绘制引导标记（淡灰色 + 醒目的叉）
+    function drawHint(cx, cy) {
+        // 灰色底圈
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(180, 180, 180, 0.4)';
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(100, 100, 100, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 画一个淡灰色的叉 (X)
+        ctx.strokeStyle = 'rgba(80, 80, 80, 0.7)';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy - 8);
+        ctx.lineTo(cx + 8, cy + 8);
+        ctx.moveTo(cx + 8, cy - 8);
+        ctx.lineTo(cx - 8, cy + 8);
+        ctx.stroke();
+    }
+
+    // 绘图主函数
+    function draw() {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 绘制引导标记
+        if (hintCell && !gameOver && !animation) {
+            const cx = PADDING + hintCell.x * SPACING;
+            const cy = PADDING + hintCell.y * SPACING;
+            drawHint(cx, cy);
+        }
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                if (animation && x === enemy.x && y === enemy.y) continue;
+
+                const cx = PADDING + x * SPACING;
+                const cy = PADDING + y * SPACING;
+
+                if (grid[y][x] === 0) {
+                    drawPiece(cx, cy, false);
+                } else if (grid[y][x] === 1) {
+                    drawPiece(cx, cy, true);
+                } else if (grid[y][x] === 2) {
+                    drawEnemy(cx, cy);
+                }
+            }
+        }
+
+        // 如果有动画，单独绘制敌人（平滑移动）
+        if (animation) {
+            const now = performance.now();
+            let t = (now - animation.startTime) / animation.duration;
+            if (t > 1) t = 1;
+            const easeT = 1 - (1 - t) * (1 - t);
+            const currentX = animation.fromX + (animation.toX - animation.fromX) * easeT;
+            const currentY = animation.fromY + (animation.toY - animation.fromY) * easeT;
+
+            const cx = PADDING + currentX * SPACING;
+            const cy = PADDING + currentY * SPACING;
+            drawEnemy(cx, cy);
+
+            if (t >= 1) {
+                grid[animation.toY][animation.toX] = 2;
+                animation = null;
+                // 动画结束后，如果引导模式开着，且玩家没赢，重新计算
+                if (hintMode && !gameOver) {
+                    computeHint();
+                }
+                draw();
+                if (checkEscape(enemy.x, enemy.y)) {
+                    endGame(false);
+                }
+            } else {
+                requestAnimationFrame(draw);
+            }
+        }
+    }
+
+    // 玩家点击事件
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameOver || animation) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = (e.clientX || e.touches[0].clientX) - rect.left;
+        const clickY = (e.clientY || e.touches[0].clientY) - rect.top;
+
+        const gridX = Math.round((clickX - PADDING) / SPACING);
+        const gridY = Math.round((clickY - PADDING) / SPACING);
+
+        if (gridX >= 0 && gridX < COLS && gridY >= 0 && gridY < ROWS) {
+            if (grid[gridY][gridX] === 0) {
+                grid[gridY][gridX] = 1;
+                if (hintMode) hintCell = null; // 玩家下了就不需要引导了
+                statusText.innerText = "棋子正在逃窜...";
+                draw();
+                setTimeout(() => {
+                    if (!gameOver) moveEnemy();
+                }, 80);
+            }
+        }
+    });
+
+    // 棋子移动逻辑 (带动画)
+    function moveEnemy() {
+        if (gameOver || animation) return;
+
+        if (checkEscape(enemy.x, enemy.y)) {
+            endGame(false);
+            return;
+        }
+
+        const nextStep = getNextMove(enemy.x, enemy.y);
+
+        if (nextStep) {
+            const fromX = enemy.x;
+            const fromY = enemy.y;
+            const toX = nextStep.x;
+            const toY = nextStep.y;
+
+            grid[fromY][fromX] = 0;
+            enemy.x = toX;
+            enemy.y = toY;
+
+            animation = {
+                fromX: fromX,
+                fromY: fromY,
+                toX: toX,
+                toY: toY,
+                startTime: performance.now(),
+                duration: MOVE_DURATION
+            };
+
+            draw();
+        } else {
+            endGame(true);
+        }
+    }
+
+    // 游戏结束
+    function endGame(isWin) {
+        if (gameOver) return;
+        gameOver = true;
+        hintCell = null;
+        hintMode = false;
+        hintBtn.classList.remove('active');
+        if (isWin) {
+            statusText.innerText = "🎉 成功围住！贱棋子无路可走！你赢了！";
+        } else {
+            statusText.innerText = "🏃 棋子逃跑了！它带着贱贱的 ^_^ 笑容溜了...你输了！";
+        }
+        draw();
+    }
+
+    initGame();
+</script>
+
+</body>
+</html>

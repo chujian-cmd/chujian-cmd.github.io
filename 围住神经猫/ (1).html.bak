@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>围住贱贱的旗子</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #fff;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #f0f0f0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            cursor: pointer;
+        }
+        #info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        button:hover { background-color: #45a049; }
+    </style>
+</head>
+<body>
+
+    <h2>围住那个贱贱的旗子</h2>
+    <div id="info">
+        <span id="status">点击白色圆圈变黑，堵住它的去路！</span>
+        <br>
+        <button onclick="initGame()">重新开始</button>
+    </div>
+    <br>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+
+    // 游戏配置
+    const ROWS = 9;
+    const COLS = 9;
+    const RADIUS = 20;
+    const MARGIN = 10;
+    const PADDING = 10; // 边缘留白
+    const CELL_SIZE = RADIUS * 2 + MARGIN;
+
+    // 画布尺寸
+    canvas.width = COLS * CELL_SIZE + PADDING * 2;
+    canvas.height = ROWS * CELL_SIZE + PADDING * 2;
+
+    // 游戏状态
+    let grid = []; // 0: 白, 1: 黑, 2: 旗子
+    let flag = { x: 4, y: 4 }; // 旗子的初始位置（中心）
+    let gameOver = false;
+
+    // 初始化游戏
+    function initGame() {
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        flag = { x: 4, y: 4 };
+        grid[flag.y][flag.x] = 2;
+        gameOver = false;
+        statusText.innerText = "点击白色圆圈变黑，堵住它的去路！";
+        draw();
+    }
+
+    // 绘制圆形
+    function drawCircle(x, y, color) {
+        ctx.beginPath();
+        ctx.arc(x, y, RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = '#999';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    // 绘制贱贱的旗子
+    function drawFlag(centerX, centerY) {
+        // 旗杆
+        ctx.beginPath();
+        ctx.moveTo(centerX - 5, centerY + 15);
+        ctx.lineTo(centerX - 5, centerY - 20);
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // 旗帜背景
+        ctx.beginPath();
+        ctx.moveTo(centerX - 5, centerY - 20);
+        ctx.lineTo(centerX + 18, centerY - 12);
+        ctx.lineTo(centerX - 5, centerY - 4);
+        ctx.fillStyle = '#000';
+        ctx.fill();
+
+        // 贱贱的笑脸 (用白色线条画在黑色旗子上)
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.fillStyle = '#fff';
+        
+        // 眼睛 (两个小点)
+        ctx.beginPath();
+        ctx.arc(centerX + 2, centerY - 14, 1.5, 0, Math.PI * 2);
+        ctx.arc(centerX + 8, centerY - 13, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 嘴巴 (歪嘴笑)
+        ctx.beginPath();
+        ctx.moveTo(centerX + 2, centerY - 9);
+        ctx.quadraticCurveTo(centerX + 6, centerY - 6, centerX + 11, centerY - 10);
+        ctx.stroke();
+
+        // 眉毛 (挑逗的挑眉)
+        ctx.beginPath();
+        ctx.moveTo(centerX, centerY - 17);
+        ctx.lineTo(centerX + 4, centerY - 18);
+        ctx.moveTo(centerX + 6, centerY - 17);
+        ctx.lineTo(centerX + 10, centerY - 15);
+        ctx.stroke();
+    }
+
+    // 绘图主函数
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const cx = PADDING + x * CELL_SIZE + CELL_SIZE / 2;
+                const cy = PADDING + y * CELL_SIZE + CELL_SIZE / 2;
+
+                if (grid[y][x] === 0) {
+                    drawCircle(cx, cy, '#ffffff'); // 空地
+                } else if (grid[y][x] === 1) {
+                    drawCircle(cx, cy, '#1a1a1a'); // 玩家点击的黑子
+                } else if (grid[y][x] === 2) {
+                    drawCircle(cx, cy, '#ffffff'); // 旗子底下的白圆
+                    drawFlag(cx, cy);              // 画贱贱的旗子
+                }
+            }
+        }
+    }
+
+    // 检查旗子是否已经逃脱（到达边缘）
+    function checkEscape(fx, fy) {
+        if (fx === 0 || fx === COLS - 1 || fy === 0 || fy === ROWS - 1) {
+            return true;
+        }
+        return false;
+    }
+
+    // 核心算法：BFS 广度优先搜索找最短路径
+    // 返回下一步要走的位置
+    function getNextMove(startX, startY) {
+        const queue = [{ x: startX, y: startY, path: [] }];
+        const visited = new Set();
+        visited.add(`${startX},${startY}`);
+
+        const directions = [
+            { dx: 0, dy: -1 }, { dx: 1, dy: 0 },
+            { dx: 0, dy: 1 },  { dx: -1, dy: 0 },
+            { dx: -1, dy: -1 },{ dx: 1, dy: -1 },
+            { dx: 1, dy: 1 },  { dx: -1, dy: 1 }
+        ];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            
+            // 如果到达边缘
+            if (checkEscape(current.x, current.y) && current.path.length > 0) {
+                return current.path[0]; // 返回路径的第一步
+            }
+
+            for (let dir of directions) {
+                const nx = current.x + dir.dx;
+                const ny = current.y + dir.dy;
+
+                // 检查边界
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    // 只能走空地 (0)
+                    if (grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        const newPath = [...current.path, { x: nx, y: ny }];
+                        queue.push({ x: nx, y: ny, path: newPath });
+                    }
+                }
+            }
+        }
+        return null; // 无路可走，被围死了
+    }
+
+    // 处理玩家点击
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameOver) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        // 计算点击的网格坐标
+        const gridX = Math.floor((clickX - PADDING) / CELL_SIZE);
+        const gridY = Math.floor((clickY - PADDING) / CELL_SIZE);
+
+        // 确保点击在网格内
+        if (gridX >= 0 && gridX < COLS && gridY >= 0 && gridY < ROWS) {
+            // 只能点击空地 (白圈)
+            if (grid[gridY][gridX] === 0) {
+                grid[gridY][gridX] = 1; // 变黑
+                draw();
+                
+                // 玩家下完，旗子立刻行动
+                setTimeout(() => {
+                    moveFlag();
+                }, 100); // 稍微延迟一下，让玩家看清楚
+            }
+        }
+    });
+
+    // 旗子移动逻辑
+    function moveFlag() {
+        if (gameOver) return;
+
+        // 如果旗子已经在边缘，直接获胜
+        if (checkEscape(flag.x, flag.y)) {
+            statusText.innerText = "🏳️ 旗子逃跑了！你输了！";
+            gameOver = true;
+            return;
+        }
+
+        // 获取下一步
+        const nextStep = getNextMove(flag.x, flag.y);
+
+        if (nextStep) {
+            // 移动旗子
+            grid[flag.y][flag.x] = 0; // 老位置变回空地
+            flag.x = nextStep.x;
+            flag.y = nextStep.y;
+            grid[flag.y][flag.x] = 2; // 新位置放旗子
+            draw();
+
+            // 移动后再次检查是否逃脱
+            if (checkEscape(flag.x, flag.y)) {
+                statusText.innerText = "🏳️ 旗子逃跑了！你输了！";
+                gameOver = true;
+            }
+        } else {
+            // 找不到路径（被围死了）
+            statusText.innerText = "🎉 成功围住！旗子无路可走！你赢了！";
+            gameOver = true;
+        }
+    }
+
+    // 启动游戏
+    initGame();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>围住贱贱的棋子 (纯黑白物理版)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #000000;
+            overflow: hidden;
+        }
+        canvas {
+            background-color: #ffffff;
+            border: 2px solid #000000;
+            cursor: pointer;
+        }
+        #info {
+            margin-top: 20px;
+            text-align: center;
+        }
+        button {
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ffffff;
+            color: #000000;
+            border: 2px solid #000000;
+            margin-top: 10px;
+            font-weight: bold;
+            transition: 0.1s;
+        }
+        button:hover {
+            background-color: #000000;
+            color: #ffffff;
+        }
+        h2 { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+    <h2>围住那个贱贱的棋子</h2>
+    <div id="info">
+        <span id="status">点击白圈变黑，斜角已封死，不能穿墙！</span>
+        <br>
+        <button onclick="initGame()">重新开始</button>
+    </div>
+    <br>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('status');
+
+    // 游戏配置
+    const ROWS = 9;
+    const COLS = 9;
+    const RADIUS = 18;
+    const SPACING = 42;
+    const PADDING = 30;
+
+    canvas.width = COLS * SPACING + PADDING * 2;
+    canvas.height = ROWS * SPACING + PADDING * 2;
+
+    // 状态：0=空地(白), 1=玩家(黑), 2=逃跑的贱棋子
+    let grid = [];
+    let enemy = { x: 4, y: 4 };
+    let gameOver = false;
+
+    // 动画状态
+    let animation = null;
+    const MOVE_DURATION = 180;
+
+    // 初始化游戏
+    function initGame() {
+        grid = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+        enemy = { x: 4, y: 4 };
+        grid[enemy.y][enemy.x] = 2;
+        gameOver = false;
+        animation = null;
+        statusText.innerText = "点击白圈变黑，斜角已封死，不能穿墙！";
+        draw();
+    }
+
+    // 绘制普通棋子
+    function drawPiece(cx, cy, isPlayer) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS, 0, Math.PI * 2);
+
+        if (isPlayer) {
+            ctx.fillStyle = '#000000';
+            ctx.fill();
+        } else {
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+    }
+
+    // 绘制那个“贱贱”的逃跑棋子 (纯黑底，白色 ^_^ 文字)
+    function drawEnemy(cx, cy) {
+        // 纯黑棋子底
+        ctx.beginPath();
+        ctx.arc(cx, cy, RADIUS + 2, 0, Math.PI * 2);
+        ctx.fillStyle = '#000000';
+        ctx.fill();
+
+        // 纯白 ^_^ 表情
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 18px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('^_^', cx, cy + 1);
+    }
+
+    // 绘图主函数
+    function draw() {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                // 动画过程中跳过敌人当前位置的绘制（由动画层单独绘制）
+                if (animation && x === enemy.x && y === enemy.y) {
+                    continue;
+                }
+                const cx = PADDING + x * SPACING;
+                const cy = PADDING + y * SPACING;
+
+                if (grid[y][x] === 0) {
+                    drawPiece(cx, cy, false);
+                } else if (grid[y][x] === 1) {
+                    drawPiece(cx, cy, true);
+                } else if (grid[y][x] === 2) {
+                    drawEnemy(cx, cy);
+                }
+            }
+        }
+
+        // 如果有动画，单独绘制敌人（平滑移动）
+        if (animation) {
+            const now = performance.now();
+            let t = (now - animation.startTime) / animation.duration;
+            if (t > 1) t = 1;
+            const easeT = 1 - (1 - t) * (1 - t);
+            const currentX = animation.fromX + (animation.toX - animation.fromX) * easeT;
+            const currentY = animation.fromY + (animation.toY - animation.fromY) * easeT;
+
+            const cx = PADDING + currentX * SPACING;
+            const cy = PADDING + currentY * SPACING;
+            drawEnemy(cx, cy);
+
+            if (t >= 1) {
+                grid[animation.toY][animation.toX] = 2;
+                animation = null;
+                draw();
+                if (checkEscape(enemy.x, enemy.y)) {
+                    endGame(false);
+                }
+            } else {
+                requestAnimationFrame(draw);
+            }
+        }
+    }
+
+    // 检查是否到达边缘
+    function checkEscape(x, y) {
+        return x === 0 || x === COLS - 1 || y === 0 || y === ROWS - 1;
+    }
+
+    // 核心算法：BFS 找最短路径 (加入防穿角逻辑)
+    function getNextMove(startX, startY) {
+        const queue = [{ x: startX, y: startY, path: [] }];
+        const visited = new Set([`${startX},${startY}`]);
+
+        const straightDirs = [
+            { dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }
+        ];
+        const diagDirs = [
+            { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }
+        ];
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+
+            if (checkEscape(current.x, current.y) && current.path.length > 0) {
+                return current.path[0];
+            }
+
+            // 直线
+            for (let d of straightDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    if (grid[ny][nx] === 0 && !visited.has(`${nx},${ny}`)) {
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+
+            // 斜线 (防穿角)
+            for (let d of diagDirs) {
+                const nx = current.x + d.dx;
+                const ny = current.y + d.dy;
+
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    const sideX1 = current.x + d.dx;
+                    const sideY1 = current.y;
+                    const sideX2 = current.x;
+                    const sideY2 = current.y + d.dy;
+
+                    if (grid[ny][nx] === 0 &&
+                        grid[sideY1][sideX1] === 0 &&
+                        grid[sideY2][sideX2] === 0 &&
+                        !visited.has(`${nx},${ny}`)) {
+
+                        visited.add(`${nx},${ny}`);
+                        queue.push({ x: nx, y: ny, path: [...current.path, { x: nx, y: ny }] });
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // 玩家点击事件
+    canvas.addEventListener('mousedown', (e) => {
+        if (gameOver || animation) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+
+        const gridX = Math.round((clickX - PADDING) / SPACING);
+        const gridY = Math.round((clickY - PADDING) / SPACING);
+
+        if (gridX >= 0 && gridX < COLS && gridY >= 0 && gridY < ROWS) {
+            if (grid[gridY][gridX] === 0) {
+                grid[gridY][gridX] = 1;
+                draw();
+                setTimeout(() => {
+                    if (!gameOver) {
+                        moveEnemy();
+                    }
+                }, 80);
+            }
+        }
+    });
+
+    // 棋子移动逻辑 (带动画)
+    function moveEnemy() {
+        if (gameOver || animation) return;
+
+        if (checkEscape(enemy.x, enemy.y)) {
+            endGame(false);
+            return;
+        }
+
+        const nextStep = getNextMove(enemy.x, enemy.y);
+
+        if (nextStep) {
+            const fromX = enemy.x;
+            const fromY = enemy.y;
+            const toX = nextStep.x;
+            const toY = nextStep.y;
+
+            grid[fromY][fromX] = 0;
+            enemy.x = toX;
+            enemy.y = toY;
+
+            animation = {
+                fromX: fromX,
+                fromY: fromY,
+                toX: toX,
+                toY: toY,
+                startTime: performance.now(),
+                duration: MOVE_DURATION
+            };
+
+            draw();
+        } else {
+            endGame(true);
+        }
+    }
+
+    // 游戏结束
+    function endGame(isWin) {
+        if (gameOver) return;
+        gameOver = true;
+        if (isWin) {
+            statusText.innerText = "🎉 成功围住！贱棋子无路可走！你赢了！";
+        } else {
+            statusText.innerText = "🏃 棋子逃跑了！它带着贱贱的 ^_^ 笑容溜了...你输了！";
+        }
+        draw();
+    }
+
+    initGame();
+</script>
+
+</body>
+</html>
