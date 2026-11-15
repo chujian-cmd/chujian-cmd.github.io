@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>暖暖小农场 · Cozy Farm Idle</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  
+  <!-- 核心依赖库：React 和 Three.js (UMD版本) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <!-- 使用 r160 版本，保留 UMD 构建并支持 CapsuleGeometry -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+  <style>
+    :root {
+      --bg-1: #fdf8f0;
+      --bg-2: #f0f8f2;
+      --bg-3: #e8f3f0;
+      --glass: rgba(255, 255, 255, 0.58);
+      --glass-strong: rgba(255, 255, 255, 0.82);
+      --stroke: rgba(255, 255, 255, 0.85);
+      --ink: #4a423a;
+      --ink-2: #8d8378;
+      --mint: #a5e3c6;
+      --mint-deep: #5fbf98;
+      --peach: #ffc9a3;
+      --orange: #f7a55f;
+      --orange-deep: #e88d45;
+      --shadow-lg: 0 16px 40px rgba(150, 128, 105, 0.16);
+      --shadow-md: 0 8px 22px rgba(150, 128, 105, 0.13);
+      --shadow-sm: 0 4px 12px rgba(150, 128, 105, 0.10);
+      --r-lg: 26px;
+      --r-md: 18px;
+      --r-sm: 13px;
+      --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body, #root { height: 100%; margin: 0; padding: 0; }
+
+    body {
+      overflow: hidden;
+      color: var(--ink);
+      font-family: 'Nunito', 'Quicksand', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background:
+        radial-gradient(1100px 780px at 12% -8%, #fff3e0 0%, rgba(255,243,224,0) 62%),
+        radial-gradient(900px 700px at 96% 6%, #e4f7ee 0%, rgba(228,247,238,0) 58%),
+        radial-gradient(1000px 900px at 46% 112%, #e8f1fd 0%, rgba(232,241,253,0) 62%),
+        linear-gradient(162deg, var(--bg-1) 0%, var(--bg-2) 52%, var(--bg-3) 100%);
+    }
+
+    /* ================= 布局 ================= */
+    .app {
+      position: relative;
+      height: 100dvh;
+      width: 100%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px 12px;
+      padding-top: calc(10px + env(safe-area-inset-top));
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
+
+    .app.landscape {
+      flex-direction: row;
+      gap: 14px;
+      padding: 14px;
+      padding-left: calc(14px + env(safe-area-inset-left));
+      padding-right: calc(14px + env(safe-area-inset-right));
+    }
+
+    .sidebar {
+      flex: 0 0 auto;
+      width: clamp(280px, 30vw, 360px);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .stage {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      border-radius: var(--r-lg);
+      overflow: hidden;
+    }
+
+    .scene-canvas { position: absolute; inset: 0; }
+    .scene-canvas canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    .float-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 5;
+    }
+
+    /* ================= 玻璃卡片 ================= */
+    .glass {
+      background: var(--glass);
+      backdrop-filter: blur(20px) saturate(1.3);
+      -webkit-backdrop-filter: blur(20px) saturate(1.3);
+      border: 1px solid var(--stroke);
+      border-radius: var(--r-lg);
+      box-shadow: var(--shadow-md);
+    }
+
+    /* ================= 顶部资源栏 ================= */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 16px;
+      flex: 0 0 auto;
+    }
+    .portrait .topbar { padding-right: 56px; }
+
+    .coin-block { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .coin-icon {
+      display: flex;
+      align-items: center;
+      animation: coinBob 3.2s ease-in-out infinite;
+    }
+    @keyframes coinBob {
+      0%, 100% { transform: translateY(0) rotate(-5deg); }
+      50% { transform: translateY(-3px) rotate(5deg); }
+    }
+
+    .coin-value {
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.05;
+    }
+
+    .stats { display: flex; gap: 14px; flex: 0 0 auto; }
+    .stat { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+    .stat-label { font-size: 10px; font-weight: 700; color: var(--ink-2); letter-spacing: 0.05em; }
+    .stat-value { font-size: 14px; font-weight: 800; color: var(--mint-deep); font-variant-numeric: tabular-nums; }
+
+    /* ================= 升级面板 ================= */
+    .panel {
+      background: var(--glass);
+      backdrop-filter: blur(20px) saturate(1.3);
+      -webkit-backdrop-filter: blur(20px) saturate(1.3);
+      border: 1px solid var(--stroke);
+      border-radius: var(--r-lg);
+      box-shadow: var(--shadow-md);
+      padding: 12px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+    .portrait .panel { flex: 0 0 auto; max-height: 42dvh; }
+    .landscape .panel { flex: 1 1 auto; min-height: 0; }
+
+    .panel::-webkit-scrollbar { width: 5px; }
+    .panel::-webkit-scrollbar-thumb { background: rgba(160, 140, 120, 0.28); border-radius: 99px; }
+    .panel::-webkit-scrollbar-track { background: transparent; }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--ink-2);
+      letter-spacing: 0.08em;
+      padding: 2px 6px 10px;
+    }
+
+    .upgrade-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .upgrade-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 12px;
+      border-radius: var(--r-md);
+      background: rgba(255, 255, 255, 0.74);
+      border: 1px solid rgba(255, 255, 255, 0.95);
+      box-shadow: 0 5px 14px rgba(160, 140, 120, 0.09);
+      transition: transform 0.18s var(--ease-pop), box-shadow 0.22s, opacity 0.22s, background 0.22s;
+    }
+    .upgrade-card[data-locked='true'] { opacity: 0.62; }
+    .upgrade-card:hover { box-shadow: 0 8px 20px rgba(160, 140, 120, 0.15); }
+    .upgrade-card.bump { animation: cardBump 0.36s var(--ease-pop); }
+
+    @keyframes cardBump {
+      0% { transform: scale(1); }
+      38% { transform: scale(1.05); box-shadow: 0 12px 26px rgba(247, 165, 95, 0.28); }
+      100% { transform: scale(1); }
+    }
+
+    .upgrade-icon {
+      flex: 0 0 auto;
+      width: 42px; height: 42px;
+      display: grid; place-items: center;
+      border-radius: 14px;
+      background: linear-gradient(150deg, #f2fbf5, #e2f4ea);
+      box-shadow: inset 0 1px 0 #fff, 0 3px 8px rgba(140, 190, 165, 0.16);
+      color: var(--mint-deep);
+    }
+
+    .upgrade-info { flex: 1 1 auto; min-width: 0; }
+    .upgrade-title { display: flex; align-items: center; gap: 7px; }
+    .upgrade-name { font-size: 14.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .upgrade-level {
+      flex: 0 0 auto;
+      font-size: 10px;
+      font-weight: 900;
+      color: #fff;
+      background: linear-gradient(140deg, #b9e7cd, var(--mint-deep));
+      padding: 1px 7px;
+      border-radius: 99px;
+      box-shadow: 0 2px 6px rgba(95, 191, 152, 0.35);
+    }
+    .upgrade-desc {
+      margin-top: 2px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--ink-2);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .buy-btn {
+      flex: 0 0 auto;
+      min-width: 74px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      border: none;
+      border-radius: 99px;
+      padding: 9px 14px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 900;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+      background: linear-gradient(145deg, #ffd3a8 0%, var(--orange) 55%, var(--orange-deep) 100%);
+      box-shadow: 0 6px 15px rgba(247, 165, 95, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+      cursor: pointer;
+      transition: transform 0.13s var(--ease-pop), box-shadow 0.2s, filter 0.2s;
+    }
+    .buy-btn:active:not(:disabled) { transform: scale(0.93); box-shadow: 0 2px 8px rgba(247, 165, 95, 0.4); }
+    .buy-btn:disabled {
+      background: #ece7df;
+      color: #b7ada2;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
+    /* ================= 飘字 ================= */
+    .float-text {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      font-size: 21px;
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: 0.02em;
+      text-shadow: 0 2px 10px rgba(230, 145, 70, 0.75), 0 0 2px rgba(220, 130, 60, 0.9);
+      animation: floatUp 0.95s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      white-space: nowrap;
+    }
+    @keyframes floatUp {
+      0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+      18% { opacity: 1; transform: translate(-50%, -72%) scale(1.08); }
+      100% { opacity: 0; transform: translate(-50%, -190%) scale(0.94); }
+    }
+
+    /* ================= 主按钮 ================= */
+    .tap-btn {
+      position: absolute;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      z-index: 6;
+      padding: 13px 36px;
+      border: none;
+      border-radius: 99px;
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      color: #fff;
+      background: linear-gradient(145deg, #ffd6ae 0%, var(--orange) 55%, var(--orange-deep) 100%);
+      box-shadow: 0 10px 26px rgba(240, 150, 80, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+      cursor: pointer;
+      user-select: none;
+      transition: transform 0.13s var(--ease-pop), box-shadow 0.2s;
+      touch-action: manipulation;
+    }
+    .tap-btn:active { transform: translateX(-50%) scale(0.92); box-shadow: 0 4px 14px rgba(240, 150, 80, 0.45); }
+
+    /* ================= 布局切换按钮 ================= */
+    .layout-toggle {
+      position: absolute;
+      top: calc(10px + env(safe-area-inset-top));
+      right: calc(10px + env(safe-area-inset-right));
+      z-index: 30;
+      width: 38px; height: 38px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      border: 1px solid var(--stroke);
+      background: var(--glass);
+      backdrop-filter: blur(16px) saturate(1.3);
+      -webkit-backdrop-filter: blur(16px) saturate(1.3);
+      box-shadow: var(--shadow-sm);
+      color: var(--ink-2);
+      cursor: pointer;
+      transition: transform 0.16s var(--ease-pop);
+    }
+    .layout-toggle:active { transform: scale(0.88); }
+
+    /* ================= 离线弹窗 ================= */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(90, 78, 66, 0.28);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      animation: fadeIn 0.28s ease both;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal {
+      width: min(340px, 100%);
+      padding: 26px 22px 22px;
+      text-align: center;
+      background: var(--glass-strong);
+      backdrop-filter: blur(28px) saturate(1.4);
+      -webkit-backdrop-filter: blur(28px) saturate(1.4);
+      border: 1px solid var(--stroke);
+      border-radius: 30px;
+      box-shadow: var(--shadow-lg);
+      animation: modalPop 0.42s var(--ease-pop) both;
+    }
+    @keyframes modalPop {
+      from { opacity: 0; transform: translateY(20px) scale(0.9); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .modal-icon {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 8px;
+      animation: coinBob 3s ease-in-out infinite;
+    }
+    .modal-title { margin: 12px 0 4px; font-size: 21px; font-weight: 900; letter-spacing: 0.01em; }
+    .modal-sub { margin: 0 0 16px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+
+    .modal-reward {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 24px;
+      border-radius: 20px;
+      background: linear-gradient(145deg, #fff5e6, #ffe7cd);
+      box-shadow: inset 0 1px 0 #fff, 0 6px 18px rgba(240, 170, 100, 0.24);
+    }
+    .modal-reward-value { font-size: 27px; font-weight: 900; color: var(--orange-deep); font-variant-numeric: tabular-nums; }
+    .modal-hint { margin: 14px 0 18px; font-size: 12px; font-weight: 600; color: var(--ink-2); line-height: 1.5; }
+
+    .primary-btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 18px;
+      font-family: inherit;
+      font-size: 15.5px;
+      font-weight: 900;
+      letter-spacing: 0.06em;
+      color: #fff;
+      background: linear-gradient(145deg, #b9ecd5 0%, var(--mint-deep) 100%);
+      box-shadow: 0 8px 20px rgba(95, 191, 152, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+      cursor: pointer;
+      transition: transform 0.13s var(--ease-pop);
+    }
+    .primary-btn:active { transform: scale(0.96); }
+
+    /* 加载遮罩 */
+    .boot {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--ink-2);
+      background: var(--bg-1);
+      z-index: 200;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"><div class="boot">正在种下第一颗种子…</div></div>
+
+  <script>
+    // ==========================================
+    // 1. 图标库 (纯 SVG 替代 Emoji)
+    // ==========================================
+    const h = React.createElement;
+    
+    // 通用 SVG 包装
+    const Icon = ({ children, size = 24, color = 'currentColor', ...props }) => 
+      h('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: color, strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', ...props }, children);
+
+    const Icons = {
+      Coin: (p) => h(Icon, p, 
+        h('circle', { cx: 12, cy: 12, r: 10, fill: '#FFD700', stroke: '#E6A800' }),
+        h('path', { d: 'M12 6v12M9 9h6M9 15h6', stroke: '#B8860B' })
+      ),
+      Hand: (p) => h(Icon, p, 
+        h('path', { d: 'M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v5' }),
+        h('path', { d: 'M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v6' }),
+        h('path', { d: 'M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8' }),
+        h('path', { d: 'M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15' })
+      ),
+      Basket: (p) => h(Icon, p, 
+        h('path', { d: 'm5 11 4-7' }),
+        h('path', { d: 'm19 11-4-7' }),
+        h('path', { d: 'M2 11h20' }),
+        h('path', { d: 'm3.5 11 1.6 7.4a2 2 0 0 0 2 1.6h9.8a2 2 0 0 0 2-1.6l1.7-7.4' }),
+        h('path', { d: 'M4.5 15.5h15' })
+      ),
+      Droplet: (p) => h(Icon, p, 
+        h('path', { d: 'M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z' })
+      ),
+      Windmill: (p) => h(Icon, p, 
+        h('path', { d: 'M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0' }),
+        h('path', { d: 'M12 9V3' }),
+        h('path', { d: 'm14.6 10.5 5.2-3' }),
+        h('path', { d: 'm14.6 13.5 5.2 3' }),
+        h('path', { d: 'M12 15v6' }),
+        h('path', { d: 'm9.4 13.5-5.2 3' }),
+        h('path', { d: 'm9.4 10.5-5.2-3' })
+      ),
+      Moon: (p) => h(Icon, p, 
+        h('path', { d: 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z' })
+      ),
+      Sparkles: (p) => h(Icon, p, 
+        h('path', { d: 'm12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z' })
+      ),
+      Refresh: (p) => h(Icon, p, 
+        h('path', { d: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' }),
+        h('path', { d: 'M3 3v5h5' })
+      ),
+      Smartphone: (p) => h(Icon, p, 
+        h('rect', { width: 14, height: 20, x: 5, y: 2, rx: 2, ry: 2 }),
+        h('path', { d: 'M12 18h.01' })
+      ),
+      Monitor: (p) => h(Icon, p, 
+        h('rect', { width: 20, height: 14, x: 2, y: 3, rx: 2 }),
+        h('line', { x1: 8, x2: 16, y1: 21, y2: 21 }),
+        h('line', { x1: 12, x2: 12, y1: 17, y2: 21 })
+      )
+    };
+
+    // ==========================================
+    // 2. 游戏数值配置
+    // ==========================================
+    const CONFIG = {
+      TICK_MS: 100,
+      SAVE_INTERVAL: 5000,
+      OFFLINE_CAP_HOURS: 8,
+      OFFLINE_EFFICIENCY: 1,
+      OFFLINE_MIN_SECONDS: 60,
+      BASE_CLICK: 99999999999999999999999999999999999999999999999999999999999999999999,
+    };
+
+    const UPGRADES = [
+      { id: 'tap', name: '灵巧双手', icon: Icons.Hand, kind: 'click', baseCost: 0, growth: 1.15, value: 1, desc: '每次点击多赚 +999 金币' },
+      { id: 'auto', name: '自动收获篮', icon: Icons.Basket, kind: 'auto', baseCost: 0, growth: 0, value: 999, desc: '每秒自动产出 +999 金币' },
+      { id: 'sprinkler', name: '清凉洒水器', icon: Icons.Droplet, kind: 'auto', baseCost: 0, growth: 0, value: 999, desc: '每秒自动产出 +999 金币' },
+      { id: 'windmill', name: '呼呼小风车', icon: Icons.Windmill, kind: 'auto', baseCost: 0, growth: 0, value: 999, desc: '每秒自动产出 +99 金币' },
+    ];
+    
+    const UPGRADE_BY_ID = Object.fromEntries(UPGRADES.map((u) => [u.id, u]));
+    const upgradeCost = (def, level) => Math.ceil(def.baseCost * Math.pow(def.growth, level));
+    const clickPower = (levels) => CONFIG.BASE_CLICK + (levels.tap || 0) * UPGRADE_BY_ID.tap.value;
+    const autoRate = (levels) => UPGRADES.reduce((sum, u) => (u.kind === 'auto' ? sum + (levels[u.id] || 0) * u.value : sum), 0);
+
+    // ==========================================
+    // 3. 工具函数与存档
+    // ==========================================
+    const UNITS = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx'];
+    function formatNumber(n) {
+      if (!isFinite(n)) return '0';
+      const abs = Math.abs(n);
+      if (abs < 1000) return Number.isInteger(n) ? String(n) : n.toFixed(1);
+      let i = -1, v = abs;
+      while (v >= 1000 && i < UNITS.length - 1) { v /= 1000; i++; }
+      const s = v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : v.toFixed(0);
+      return (n < 0 ? '-' : '') + s + UNITS[i];
+    }
+    function formatDuration(sec) {
+      const s = Math.max(0, Math.floor(sec));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      if (h > 0) return h + ' 小时 ' + m + ' 分钟';
+      if (m > 0) return m + ' 分钟';
+      return s + ' 秒';
+    }
+
+    const SAVE_KEY = 'cozy-farm-idle:v2';
+    function readSave() {
+      try {
+        const raw = localStorage.getItem(SAVE_KEY);
+        if (!raw) return null;
+        const d = JSON.parse(raw);
+        if (!d || typeof d.coins !== 'number') return null;
+        return d;
+      } catch { return null; }
+    }
+    function writeSave(data) {
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch {}
+    }
+
+    function bootstrap() {
+      const saved = readSave();
+      if (!saved) return { coins: 0, levels: { tap: 999999999 }, totalClicks: 999999999, offline: null };
+      const levels = saved.levels || {};
+      const now = Date.now();
+      const elapsed = Math.max(0, (now - (saved.lastSeen || now)) / 1000);
+      const capped = Math.min(elapsed, CONFIG.OFFLINE_CAP_HOURS * 3600);
+      const gain = Math.floor(autoRate(levels) * capped * CONFIG.OFFLINE_EFFICIENCY);
+      return {
+        coins: (saved.coins || 0) + gain,
+        levels,
+        totalClicks: saved.totalClicks || 0,
+        offline: gain > 0 && elapsed >= CONFIG.OFFLINE_MIN_SECONDS ? { seconds: capped, gain } : null,
+      };
+    }
+
+    // ==========================================
+    // 4. 游戏状态管理
+    // ==========================================
+    const Game = {
+      state: bootstrap(),
+      listeners: new Set(),
+      get() { return this.state; },
+      set(patch) {
+        this.state = { ...this.state, ...patch };
+        this.listeners.forEach((fn) => fn());
+      },
+      subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+      tap() {
+        const gain = clickPower(this.state.levels);
+        this.set({ coins: this.state.coins + gain, totalClicks: this.state.totalClicks + 1 });
+        return gain;
+      },
+      buy(id) {
+        const def = UPGRADE_BY_ID[id];
+        if (!def) return false;
+        const lv = this.state.levels[id] || 0;
+        const cost = upgradeCost(def, lv);
+        if (this.state.coins < cost) return false;
+        this.set({
+          coins: this.state.coins - cost,
+          levels: { ...this.state.levels, [id]: lv + 1 },
+        });
+        return true;
+      },
+      tick(dt) {
+        const rate = autoRate(this.state.levels);
+        if (rate <= 0) return;
+        this.set({ coins: this.state.coins + rate * dt });
+      },
+      save() {
+        writeSave({
+          version: 2,
+          coins: this.state.coins,
+          levels: this.state.levels,
+          totalClicks: this.state.totalClicks,
+          lastSeen: Date.now(),
+        });
+      },
+      dismissOffline() { this.set({ offline: null }); },
+    };
+
+    // ==========================================
+    // 5. 3D 场景 (Three.js)
+    // ==========================================
+    class FarmScene {
+      constructor(container, onTap) {
+        this.container = container;
+        this.onTap = onTap;
+        this.disposed = false;
+        this.time = 0;
+        this.hopTime = -1;
+        this.clock = new THREE.Clock();
+
+        const w = container.clientWidth || 1;
+        const h = container.clientHeight || 1;
+
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        this.renderer.setSize(w, h);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.domElement.style.display = 'block';
+        this.renderer.domElement.style.touchAction = 'manipulation';
+        container.appendChild(this.renderer.domElement);
+
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(36, w / h, 0.1, 100);
+
+        this.setupLights();
+        this.buildIsland();
+        this.buildDecor();
+        this.character = this.buildCharacter();
+        this.scene.add(this.character);
+
+        const sp = this.buildSprinkler();
+        this.sprinklerProp = sp;
+        this.scene.add(sp);
+
+        const wm = this.buildWindmill();
+        this.windmillProp = wm.group;
+        this.windmillBlades = wm.blades;
+        this.scene.add(wm.group);
+
+        this.handleResize();
+        this.resizeObserver = new ResizeObserver(() => this.handleResize());
+        this.resizeObserver.observe(container);
+
+        this.handlePointerDown = (e) => {
+          const rect = container.getBoundingClientRect();
+          this.onTap({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+          this.hopTime = 0;
+        };
+        container.addEventListener('pointerdown', this.handlePointerDown);
+
+        this.loop();
+      }
+
+      setupLights() {
+        const hemi = new THREE.HemisphereLight(0xfff4e6, 0xc4e6cf, 2.3);
+        hemi.position.set(0, 10, 0);
+        this.scene.add(hemi);
+
+        const key = new THREE.DirectionalLight(0xfff6e8, 2.1);
+        key.position.set(4.5, 8.5, 5);
+        key.castShadow = true;
+        key.shadow.mapSize.set(1024, 1024);
+        key.shadow.camera.near = 0.5;
+        key.shadow.camera.far = 30;
+        key.shadow.camera.left = -6;
+        key.shadow.camera.right = 6;
+        key.shadow.camera.top = 6;
+        key.shadow.camera.bottom = -6;
+        key.shadow.bias = -0.0009;
+        key.shadow.radius = 4;
+        this.scene.add(key);
+
+        const fill = new THREE.DirectionalLight(0xdbeeff, 0.7);
+        fill.position.set(-6, 4, -5);
+        this.scene.add(fill);
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+      }
+
+      buildIsland() {
+        const grass = new THREE.Mesh(
+          new THREE.CylinderGeometry(2.5, 2.42, 0.34, 64),
+          new THREE.MeshStandardMaterial({ color: 0xc7e8ab, roughness: 0.96 })
+        );
+        grass.position.y = -0.17;
+        grass.receiveShadow = true;
+        this.scene.add(grass);
+
+        const soil = new THREE.Mesh(
+          new THREE.CylinderGeometry(2.42, 1.7, 0.95, 64),
+          new THREE.MeshStandardMaterial({ color: 0xe6cfae, roughness: 1 })
+        );
+        soil.position.y = -0.81;
+        soil.receiveShadow = true;
+        this.scene.add(soil);
+      }
+
+      buildDecor() {
+        this.addBush(-1.75, 1.15, 1.0);
+        this.addBush(1.9, -1.1, 0.85);
+        this.addBush(-2.0, -0.6, 0.7);
+        this.addFlower(0.95, 1.75, 0xffd6e0);
+        this.addFlower(1.35, 1.5, 0xfff0b8);
+        this.addFlower(-0.85, 1.9, 0xd9e8ff);
+        this.addFlower(2.05, 0.55, 0xffd6e0);
+        this.addFlower(-1.4, 1.75, 0xfff0b8);
+      }
+
+      addBush(x, z, s) {
+        const mat = new THREE.MeshStandardMaterial({ color: 0x9ddba2, roughness: 1 });
+        const g = new THREE.Group();
+        const parts = [[0, 0.23, 0], [0.2, 0.15, 0.06], [-0.18, 0.16, -0.05]];
+        for (const [bx, by, bz] of parts) {
+          const m = new THREE.Mesh(new THREE.SphereGeometry(by, 16, 12), mat);
+          m.position.set(bx, by, bz);
+          m.castShadow = true;
+          m.receiveShadow = true;
+          g.add(m);
+        }
+        g.position.set(x, 0, z);
+        g.scale.setScalar(s);
+        this.scene.add(g);
+      }
+
+      addFlower(x, z, color) {
+        const stem = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.012, 0.012, 0.18, 6),
+          new THREE.MeshStandardMaterial({ color: 0x8ccf94, roughness: 1 })
+        );
+        stem.position.set(x, 0.09, z);
+        this.scene.add(stem);
+
+        const head = new THREE.Mesh(
+          new THREE.SphereGeometry(0.055, 12, 10),
+          new THREE.MeshStandardMaterial({ color, roughness: 0.85 })
+        );
+        head.position.set(x, 0.2, z);
+        head.castShadow = true;
+        this.scene.add(head);
+      }
+
+      buildCharacter() {
+        const g = new THREE.Group();
+        const skin = new THREE.MeshStandardMaterial({ color: 0xffe3c9, roughness: 0.86 });
+        const shirt = new THREE.MeshStandardMaterial({ color: 0x9adfc0, roughness: 0.95 });
+        const pants = new THREE.MeshStandardMaterial({ color: 0xf6dcbc, roughness: 0.95 });
+        const shoe = new THREE.MeshStandardMaterial({ color: 0xc39a74, roughness: 1 });
+        const straw = new THREE.MeshStandardMaterial({ color: 0xf8d992, roughness: 1 });
+        const strawDark = new THREE.MeshStandardMaterial({ color: 0xe6bd6a, roughness: 1 });
+        const eyeMat = new THREE.MeshStandardMaterial({ color: 0x4a4038, roughness: 0.5 });
+        const blushMat = new THREE.MeshStandardMaterial({ color: 0xffb2a6, roughness: 1 });
+
+        // 腿 + 鞋
+        for (const x of [-0.135, 0.135]) {
+          const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.13, 4, 12), pants);
+          leg.position.set(x, 0.2, 0);
+          leg.castShadow = true;
+          g.add(leg);
+
+          const s = new THREE.Mesh(new THREE.SphereGeometry(0.105, 16, 12), shoe);
+          s.scale.set(1, 0.68, 1.2);
+          s.position.set(x, 0.09, 0.035);
+          s.castShadow = true;
+          g.add(s);
+        }
+
+        // 身体
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 32, 24), shirt);
+        body.scale.set(1, 1.06, 0.92);
+        body.position.y = 0.66;
+        body.castShadow = true;
+        g.add(body);
+
+        // 头
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.315, 32, 24), skin);
+        head.position.y = 1.22;
+        head.castShadow = true;
+        g.add(head);
+
+        // 草帽
+        const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.035, 32), straw);
+        brim.position.y = 1.43;
+        brim.castShadow = true;
+        g.add(brim);
+
+        const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.21, 0.25, 0.22, 28), straw);
+        crown.position.y = 1.545;
+        crown.castShadow = true;
+        g.add(crown);
+
+        const band = new THREE.Mesh(new THREE.CylinderGeometry(0.253, 0.253, 0.055, 28), strawDark);
+        band.position.y = 1.47;
+        g.add(band);
+
+        // 眼睛
+        for (const x of [-0.115, 0.115]) {
+          const e = new THREE.Mesh(new THREE.SphereGeometry(0.048, 16, 12), eyeMat);
+          e.position.set(x, 1.25, 0.283);
+          g.add(e);
+        }
+
+        // 腮红
+        for (const x of [-0.205, 0.205]) {
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.062, 14, 10), blushMat);
+          b.scale.set(1, 0.72, 0.4);
+          b.position.set(x, 1.15, 0.222);
+          g.add(b);
+        }
+
+        // 嘴巴
+        const mouth = new THREE.Mesh(new THREE.SphereGeometry(0.036, 12, 10), eyeMat);
+        mouth.scale.set(1.35, 0.72, 0.45);
+        mouth.position.set(0, 1.135, 0.298);
+        g.add(mouth);
+
+        // 手臂
+        const makeArm = (side) => {
+          const pivot = new THREE.Group();
+          pivot.position.set(side * 0.33, 0.88, 0);
+
+          const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.17, 4, 12), shirt);
+          arm.position.y = -0.14;
+          arm.castShadow = true;
+          pivot.add(arm);
+
+          const hand = new THREE.Mesh(new THREE.SphereGeometry(0.083, 16, 12), skin);
+          hand.position.y = -0.26;
+          hand.castShadow = true;
+          pivot.add(hand);
+
+          pivot.rotation.z = side * 0.3;
+          return pivot;
+        };
+        this.armL = makeArm(-1);
+        this.armR = makeArm(1);
+        g.add(this.armL, this.armR);
+
+        g.position.set(0, 0, 0.15);
+        return g;
+      }
+
+      buildSprinkler() {
+        const g = new THREE.Group();
+        const body = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.085, 0.11, 0.3, 18),
+          new THREE.MeshStandardMaterial({ color: 0xa9dcef, roughness: 0.55 })
+        );
+        body.position.y = 0.15;
+        body.castShadow = true;
+        g.add(body);
+
+        const top = new THREE.Mesh(
+          new THREE.SphereGeometry(0.12, 18, 14),
+          new THREE.MeshStandardMaterial({ color: 0xdaf1fb, roughness: 0.45 })
+        );
+        top.position.y = 0.32;
+        top.castShadow = true;
+        g.add(top);
+
+        g.position.set(1.55, 0, 0.85);
+        g.visible = false;
+        return g;
+      }
+
+      buildWindmill() {
+        const g = new THREE.Group();
+        const tower = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.28, 0.42, 1.25, 28),
+          new THREE.MeshStandardMaterial({ color: 0xfff3e4, roughness: 0.95 })
+        );
+        tower.position.y = 0.625;
+        tower.castShadow = true;
+        tower.receiveShadow = true;
+        g.add(tower);
+
+        const roof = new THREE.Mesh(
+          new THREE.ConeGeometry(0.37, 0.36, 28),
+          new THREE.MeshStandardMaterial({ color: 0xf2a878, roughness: 0.9 })
+        );
+        roof.position.y = 1.43;
+        roof.castShadow = true;
+        g.add(roof);
+
+        const blades = new THREE.Group();
+        blades.position.set(0, 1.16, 0.33);
+        const bladeMat = new THREE.MeshStandardMaterial({ color: 0xffdcaa, roughness: 0.9 });
+        for (let i = 0; i < 4; i++) {
+          const pivot = new THREE.Group();
+          pivot.rotation.z = (i * Math.PI) / 2;
+          const arm = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.56, 0.04), bladeMat);
+          arm.position.y = 0.29;
+          arm.castShadow = true;
+          pivot.add(arm);
+          blades.add(pivot);
+        }
+        const hub = new THREE.Mesh(
+          new THREE.SphereGeometry(0.082, 14, 12),
+          new THREE.MeshStandardMaterial({ color: 0xe08d5a, roughness: 0.8 })
+        );
+        blades.add(hub);
+        g.add(blades);
+
+        g.position.set(-1.55, 0, -0.65);
+        g.visible = false;
+        return { group: g, blades };
+      }
+
+      setProps({ sprinkler, windmill }) {
+        if (this.sprinklerProp) this.sprinklerProp.visible = !!sprinkler;
+        if (this.windmillProp) this.windmillProp.visible = !!windmill;
+      }
+
+      handleResize() {
+        const w = this.container.clientWidth;
+        const h = this.container.clientHeight;
+        if (!w || !h) return;
+        const aspect = w / h;
+        this.camera.aspect = aspect;
+        const dist = 6.6 + Math.max(0, 1 - aspect) * 4.0;
+        this.camera.position.set(0, 2.2 + dist * 0.12, dist);
+        this.camera.lookAt(0, 0.82, 0);
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(w, h);
+      }
+
+      loop = () => {
+        if (this.disposed) return;
+        this.raf = requestAnimationFrame(this.loop);
+
+        const dt = Math.min(this.clock.getDelta(), 0.05);
+        this.time += dt;
+        const t = this.time;
+
+        // 呼吸 + 摇摆
+        const breathe = 1 + Math.sin(t * 2.0) * 0.021;
+        this.character.scale.set(1, breathe, 1);
+        this.character.rotation.z = Math.sin(t * 1.15) * 0.033;
+        this.character.rotation.y = Math.sin(t * 0.62) * 0.18;
+
+        // 点击跳跃
+        let wave = 0;
+        if (this.hopTime >= 0) {
+          this.hopTime += dt;
+          const DUR = 0.5;
+          if (this.hopTime >= DUR) {
+            this.hopTime = -1;
+            this.character.position.y = 0;
+          } else {
+            const p = this.hopTime / DUR;
+            this.character.position.y = Math.sin(p * Math.PI) * 0.32;
+            wave = Math.sin(p * Math.PI * 3) * 0.9;
+          }
+        }
+
+        // 手臂
+        const idle = Math.sin(t * 2.0) * 0.055;
+        this.armL.rotation.z = -0.3 - idle - wave * 0.4;
+        this.armR.rotation.z = 0.3 + idle + wave * 0.4;
+
+        // 风车旋转
+        if (this.windmillBlades && this.windmillProp.visible) {
+          this.windmillBlades.rotation.z += dt * 1.4;
+        }
+
+        this.renderer.render(this.scene, this.camera);
+      };
+
+      dispose() {
+        this.disposed = true;
+        cancelAnimationFrame(this.raf);
+        this.resizeObserver.disconnect();
+        this.container.removeEventListener('pointerdown', this.handlePointerDown);
+        this.scene.traverse((obj) => {
+          if (obj.geometry) obj.geometry.dispose();
+          const m = obj.material;
+          if (Array.isArray(m)) m.forEach((x) => x.dispose());
+          else if (m) m.dispose();
+        });
+        this.renderer.dispose();
+        if (this.renderer.domElement.parentElement === this.container) {
+          this.container.removeChild(this.renderer.domElement);
+        }
+      }
+    }
+
+    // ==========================================
+    // 6. React UI 组件
+    // ==========================================
+    const { useEffect, useLayoutEffect, useRef, useState, useCallback } = React;
+
+    function RollingNumber({ value }) {
+      const [display, setDisplay] = useState(value);
+      const ref = useRef(value);
+
+      useEffect(() => {
+        let raf = 0;
+        const step = () => {
+          const diff = value - ref.current;
+          if (Math.abs(diff) < 0.02) {
+            ref.current = value;
+            setDisplay(value);
+            return;
+          }
+          ref.current += diff * 0.24;
+          setDisplay(ref.current);
+          raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        return () => cancelAnimationFrame(raf);
+      }, [value]);
+
+      return h('span', null, formatNumber(display));
+    }
+
+    function useLayout(mode) {
+      const [auto, setAuto] = useState(() => window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+      useEffect(() => {
+        const update = () => setAuto(window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+        window.addEventListener('resize', update);
+        window.addEventListener('orientationchange', update);
+        return () => {
+          window.removeEventListener('resize', update);
+          window.removeEventListener('orientationchange', update);
+        };
+      }, []);
+      return mode === 'auto' ? auto : mode;
+    }
+
+    function useGameState() {
+      const [, force] = useState(0);
+      useEffect(() => Game.subscribe(() => force((n) => n + 1)), []);
+      return Game.get();
+    }
+
+    function TopBar() {
+      const { coins, levels } = useGameState();
+      return h('div', { className: 'topbar glass' },
+        h('div', { className: 'coin-block' },
+          h('span', { className: 'coin-icon' }, h(Icons.Coin, { size: 26 })),
+          h('span', { className: 'coin-value' }, h(RollingNumber, { value: coins }))
+        ),
+        h('div', { className: 'stats' },
+          h('div', { className: 'stat' },
+            h('span', { className: 'stat-label' }, '每次点击'),
+            h('span', { className: 'stat-value' }, '+', formatNumber(clickPower(levels)))
+          ),
+          h('div', { className: 'stat' },
+            h('span', { className: 'stat-label' }, '每秒产出'),
+            h('span', { className: 'stat-value' }, formatNumber(autoRate(levels)))
+          )
+        )
+      );
+    }
+
+    function UpgradeCard({ def, level, cost, affordable, onBuy }) {
+      const cardRef = useRef(null);
+
+      const handleClick = () => {
+        if (!onBuy()) return;
+        const el = cardRef.current;
+        if (!el) return;
+        el.classList.remove('bump');
+        void el.offsetWidth;
+        el.classList.add('bump');
+      };
+
+      return h('div', { className: 'upgrade-card', ref: cardRef, 'data-locked': !affordable },
+        h('div', { className: 'upgrade-icon' }, h(def.icon, { size: 22 })),
+        h('div', { className: 'upgrade-info' },
+          h('div', { className: 'upgrade-title' },
+            h('span', { className: 'upgrade-name' }, def.name),
+            level > 0 && h('span', { className: 'upgrade-level' }, 'Lv.', level)
+          ),
+          h('div', { className: 'upgrade-desc' }, def.desc)
+        ),
+        h('button', { className: 'buy-btn', disabled: !affordable, onClick: handleClick },
+          h(Icons.Coin, { size: 14, style: { marginRight: 2 } }),
+          formatNumber(cost)
+        )
+      );
+    }
+
+    function UpgradePanel() {
+      const { coins, levels } = useGameState();
+      return h('div', null,
+        h('div', { className: 'panel-title' },
+          h(Icons.Sparkles, { size: 14, style: { color: 'var(--orange)' } }),
+          ' 升级与小设施'
+        ),
+        h('div', { className: 'upgrade-list' },
+          UPGRADES.map((def) => {
+            const level = levels[def.id] || 0;
+            const cost = upgradeCost(def, level);
+            return h(UpgradeCard, {
+              key: def.id,
+              def: def,
+              level: level,
+              cost: cost,
+              affordable: coins >= cost,
+              onBuy: () => Game.buy(def.id)
+            });
+          })
+        )
+      );
+    }
+
+    function Scene3D({ onTap, sprinkler, windmill }) {
+      const ref = useRef(null);
+      const sceneRef = useRef(null);
+      const tapRef = useRef(onTap);
+      tapRef.current = onTap;
+
+      useEffect(() => {
+        if (!ref.current) return;
+        const s = new FarmScene(ref.current, (p) => tapRef.current(p));
+        sceneRef.current = s;
+        return () => {
+          s.dispose();
+          sceneRef.current = null;
+        };
+      }, []);
+
+      useEffect(() => {
+        sceneRef.current?.setProps({ sprinkler, windmill });
+      }, [sprinkler, windmill]);
+
+      return h('div', { className: 'scene-canvas', ref: ref });
+    }
+
+    function FloatLayer({ items }) {
+      return h('div', { className: 'float-layer' },
+        items.map((f) => h('span', { key: f.id, className: 'float-text', style: { left: f.x, top: f.y } }, f.text))
+      );
+    }
+
+    function OfflineModal({ report, onClose }) {
+      if (!report) return null;
+      return h('div', { className: 'modal-backdrop', onClick: onClose },
+        h('div', { className: 'modal', onClick: (e) => e.stopPropagation() },
+          h('div', { className: 'modal-icon' }, h(Icons.Moon, { size: 42, color: '#8da4c4' })),
+          h('h2', { className: 'modal-title' }, '欢迎回来！'),
+          h('p', { className: 'modal-sub' }, '你离开了 ', formatDuration(report.seconds)),
+          h('div', { className: 'modal-reward' },
+            h(Icons.Coin, { size: 24 }),
+            h('span', { className: 'modal-reward-value' }, '+', formatNumber(report.gain))
+          ),
+          h('p', { className: 'modal-hint' }, '小农场已经把这些收成放进了你的仓库～'),
+          h('button', { className: 'primary-btn', onClick: onClose }, '收下啦')
+        )
+      );
+    }
+
+    function LayoutToggle({ mode, onChange }) {
+      const next = mode === 'auto' ? 'portrait' : mode === 'portrait' ? 'landscape' : 'auto';
+      const icon = mode === 'auto' ? Icons.Refresh : mode === 'portrait' ? Icons.Smartphone : Icons.Monitor;
+      return h('button', { className: 'layout-toggle', title: '切换布局', onClick: () => onChange(next) },
+        h(icon, { size: 18 })
+      );
+    }
+
+    function App() {
+      const [mode, setMode] = useState('auto');
+      const layout = useLayout(mode);
+      const isLandscape = layout === 'landscape';
+
+      const { coins, levels, offline } = useGameState();
+      const [floats, setFloats] = useState([]);
+      const floatId = useRef(0);
+      const stageRef = useRef(null);
+
+      useEffect(() => {
+        let last = performance.now();
+        const id = window.setInterval(() => {
+          const now = performance.now();
+          const dt = Math.min((now - last) / 1000, 0.5);
+          last = now;
+          Game.tick(dt);
+        }, CONFIG.TICK_MS);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        const id = window.setInterval(() => Game.save(), CONFIG.SAVE_INTERVAL);
+        const onHide = () => Game.save();
+        const onVisibility = () => {
+          if (document.visibilityState === 'hidden') onHide();
+        };
+        window.addEventListener('pagehide', onHide);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+          clearInterval(id);
+          window.removeEventListener('pagehide', onHide);
+          document.removeEventListener('visibilitychange', onVisibility);
+          onHide();
+        };
+      }, []);
+
+      const spawnFloat = useCallback((x, y, text) => {
+        const id = ++floatId.current;
+        setFloats((prev) => [...prev.slice(-14), { id, x, y, text }]);
+        window.setTimeout(() => {
+          setFloats((prev) => prev.filter((f) => f.id !== id));
+        }, 950);
+      }, []);
+
+      const handleTap = useCallback((p) => {
+        const gain = Game.tap();
+        spawnFloat(p.x, p.y, '+' + formatNumber(gain));
+      }, [spawnFloat]);
+
+      const handleTapButton = useCallback(() => {
+        const el = stageRef.current;
+        const x = el ? el.clientWidth / 2 : 0;
+        const y = el ? el.clientHeight * 0.6 : 0;
+        handleTap({ x, y });
+      }, [handleTap]);
+
+      const stage = h('main', { className: 'stage', ref: stageRef },
+        h(Scene3D, {
+          onTap: handleTap,
+          sprinkler: (levels.sprinkler || 0) > 0,
+          windmill: (levels.windmill || 0) > 0
+        }),
+        h(FloatLayer, { items: floats }),
+        h('button', { className: 'tap-btn', onClick: handleTapButton }, '收 获')
+      );
+
+      return h('div', { className: 'app ' + (isLandscape ? 'landscape' : 'portrait') },
+        isLandscape ? h(React.Fragment, null,
+          h('aside', { className: 'sidebar' },
+            h(TopBar),
+            h('div', { className: 'panel' }, h(UpgradePanel))
+          ),
+          stage
+        ) : h(React.Fragment, null,
+          h(TopBar),
+          stage,
+          h('div', { className: 'panel' }, h(UpgradePanel))
+        ),
+        h(LayoutToggle, { mode: mode, onChange: setMode }),
+        h(OfflineModal, { report: offline, onClose: () => Game.dismissOffline() })
+      );
+    }
+
+    // 挂载
+    const rootEl = document.getElementById('root');
+    rootEl.innerHTML = '';
+    ReactDOM.createRoot(rootEl).render(h(App));
+  </script>
+</body>
+</html>
