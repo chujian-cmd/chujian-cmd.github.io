@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<script>
+  const CONFIG = {
+    effect: 'spring',
+    nDots: 7,
+    springK: 10,
+    segLen: 12,
+    gravity: 30,
+    resistance: 10,
+    bounce: 0.7,
+    size: 1,
+    lines: true,
+    filled: false,
+    invert: false
+  };
+</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弹性光标</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #FFFFFF;
+    --fg: #000000;
+    --gray: #E5E5E5;
+  }
+  body.invert {
+    --bg: #000000;
+    --fg: #FFFFFF;
+    --gray: #333333;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    overflow-x: hidden;
+    transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin-bottom: 20px;
+    text-align: center;
+    transition: color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .panel {
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    background: var(--bg);
+    border: 1.5px solid var(--fg);
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+    z-index: 10;
+    transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1.5px solid var(--fg);
+    transition: border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .panel-head h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .toggle {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 32px;
+    height: 32px;
+    border: 1.5px solid var(--fg);
+    border-radius: 50%;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    touch-action: manipulation;
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .toggle:active {
+    transform: scale(0.96) rotate(90deg);
+    background: var(--fg);
+    color: var(--bg);
+  }
+  .toggle:focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: 2px;
+  }
+  .panel-body {
+    max-height: 2000px;
+    overflow: hidden;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .panel.collapsed .panel-body {
+    max-height: 0;
+  }
+  .group {
+    padding: 16px 18px;
+    border-bottom: 1.5px solid var(--gray);
+    animation: fadeUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+  .group:nth-child(1) { animation-delay: 0.02s; }
+  .group:nth-child(2) { animation-delay: 0.06s; }
+  .group:nth-child(3) { animation-delay: 0.10s; }
+  .group:last-child { border-bottom: none; }
+  .group-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    opacity: 0.5;
+    margin-bottom: 12px;
+  }
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border: 1.5px solid var(--fg);
+    border-radius: 50px;
+    overflow: hidden;
+  }
+  .segmented button {
+    -webkit-appearance: none;
+    appearance: none;
+    border: none;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 9px 0;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+                color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    border-right: 1.5px solid var(--fg);
+  }
+  .segmented button:last-child { border-right: none; }
+  .segmented button.active {
+    background: var(--fg);
+    color: var(--bg);
+  }
+  .segmented button:active {
+    transform: scale(0.96);
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .segmented button.active:active {
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .segmented button:focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: -2px;
+  }
+  .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin: 12px 0 4px;
+  }
+  .row:first-of-type { margin-top: 0; }
+  .row label { font-size: 13px; }
+  .row output {
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 20px;
+    background: transparent;
+    cursor: pointer;
+    margin: 0 0 6px;
+    touch-action: manipulation;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 1.5px;
+    background: var(--fg);
+    border-radius: 1px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--fg);
+    border-radius: 50%;
+    margin-top: -6.25px;
+    border: none;
+    transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  input[type=range]:active::-webkit-slider-thumb {
+    transform: scale(1.3);
+  }
+  input[type=range]::-moz-range-track {
+    height: 1.5px;
+    background: var(--fg);
+    border-radius: 1px;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: var(--fg);
+    border-radius: 50%;
+    border: none;
+    transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  input[type=range]:active::-moz-range-thumb {
+    transform: scale(1.3);
+  }
+  input[type=range]:focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
+  .switch-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    touch-action: manipulation;
+  }
+  .switch input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+    z-index: 2;
+  }
+  .switch .slider {
+    position: absolute;
+    inset: 0;
+    border: 1.5px solid var(--fg);
+    border-radius: 50px;
+    background: var(--bg);
+    transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .switch .slider::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--fg);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+                background 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .switch input:checked + .slider {
+    background: var(--fg);
+  }
+  .switch input:checked + .slider::after {
+    transform: translateX(18px);
+    background: var(--bg);
+  }
+  .switch:active .slider::after {
+    transform: scale(0.9);
+  }
+  .switch input:checked:active + .slider::after {
+    transform: translateX(18px) scale(0.9);
+  }
+  .switch input:focus-visible + .slider {
+    outline: 2px solid var(--fg);
+    outline-offset: 3px;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (max-width: 560px) {
+    body { padding: 16px; }
+    h1 { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>弹性光标</h1>
+
+<aside class="panel" id="panel">
+  <div class="panel-head">
+    <h2>自定义</h2>
+    <button class="toggle" id="toggle" aria-label="折叠面板">−</button>
+  </div>
+  <div class="panel-body" id="panelBody">
+    <div class="group">
+      <div class="group-title">效果</div>
+      <div class="segmented" id="effectGroup">
+        <button data-effect="spring" class="active">弹簧</button>
+        <button data-effect="orbit">环绕</button>
+        <button data-effect="chain">链条</button>
+        <button data-effect="pendulum">钟摆</button>
+      </div>
+    </div>
+    <div class="group">
+      <div class="group-title">参数</div>
+      <div class="row"><label for="nDots">圆点数量</label><output id="o-nDots">7</output></div>
+      <input type="range" id="nDots" min="2" max="20" step="1" value="7">
+      <div class="row"><label for="springK">弹簧刚度</label><output id="o-springK">10</output></div>
+      <input type="range" id="springK" min="1" max="30" step="1" value="10">
+      <div class="row"><label for="segLen">自然长度</label><output id="o-segLen">12</output></div>
+      <input type="range" id="segLen" min="5" max="40" step="1" value="12">
+      <div class="row"><label for="gravity">重力</label><output id="o-gravity">30</output></div>
+      <input type="range" id="gravity" min="0" max="120" step="1" value="30">
+      <div class="row"><label for="resistance">阻力</label><output id="o-resistance">10</output></div>
+      <input type="range" id="resistance" min="1" max="20" step="1" value="10">
+      <div class="row"><label for="bounce">弹性</label><output id="o-bounce">0.70</output></div>
+      <input type="range" id="bounce" min="0" max="1" step="0.05" value="0.7">
+      <div class="row"><label for="size">尺寸</label><output id="o-size">1.0×</output></div>
+      <input type="range" id="size" min="0.5" max="2" step="0.1" value="1">
+    </div>
+    <div class="group">
+      <div class="group-title">视觉</div>
+      <div class="switch-row">
+        <span>连接线</span>
+        <label class="switch">
+          <input type="checkbox" id="lines" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="switch-row">
+        <span>实心圆点</span>
+        <label class="switch">
+          <input type="checkbox" id="filled">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="switch-row">
+        <span>反色模式</span>
+        <label class="switch">
+          <input type="checkbox" id="invert">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<script>
+(function () {
+  // 物理
+  const DELTAT = 0.01;
+  const MASS = 1;
+  const STOPVEL = 0.1;
+  const STOPACC = 0.1;
+  const TRAIL_SIZES = [14, 12, 16, 10, 14, 12];
+
+  let canvas, ctx;
+  let particles = [];
+  let particleImages = [];
+  let cursor = { x: innerWidth / 2, y: innerHeight / 2 };
+  let time = 0;
+  let raf = null;
+
+  function fg() { return CONFIG.invert ? '#FFFFFF' : '#000000'; }
+
+  function makeDotSVG(size, filled, color) {
+    const sw = 1.5;
+    const r = filled ? size / 2 : size / 2 - sw / 2;
+    const fill = filled ? color : 'none';
+    const stroke = filled ? 'none' : color;
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
+      '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + (filled ? 0 : sw) + '"/></svg>';
+    return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+  }
+
+  function rebuildImages() {
+    const color = fg();
+    const s = CONFIG.size;
+    particleImages = [];
+    for (let i = 0; i < CONFIG.nDots; i++) {
+      const base = i === 0 ? 18 : TRAIL_SIZES[(i - 1) % TRAIL_SIZES.length];
+      const sz = Math.max(6, base * s);
+      const filled = i === 0 ? true : CONFIG.filled;
+      const img = new Image();
+      img.src = makeDotSVG(sz, filled, color);
+      particleImages.push(img);
+    }
+  }
+
+  function Particle(image) {
+    this.position = { x: cursor.x, y: cursor.y };
+    this.velocity = { x: 0, y: 0 };
+    this.canv = image;
+    this.draw = function (ctx) {
+      if (!this.canv || !this.canv.complete) return;
+      const w = this.canv.width;
+      const h = this.canv.height;
+      ctx.drawImage(this.canv, this.position.x - w / 2, this.position.y - h / 2, w, h);
+    };
+  }
+
+  function rebuildParticles() {
+    rebuildImages();
+    const next = [];
+    for (let i = 0; i < CONFIG.nDots; i++) {
+      const p = new Particle(particleImages[i]);
+      if (particles[i]) {
+        p.position = { x: particles[i].position.x, y: particles[i].position.y };
+        p.velocity = { x: particles[i].velocity.x, y: particles[i].velocity.y };
+      } else {
+        p.position = { x: cursor.x + i * 6, y: cursor.y + i * 4 };
+        p.velocity = { x: 0, y: 0 };
+      }
+      next.push(p);
+    }
+    particles = next;
+  }
+
+  function refreshImages() {
+    rebuildImages();
+    for (let i = 0; i < particles.length; i++) {
+      particles[i].canv = particleImages[i];
+    }
+  }
+
+  function vec(X, Y) {
+    this.X = X;
+    this.Y = Y;
+  }
+
+  function springForce(i, j, spring, segLen, springK) {
+    const dx = particles[i].position.x - particles[j].position.x;
+    const dy = particles[i].position.y - particles[j].position.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len > segLen) {
+      const f = springK * (len - segLen);
+      spring.X += (dx / len) * f;
+      spring.Y += (dy / len) * f;
+    }
+  }
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = innerWidth * dpr;
+    canvas.height = innerHeight * dpr;
+    canvas.style.width = innerWidth + 'px';
+    canvas.style.height = innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function updateParticles() {
+    time += 0.016;
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+
+    particles[0].position.x = cursor.x;
+    particles[0].position.y = cursor.y;
+
+    let g = CONFIG.gravity;
+    let r = CONFIG.resistance;
+    let k = CONFIG.springK;
+    let sl = CONFIG.segLen;
+    const e = CONFIG.effect;
+    if (e === 'orbit') { g *= 0.17; r *= 0.6; k *= 1.8; sl *= 1.8; }
+    else if (e === 'chain') { g *= 0.5; r *= 0.8; k *= 1.4; sl *= 1.33; }
+    else if (e === 'pendulum') { g *= 2.6; r *= 0.4; k *= 0.8; sl *= 0.85; }
+
+    const m = 10 * CONFIG.size;
+    const b = CONFIG.bounce;
+
+    for (let i = 1; i < particles.length; i++) {
+      let spring = new vec(0, 0);
+
+      if (i > 0) springForce(i - 1, i, spring, sl, k);
+      if (i < particles.length - 1) springForce(i + 1, i, spring, sl, k);
+
+      if (e === 'orbit') {
+        const dx = particles[i].position.x - cursor.x;
+        const dy = particles[i].position.y - cursor.y;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        spring.X += (-dy / len) * 2;
+        spring.Y += (dx / len) * 2;
+      }
+      if (e === 'pendulum') {
+        spring.X += Math.sin(time * 3 + i * 0.5) * 15;
+      }
+
+      const resist = new vec(
+        -particles[i].velocity.x * r,
+        -particles[i].velocity.y * r
+      );
+
+      const accel = new vec(
+        (spring.X + resist.X) / MASS,
+        (spring.Y + resist.Y) / MASS + g
+      );
+
+      particles[i].velocity.x += DELTAT * accel.X;
+      particles[i].velocity.y += DELTAT * accel.Y;
+
+      if (Math.abs(particles[i].velocity.x) < STOPVEL &&
+          Math.abs(particles[i].velocity.y) < STOPVEL &&
+          Math.abs(accel.X) < STOPACC &&
+          Math.abs(accel.Y) < STOPACC) {
+        particles[i].velocity.x = 0;
+        particles[i].velocity.y = 0;
+      }
+
+      particles[i].position.x += particles[i].velocity.x;
+      particles[i].position.y += particles[i].velocity.y;
+
+      if (particles[i].position.y >= H - m - 1) {
+        if (particles[i].velocity.y > 0) particles[i].velocity.y *= -b;
+        particles[i].position.y = H - m - 1;
+      }
+      if (particles[i].position.y < m) {
+        if (particles[i].velocity.y < 0) particles[i].velocity.y *= -b;
+        particles[i].position.y = m;
+      }
+      if (particles[i].position.x >= W - m) {
+        if (particles[i].velocity.x > 0) particles[i].velocity.x *= -b;
+        particles[i].position.x = W - m - 1;
+      }
+      if (particles[i].position.x < m) {
+        if (particles[i].velocity.x < 0) particles[i].velocity.x *= -b;
+        particles[i].position.x = m;
+      }
+    }
+
+    if (CONFIG.lines && particles.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = fg();
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      for (let i = 1; i < particles.length; i++) {
+        ctx.moveTo(particles[i - 1].position.x, particles[i - 1].position.y);
+        ctx.lineTo(particles[i].position.x, particles[i].position.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    for (let i = particles.length - 1; i >= 1; i--) particles[i].draw(ctx);
+    particles[0].draw(ctx);
+  }
+
+  function loop() {
+    updateParticles();
+    raf = requestAnimationFrame(loop);
+  }
+
+  // UI
+  function initUI() {
+    const panel = document.getElementById('panel');
+    document.getElementById('toggle').addEventListener('click', function () {
+      panel.classList.toggle('collapsed');
+      this.textContent = panel.classList.contains('collapsed') ? '+' : '−';
+    });
+
+    document.querySelectorAll('#effectGroup button').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        CONFIG.effect = this.dataset.effect;
+        document.querySelectorAll('#effectGroup button').forEach(function (b) {
+          b.classList.toggle('active', b === btn);
+        });
+        for (const p of particles) {
+          p.velocity.x = 0;
+          p.velocity.y = 0;
+        }
+      });
+    });
+
+    const ranges = [
+      ['nDots', function (v) { return v; }],
+      ['springK', function (v) { return v; }],
+      ['segLen', function (v) { return v; }],
+      ['gravity', function (v) { return v; }],
+      ['resistance', function (v) { return v; }],
+      ['bounce', function (v) { return v.toFixed(2); }],
+      ['size', function (v) { return v.toFixed(1) + '×'; }]
+    ];
+    ranges.forEach(function (item) {
+      const id = item[0];
+      const fmt = item[1];
+      const input = document.getElementById(id);
+      const out = document.getElementById('o-' + id);
+      input.value = CONFIG[id];
+      out.textContent = fmt(CONFIG[id]);
+      input.addEventListener('input', function () {
+        const v = parseFloat(this.value);
+        CONFIG[id] = v;
+        out.textContent = fmt(v);
+        if (id === 'nDots') rebuildParticles();
+        if (id === 'size') refreshImages();
+      });
+    });
+
+    document.getElementById('lines').checked = CONFIG.lines;
+    document.getElementById('filled').checked = CONFIG.filled;
+    document.getElementById('invert').checked = CONFIG.invert;
+
+    document.getElementById('lines').addEventListener('change', function () {
+      CONFIG.lines = this.checked;
+    });
+    document.getElementById('filled').addEventListener('change', function () {
+      CONFIG.filled = this.checked;
+      refreshImages();
+    });
+    document.getElementById('invert').addEventListener('change', function () {
+      CONFIG.invert = this.checked;
+      document.body.classList.toggle('invert', CONFIG.invert);
+      refreshImages();
+    });
+
+    document.querySelectorAll('#effectGroup button').forEach(function (b) {
+      b.classList.toggle('active', b.dataset.effect === CONFIG.effect);
+    });
+  }
+
+  function bindEvents() {
+    addEventListener('mousemove', function (e) {
+      cursor.x = e.clientX;
+      cursor.y = e.clientY;
+    });
+    addEventListener('touchmove', function (e) {
+      if (e.touches[0]) {
+        cursor.x = e.touches[0].clientX;
+        cursor.y = e.touches[0].clientY;
+      }
+    }, { passive: true });
+    addEventListener('resize', resize);
+  }
+
+  function init() {
+    canvas = document.createElement('canvas');
+    ctx = canvas.getContext('2d');
+    document.body.appendChild(canvas);
+    resize();
+    rebuildParticles();
+    initUI();
+    bindEvents();
+    loop();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

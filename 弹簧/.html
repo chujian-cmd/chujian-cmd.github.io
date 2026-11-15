@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>纯黑白 · SVG 弹簧光标</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      background: #fff;
+      font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      touch-action: none;
+      overflow: hidden;
+    }
+    .controls {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      background: #fff;
+      border: 1.5px solid #000;
+      padding: 12px 24px;
+      border-radius: 60px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+      z-index: 1000;
+    }
+    .controls button {
+      background: #fff;
+      border: 1.5px solid #000;
+      color: #000;
+      font-weight: 500;
+      font-size: 15px;
+      padding: 8px 18px;
+      border-radius: 40px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: inherit;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .controls button:hover,
+    .controls button.active {
+      background: #000;
+      color: #fff;
+    }
+    .status {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: #fff;
+      border: 1.5px solid #000;
+      padding: 10px 18px;
+      border-radius: 40px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #000;
+      z-index: 100;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+    }
+    .status span { font-weight: 600; margin-left: 4px; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+  <div class="status">效果: <span id="effectName">经典弹簧</span></div>
+
+  <div class="controls">
+    <button id="btnSpring" class="active" data-effect="spring">经典弹簧</button>
+    <button id="btnOrbit" data-effect="orbit">轨道环绕</button>
+    <button id="btnChain" data-effect="chain">链条拖尾</button>
+    <button id="btnPendulum" data-effect="pendulum">钟摆波动</button>
+  </div>
+
+  <script>
+    (function() {
+      // 生成纯黑白 SVG 圆点
+      function createDotSVG(size, filled = false, strokeWidth = 2) {
+        const fill = filled ? '#000' : 'none';
+        const r = size / 2 - (filled ? 0 : strokeWidth / 2);
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+          <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="${fill}" stroke="#000" stroke-width="${filled ? 0 : strokeWidth}" />
+        </svg>`;
+        return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+      }
+
+      const DOT_STYLES = {
+        primary: createDotSVG(18, true),
+        trail1: createDotSVG(14, false, 2),
+        trail2: createDotSVG(12, true),
+        trail3: createDotSVG(16, false, 2),
+        trail4: createDotSVG(10, true),
+        trail5: createDotSVG(14, false, 2),
+        trail6: createDotSVG(12, true),
+      };
+
+      // 物理参数
+      const N_DOTS = 7;
+      const DELTAT = 0.01;
+      const SEGLEN = 12;
+      const SPRINGK = 10;
+      const MASS = 1;
+      const GRAVITY = 30;
+      const RESISTANCE = 10;
+      const STOPVEL = 0.1;
+      const STOPACC = 0.1;
+      const DOTSIZE = 16;
+      const BOUNCE = 0.7;
+
+      let width = window.innerWidth;
+      let height = window.innerHeight;
+      let cursor = { x: width / 2, y: height / 2 };
+      let particles = [];
+      let canvas, context;
+      let animationFrameId = null;
+      let currentEffect = 'spring';
+      let particleImages = [];
+      let time = 0;
+      let isInitialized = false;
+
+      function initCanvas() {
+        const oldCanvas = document.querySelector('canvas.spring-cursor');
+        if (oldCanvas) oldCanvas.remove();
+
+        canvas = document.createElement('canvas');
+        canvas.className = 'spring-cursor';
+        context = canvas.getContext('2d');
+        canvas.style.position = 'fixed';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.pointerEvents = 'none';
+        canvas.width = width;
+        canvas.height = height;
+        document.body.appendChild(canvas);
+
+        particles = [];
+        particleImages = [];
+
+        particleImages[0] = new Image();
+        particleImages[0].src = DOT_STYLES.primary;
+
+        const trailKeys = ['trail1', 'trail2', 'trail3', 'trail4', 'trail5', 'trail6'];
+        for (let i = 1; i < N_DOTS; i++) {
+          const img = new Image();
+          img.src = DOT_STYLES[trailKeys[(i - 1) % trailKeys.length]];
+          particleImages[i] = img;
+        }
+
+        for (let i = 0; i < N_DOTS; i++) {
+          particles[i] = new Particle(particleImages[i]);
+        }
+
+        for (let i = 1; i < N_DOTS; i++) {
+          particles[i].position.x = cursor.x + i * 5;
+          particles[i].position.y = cursor.y + i * 3;
+        }
+      }
+
+      function Particle(image) {
+        this.position = { x: cursor.x, y: cursor.y };
+        this.velocity = { x: 0, y: 0 };
+        this.canv = image;
+
+        this.draw = function(ctx) {
+          if (!this.canv || !this.canv.complete) return;
+          const w = this.canv.width || 16;
+          const h = this.canv.height || 16;
+          ctx.drawImage(this.canv, this.position.x - w/2, this.position.y - h/2, w, h);
+        };
+      }
+
+      function vec(X, Y) {
+        this.X = X;
+        this.Y = Y;
+      }
+
+      function springForce(i, j, spring, segLen, springK) {
+        const dx = particles[i].position.x - particles[j].position.x;
+        const dy = particles[i].position.y - particles[j].position.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len > segLen) {
+          const f = springK * (len - segLen);
+          spring.X += (dx / len) * f;
+          spring.Y += (dy / len) * f;
+        }
+      }
+
+      function bindEvents() {
+        document.body.removeEventListener('mousemove', onMouseMove);
+        document.body.removeEventListener('touchmove', onTouchMove);
+        document.body.removeEventListener('touchstart', onTouchMove);
+        window.removeEventListener('resize', onWindowResize);
+
+        document.body.addEventListener('mousemove', onMouseMove);
+        document.body.addEventListener('touchmove', onTouchMove, { passive: true });
+        document.body.addEventListener('touchstart', onTouchMove, { passive: true });
+        window.addEventListener('resize', onWindowResize);
+      }
+
+      function onMouseMove(e) {
+        cursor.x = e.clientX;
+        cursor.y = e.clientY;
+      }
+
+      function onTouchMove(e) {
+        if (e.touches.length > 0) {
+          cursor.x = e.touches[0].clientX;
+          cursor.y = e.touches[0].clientY;
+        }
+      }
+
+      function onWindowResize() {
+        width = window.innerWidth;
+        height = window.innerHeight;
+        if (canvas) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+      }
+
+      function updateParticles() {
+        if (canvas && context) canvas.width = canvas.width;
+        time += 0.016;
+
+        particles[0].position.x = cursor.x;
+        particles[0].position.y = cursor.y;
+
+        let gravity = GRAVITY;
+        let resistance = RESISTANCE;
+        let springK = SPRINGK;
+        let segLen = SEGLEN;
+
+        // 各效果差异化参数
+        if (currentEffect === 'orbit') {
+          gravity = 5; resistance = 6; springK = 18; segLen = 22;
+        } else if (currentEffect === 'chain') {
+          gravity = 15; resistance = 8; springK = 14; segLen = 16;
+        } else if (currentEffect === 'pendulum') {
+          gravity = 80; resistance = 4; springK = 8; segLen = 10;
+        }
+
+        for (let i = 1; i < N_DOTS; i++) {
+          let spring = new vec(0, 0);
+
+          if (i > 0) springForce(i - 1, i, spring, segLen, springK);
+          if (i < N_DOTS - 1) springForce(i + 1, i, spring, segLen, springK);
+
+          // 轨道环绕：切向力
+          if (currentEffect === 'orbit') {
+            const dx = particles[i].position.x - cursor.x;
+            const dy = particles[i].position.y - cursor.y;
+            const len = Math.sqrt(dx * dx + dy * dy) || 1;
+            spring.X += (-dy / len) * 1.8;
+            spring.Y += (dx / len) * 1.8;
+          }
+
+          // 钟摆波动：周期性水平力
+          if (currentEffect === 'pendulum') {
+            spring.X += Math.sin(time * 3 + i * 0.5) * 12;
+          }
+
+          let resist = new vec(
+            -particles[i].velocity.x * resistance,
+            -particles[i].velocity.y * resistance
+          );
+
+          let accel = new vec(
+            (spring.X + resist.X) / MASS,
+            (spring.Y + resist.Y) / MASS + gravity
+          );
+
+          particles[i].velocity.x += DELTAT * accel.X;
+          particles[i].velocity.y += DELTAT * accel.Y;
+
+          if (
+            Math.abs(particles[i].velocity.x) < STOPVEL &&
+            Math.abs(particles[i].velocity.y) < STOPVEL &&
+            Math.abs(accel.X) < STOPACC &&
+            Math.abs(accel.Y) < STOPACC
+          ) {
+            particles[i].velocity.x = 0;
+            particles[i].velocity.y = 0;
+          }
+
+          particles[i].position.x += particles[i].velocity.x;
+          particles[i].position.y += particles[i].velocity.y;
+
+          // 边界碰撞
+          const cw = canvas.clientWidth;
+          const ch = canvas.clientHeight;
+          const m = DOTSIZE / 2;
+
+          if (particles[i].position.y >= ch - m - 1) {
+            if (particles[i].velocity.y > 0) particles[i].velocity.y *= -BOUNCE;
+            particles[i].position.y = ch - m - 1;
+          }
+          if (particles[i].position.y < m) {
+            if (particles[i].velocity.y < 0) particles[i].velocity.y *= -BOUNCE;
+            particles[i].position.y = m;
+          }
+          if (particles[i].position.x >= cw - m) {
+            if (particles[i].velocity.x > 0) particles[i].velocity.x *= -BOUNCE;
+            particles[i].position.x = cw - m - 1;
+          }
+          if (particles[i].position.x < m) {
+            if (particles[i].velocity.x < 0) particles[i].velocity.x *= -BOUNCE;
+            particles[i].position.x = m;
+          }
+        }
+
+        // 反向绘制，主光标最上层
+        for (let i = N_DOTS - 1; i >= 1; i--) particles[i].draw(context);
+        particles[0].draw(context);
+      }
+
+      function loop() {
+        updateParticles();
+        animationFrameId = requestAnimationFrame(loop);
+      }
+
+      function startEffect(effect) {
+        currentEffect = effect;
+
+        document.querySelectorAll('.controls button').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.effect === effect);
+        });
+
+        const names = { spring: '经典弹簧', orbit: '轨道环绕', chain: '链条拖尾', pendulum: '钟摆波动' };
+        document.getElementById('effectName').textContent = names[effect] || effect;
+
+        if (!isInitialized) {
+          initCanvas();
+          bindEvents();
+          isInitialized = true;
+          if (animationFrameId) cancelAnimationFrame(animationFrameId);
+          loop();
+        } else {
+          // 切换效果时重置粒子位置
+          for (let i = 0; i < N_DOTS; i++) {
+            particles[i].position.x = cursor.x + i * 8 - 20;
+            particles[i].position.y = cursor.y + i * 6 - 15;
+            particles[i].velocity.x = 0;
+            particles[i].velocity.y = 0;
+          }
+        }
+      }
+
+      function bindControls() {
+        document.getElementById('btnSpring').addEventListener('click', () => startEffect('spring'));
+        document.getElementById('btnOrbit').addEventListener('click', () => startEffect('orbit'));
+        document.getElementById('btnChain').addEventListener('click', () => startEffect('chain'));
+        document.getElementById('btnPendulum').addEventListener('click', () => startEffect('pendulum'));
+      }
+
+      window.addEventListener('load', () => {
+        cursor.x = window.innerWidth / 2;
+        cursor.y = window.innerHeight / 2;
+        startEffect('spring');
+        bindControls();
+      });
+
+      window.addEventListener('beforeunload', () => {
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        document.body.removeEventListener('mousemove', onMouseMove);
+        document.body.removeEventListener('touchmove', onTouchMove);
+        document.body.removeEventListener('touchstart', onTouchMove);
+        window.removeEventListener('resize', onWindowResize);
+      });
+
+    })();
+  </script>
+</body>
+</html>
