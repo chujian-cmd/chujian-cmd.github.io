@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 房间测试 4.1</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+  #app { position: relative; width: 100%; height: 100%; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+</div>
+
+<script>
+// ===== 3D 向量工具 =====
+const V = {
+  add: (a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+  sub: (a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],
+  scale: (a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+  dot: (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],
+  cross: (a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+  norm: (a)=>{ const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l]; }
+};
+
+// ===== 摄像机 =====
+const camera = {
+  pos: [0, 1.6, 4.5],
+  yaw: 0,
+  pitch: -0.08,
+  fov: Math.PI / 3
+};
+
+// ===== 房间尺寸 =====
+const ROOM = { width: 8, height: 3.2, depth: 10 };
+const hx = ROOM.width/2, hz = ROOM.depth/2, top = ROOM.height;
+
+// ===== 物体：桌子 + 4 把椅子 =====
+const objects = [];
+// 桌子
+objects.push({ name: '桌', min: [-0.9, 0, -0.55], max: [0.9, 0.78, 0.55] });
+
+// 椅子生成
+function addChair(cx, cz, facing) {
+  const sh = 0.24;   // 座位半宽
+  const seatH = 0.45;
+  const backT = 0.08;
+  const backH = 0.95;
+
+  // 座位
+  objects.push({
+    name: '椅',
+    min: [cx - sh, 0, cz - sh],
+    max: [cx + sh, seatH, cz + sh]
+  });
+  // 靠背
+  if (facing === 'N') {
+    objects.push({ name: '椅', min: [cx - sh, seatH, cz - sh - backT], max: [cx + sh, backH, cz - sh] });
+  } else if (facing === 'S') {
+    objects.push({ name: '椅', min: [cx - sh, seatH, cz + sh], max: [cx + sh, backH, cz + sh + backT] });
+  } else if (facing === 'W') {
+    objects.push({ name: '椅', min: [cx - sh - backT, seatH, cz - sh], max: [cx - sh, backH, cz + sh] });
+  } else if (facing === 'E') {
+    objects.push({ name: '椅', min: [cx + sh, seatH, cz - sh], max: [cx + sh + backT, backH, cz + sh] });
+  }
+}
+
+addChair(0, -1.15, 'N');
+addChair(0,  1.15, 'S');
+addChair(-1.35, 0, 'W');
+addChair( 1.35, 0, 'E');
+
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+
+// ===== 视图基向量 =====
+function getViewBasis() {
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const forward = V.norm([sy*cp, sp, -cy*cp]);
+  const worldUp = [0,1,0];
+  let right = V.cross(forward, worldUp);
+  if (Math.hypot(right[0], right[1], right[2]) < 1e-6) right = [1,0,0];
+  right = V.norm(right);
+  const up = V.norm(V.cross(right, forward));
+  return { forward, right, up };
+}
+
+// ===== 房间求交 =====
+function raycastRoom(origin, dir) {
+  let bestT = Infinity, bestName = null, bestNormal = null;
+  function test(t, name, normal, ok) {
+    if (t > 1e-4 && t < bestT && ok) { bestT = t; bestName = name; bestNormal = normal; }
+  }
+  if (dir[2] !== 0) {
+    let t = (-hz - origin[2]) / dir[2];
+    let x = origin[0] + dir[0]*t, y = origin[1] + dir[1]*t;
+    test(t, '墙', [0,0,1], x>=-hx && x<=hx && y>=0 && y<=top);
+    t = (hz - origin[2]) / dir[2];
+    x = origin[0] + dir[0]*t; y = origin[1] + dir[1]*t;
+    test(t, '墙', [0,0,-1], x>=-hx && x<=hx && y>=0 && y<=top);
+  }
+  if (dir[0] !== 0) {
+    let t = (-hx - origin[0]) / dir[0];
+    let y = origin[1] + dir[1]*t, z = origin[2] + dir[2]*t;
+    test(t, '墙', [1,0,0], z>=-hz && z<=hz && y>=0 && y<=top);
+    t = (hx - origin[0]) / dir[0];
+    y = origin[1] + dir[1]*t; z = origin[2] + dir[2]*t;
+    test(t, '墙', [-1,0,0], z>=-hz && z<=hz && y>=0 && y<=top);
+  }
+  if (dir[1] !== 0) {
+    const t = (0 - origin[1]) / dir[1];
+    const x = origin[0] + dir[0]*t;
+    const z = origin[2] + dir[2]*t;
+    test(t, '地', [0,1,0], x>=-hx && x<=hx && z>=-hz && z<=hz);
+  }
+  return bestName ? { name: bestName, normal: bestNormal, t: bestT } : null;
+}
+
+// ===== AABB 求交（修复了数组赋值） =====
+function rayAABB(o, d, min, max) {
+  let tmin = -Infinity, tmax = Infinity;
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(d[i]) < 1e-9) {
+      if (o[i] < min[i] || o[i] > max[i]) return null;
+    } else {
+      let t1 = (min[i] - o[i]) / d[i];
+      let t2 = (max[i] - o[i]) / d[i];
+      let n1 = -1;
+      if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; n1 = 1; }
+      if (t1 > tmin) {
+        tmin = t1;
+        nx = 0; ny = 0; nz = 0;
+        if (i === 0) nx = n1;
+        if (i === 1) ny = n1;
+        if (i === 2) nz = n1;
+      }
+      if (t2 < tmax) tmax = t2;
+      if (tmin > tmax) return null;
+    }
+  }
+  if (tmax < 0) return null;
+  const t = tmin > 1e-4 ? tmin : tmax;
+  if (t <= 1e-4) return null;
+  return { t: t, normal: [nx, ny, nz] };
+}
+
+// ===== 综合求交 =====
+function raycast(origin, dir) {
+  const room = raycastRoom(origin, dir);
+  let bestT = room ? room.t : Infinity;
+  let bestName = room ? room.name : null;
+  let bestNormal = room ? room.normal : null;
+  for (const obj of objects) {
+    const hit = rayAABB(origin, dir, obj.min, obj.max);
+    if (hit && hit.t < bestT) {
+      bestT = hit.t;
+      bestName = obj.name;
+      bestNormal = hit.normal;
+    }
+  }
+  return bestName ? { name: bestName, normal: bestNormal, t: bestT } : null;
+}
+
+// ===== 摇杆状态 =====
+const joystick = {
+  active: false,
+  originX: 0, originY: 0,
+  knobX: 0, knobY: 0,
+  nx: 0, ny: 0,
+  maxR: 50,
+  outerR: 72,
+  knobR: 22
+};
+
+// ===== 尺寸 =====
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+let cssW = 0, cssH = 0;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cssW = window.innerWidth;
+  cssH = window.innerHeight;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+resize();
+
+const CELL_SIZE = 22;
+const FONT_RATIO = 0.9;
+const PLACEHOLDER = '·';
+
+function grayStr(g) {
+  const v = Math.max(0, Math.min(255, Math.round(g)));
+  return `rgb(${v},${v},${v})`;
+}
+
+// ===== 像素绘制 =====
+function drawPixelRing(cx, cy, radius, pxSize, thicknessGrid, color) {
+  ctx.fillStyle = color;
+  const rOut = radius / pxSize;
+  const rIn = rOut - thicknessGrid;
+  const n = Math.ceil(rOut);
+  const ox = Math.round(cx / pxSize) * pxSize;
+  const oy = Math.round(cy / pxSize) * pxSize;
+  for (let gy = -n; gy <= n; gy++) {
+    for (let gx = -n; gx <= n; gx++) {
+      const d = Math.hypot(gx, gy);
+      if (d <= rOut && d > rIn) {
+        ctx.fillRect(ox + gx * pxSize - pxSize/2, oy + gy * pxSize - pxSize/2, pxSize, pxSize);
+      }
+    }
+  }
+}
+
+function drawPixelDisc(cx, cy, radius, pxSize, color) {
+  ctx.fillStyle = color;
+  const r = radius / pxSize;
+  const n = Math.ceil(r);
+  const ox = Math.round(cx / pxSize) * pxSize;
+  const oy = Math.round(cy / pxSize) * pxSize;
+  for (let gy = -n; gy <= n; gy++) {
+    for (let gx = -n; gx <= n; gx++) {
+      if (Math.hypot(gx, gy) <= r) {
+        ctx.fillRect(ox + gx * pxSize - pxSize/2, oy + gy * pxSize - pxSize/2, pxSize, pxSize);
+      }
+    }
+  }
+}
+
+// ===== 主渲染 =====
+function render() {
+  const basis = getViewBasis();
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, cssW, cssH);
+
+  const f = (cssH / 2) / Math.tan(camera.fov / 2);
+
+  const cols = Math.ceil(cssW / CELL_SIZE);
+  const rows = Math.ceil(cssH / CELL_SIZE);
+  const offsetX = (cssW - cols * CELL_SIZE) / 2 + CELL_SIZE / 2;
+  const offsetY = (cssH - rows * CELL_SIZE) / 2 + CELL_SIZE / 2;
+
+  const fontSize = CELL_SIZE * FONT_RATIO;
+  ctx.font = `700 ${fontSize}px "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sx = offsetX + c * CELL_SIZE;
+      const sy = offsetY + r * CELL_SIZE;
+
+      const camX = (sx - cssW/2) / f;
+      const camY = -(sy - cssH/2) / f;
+      const camZ = 1;
+
+      const dir = V.norm([
+        basis.right[0]*camX + basis.up[0]*camY + basis.forward[0]*camZ,
+        basis.right[1]*camX + basis.up[1]*camY + basis.forward[1]*camZ,
+        basis.right[2]*camX + basis.up[2]*camY + basis.forward[2]*camZ
+      ]);
+
+      const hit = raycast(camera.pos, dir);
+
+      if (!hit) {
+        ctx.fillStyle = grayStr(60);
+        ctx.fillText(PLACEHOLDER, sx, sy);
+        continue;
+      }
+
+      const facing = Math.max(0, -V.dot(hit.normal, dir));
+      const fog = 1 / (1 + hit.t * 0.06);
+      const lum = Math.pow(facing, 0.7) * fog;
+      const textGray = 40 + lum * 215;
+      ctx.fillStyle = grayStr(textGray);
+      ctx.fillText(hit.name, sx, sy);
+    }
+  }
+
+  // 摇杆
+  if (joystick.active) {
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    const px = 8;
+    drawPixelRing(joystick.originX, joystick.originY, joystick.outerR, px, 1.5, '#ffffff');
+    drawPixelDisc(joystick.knobX, joystick.knobY, joystick.knobR, px, '#000000');
+    drawPixelRing(joystick.knobX, joystick.knobY, joystick.knobR, px, 1, '#ffffff');
+    ctx.restore();
+  }
+}
+
+function frame() {
+  render();
+  requestAnimationFrame(frame);
+}
+frame();
+
+// ===== 键盘 =====
+let keys = {};
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// ===== 鼠标拖动旋转 =====
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camera.yaw += dx * 0.005;
+  camera.pitch -= dy * 0.005;
+  camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+});
+
+// ===== 触摸：单指摇杆，双指旋转 =====
+let joyTouchId = null;
+let rotateActive = false;
+let rotateLastMX = 0, rotateLastMY = 0;
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    joyTouchId = t.identifier;
+    joystick.active = true;
+    joystick.originX = t.clientX;
+    joystick.originY = t.clientY;
+    joystick.knobX = t.clientX;
+    joystick.knobY = t.clientY;
+    joystick.nx = 0; joystick.ny = 0;
+  } else if (e.touches.length === 2) {
+    joystick.active = false;
+    joystick.nx = 0; joystick.ny = 0;
+    joyTouchId = null;
+    rotateActive = true;
+    let mx = 0, my = 0;
+    for (const t of e.touches) { mx += t.clientX; my += t.clientY; }
+    mx /= e.touches.length; my /= e.touches.length;
+    rotateLastMX = mx; rotateLastMY = my;
+  }
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (rotateActive && e.touches.length >= 2) {
+    let mx = 0, my = 0;
+    for (const t of e.touches) { mx += t.clientX; my += t.clientY; }
+    mx /= e.touches.length; my /= e.touches.length;
+    const dx = mx - rotateLastMX, dy = my - rotateLastMY;
+    rotateLastMX = mx; rotateLastMY = my;
+    camera.yaw += dx * 0.005;
+    camera.pitch -= dy * 0.005;
+    camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+  } else if (joystick.active && joyTouchId !== null) {
+    let t = null;
+    for (const touch of e.touches) if (touch.identifier === joyTouchId) { t = touch; break; }
+    if (t) {
+      const dx = t.clientX - joystick.originX;
+      const dy = t.clientY - joystick.originY;
+      const len = Math.hypot(dx, dy);
+      const maxR = joystick.maxR;
+      if (len > 1e-3) {
+        const cl = Math.min(len, maxR);
+        joystick.nx = (dx / len) * (cl / maxR);
+        joystick.ny = (dy / len) * (cl / maxR);
+        joystick.knobX = joystick.originX + (dx / len) * cl;
+        joystick.knobY = joystick.originY + (dy / len) * cl;
+      } else {
+        joystick.nx = 0; joystick.ny = 0;
+        joystick.knobX = joystick.originX;
+        joystick.knobY = joystick.originY;
+      }
+    }
+  }
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  if (joyTouchId !== null) {
+    let still = false;
+    for (const t of e.touches) if (t.identifier === joyTouchId) { still = true; break; }
+    if (!still) {
+      joyTouchId = null;
+      joystick.active = false;
+      joystick.nx = 0; joystick.ny = 0;
+    }
+  }
+  if (rotateActive && e.touches.length < 2) rotateActive = false;
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => {
+  joystick.active = false;
+  joyTouchId = null;
+  rotateActive = false;
+  joystick.nx = 0; joystick.ny = 0;
+}, { passive: false });
+
+// ===== 移动更新 =====
+let last = performance.now();
+function update(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  const speed = 2.5;
+  const basis = getViewBasis();
+  const flatForward = V.norm([basis.forward[0], 0, basis.forward[2]]);
+  const flatRight = V.norm([basis.right[0], 0, basis.right[2]]);
+
+  // WASD
+  if (keys['w']) camera.pos = V.add(camera.pos, V.scale(flatForward, speed * dt));
+  if (keys['s']) camera.pos = V.add(camera.pos, V.scale(flatForward, -speed * dt));
+  if (keys['a']) camera.pos = V.add(camera.pos, V.scale(flatRight, -speed * dt));
+  if (keys['d']) camera.pos = V.add(camera.pos, V.scale(flatRight, speed * dt));
+
+  // 摇杆
+  if (joystick.active && (Math.abs(joystick.nx) > 1e-3 || Math.abs(joystick.ny) > 1e-3)) {
+    const fwd = -joystick.ny;
+    const rgt = joystick.nx;
+    camera.pos = V.add(camera.pos, V.scale(flatForward, fwd * speed * dt));
+    camera.pos = V.add(camera.pos, V.scale(flatRight, rgt * speed * dt));
+  }
+
+  camera.pos[0] = Math.max(-hx + 0.3, Math.min(hx - 0.3, camera.pos[0]));
+  camera.pos[2] = Math.max(-hz + 0.3, Math.min(hz - 0.3, camera.pos[2]));
+
+  requestAnimationFrame(update);
+}
+requestAnimationFrame(update);
+</script>
+</body>
+</html>

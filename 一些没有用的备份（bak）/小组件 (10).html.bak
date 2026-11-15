@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>动态日历 - 多组件管理系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft Yahei", Tahoma, Simsun, sans-serif;
+            /* 防止长按选中 */
+            -webkit-user-select: none;
+            user-select: none; 
+            -webkit-touch-callout: none;
+            overflow-x: hidden;
+        }
+
+        /* --- 工作区容器（核心：自动布局，不重叠） --- */
+        .workspace {
+            display: flex;
+            flex-wrap: wrap; /* 允许换行 */
+            justify-content: center; /* 水平居中 */
+            align-content: center; /* 垂直居中 */
+            gap: clamp(20px, 4vw, 40px); /* 卡片之间的间距 */
+            min-height: 100vh;
+            width: 100%;
+            padding: 40px 20px;
+            box-sizing: border-box;
+        }
+
+        /* --- 核心卡片样式 --- */
+        .calendar-card {
+            position: relative; 
+            width: 100%;
+            max-width: 600px; /* 稍微调小一点，方便并排显示 */
+            border-radius: 24px;
+            padding: clamp(24px, 5vw, 40px) clamp(20px, 6vw, 50px);
+            overflow: hidden;
+            
+            /* 背景光效 */
+            background: 
+                linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+                radial-gradient(circle at 0% 100%, rgba(0, 80, 50, 0.9) 0%, rgba(0, 40, 25, 0.4) 40%, transparent 70%),
+                radial-gradient(circle at 100% 80%, rgba(60, 20, 100, 0.6) 0%, transparent 60%),
+                #040408;
+
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            
+            /* 动画与 GPU 加速 */
+            transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), 
+                        opacity 0.3s ease;
+            transform-origin: center center;
+            will-change: transform, opacity;
+            transform: translate3d(0, 0, 0);
+
+            /* 初始弹出的动画 */
+            animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+        }
+
+        @keyframes popIn {
+            0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        /* 🌟 编辑/缩小状态 */
+        .calendar-card.is-minimized {
+            transform: scale(0.9) translate3d(0, 0, 0); /* 不缩太小，方便预览多个 */
+            opacity: 0.9;
+        }
+
+        /* 🌟 点击减号，彻底消失的状态 */
+        .calendar-card.is-hidden {
+            transform: scale(0.5) translate3d(0, 50px, 0);
+            opacity: 0;
+            pointer-events: none; 
+            transition: transform 0.4s ease-in, opacity 0.3s ease-in;
+        }
+
+        /* --- 卡片右上角的删除按钮 --- */
+        .close-btn {
+            position: absolute; 
+            top: 20px;
+            right: 20px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            opacity: 0;
+            visibility: hidden;
+            transform: scale(0.5);
+            transition: transform 0.3s ease, opacity 0.3s ease;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        .calendar-card.is-minimized .close-btn {
+            opacity: 1;
+            visibility: visible;
+            transform: scale(1);
+            pointer-events: auto;
+        }
+
+        .close-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .close-btn::before {
+            content: '';
+            width: 12px;
+            height: 2px;
+            background-color: #ffffff;
+            border-radius: 1px;
+        }
+
+        /* --- 全局浮动添加按钮 --- */
+        .global-add-btn {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%);
+            box-shadow: 0 10px 30px rgba(0, 255, 136, 0.4);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            /* 默认隐藏 */
+            opacity: 0;
+            visibility: hidden;
+            transform: scale(0.5) translateY(20px);
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 100;
+        }
+
+        /* 编辑模式下显示加号 */
+        .global-add-btn.show {
+            opacity: 1;
+            visibility: visible;
+            transform: scale(1) translateY(0);
+        }
+
+        .global-add-btn:hover {
+            transform: scale(1.1);
+        }
+        
+        .global-add-btn:active {
+            transform: scale(0.9);
+        }
+
+        /* 加号图标 */
+        .global-add-btn::before,
+        .global-add-btn::after {
+            content: '';
+            position: absolute;
+            background-color: #000;
+            border-radius: 2px;
+        }
+        .global-add-btn::before { width: 20px; height: 3px; }
+        .global-add-btn::after { width: 3px; height: 20px; }
+
+        /* --- 内部的日历布局样式 --- */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: clamp(20px, 4vw, 40px);
+        }
+
+        .title {
+            color: #ffffff;
+            font-size: clamp(40px, 8vw, 64px);
+            font-weight: 400;
+            line-height: 1;
+            letter-spacing: 2px;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.45);
+            font-size: clamp(12px, 2.5vw, 14px);
+            font-weight: 300;
+            letter-spacing: 2px;
+            margin-bottom: 8px;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            row-gap: clamp(15px, 3vw, 25px);
+            text-align: center;
+        }
+
+        .weekday {
+            color: rgba(255, 255, 255, 0.35);
+            font-size: clamp(14px, 3vw, 16px);
+            font-weight: 300;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .day {
+            color: #ffffff;
+            font-size: clamp(16px, 3.5vw, 22px);
+            font-weight: 300;
+            width: 100%;
+            max-width: 48px;
+            aspect-ratio: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .day.active {
+            border: 1px solid rgba(160, 130, 255, 0.5);
+            border-radius: 50%;
+            background: rgba(120, 90, 255, 0.08);
+            box-shadow: 0 0 15px rgba(120, 90, 255, 0.15);
+            font-weight: 400;
+        }
+
+        .calendar-card::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, #00ff88 0%, #00ccff 30%, #6b21a8 100%);
+            box-shadow: 0 -2px 10px rgba(0, 255, 136, 0.5), 0 -2px 10px rgba(107, 33, 168, 0.5);
+            border-bottom-left-radius: 24px;
+            border-bottom-right-radius: 24px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- 工作区容器 -->
+    <div class="workspace" id="workspace">
+        <!-- 初始卡片由 JS 生成 -->
+    </div>
+
+    <!-- 全局加号按钮 -->
+    <div class="global-add-btn" id="addBtn"></div>
+
+    <script>
+        // --- 1. 获取当前日期数据 ---
+        function getCalendarData() {
+            const today = new Date();
+            const weekdaysChinese = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+            const weekdayTitle = weekdaysChinese[today.getDay()];
+            
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+
+            const days = [];
+            for (let i = 0; i < 7; i++) {
+                const currentDate = new Date(startOfWeek);
+                currentDate.setDate(startOfWeek.getDate() + i);
+                days.push({
+                    num: currentDate.getDate(),
+                    isToday: currentDate.getDate() === today.getDate() && 
+                             currentDate.getMonth() === today.getMonth() && 
+                             currentDate.getFullYear() === today.getFullYear()
+                });
+            }
+            return { weekdayTitle, days };
+        }
+
+        // --- 2. 创建卡片 DOM 的工厂函数 ---
+        function createCard() {
+            const { weekdayTitle, days } = getCalendarData();
+            const card = document.createElement('div');
+            card.className = 'calendar-card';
+
+            // HTML 骨架
+            card.innerHTML = `
+                <div class="close-btn"></div>
+                <div class="header">
+                    <div class="title">${weekdayTitle}</div>
+                    <div class="subtitle">CALENDAR</div>
+                </div>
+                <div class="calendar-grid">
+                    <div class="weekday">日</div><div class="weekday">一</div>
+                    <div class="weekday">二</div><div class="weekday">三</div>
+                    <div class="weekday">四</div><div class="weekday">五</div>
+                    <div class="weekday">六</div>
+                </div>
+            `;
+
+            const grid = card.querySelector('.calendar-grid');
+            days.forEach(day => {
+                const dayDiv = document.createElement('div');
+                dayDiv.className = `day ${day.isToday ? 'active' : ''}`;
+                dayDiv.textContent = day.num;
+                grid.appendChild(dayDiv);
+            });
+
+            // 绑定该卡片自己的删除逻辑
+            const closeBtn = card.querySelector('.close-btn');
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation(); // 阻止冒泡
+                card.classList.add('is-hidden');
+                // 动画结束后从 DOM 中移除
+                setTimeout(() => {
+                    card.remove();
+                    // 如果全删光了，自动补一个保底
+                    if (document.querySelectorAll('.calendar-card').length === 0) {
+                        addNewCard();
+                    }
+                }, 400); // 对应 CSS 中 is-hidden 的过渡时间
+            });
+
+            return card;
+        }
+
+        // --- 3. 状态与交互管理 ---
+        const workspace = document.getElementById('workspace');
+        const addBtn = document.getElementById('addBtn');
+
+        let isEditingMode = false;
+        let pressTimer = null;
+        let isLongPressTriggered = false;
+
+        // 添加新卡片
+        function addNewCard() {
+            const newCard = createCard();
+            workspace.appendChild(newCard);
+            // 如果是编辑模式下添加的，新卡片也要保持缩小状态
+            if (isEditingMode) {
+                newCard.classList.add('is-minimized');
+            }
+        }
+
+        // 页面初始化：加入第一个卡片
+        addNewCard();
+
+        // 进入编辑模式
+        function enterEditMode() {
+            isEditingMode = true;
+            addBtn.classList.add('show');
+            document.querySelectorAll('.calendar-card').forEach(card => {
+                card.classList.add('is-minimized');
+            });
+            if (navigator.vibrate) navigator.vibrate(10);
+        }
+
+        // 退出编辑模式
+        function exitEditMode() {
+            isEditingMode = false;
+            addBtn.classList.remove('show');
+            document.querySelectorAll('.calendar-card').forEach(card => {
+                card.classList.remove('is-minimized');
+            });
+        }
+
+        // 全局长按监听
+        const startPress = (e) => {
+            if (isEditingMode) return; // 已经在编辑模式就不响应长按
+            if (e.target === addBtn || e.target.closest('.close-btn')) return; // 点按钮不触发
+
+            isLongPressTriggered = false;
+            pressTimer = setTimeout(() => {
+                isLongPressTriggered = true;
+                enterEditMode();
+            }, 500);
+        };
+
+        const cancelPress = () => {
+            if (pressTimer) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+            }
+        };
+
+        document.addEventListener('mousedown', startPress);
+        document.addEventListener('touchstart', startPress, { passive: true });
+        document.addEventListener('mouseup', cancelPress);
+        document.addEventListener('touchend', cancelPress);
+        document.addEventListener('touchcancel', cancelPress);
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // 点击加号按钮
+        addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addNewCard();
+        });
+
+        // 点击空白处恢复
+        document.addEventListener('click', (e) => {
+            if (isLongPressTriggered) {
+                isLongPressTriggered = false;
+                return;
+            }
+            // 如果处于编辑模式，且点击的不是卡片和加号
+            if (isEditingMode && !e.target.closest('.calendar-card') && e.target !== addBtn) {
+                exitEditMode();
+            }
+        });
+
+        // 移动端触摸空白恢复
+        document.addEventListener('touchstart', (e) => {
+            if (isLongPressTriggered) {
+                isLongPressTriggered = false;
+                return;
+            }
+            if (isEditingMode && !e.target.closest('.calendar-card') && e.target !== addBtn) {
+                exitEditMode();
+            }
+        }, { passive: true });
+
+    </script>
+</body>
+</html>

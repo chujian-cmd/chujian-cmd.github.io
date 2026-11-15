@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>纯净柔光晕壁纸</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #08020a; /* 极暗紫黑底 */
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        let width, height;
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 核心：预渲染一个绝对干净、边缘极其柔和的圆形光斑
+        const spriteCanvas = document.createElement('canvas');
+        const size = 256;
+        spriteCanvas.width = size;
+        spriteCanvas.height = size;
+        const sCtx = spriteCanvas.getContext('2d');
+        
+        // 径向渐变：中心稍微亮一点点，向外极其平滑地过渡到透明
+        const gradient = sCtx.createRadialGradient(
+            size/2, size/2, 0,
+            size/2, size/2, size/2
+        );
+        // 非常克制的品红色
+        gradient.addColorStop(0, 'rgba(200, 20, 100, 0.8)');   // 核心
+        gradient.addColorStop(0.3, 'rgba(150, 5, 70, 0.4)');   // 中层
+        gradient.addColorStop(0.7, 'rgba(80, 0, 40, 0.05)');   // 外边缘
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');          // 完全透明
+        
+        sCtx.fillStyle = gradient;
+        sCtx.fillRect(0, 0, size, size);
+
+        // 存储我们的“光晕团”对象
+        let blobs = [];
+        const MAX_BLOBS = 60;
+
+        let mouse = { x: 0, y: 0, px: 0, py: 0, isDown: false };
+
+        // 生成一个光晕
+        function createBlob(x, y, vx, vy) {
+            if (blobs.length >= MAX_BLOBS) return;
+            blobs.push({
+                x: x,
+                y: y,
+                vx: vx,
+                vy: vy,
+                life: 1.0, 
+                decay: 0.01 + Math.random() * 0.01, // 慢慢消散
+                size: 150 + Math.random() * 100     // 基础大小
+            });
+        }
+
+        // 处理输入（在两点之间插值，保证快速滑动时也能连成柔和的丝带）
+        function handleMove(x, y) {
+            if (!mouse.isDown) return;
+
+            const dx = x - mouse.px;
+            const dy = y - mouse.py;
+            const dist = Math.hypot(dx, dy);
+
+            // 根据滑动距离决定插入多少个圆
+            if (dist > 5) {
+                const steps = Math.min(Math.floor(dist / 15), 5); // 最多一次插5个，防卡顿
+                for (let i = 0; i < steps; i++) {
+                    const t = i / steps;
+                    // 计算推力速度，让它们有向外扩散的惯性
+                    createBlob(
+                        mouse.px + dx * t, 
+                        mouse.py + dy * t,
+                        dx * 0.05,  // 轻微的惯性推力
+                        dy * 0.05
+                    );
+                }
+            } else {
+                // 如果按着不动，偶尔生成一个大光晕（对应图4）
+                if (Math.random() < 0.1) createBlob(x, y, 0, 0);
+            }
+            
+            mouse.px = x;
+            mouse.py = y;
+        }
+
+        // 事件绑定
+        canvas.addEventListener('mousedown', (e) => { mouse.isDown = true; mouse.px = e.clientX; mouse.py = e.clientY; createBlob(e.clientX, e.clientY, 0, 0); });
+        canvas.addEventListener('mousemove', (e) => { handleMove(e.clientX, e.clientY); });
+        canvas.addEventListener('mouseup', () => { mouse.isDown = false; });
+        canvas.addEventListener('mouseleave', () => { mouse.isDown = false; });
+
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); mouse.isDown = true; mouse.px = e.touches[0].clientX; mouse.py = e.touches[0].clientY; createBlob(mouse.px, mouse.py, 0, 0); }, {passive: false});
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e.touches[0].clientX, e.touches[0].clientY); }, {passive: false});
+        canvas.addEventListener('touchend', () => { mouse.isDown = false; });
+
+        // --- 动画渲染 ---
+        function animate() {
+            // 1. 绘制极其深邃的底色，带一点点残影（0.2的透明度）
+            // 这样光晕散去时不会有生硬的截断，而是慢慢融入背景
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = 'rgba(8, 2, 10, 0.2)'; 
+            ctx.fillRect(0, 0, width, height);
+
+            // 2. 切换为“滤色/叠加”模式
+            // 这是灵魂！当两个圆重叠时，重叠部分的颜色会叠加变亮，完美模拟图1图2那种“推挤”和“融合”的体积感
+            ctx.globalCompositeOperation = 'lighter'; 
+
+            for (let i = blobs.length - 1; i >= 0; i--) {
+                let b = blobs[i];
+                
+                // 物理运动
+                b.x += b.vx;
+                b.y += b.vy;
+                // 速度慢慢降下来
+                b.vx *= 0.9;
+                b.vy *= 0.9;
+                
+                // 随着时间，光晕慢慢变大（像烟一样散开）
+                b.size += 0.5;
+                // 生命流逝
+                b.life -= b.decay;
+
+                if (b.life <= 0) {
+                    blobs.splice(i, 1);
+                    continue;
+                }
+
+                // 设置透明度（乘以0.7，让它暗下来，绝不刺眼）
+                ctx.globalAlpha = b.life * 0.7; 
+
+                // 画圆
+                ctx.drawImage(
+                    spriteCanvas,
+                    b.x - b.size / 2,
+                    b.y - b.size / 2,
+                    b.size,
+                    b.size
+                );
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

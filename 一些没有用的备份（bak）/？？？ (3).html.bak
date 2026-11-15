@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Dance of Two</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #0a0a12; }
+  canvas { display: block; }
+  #veil {
+    position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.6) 100%);
+  }
+</style>
+</head>
+<body>
+<div id="veil"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0a12, 0.05);
+
+// 移动端优化：降低渲染分辨率
+const pr = Math.min(window.devicePixelRatio, 1.5);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 1.2, 9);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(pr);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.appendChild(renderer.domElement);
+
+// ---------- lights ----------
+scene.add(new THREE.AmbientLight(0x221122, 2));
+const key = new THREE.PointLight(0xff5a7a, 40, 30, 2);
+key.position.set(3, 4, 4);
+scene.add(key);
+const rim = new THREE.PointLight(0x4a7aff, 35, 30, 2);
+rim.position.set(-4, 2, -3);
+scene.add(rim);
+const warm = new THREE.PointLight(0xffaa66, 20, 20, 2);
+warm.position.set(0, -2, 3);
+scene.add(warm);
+
+// ---------- 粒子尘埃 (呼吸感) ----------
+const pGeo = new THREE.BufferGeometry();
+const N = 1500; // 数量减半
+const pos = new Float32Array(N * 3);
+const seed = new Float32Array(N);
+for (let i = 0; i < N; i++) {
+  const r = 3 + Math.random() * 12;
+  const th = Math.random() * Math.PI * 2;
+  const ph = (Math.random() - 0.5) * Math.PI;
+  pos[i*3]   = Math.cos(th) * Math.cos(ph) * r;
+  pos[i*3+1] = Math.sin(ph) * r * 0.55;
+  pos[i*3+2] = Math.sin(th) * Math.cos(ph) * r;
+  seed[i] = Math.random() * 100;
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+pGeo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+
+const pMat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0xff9bb0) } },
+  vertexShader: `
+    uniform float uTime; attribute float aSeed;
+    varying float vA;
+    void main(){
+      vec3 p = position;
+      p.y += sin(uTime * 0.35 + aSeed) * 0.7;
+      p.x += cos(uTime * 0.22 + aSeed * 1.7) * 0.5;
+      p.z += sin(uTime * 0.18 + aSeed * 0.9) * 0.5;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_PointSize = (6.0 + sin(aSeed + uTime) * 2.0) * (200.0 / -mv.z);
+      vA = 0.25 + 0.55 * (0.5 + 0.5 * sin(aSeed * 3.1 + uTime * 1.4));
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform vec3 uColor; varying float vA;
+    void main(){
+      vec2 c = gl_PointCoord - 0.5;
+      float a = smoothstep(0.5, 0.0, length(c));
+      gl_FragColor = vec4(uColor, a * vA);
+    }`
+});
+const particles = new THREE.Points(pGeo, pMat);
+scene.add(particles);
+
+// ---------- 两个形体：吸引与交融 ----------
+function makeForm(color, emissive) {
+  const g = new THREE.Group();
+
+  // 核心球体（使用 StandardMaterial 替代高耗能的 Physical）
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.85, 3),
+    new THREE.MeshStandardMaterial({
+      color: color,
+      emissive: emissive,
+      emissiveIntensity: 1.2,
+      roughness: 0.3,
+      metalness: 0.1,
+    })
+  );
+  g.add(core);
+
+  // 环绕的光带
+  const ribbonGroup = new THREE.Group();
+  const RN = 5;
+  for (let i = 0; i < RN; i++) {
+    const curve = new THREE.CatmullRomCurve3(
+      Array.from({ length: 20 }, (_, k) => {
+        const t = k / 19;
+        const a = t * Math.PI * 2;
+        const rad = 1.1 + Math.sin(a * 3 + i) * 0.35;
+        return new THREE.Vector3(
+          Math.cos(a) * rad,
+          Math.sin(a * 2 + i * 0.8) * 0.55,
+          Math.sin(a) * rad
+        );
+      })
+    );
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(curve, 40, 0.02, 4, true),
+      new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.5 })
+    );
+    tube.rotation.set(i * 0.9, i * 1.4, i * 0.6);
+    ribbonGroup.add(tube);
+  }
+  g.add(ribbonGroup);
+  g.userData.ribbon = ribbonGroup;
+
+  return g;
+}
+
+const a = makeForm(0xff3d6e, 0xff2a55);
+const b = makeForm(0x3d7aff, 0x2a55ff);
+scene.add(a, b);
+
+// 交融的能量场
+const bridgeGeo = new THREE.SphereGeometry(1, 24, 24);
+const bridgeMat = new THREE.MeshBasicMaterial({
+  color: 0xff88cc, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false
+});
+const bridge = new THREE.Mesh(bridgeGeo, bridgeMat);
+scene.add(bridge);
+
+// 汇聚的火花
+const sparkGeo = new THREE.BufferGeometry();
+const SN = 250;
+const sp = new Float32Array(SN * 3);
+const spSeed = new Float32Array(SN);
+for (let i = 0; i < SN; i++) {
+  sp[i*3] = (Math.random() - 0.5) * 0.4;
+  sp[i*3+1] = (Math.random() - 0.5) * 0.4;
+  sp[i*3+2] = (Math.random() - 0.5) * 0.4;
+  spSeed[i] = Math.random() * 100;
+}
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+sparkGeo.setAttribute('aSeed', new THREE.BufferAttribute(spSeed, 1));
+const sparkMat = new THREE.ShaderMaterial({
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  uniforms: { uTime: { value: 0 }, uIntensity: { value: 0 } },
+  vertexShader: `
+    uniform float uTime; attribute float aSeed; varying float vA;
+    void main(){
+      vec3 p = position;
+      float t = uTime + aSeed;
+      p += vec3(sin(t*2.3), cos(t*1.7), sin(t*3.1)) * 0.25;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_PointSize = (4.0 + sin(aSeed)*2.0) * (200.0 / -mv.z);
+      vA = 0.6 + 0.4 * sin(t*4.0);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform float uIntensity; varying float vA;
+    void main(){
+      vec2 c = gl_PointCoord - 0.5;
+      float a = smoothstep(0.5, 0.0, length(c));
+      gl_FragColor = vec4(1.0, 0.85, 0.95, a * vA * uIntensity);
+    }`
+});
+const sparks = new THREE.Points(sparkGeo, sparkMat);
+scene.add(sparks);
+
+// 脉冲光环
+const ring = new THREE.Mesh(
+  new THREE.RingGeometry(0.98, 1.02, 64),
+  new THREE.MeshBasicMaterial({ color: 0xffaacc, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
+);
+scene.add(ring);
+
+// ---------- 动画：克制的爱慕与纠缠 ----------
+const clock = new THREE.Clock();
+
+function easeInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+
+  // 周期 14s: 靠近 -> 触碰 -> 分开 -> 循环
+  const cycle = 14;
+  const phase = (t % cycle) / cycle;
+  let approach;
+  if (phase < 0.4) approach = easeInOut(phase / 0.4);
+  else if (phase < 0.6) approach = 1;
+  else approach = 1 - easeInOut((phase - 0.6) / 0.4);
+
+  const baseDist = 4.2;
+  const minDist = 0.35;
+  const dist = baseDist - (baseDist - minDist) * approach;
+
+  const orbit = t * 0.18;
+  const wobble = Math.sin(t * 0.9) * 0.15;
+
+  a.position.set(
+    Math.cos(orbit) * dist * 0.5,
+    Math.sin(t * 0.5) * 0.25 + wobble,
+    Math.sin(orbit) * dist * 0.5
+  );
+  b.position.set(
+    -Math.cos(orbit) * dist * 0.5,
+    Math.sin(t * 0.5 + Math.PI) * 0.25 - wobble,
+    -Math.sin(orbit) * dist * 0.5
+  );
+
+  a.lookAt(b.position);
+  b.lookAt(a.position);
+
+  [a, b].forEach((form, idx) => {
+    const rg = form.userData.ribbon;
+    rg.rotation.x += 0.0025 * (idx ? -1 : 1);
+    rg.rotation.y += 0.0035 * (idx ? -1 : 1);
+    rg.rotation.z += 0.0015 * (idx ? -1 : 1);
+    rg.children.forEach((c, i) => {
+      c.material.opacity = 0.35 + 0.3 * Math.sin(t * 1.5 + i);
+    });
+  });
+
+  const prox = 1 - Math.min(dist / baseDist, 1);
+  const closeness = Math.pow(prox, 1.6);
+
+  bridge.position.copy(a.position).add(b.position).multiplyScalar(0.5);
+  bridge.scale.setScalar(0.2 + closeness * 1.6);
+  bridgeMat.opacity = closeness * 0.22;
+
+  sparks.position.copy(bridge.position);
+  sparkMat.uniforms.uTime.value = t;
+  sparkMat.uniforms.uIntensity.value = closeness;
+
+  const unionMoment = phase > 0.4 && phase < 0.6;
+  const pulse = unionMoment ? 1 : Math.max(0, 1 - Math.abs(phase - 0.5) * 8);
+  ring.position.copy(bridge.position);
+  ring.scale.setScalar(0.5 + pulse * 3.5);
+  ring.material.opacity = pulse * 0.5;
+  ring.lookAt(camera.position);
+
+  const camZ = 9 - closeness * 1.8 + Math.sin(t * 0.3) * 0.3;
+  camera.position.z += (camZ - camera.position.z) * 0.02;
+  camera.position.x = Math.sin(t * 0.25) * 0.8;
+  camera.position.y = 1.2 + Math.sin(t * 0.4) * 0.3;
+  camera.lookAt(0, 0, 0);
+
+  key.position.x = a.position.x + 2;
+  key.position.z = a.position.z + 3;
+  rim.position.x = b.position.x - 2;
+  rim.position.z = b.position.z - 3;
+  key.intensity = 30 + closeness * 30;
+  rim.intensity = 25 + closeness * 30;
+
+  particles.rotation.y = t * 0.03;
+  pMat.uniforms.uTime.value = t;
+
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

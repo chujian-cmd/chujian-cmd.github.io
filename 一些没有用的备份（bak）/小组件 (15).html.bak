@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>动态日历 - 终极拖拽版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft Yahei", Tahoma, Simsun, sans-serif;
+            -webkit-user-select: none;
+            user-select: none; 
+            -webkit-touch-callout: none;
+            overflow: hidden; 
+        }
+
+        .pages-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scroll-snap-type: x mandatory; 
+            scroll-behavior: smooth;
+            scrollbar-width: none; 
+        }
+        .pages-container::-webkit-scrollbar { display: none; }
+
+        .page {
+            flex: 0 0 100vw;
+            width: 100vw;
+            height: 100vh;
+            scroll-snap-align: center;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-content: center;
+            gap: clamp(20px, 4vw, 40px);
+            padding: 40px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            scrollbar-width: none;
+        }
+        .page::-webkit-scrollbar { display: none; }
+
+        .calendar-card {
+            position: relative; 
+            width: 100%;
+            max-width: 480px; 
+            flex: 1 1 320px; 
+            border-radius: 24px;
+            padding: clamp(20px, 4vw, 36px) clamp(20px, 5vw, 40px);
+            overflow: hidden;
+            
+            background: 
+                linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+                radial-gradient(circle at 0% 100%, rgba(0, 80, 50, 0.9) 0%, rgba(0, 40, 25, 0.4) 40%, transparent 70%),
+                radial-gradient(circle at 100% 80%, rgba(60, 20, 100, 0.6) 0%, transparent 60%),
+                #040408;
+
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            
+            transition: transform 0.5s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.4s ease;
+            transform-origin: center center;
+            z-index: 10;
+            
+            will-change: transform, opacity;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden; 
+            
+            animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+        }
+
+        @keyframes popIn {
+            0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        .calendar-card.is-minimized {
+            transform: scale(0.9) translate3d(0, 0, 0);
+            opacity: 0.9;
+            transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+        }
+
+        .calendar-card.is-hidden {
+            transform: scale(0.5) translate3d(0, 50px, 0);
+            opacity: 0;
+            pointer-events: none; 
+            transition: transform 0.4s ease-in, opacity 0.3s ease-in;
+        }
+
+        .close-btn {
+            position: absolute; 
+            top: 16px;
+            right: 16px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            opacity: 0;
+            visibility: hidden;
+            transform: scale(0.5);
+            transition: transform 0.25s ease, opacity 0.25s ease;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        .calendar-card.is-minimized .close-btn {
+            opacity: 1;
+            visibility: visible;
+            transform: scale(1);
+            transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+            pointer-events: auto;
+        }
+
+        .close-btn::before {
+            content: '';
+            width: 12px;
+            height: 2px;
+            background-color: #ffffff;
+            border-radius: 1px;
+        }
+
+        .global-add-btn {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%);
+            box-shadow: 0 10px 30px rgba(0, 255, 136, 0.4);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            opacity: 0;
+            visibility: hidden;
+            transform: scale(0.5) translateY(20px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s;
+            z-index: 100;
+        }
+
+        .global-add-btn.show {
+            opacity: 1;
+            visibility: visible;
+            transform: scale(1) translateY(0);
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0s;
+        }
+
+        .global-add-btn::before, .global-add-btn::after {
+            content: '';
+            position: absolute;
+            background-color: #000;
+            border-radius: 2px;
+        }
+        .global-add-btn::before { width: 20px; height: 3px; }
+        .global-add-btn::after { width: 3px; height: 20px; }
+
+        /* 🌟 终极切换条 UI (胶囊形状) */
+        .bottom-controls {
+            position: fixed;
+            bottom: 30px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            z-index: 100;
+            pointer-events: none; /* 让点击穿透到底层 */
+        }
+
+        .scrubber-container {
+            pointer-events: auto; /* 仅胶囊区域响应 */
+            padding: 12px 24px;
+            background: rgba(30, 30, 30, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            cursor: grab;
+            
+            /* 关键：彻底禁用浏览器原生手势，全权交给 JS */
+            touch-action: none; 
+            
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.3s, transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .scrubber-container.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .scrubber-container:active {
+            cursor: grabbing;
+            background: rgba(50, 50, 50, 0.7);
+        }
+
+        /* 里面的小圆点 */
+        .pagination-dots {
+            display: flex;
+            gap: 10px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        
+        .dot.active {
+            background: rgba(255, 255, 255, 0.9);
+            transform: scale(1.4);
+        }
+
+        /* 内部布局 */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: clamp(16px, 3vw, 30px);
+        }
+
+        .title {
+            color: #ffffff;
+            font-size: clamp(36px, 6vw, 54px);
+            font-weight: 400;
+            line-height: 1;
+            letter-spacing: 1px;
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.45);
+            font-size: clamp(10px, 2vw, 12px);
+            font-weight: 300;
+            letter-spacing: 2px;
+            margin-bottom: 6px;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            row-gap: clamp(10px, 2vw, 16px);
+            text-align: center;
+        }
+
+        .weekday {
+            color: rgba(255, 255, 255, 0.35);
+            font-size: clamp(12px, 2vw, 14px);
+            font-weight: 300;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .day {
+            color: #ffffff;
+            font-size: clamp(14px, 2.5vw, 18px);
+            font-weight: 300;
+            width: 100%;
+            max-width: 40px;
+            aspect-ratio: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto;
+        }
+
+        .day.active {
+            border: 1px solid rgba(160, 130, 255, 0.5);
+            border-radius: 50%;
+            background: rgba(120, 90, 255, 0.08);
+            font-weight: 400;
+        }
+
+        .calendar-card::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, #00ff88 0%, #00ccff 30%, #6b21a8 100%);
+            box-shadow: 0 -2px 10px rgba(0, 255, 136, 0.5);
+            border-bottom-left-radius: 24px;
+            border-bottom-right-radius: 24px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="pages-container" id="pagesContainer"></div>
+    
+    <!-- 新的底部控制条区域 -->
+    <div class="bottom-controls">
+        <div class="scrubber-container" id="scrubber">
+            <div class="pagination-dots" id="paginationDots"></div>
+        </div>
+    </div>
+    
+    <div class="global-add-btn" id="addBtn"></div>
+
+    <script>
+        const pagesContainer = document.getElementById('pagesContainer');
+        const addBtn = document.getElementById('addBtn');
+        const paginationDots = document.getElementById('paginationDots');
+        const scrubber = document.getElementById('scrubber');
+
+        let pagesData = [[]]; 
+        let currentPageIndex = 0;
+        let isEditingMode = false;
+        let pressTimer = null;
+        let isLongPressTriggered = false;
+        
+        function getCalendarData() {
+            const today = new Date();
+            const weekdaysChinese = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+            const days = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(startOfWeek);
+                d.setDate(startOfWeek.getDate() + i);
+                days.push({
+                    num: d.getDate(),
+                    isToday: d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear()
+                });
+            }
+            return { weekdayTitle: weekdaysChinese[today.getDay()], days };
+        }
+
+        function createCard(pageIndex) {
+            const { weekdayTitle, days } = getCalendarData();
+            const card = document.createElement('div');
+            card.className = 'calendar-card';
+            card.dataset.pageIndex = pageIndex;
+
+            card.innerHTML = `
+                <div class="close-btn"></div>
+                <div class="header">
+                    <div class="title">${weekdayTitle}</div>
+                    <div class="subtitle">CALENDAR</div>
+                </div>
+                <div class="calendar-grid">
+                    <div class="weekday">日</div><div class="weekday">一</div>
+                    <div class="weekday">二</div>
+                    <div class="weekday">三</div>
+                    <div class="weekday">四</div><div class="weekday">五</div>
+                    <div class="weekday">六</div>
+                </div>
+            `;
+
+            const grid = card.querySelector('.calendar-grid');
+            days.forEach(day => {
+                const dayDiv = document.createElement('div');
+                dayDiv.className = `day ${day.isToday ? 'active' : ''}`;
+                dayDiv.textContent = day.num;
+                grid.appendChild(dayDiv);
+            });
+
+            card.querySelector('.close-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteCard(card);
+            });
+
+            return card;
+        }
+
+        function renderPagination() {
+            paginationDots.innerHTML = '';
+            if (pagesData.length > 1) {
+                scrubber.classList.add('show');
+                pagesData.forEach((_, idx) => {
+                    const dot = document.createElement('div');
+                    dot.className = `dot ${idx === currentPageIndex ? 'active' : ''}`;
+                    paginationDots.appendChild(dot);
+                });
+            } else {
+                scrubber.classList.remove('show');
+            }
+        }
+
+        function scrollToPage(index, animate = true) {
+            if (index < 0 || index >= pagesData.length) return;
+            currentPageIndex = index;
+            pagesContainer.scrollTo({
+                left: index * window.innerWidth,
+                behavior: animate ? 'smooth' : 'auto'
+            });
+            renderPagination();
+        }
+
+        function addNewCard() {
+            let lastPageIdx = pagesData.length - 1;
+            if (pagesData[lastPageIdx].length >= 3) {
+                lastPageIdx++;
+                pagesData.push([]);
+                const newPageDOM = document.createElement('div');
+                newPageDOM.className = 'page';
+                newPageDOM.dataset.index = lastPageIdx;
+                pagesContainer.appendChild(newPageDOM);
+            }
+
+            const card = createCard(lastPageIdx);
+            pagesData[lastPageIdx].push(card);
+            pagesContainer.querySelector(`.page[data-index="${lastPageIdx}"]`).appendChild(card);
+
+            if (isEditingMode) card.classList.add('is-minimized');
+            scrollToPage(lastPageIdx);
+        }
+
+        function deleteCard(card) {
+            card.classList.add('is-hidden');
+            setTimeout(() => {
+                const pageIdx = parseInt(card.dataset.pageIndex);
+                card.remove();
+                pagesData[pageIdx] = pagesData[pageIdx].filter(c => c !== card);
+
+                if (pagesData[pageIdx].length === 0 && pagesData.length > 1) {
+                    pagesData.splice(pageIdx, 1);
+                    rebuildPagesDOM();
+                    scrollToPage(Math.max(0, pageIdx - 1), false);
+                } else if (document.querySelectorAll('.calendar-card').length === 0) {
+                    addNewCard();
+                } else {
+                    scrollToPage(currentPageIndex, false);
+                }
+            }, 400);
+        }
+
+        function rebuildPagesDOM() {
+            pagesContainer.innerHTML = '';
+            pagesData.forEach((pageCards, idx) => {
+                const pageDOM = document.createElement('div');
+                pageDOM.className = 'page';
+                pageDOM.dataset.index = idx;
+                pageCards.forEach(card => {
+                    card.dataset.pageIndex = idx;
+                    pageDOM.appendChild(card);
+                });
+                pagesContainer.appendChild(pageDOM);
+            });
+            renderPagination();
+        }
+
+        function init() {
+            pagesData = [[]];
+            pagesContainer.innerHTML = '';
+            const pageDOM = document.createElement('div');
+            pageDOM.className = 'page';
+            pageDOM.dataset.index = 0;
+            pagesContainer.appendChild(pageDOM);
+            addNewCard();
+        }
+        init();
+
+        pagesContainer.addEventListener('scroll', () => {
+            if (isScrubbing) return; // 拖拽时忽略原生滚动更新
+            const index = Math.round(pagesContainer.scrollLeft / window.innerWidth);
+            if (index !== currentPageIndex && index >= 0 && index < pagesData.length) {
+                currentPageIndex = index;
+                renderPagination();
+            }
+        });
+
+        window.addEventListener('resize', () => {
+            pagesContainer.scrollLeft = currentPageIndex * window.innerWidth;
+        });
+
+
+        // ================= 🌟 核心：Pointer Events 拖拽逻辑 =================
+        let isScrubbing = false;
+        let scrubStartX = 0;
+        let scrubStartScrollLeft = 0;
+
+        // 1. 按下瞬间 (接管所有指针)
+        scrubber.addEventListener('pointerdown', (e) => {
+            if (isEditingMode || pagesData.length <= 1) return;
+            
+            isScrubbing = true;
+            if (pressTimer) clearTimeout(pressTimer); // 防止触发长按
+            
+            scrubStartX = e.clientX;
+            scrubStartScrollLeft = pagesContainer.scrollLeft;
+            
+            // 核心优化：接管指针，即使滑出胶囊区域依然有效
+            scrubber.setPointerCapture(e.pointerId);
+            
+            // 禁用原生动画和吸附，让跟随变得极其跟手
+            pagesContainer.style.scrollSnapType = 'none';
+            pagesContainer.style.scrollBehavior = 'auto';
+            
+            e.stopPropagation();
+        });
+
+        // 2. 拖拽中
+        scrubber.addEventListener('pointermove', (e) => {
+            if (!isScrubbing) return;
+            
+            const deltaX = e.clientX - scrubStartX;
+            // 灵敏度映射，乘以 1.5 让滑动更轻快
+            pagesContainer.scrollLeft = scrubStartScrollLeft - deltaX * 1.5;
+            
+            // 实时高亮预览
+            const previewIndex = Math.round(pagesContainer.scrollLeft / window.innerWidth);
+            if (previewIndex !== currentPageIndex && previewIndex >= 0 && previewIndex < pagesData.length) {
+                currentPageIndex = previewIndex;
+                renderPagination();
+            }
+        });
+
+        // 3. 松开手指
+        scrubber.addEventListener('pointerup', (e) => {
+            if (!isScrubbing) return;
+            isScrubbing = false;
+            
+            scrubber.releasePointerCapture(e.pointerId);
+            
+            // 恢复原生吸附
+            pagesContainer.style.scrollSnapType = 'x mandatory';
+            pagesContainer.style.scrollBehavior = 'smooth';
+            
+            // 计算松手后最近的页码，平滑吸过去
+            const finalIndex = Math.round(pagesContainer.scrollLeft / window.innerWidth);
+            scrollToPage(finalIndex, true);
+        });
+
+        // 处理意外中断
+        scrubber.addEventListener('pointercancel', (e) => {
+            if (!isScrubbing) return;
+            isScrubbing = false;
+            scrubber.releasePointerCapture(e.pointerId);
+            pagesContainer.style.scrollSnapType = 'x mandatory';
+            pagesContainer.style.scrollBehavior = 'smooth';
+            scrollToPage(currentPageIndex, true);
+        });
+
+
+        // ================= 原有长按与编辑逻辑 =================
+        const startPress = (e) => {
+            if (isEditingMode || isScrubbing) return;
+            // 如果点到的是底部胶囊或者加号，不触发长按
+            if (e.target === addBtn || e.target.closest('.close-btn') || e.target.closest('#scrubber')) return;
+
+            isLongPressTriggered = false;
+            pressTimer = setTimeout(() => {
+                isLongPressTriggered = true;
+                enterEditMode();
+            }, 500);
+        };
+
+        const cancelPress = () => {
+            if (pressTimer) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+            }
+        };
+
+        document.addEventListener('mousedown', startPress);
+        document.addEventListener('touchstart', startPress, { passive: true });
+        document.addEventListener('mouseup', cancelPress);
+        document.addEventListener('touchend', cancelPress);
+        document.addEventListener('touchcancel', cancelPress);
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        function enterEditMode() {
+            isEditingMode = true;
+            addBtn.classList.add('show');
+            document.querySelectorAll('.calendar-card').forEach(card => {
+                card.classList.add('is-minimized');
+            });
+            if (navigator.vibrate) navigator.vibrate(10);
+        }
+
+        function exitEditMode() {
+            isEditingMode = false;
+            addBtn.classList.remove('show');
+            document.querySelectorAll('.calendar-card').forEach(card => {
+                card.classList.remove('is-minimized');
+            });
+        }
+
+        addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addNewCard();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (isLongPressTriggered) {
+                isLongPressTriggered = false;
+                return;
+            }
+            // 点击空白处退出编辑，但如果点的是胶囊/点，则不退出
+            if (isEditingMode && !e.target.closest('.calendar-card') && e.target !== addBtn && !e.target.closest('#scrubber')) {
+                exitEditMode();
+            }
+        });
+
+        document.addEventListener('touchstart', (e) => {
+            if (isLongPressTriggered) {
+                isLongPressTriggered = false;
+                return;
+            }
+            if (isEditingMode && !e.target.closest('.calendar-card') && e.target !== addBtn && !e.target.closest('#scrubber')) {
+                exitEditMode();
+            }
+        }, { passive: true });
+    </script>
+</body>
+</html>

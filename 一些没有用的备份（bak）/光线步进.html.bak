@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>光线步进 Raymarch</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06060c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(6,6,12,0.8), rgba(6,6,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">Raymarch <b id="m">回转晶体</b></div>
+  <button class="btn" id="btn-reset">重置</button>
+  <button class="btn pri" id="btn-change">换形态</button>
+</div>
+
+<div id="hint">拖动屏幕 = 旋转视角</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+              || (navigator.maxTouchPoints > 1);
+
+// ---------- 参数 ----------
+const CFG = {
+  shape: 2,          // 0=球场 1=扭曲环 2=Gyroid 3=门格框 4=曼德球
+  morph: 0.4,        // 形变
+  rotate: 0.6,       // 自动旋转速度
+  camDist: 6.5,      // 相机距离
+  fresnel: 1.0,      // 边缘光
+  glow: 0.6,         // 辉光
+  brightness: 1.1,   // 亮度
+  colorShift: 0,     // 色相偏移
+  colorA: '#5a6bff', // 基色
+  colorB: '#33264d', // 相位色
+  background: '#06060c'
+};
+
+// ---------- 屏幕分辨率（决定画面精细度） ----------
+const RES_SCALE = isMobile ? 0.6 : 0.85;
+
+// ---------- three.js 基础 ----------
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const scene = new THREE.Scene();
+
+// ---------- 顶点着色器 ----------
+const vert = /* glsl */`
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+// ---------- 片元着色器（核心） ----------
+const frag = /* glsl */`
+  precision highp float;
+
+  varying vec2 vUv;
+
+  uniform vec2  uResolution;
+  uniform vec2  uMouse;
+  uniform float uTime;
+  uniform int   uShape;
+  uniform float uMorph;
+  uniform float uRotate;
+  uniform float uCamDist;
+  uniform float uFresnel;
+  uniform float uGlow;
+  uniform float uBrightness;
+  uniform float uColorShift;
+  uniform vec3  uColorA;
+  uniform vec3  uColorB;
+  uniform vec3  uBackground;
+
+  #define PI 3.14159265359
+  #define TAU 6.28318530718
+
+  mat2 rot(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, -s, s, c);
+  }
+
+  // ---- SDF 基元 ----
+  float sdSphere(vec3 p, float r) { return length(p) - r; }
+  float sdTorus(vec3 p, vec2 t) {
+    vec2 q = vec2(length(p.xz) - t.x, p.y);
+    return length(q) - t.y;
+  }
+  float sdBox(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+  }
+
+  // 回转曲面 Gyroid：三周期极小曲面
+  float sdGyroid(vec3 p, float sc, float th) {
+    p *= sc;
+    return abs(dot(sin(p), cos(p.yzx))) / sc - th;
+  }
+
+  // 曼德球距离估计
+  float sdMandelbulb(vec3 p, float power) {
+    vec3 z = p;
+    float dr = 1.0, r = 0.0;
+    for (int i = 0; i < 6; i++) {
+      r = length(z);
+      if (r > 2.0) break;
+      float theta = acos(z.z / r);
+      float phi = atan(z.y, z.x);
+      dr = pow(r, power - 1.0) * power * dr + 1.0;
+      float zr = pow(r, power);
+      theta *= power;
+      phi *= power;
+      z = zr * vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta)) + p;
+    }
+    return 0.5 * log(r) * r / dr;
+  }
+
+  // ---- 场景 map（返回最近距离） ----
+  float map(vec3 p) {
+    int sh = uShape;
+    float t = uTime * 0.3;
+
+    // 整体旋转（指针影响）
+    p.xz = rot(t * uRotate + (uMouse.x - 0.5) * 3.0) * p.xz;
+    p.yz = rot(t * uRotate * 0.6 + (uMouse.y - 0.5) * 2.0) * p.yz;
+
+    float m = uMorph;
+    float bound = sdSphere(p, 2.6);
+
+    if (sh == 0) {
+      // 球场：域重复的球团
+      vec3 q = mod(p + 2.0, 4.0) - 2.0;
+      float rad = 0.55 + 0.3 * sin(uTime * 0.8 + floor(p.x) + floor(p.z));
+      return max(sdSphere(q, rad * (0.7 + m)) * 0.85, bound);
+    } else if (sh == 1) {
+      // 扭曲环
+      float k = 0.9 * m + 0.3;
+      p.xz = rot(p.y * k) * p.xz;
+      return sdTorus(p, vec2(1.5, 0.45 + 0.2 * sin(uTime)));
+    } else if (sh == 2) {
+      // Gyroid 晶格球
+      float gy = sdGyroid(p, 2.6 + m * 2.4, 0.05 + 0.03 * (0.5 + 0.5 * sin(uTime * 0.5)));
+      return max(gy, bound);
+    } else if (sh == 3) {
+      // 门格框
+      vec3 q = mod(p + 1.5, 3.0) - 1.5;
+      float b = sdBox(q, vec3(1.0));
+      float e = 0.28 + m * 0.2;
+      float cx = sdBox(vec3(0.0, q.y, q.z), vec3(2.0, e, e));
+      float cy = sdBox(vec3(q.x, 0.0, q.z), vec3(e, 2.0, e));
+      float cz = sdBox(vec3(q.x, q.y, 0.0), vec3(e, e, 2.0));
+      float mg = max(b, -min(cx, min(cy, cz)));
+      return max(mg, sdSphere(p, 2.9));
+    }
+    // 曼德球
+    return sdMandelbulb(p * 0.9, 6.0 + m * 4.0) / 0.9;
+  }
+
+  // ---- 法线（中心差分） ----
+  vec3 calcNormal(vec3 p) {
+    vec2 e = vec2(0.001, 0.0);
+    return normalize(vec3(
+      map(p + e.xyy) - map(p - e.xyy),
+      map(p + e.yxy) - map(p - e.yxy),
+      map(p + e.yyx) - map(p - e.yyx)
+    ));
+  }
+
+  // ---- 调色板 ----
+  vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+  }
+
+  void main() {
+    // 屏幕坐标（居中，按分辨率归一化）
+    vec2 uv = (vUv - 0.5) * 2.0;
+    uv.x *= uResolution.x / uResolution.y;
+
+    // 相机
+    vec3 ro = vec3(0.0, 0.0, uCamDist);
+    vec3 rd = normalize(vec3(uv, -1.4));
+
+    // ray march
+    float t = 0.0;
+    float glow = 0.0;
+    bool hit = false;
+    vec3 p;
+    for (int i = 0; i < 90; i++) {
+      p = ro + rd * t;
+      float d = map(p);
+      glow += 0.006 / (0.02 + abs(d));
+      if (d < 0.001) { hit = true; break; }
+      t += d * 0.72;
+      if (t > 24.0) break;
+    }
+
+    vec3 col = uBackground;
+    if (hit) {
+      vec3 n = calcNormal(p);
+      vec3 lightDir = normalize(vec3(0.6, 0.8, 0.5));
+      float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+      float fres = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
+
+      // 用位置 + 法线驱动调色
+      float tone = 0.5 + 0.5 * sin(p.x * 0.4 + p.z * 0.4 + uTime * 0.3);
+      vec3 base = palette(tone + uColorShift, uColorA, vec3(0.5), vec3(1.0), uColorB);
+      col = base * (0.25 + 0.85 * diff) + fres * uFresnel * base;
+      col = mix(col, uBackground, clamp(t / 24.0, 0.0, 0.85));
+    }
+    col += uColorA * glow * uGlow * 0.02;
+    col *= uBrightness;
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const material = new THREE.ShaderMaterial({
+  vertexShader: vert,
+  fragmentShader: frag,
+  uniforms: {
+    uResolution: { value: new THREE.Vector2(1, 1) },
+    uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    uTime: { value: 0 },
+    uShape: { value: CFG.shape },
+    uMorph: { value: CFG.morph },
+    uRotate: { value: CFG.rotate },
+    uCamDist: { value: CFG.camDist },
+    uFresnel: { value: CFG.fresnel },
+    uGlow: { value: CFG.glow },
+    uBrightness: { value: CFG.brightness },
+    uColorShift: { value: CFG.colorShift },
+    uColorA: { value: new THREE.Color(CFG.colorA) },
+    uColorB: { value: new THREE.Color(CFG.colorB) },
+    uBackground: { value: new THREE.Color(CFG.background) }
+  }
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+mesh.frustumCulled = false;
+scene.add(mesh);
+
+// ---------- 尺寸 ----------
+let RW = 0, RH = 0;
+function resize() {
+  const W = innerWidth;
+  const H = innerHeight;
+  RW = Math.max(2, Math.floor(W * RES_SCALE));
+  RH = Math.max(2, Math.floor(H * RES_SCALE));
+  renderer.setSize(W, H, false);
+  renderer.domElement.style.width = W + 'px';
+  renderer.domElement.style.height = H + 'px';
+  // 渲染分辨率通过 renderer 内部 canvas 尺寸控制
+  // 让 canvas 内部用一个较低的分辨率，然后 CSS 放大
+  renderer.domElement.width = RW;
+  renderer.domElement.height = RH;
+  material.uniforms.uResolution.value.set(RW, RH);
+}
+resize();
+
+// ---------- 指针（拖动旋转视角） ----------
+const pointer = { x: 0.5, y: 0.5, targetX: 0.5, targetY: 0.5, down: false };
+const rect = () => renderer.domElement.getBoundingClientRect();
+
+const onDown = e => {
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  pointer.down = true;
+  if (e.touches) e.preventDefault();
+};
+const onMove = e => {
+  if (!pointer.down) return;
+  const t = e.touches ? e.touches[0] : e;
+  const r = rect();
+  pointer.targetX = (t.clientX - r.left) / r.width;
+  pointer.targetY = (t.clientY - r.top) / r.height;
+  if (e.touches) e.preventDefault();
+};
+const onUp = () => { pointer.down = false; };
+
+renderer.domElement.addEventListener('touchstart', onDown, { passive: false });
+renderer.domElement.addEventListener('touchmove', onMove, { passive: false });
+renderer.domElement.addEventListener('touchend', onUp);
+renderer.domElement.addEventListener('touchcancel', onUp);
+renderer.domElement.addEventListener('mousedown', onDown);
+renderer.domElement.addEventListener('mousemove', onMove);
+renderer.domElement.addEventListener('mouseup', onUp);
+renderer.domElement.addEventListener('mouseleave', onUp);
+
+// ---------- 主循环 ----------
+let startTime = performance.now();
+function loop(now) {
+  const t = (now - startTime) / 1000;
+
+  // 平滑跟随指针
+  pointer.x += (pointer.targetX - pointer.x) * 0.08;
+  pointer.y += (pointer.targetY - pointer.y) * 0.08;
+
+  const u = material.uniforms;
+  u.uTime.value = t;
+  u.uMouse.value.set(pointer.x, pointer.y);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+// ---------- 按钮 ----------
+const mEl = document.getElementById('m');
+
+const SHAPES = [
+  { name: '回转晶体', shape: 2, colorA: '#6be6ff', colorB: '#203050', morph: 0.5, glow: 0.8, fresnel: 1.2 },
+  { name: '曼德球',   shape: 4, colorA: '#ff9d5c', colorB: '#402010', morph: 0.3, glow: 0.6, fresnel: 1.4, camDist: 3.2 },
+  { name: '分子云',   shape: 0, colorA: '#a06bff', colorB: '#301a50', morph: 0.4, glow: 1.2, fresnel: 1.0 },
+  { name: '光门',     shape: 3, colorA: '#4ecb8d', colorB: '#123024', morph: 0.6, glow: 0.5, fresnel: 1.2 },
+  { name: '扭曲环',   shape: 1, colorA: '#ff5ac8', colorB: '#301030', morph: 0.7, glow: 0.9, fresnel: 1.0 }
+];
+let shapeIdx = 0;
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  pointer.targetX = 0.5;
+  pointer.targetY = 0.5;
+  const u = material.uniforms;
+  u.uColorShift.value = 0;
+});
+
+document.getElementById('btn-change').addEventListener('click', () => {
+  shapeIdx = (shapeIdx + 1) % SHAPES.length;
+  const s = SHAPES[shapeIdx];
+  CFG.shape = s.shape;
+  CFG.colorA = s.colorA;
+  CFG.colorB = s.colorB;
+  CFG.morph = s.morph;
+  CFG.glow = s.glow;
+  CFG.fresnel = s.fresnel;
+  if (s.camDist) CFG.camDist = s.camDist; else CFG.camDist = 6.5;
+
+  const u = material.uniforms;
+  u.uShape.value = CFG.shape;
+  u.uColorA.value.set(CFG.colorA);
+  u.uColorB.value.set(CFG.colorB);
+  u.uMorph.value = CFG.morph;
+  u.uGlow.value = CFG.glow;
+  u.uFresnel.value = CFG.fresnel;
+  u.uCamDist.value = CFG.camDist;
+
+  mEl.textContent = s.name;
+});
+
+// ---------- 启动 ----------
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+mEl.textContent = SHAPES[0].name;
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

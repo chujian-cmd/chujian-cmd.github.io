@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>MediaPipe 手势拉框</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #1a1a2e;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    .container {
+      position: relative;
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      background: #16213e;
+    }
+    video, canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 800px;
+      margin: 0 auto;
+      transform: scaleX(-1); /* 镜像效果，更自然 */
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none; /* 允许点击穿透，但手势绘制不受影响 */
+    }
+    .info {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      color: #e0e0e0;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px 20px;
+      backdrop-filter: blur(4px);
+      border-radius: 40px;
+      width: fit-content;
+      margin: 0 auto;
+      font-size: 0.9rem;
+      letter-spacing: 0.5px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      pointer-events: none;
+    }
+    .info span {
+      color: #ffd700;
+      font-weight: 600;
+    }
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      background: rgba(0,0,0,0.7);
+      padding: 12px 24px;
+      border-radius: 40px;
+      backdrop-filter: blur(4px);
+      z-index: 10;
+      border: 1px solid #4fc3f7;
+      font-weight: 300;
+    }
+    @media (max-width: 600px) {
+      .info { font-size: 0.7rem; padding: 6px 14px; bottom: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- 加载提示 -->
+    <div id="loading" class="loading">⏳ 加载模型中...</div>
+    <!-- 视频元素 (隐藏controls) -->
+    <video id="webcam" playsinline autoplay muted></video>
+    <!-- 绘制画布 -->
+    <canvas id="overlayCanvas"></canvas>
+    <!-- 状态提示 -->
+    <div class="info" id="statusText">👆 伸出 <span>食指</span> 与 <span>拇指</span> 拉框</div>
+  </div>
+
+  <!-- 引入 MediaPipe Hands 和 绘图工具 -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029078/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.3.1640029078/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1640029078/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <script>
+    (function() {
+      // ----- DOM 元素 -----
+      const videoElement = document.getElementById('webcam');
+      const canvasElement = document.getElementById('overlayCanvas');
+      const canvasCtx = canvasElement.getContext('2d');
+      const statusText = document.getElementById('statusText');
+      const loadingDiv = document.getElementById('loading');
+
+      // ----- 状态变量 -----
+      let isDragging = false;          // 是否正在拉框 (食指+拇指均检测到)
+      let startX = 0, startY = 0;      // 起始点 (食指指尖)
+      let endX = 0, endY = 0;          // 结束点 (拇指指尖)
+      let rect = null;                // 当前绘制的矩形 {x, y, w, h} (归一化坐标0~1)
+      let lastRect = null;            // 上一次有效矩形 (用于显示)
+
+      // 手指 landmark 索引 (MediaPipe Hands)
+      const INDEX_FINGER_TIP = 8;
+      const THUMB_TIP = 4;
+
+      // 初始化画布尺寸
+      function resizeCanvas() {
+        const videoWidth = videoElement.videoWidth || 640;
+        const videoHeight = videoElement.videoHeight || 480;
+        // 保持画布与视频比例一致 (但实际显示受css控制，我们用css宽高自适应)
+        // 设置canvas实际像素尺寸，避免拉伸模糊
+        const containerRect = document.querySelector('.container').getBoundingClientRect();
+        // 但为了精准映射，我们让canvas尺寸与视频原始尺寸匹配，再用css缩放
+        canvasElement.width = videoWidth;
+        canvasElement.height = videoHeight;
+        // 让canvas css宽高与视频一致 (视频css宽高自适应)
+        canvasElement.style.width = '100%';
+        canvasElement.style.height = 'auto';
+      }
+
+      // ----- 绘制函数 (将归一化坐标转为canvas像素) -----
+      function drawOverlay() {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+        // 如果有矩形数据，绘制
+        if (rect) {
+          const { x, y, w, h } = rect;
+          // 转为像素坐标
+          const px = x * canvasElement.width;
+          const py = y * canvasElement.height;
+          const pw = w * canvasElement.width;
+          const ph = h * canvasElement.height;
+
+          // 绘制半透明填充
+          canvasCtx.fillStyle = 'rgba(0, 150, 255, 0.2)';
+          canvasCtx.strokeStyle = '#00e5ff';
+          canvasCtx.lineWidth = 4;
+          canvasCtx.shadowColor = '#00e5ff';
+          canvasCtx.shadowBlur = 12;
+
+          // 圆角矩形 (更好看)
+          const radius = 12;
+          canvasCtx.beginPath();
+          canvasCtx.moveTo(px + radius, py);
+          canvasCtx.lineTo(px + pw - radius, py);
+          canvasCtx.quadraticCurveTo(px + pw, py, px + pw, py + radius);
+          canvasCtx.lineTo(px + pw, py + ph - radius);
+          canvasCtx.quadraticCurveTo(px + pw, py + ph, px + pw - radius, py + ph);
+          canvasCtx.lineTo(px + radius, py + ph);
+          canvasCtx.quadraticCurveTo(px, py + ph, px, py + ph - radius);
+          canvasCtx.lineTo(px, py + radius);
+          canvasCtx.quadraticCurveTo(px, py, px + radius, py);
+          canvasCtx.closePath();
+
+          canvasCtx.fill();
+          canvasCtx.stroke();
+
+          // 绘制两个端点小圆 (食指和拇指位置)
+          canvasCtx.shadowBlur = 0;
+          canvasCtx.fillStyle = '#ffd700';
+          canvasCtx.beginPath();
+          canvasCtx.arc(px, py, 8, 0, 2 * Math.PI);
+          canvasCtx.fill();
+          canvasCtx.fillStyle = '#ff6b6b';
+          canvasCtx.beginPath();
+          canvasCtx.arc(px + pw, py + ph, 8, 0, 2 * Math.PI);
+          canvasCtx.fill();
+
+          // 绘制标注文字
+          canvasCtx.font = 'bold 16px "Segoe UI"';
+          canvasCtx.fillStyle = 'white';
+          canvasCtx.shadowColor = 'black';
+          canvasCtx.shadowBlur = 8;
+          canvasCtx.fillText('📐 拉框', px + 10, py + 30);
+          canvasCtx.shadowBlur = 0;
+        } else {
+          // 没有矩形，显示提示文字 (canvas上轻提示)
+          canvasCtx.font = '18px "Segoe UI"';
+          canvasCtx.fillStyle = 'rgba(255,255,255,0.3)';
+          canvasCtx.textAlign = 'center';
+          canvasCtx.fillText('🤏 伸出食指与拇指', canvasElement.width/2, canvasElement.height/2 - 10);
+          canvasCtx.fillText('移动手指拉出矩形', canvasElement.width/2, canvasElement.height/2 + 30);
+        }
+      }
+
+      // ----- 更新矩形数据 (基于归一化坐标) -----
+      function updateRect(indexTip, thumbTip) {
+        // 归一化坐标 (0~1)
+        const x1 = indexTip.x;
+        const y1 = indexTip.y;
+        const x2 = thumbTip.x;
+        const y2 = thumbTip.y;
+
+        // 计算矩形左上角和宽高 (确保宽高为正)
+        const left = Math.min(x1, x2);
+        const right = Math.max(x1, x2);
+        const top = Math.min(y1, y2);
+        const bottom = Math.max(y1, y2);
+
+        const width = right - left;
+        const height = bottom - top;
+
+        // 忽略过小的矩形 (防止抖动)
+        if (width < 0.02 || height < 0.02) {
+          // 如果太小，不更新，保留上次有效矩形
+          return;
+        }
+
+        rect = {
+          x: left,
+          y: top,
+          w: width,
+          h: height
+        };
+        lastRect = { ...rect };
+      }
+
+      // ----- MediaPipe Hands 结果回调 -----
+      function onResults(results) {
+        // 隐藏loading
+        if (loadingDiv.style.display !== 'none') {
+          loadingDiv.style.display = 'none';
+        }
+
+        // 清空矩形，等待手势重新确定 (默认为无)
+        rect = null;
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          // 取第一只手
+          const landmarks = results.multiHandLandmarks[0];
+          
+          // 获取食指指尖 和 拇指指尖
+          const indexTip = landmarks[INDEX_FINGER_TIP];
+          const thumbTip = landmarks[THUMB_TIP];
+
+          // 检查是否都有足够的置信度 (landmarks自带visibility，但可能未启用，我们简单判断存在)
+          if (indexTip && thumbTip) {
+            // 计算两点距离 (归一化)
+            const dx = indexTip.x - thumbTip.x;
+            const dy = indexTip.y - thumbTip.y;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+
+            // 如果距离大于阈值，认为正在拉框 (防止手指并拢误触)
+            if (distance > 0.04) { 
+              isDragging = true;
+              // 更新矩形
+              updateRect(indexTip, thumbTip);
+              statusText.innerHTML = '✅ 拉框中 <span>食指</span> + <span>拇指</span>';
+            } else {
+              // 距离太近，视为释放
+              isDragging = false;
+              // 保留上一次矩形 (显示为虚线或保留，这里我们保留显示，但也可以清除，为了体验，保留清晰矩形)
+              // 但为了更好地交互，当手指松开时，我们希望矩形保留，所以不置空rect，而是保留lastRect
+              if (lastRect) {
+                rect = { ...lastRect };
+              }
+              statusText.innerHTML = '👆 伸出 <span>食指</span> 与 <span>拇指</span> 拉框';
+            }
+          } else {
+            isDragging = false;
+            if (lastRect) {
+              rect = { ...lastRect };
+            }
+            statusText.innerHTML = '👀 未检测到手指';
+          }
+        } else {
+          // 没有手
+          isDragging = false;
+          if (lastRect) {
+            rect = { ...lastRect };
+          }
+          statusText.innerHTML = '✋ 请伸出手';
+        }
+
+        // 绘制覆盖层
+        drawOverlay();
+      }
+
+      // ----- 初始化 MediaPipe Hands -----
+      const hands = new Hands({
+        locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+        }
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,   // 0-轻量, 1-全量
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.6
+      });
+
+      hands.onResults(onResults);
+
+      // ----- 启动摄像头 -----
+      const camera = new Camera(videoElement, {
+        onFrame: async () => {
+          await hands.send({image: videoElement});
+        },
+        width: 640,
+        height: 480,
+        facingMode: "user"
+      });
+
+      camera.start().then(() => {
+        // 视频启动后调整画布
+        videoElement.addEventListener('loadedmetadata', () => {
+          resizeCanvas();
+          // 初始绘制
+          drawOverlay();
+        });
+        // 如果已经加载完成
+        if (videoElement.videoWidth) {
+          resizeCanvas();
+          drawOverlay();
+        }
+      }).catch(error => {
+        console.error("摄像头启动失败:", error);
+        statusText.innerHTML = '❌ 摄像头不可用，请授权或检查设备';
+        loadingDiv.style.display = 'none';
+      });
+
+      // 窗口尺寸变化时重新调整画布 (保持清晰)
+      window.addEventListener('resize', () => {
+        resizeCanvas();
+        drawOverlay();
+      });
+
+      // 额外的resize监听，适应容器变化
+      const container = document.querySelector('.container');
+      if (window.ResizeObserver) {
+        const resizeObserver = new ResizeObserver(() => {
+          resizeCanvas();
+          drawOverlay();
+        });
+        resizeObserver.observe(container);
+      }
+
+      // 辅助: 手动触发一次绘制
+      setTimeout(() => {
+        resizeCanvas();
+        drawOverlay();
+      }, 500);
+
+    })();
+  </script>
+</body>
+</html>

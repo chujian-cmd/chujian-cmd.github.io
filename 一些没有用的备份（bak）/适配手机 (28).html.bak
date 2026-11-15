@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>体素沙盒 · 重构版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', 'PingFang SC', sans-serif;
+      overflow: hidden;
+      background: #0b0f1a;
+      user-select: none;
+      touch-action: none;
+      position: fixed;
+      width: 100%;
+      height: 100%;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      width: 100vw;
+      height: 100vh;
+      background: #0b0f1a;
+    }
+    #scene-container {
+      flex: 1;
+      background: #151e2e;
+      overflow: hidden;
+      position: relative;
+      box-shadow: inset 0 0 30px rgba(0,0,0,0.5);
+    }
+    #scene-container canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* HUD */
+    #hud {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 6px 20px;
+      background: rgba(8, 14, 30, 0.7);
+      backdrop-filter: blur(14px);
+      border-radius: 40px;
+      border: 1px solid rgba(255,255,255,0.06);
+      color: #b0c8e8;
+      font-size: 0.6rem;
+      pointer-events: none;
+      white-space: nowrap;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    }
+    #hud .dot {
+      width: 16px; height: 16px;
+      border-radius: 4px;
+      display: inline-block;
+      border: 1.5px solid rgba(255,255,255,0.1);
+      margin-right: 4px;
+    }
+    #hud .name { color: #e0ecff; font-weight: 600; }
+    #hud .right {
+      display: flex;
+      gap: 12px;
+      font-family: monospace;
+      font-size: 0.5rem;
+      color: #4ecdc4;
+    }
+
+    /* 底部控制 */
+    #bottom-controls {
+      position: absolute;
+      bottom: 12px;
+      left: 0;
+      right: 0;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 0 10px;
+      pointer-events: none;
+    }
+    #bottom-controls > * { pointer-events: auto; }
+
+    #toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.06);
+      padding: 6px 12px;
+      border-radius: 28px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+    .tool-group {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .btn-icon {
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(4px);
+      color: #ffffff;
+      font-size: 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      touch-action: none;
+      transition: 0.08s;
+      border: 1px solid rgba(255,255,255,0.04);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+      font-family: inherit;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+    .btn-icon:active {
+      transform: scale(0.85);
+      background: rgba(78,205,196,0.2);
+    }
+    .btn-icon.action:active { background: rgba(255,107,107,0.2); }
+
+    #shape-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0,0,0,0.2);
+      backdrop-filter: blur(4px);
+      padding: 2px 12px 2px 6px;
+      border-radius: 30px;
+      border: 1px solid rgba(255,255,255,0.03);
+    }
+    #shape-dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 6px;
+      border: 1.5px solid rgba(255,255,255,0.1);
+      flex-shrink: 0;
+    }
+    #shape-name {
+      color: #e0ecff;
+      font-size: 0.6rem;
+      font-weight: 500;
+    }
+
+    #control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(14px);
+      border-radius: 40px;
+      border: 1px solid rgba(255,255,255,0.04);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    }
+
+    #joystick-area {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      touch-action: none;
+      flex-shrink: 0;
+    }
+    #joystick-base {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(8px);
+      border: 2px solid rgba(255,255,255,0.08);
+      box-shadow: inset 0 0 30px rgba(0,0,0,0.2);
+    }
+    #joystick-thumb {
+      position: absolute;
+      width: 44%;
+      height: 44%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #8cf0e8, #1f8a82);
+      border: 2.5px solid rgba(255,255,255,0.2);
+      box-shadow: 0 0 30px rgba(78,205,196,0.15);
+      top: 28%; left: 28%;
+      pointer-events: none;
+      transition: none;
+    }
+
+    #btn-jump {
+      width: 80px;
+      height: 80px;
+      border: none;
+      border-radius: 50%;
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(145deg, #ff6b6b, #d63031);
+      box-shadow: 0 8px 30px rgba(255,107,107,0.2), inset 0 -4px 0 rgba(0,0,0,0.1);
+      cursor: pointer;
+      touch-action: none;
+      transition: 0.06s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: 2px solid rgba(255,255,255,0.05);
+    }
+    #btn-jump:active {
+      transform: scale(0.85);
+      box-shadow: 0 4px 15px rgba(255,107,107,0.1);
+    }
+
+    /* 右上触控板 */
+    #touchpad-wrap {
+      position: absolute;
+      top: 64px;
+      right: 8px;
+      width: 64px;
+      height: 64px;
+      z-index: 25;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(14px);
+      border-radius: 36px;
+      border: 1px solid rgba(255,255,255,0.06);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      pointer-events: auto;
+      touch-action: none;
+    }
+    #touchpad-wrap #touchpad-label {
+      color: rgba(255,255,255,0.3);
+      font-size: 0.3rem;
+      letter-spacing: 1px;
+      margin-bottom: 2px;
+      font-weight: 500;
+    }
+    #touchpad {
+      width: 48px;
+      height: 32px;
+      border-radius: 30px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.04);
+      position: relative;
+      touch-action: none;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    #touchpad .divider {
+      position: absolute;
+      top: 0; bottom: 0; left: 50%;
+      width: 1px;
+      background: rgba(255,255,255,0.06);
+    }
+    #touchpad .label-left,
+    #touchpad .label-right {
+      position: absolute;
+      bottom: 2px;
+      font-size: 0.3rem;
+      color: rgba(255,255,255,0.08);
+      letter-spacing: 1px;
+    }
+    #touchpad .label-left { left: 6px; }
+    #touchpad .label-right { right: 6px; }
+    #touchpad .cursor-dot {
+      position: absolute;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(78,205,196,0.4), rgba(78,205,196,0.05));
+      border: 1.5px solid rgba(78,205,196,0.2);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+    }
+    #touchpad .cursor-dot.active { display: block; }
+
+    /* 控制台 */
+    #cheat-panel {
+      position: fixed;
+      top: 80px;
+      right: 6px;
+      width: 180px;
+      z-index: 9999;
+      background: rgba(8,16,32,0.92);
+      border: 1px solid rgba(78,205,196,0.1);
+      color: #b0f0e0;
+      padding: 10px;
+      border-radius: 16px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s;
+      font-family: monospace;
+      font-size: 0.5rem;
+      backdrop-filter: blur(14px);
+      max-height: 70vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      cursor: grab;
+      touch-action: none;
+    }
+    #cheat-panel.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    #cheat-panel:active { cursor: grabbing; }
+    #cheat-panel .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+    #cheat-panel .panel-header:active { cursor: grabbing; }
+    #cheat-panel .panel-header h3 {
+      color: #4ecdc4;
+      font-size: 0.7rem;
+      margin: 0;
+      pointer-events: none;
+    }
+    #cheat-panel .panel-header .close-btn {
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.3);
+      font-size: 0.8rem;
+      cursor: pointer;
+      padding: 0 4px;
+      font-family: inherit;
+    }
+    #cheat-panel .panel-header .close-btn:hover { color: #ff6b6b; }
+    #cheat-panel input[type="range"] { width: 60px; accent-color: #4ecdc4; }
+    .cheat-btn {
+      width: 100%;
+      padding: 3px;
+      margin: 2px 0;
+      background: rgba(0,255,200,0.05);
+      border: 1px solid rgba(0,255,200,0.1);
+      color: #b0f0e0;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.5rem;
+      font-family: inherit;
+    }
+    .cheat-btn:active { background: rgba(0,255,200,0.12); }
+    #cheat-panel textarea {
+      width: 100%;
+      background: rgba(0,10,0,0.3);
+      border: 1px solid rgba(0,255,200,0.08);
+      color: #b0f0e0;
+      padding: 3px;
+      border-radius: 6px;
+      min-height: 28px;
+      font-size: 0.45rem;
+      font-family: monospace;
+      resize: vertical;
+    }
+
+    /* 覆层 */
+    #start-overlay, #death-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity 0.4s ease, visibility 0.4s ease;
+    }
+    #start-overlay {
+      background: radial-gradient(circle at center, rgba(8,12,26,0.98), rgba(0,0,0,0.99));
+      backdrop-filter: blur(16px);
+      visibility: visible;
+    }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+    #start-box {
+      background: rgba(18,26,48,0.95);
+      border: 1.5px solid rgba(78,205,196,0.15);
+      border-radius: 32px;
+      padding: 28px 24px;
+      text-align: center;
+      color: #eaf2ff;
+      max-width: 320px;
+      width: 90%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      animation: breathe 2.4s ease-in-out infinite;
+      cursor: pointer;
+    }
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+      50% { transform: scale(1.02); box-shadow: 0 20px 80px rgba(78,205,196,0.15); }
+    }
+    #start-box h1 { font-size: 1.8rem; margin-bottom: 2px; background: linear-gradient(135deg, #4ecdc4, #ff6b6b); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    #start-box .sub { color: #4ecdc4; font-size: 0.9rem; margin-bottom: 6px; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+    #start-box p { font-size: 0.65rem; color: #8aa4c8; margin: 2px 0; }
+    #start-box .key { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 6px; font-size: 0.5rem; display: inline-block; color: #b0c8e8; }
+
+    #death-overlay {
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(6px);
+      opacity: 0; pointer-events: none;
+      z-index: 200;
+    }
+    #death-overlay.active { opacity: 1; pointer-events: auto; }
+    #death-box {
+      background: rgba(18,10,22,0.96);
+      border: 1px solid rgba(255,107,107,0.15);
+      border-radius: 28px;
+      padding: 24px 28px;
+      text-align: center;
+      color: #fff;
+    }
+    #death-box button {
+      background: linear-gradient(135deg, #ff6b6b, #e84a4a);
+      border: none;
+      color: #fff;
+      font-weight: 600;
+      padding: 10px 32px;
+      border-radius: 40px;
+      cursor: pointer;
+      margin-top: 8px;
+      font-size: 0.9rem;
+      box-shadow: 0 4px 20px rgba(255,107,107,0.2);
+    }
+
+    @media (max-width: 600px) {
+      #hud { font-size: 0.5rem; gap: 8px; padding: 4px 14px; top: 8px; }
+      #hud .right { font-size: 0.45rem; gap: 6px; }
+      #touchpad-wrap { width: 56px; height: 56px; top: 56px; right: 6px; }
+      #touchpad { width: 40px; height: 28px; }
+      .btn-icon { width: 34px; height: 34px; font-size: 1rem; border-radius: 10px; }
+      #shape-indicator { padding: 2px 8px 2px 4px; }
+      #shape-dot { width: 16px; height: 16px; }
+      #shape-name { font-size: 0.5rem; }
+      #joystick-area { width: 80px; height: 80px; }
+      #btn-jump { width: 64px; height: 64px; font-size: 1.4rem; }
+      #toolbar { padding: 4px 8px; }
+      #cheat-panel { width: 150px; font-size: 0.4rem; top: 70px; right: 4px; }
+    }
+    @media (max-width: 420px) {
+      .btn-icon { width: 28px; height: 28px; font-size: 0.8rem; border-radius: 8px; }
+      #shape-dot { width: 12px; height: 12px; }
+      #shape-name { font-size: 0.45rem; }
+      #joystick-area { width: 68px; height: 68px; }
+      #btn-jump { width: 54px; height: 54px; font-size: 1.2rem; }
+      #touchpad-wrap { width: 46px; height: 46px; top: 48px; }
+      #touchpad { width: 34px; height: 24px; }
+      #hud { font-size: 0.4rem; gap: 4px; padding: 2px 10px; }
+      #hud .right { font-size: 0.35rem; gap: 4px; }
+      #cheat-panel { width: 130px; font-size: 0.35rem; top: 60px; right: 2px; padding: 6px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="start-overlay">
+    <div id="start-box">
+      <h1>沙盒 · 重构</h1>
+      <p class="sub">👆 点击任意处进入</p>
+      <p><span class="key">摇杆</span> 移动 · <span class="key">跳跃</span> 大按钮</p>
+      <p><span class="key">右触板</span> 左/右 · <span class="key">右滑</span> 视角</p>
+    </div>
+  </div>
+
+  <div id="death-overlay">
+    <div id="death-box">
+      <h2>💀 坠落</h2>
+      <p style="margin:4px 0;font-size:0.75rem;">点击重生</p>
+      <button id="respawn-btn">重生</button>
+    </div>
+  </div>
+
+  <div id="app">
+    <div id="scene-container">
+      <div id="hud">
+        <span id="shape-indicator">
+          <span id="shape-dot" class="dot"></span>
+          <span id="shape-name" class="name">立方体</span>
+        </span>
+        <span class="right">📦 <span id="obj-count">0</span> ⚡ <span id="fps-val">60</span>fps</span>
+      </div>
+
+      <div id="touchpad-wrap">
+        <div id="touchpad-label">◀ ▶</div>
+        <div id="touchpad">
+          <div class="divider"></div>
+          <span class="label-left">◀</span>
+          <span class="label-right">▶</span>
+          <div class="cursor-dot" id="cursor-dot"></div>
+        </div>
+      </div>
+
+      <div id="bottom-controls">
+        <div id="toolbar">
+          <div class="tool-group">
+            <button class="btn-icon action" id="btn-place">+</button>
+            <button class="btn-icon action" id="btn-remove">-</button>
+            <button class="btn-icon" id="btn-next">▶</button>
+            <button class="btn-icon" id="btn-grab">🌀</button>
+            <button class="btn-icon" id="btn-push">💨</button>
+          </div>
+          <div class="tool-group">
+            <button class="btn-icon" id="btn-explode">💥</button>
+            <button class="btn-icon" id="btn-vacuum">🌪</button>
+            <button class="btn-icon" id="btn-color">🎨</button>
+            <button class="btn-icon" id="btn-panel">⚙</button>
+          </div>
+        </div>
+
+        <div id="control-row">
+          <div id="joystick-area">
+            <div id="joystick-base"></div>
+            <div id="joystick-thumb"></div>
+          </div>
+          <button id="btn-jump">⬆</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cheat-panel">
+    <div class="panel-header" id="panel-drag-handle">
+      <h3>⚡ 控制台</h3>
+      <button class="close-btn" id="panel-close">✕</button>
+    </div>
+    <div><label>🕊️ 飞行</label><input type="checkbox" id="cheat-fly"></div>
+    <div><label>👑 上帝</label><input type="checkbox" id="cheat-god" checked></div>
+    <div><label>🎯 无限放置</label><input type="checkbox" id="cheat-range"></div>
+    <div><label>⚡ 自动放置</label><input type="checkbox" id="cheat-auto"></div>
+    <div>重力 <input type="range" id="cheat-gravity" min="-20" max="20" value="-12" step="0.5"></div>
+    <div>速度 <input type="range" id="cheat-speed" min="2" max="30" value="6" step="0.5"></div>
+    <div>跳跃 <input type="range" id="cheat-jump" min="2" max="20" value="7" step="0.5"></div>
+    <button class="cheat-btn" id="btn-spawn-batch">💣 批量生成(30)</button>
+    <button class="cheat-btn" id="btn-random-color">🎨 随机颜色</button>
+    <label>📜 脚本</label>
+    <textarea id="cheat-script-input">// 示例: setGravity(-9.8); spawnSphere(0,5,0,'#ff0000');</textarea>
+    <button class="cheat-btn" id="btn-exec-script">执行</button>
+  </div>
+
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js" } }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    // ============================================================
+    //  核心重构：干净、稳定、高性能
+    // ============================================================
+    
+    // -------- 配置 --------
+    const CONFIG = {
+      worldSize: 17,
+      gravity: -12,
+      moveSpeed: 6,
+      jumpForce: 7,
+      forceStrength: 1500,
+      playerRadius: 0.4,
+      blockSize: 0.95,
+      physicsSize: 0.475, // 与Three.js匹配
+      maxSubSteps: 5,
+      fixedTimeStep: 1/60,
+      maxDistance: 30,
+    };
+
+    // -------- 状态 --------
+    const state = {
+      scene: new THREE.Scene(),
+      camera: new THREE.PerspectiveCamera(68, 1, 0.1, 200),
+      renderer: null,
+      world: null,
+      clock: new THREE.Clock(),
+      
+      player: {
+        body: null,
+        mesh: null,
+        isOnGround: false,
+      },
+      
+      placed: [], // { mesh, body, type, color }
+      allObjects: [], // 用于射线检测
+      
+      shapes: {
+        types: ['cube','sphere','cylinder','cone','torus','pyramid','capsule','octahedron'],
+        names: ['立方体','球体','圆柱','圆锥','圆环','金字塔','胶囊','八面体'],
+        index: 0,
+        colors: ['#ff6b6b','#ff9f43','#feca57','#54a0ff','#5f27cd','#00d2d3','#55efc4','#fd79a8','#ffffff','#e056a0'],
+        colorIndex: 0,
+      },
+      
+      input: {
+        keys: {},
+        euler: new THREE.Euler(0, 0, 0, 'YXZ'),
+        joystick: { x: 0, y: 0 },
+        viewDrag: { active: false, lastX: 0, lastY: 0, pointerId: null },
+      },
+      
+      cheat: {
+        fly: false,
+        god: true,
+        range: false,
+        auto: false,
+      },
+      
+      preview: null,
+      isDead: false,
+      holdK: false,
+      autoTimer: 0,
+      stats: { frames: 0, time: 0 },
+    };
+
+    // -------- DOM 引用 --------
+    const container = document.getElementById('scene-container');
+    const dom = {
+      joystickArea: document.getElementById('joystick-area'),
+      joystickThumb: document.getElementById('joystick-thumb'),
+      touchpad: document.getElementById('touchpad'),
+      cursorDot: document.getElementById('cursor-dot'),
+      cheatPanel: document.getElementById('cheat-panel'),
+      deathOverlay: document.getElementById('death-overlay'),
+      startOverlay: document.getElementById('start-overlay'),
+      objCount: document.getElementById('obj-count'),
+      fpsVal: document.getElementById('fps-val'),
+      shapeDot: document.getElementById('shape-dot'),
+      shapeName: document.getElementById('shape-name'),
+    };
+
+    // ============================================================
+    //  几何体缓存（避免重复创建）
+    // ============================================================
+    const geoCache = new Map();
+    function getGeometry(type) {
+      if (geoCache.has(type)) return geoCache.get(type);
+      let geo;
+      const s = CONFIG.blockSize;
+      const r = CONFIG.physicsSize;
+      switch(type) {
+        case 'cube': geo = new THREE.BoxGeometry(s, s, s); break;
+        case 'sphere': geo = new THREE.SphereGeometry(r, 16, 12); break;
+        case 'cylinder': geo = new THREE.CylinderGeometry(r, r, s, 12); break;
+        case 'cone': geo = new THREE.ConeGeometry(r, s, 12); break;
+        case 'torus': geo = new THREE.TorusGeometry(r * 0.85, 0.18, 10, 16); break;
+        case 'pyramid': geo = new THREE.ConeGeometry(r, s * 0.95, 4); break;
+        case 'capsule': geo = new THREE.CylinderGeometry(r * 0.7, r * 0.7, s * 0.8, 10); break;
+        case 'octahedron': geo = new THREE.OctahedronGeometry(r); break;
+        default: geo = new THREE.BoxGeometry(s, s, s);
+      }
+      geoCache.set(type, geo);
+      return geo;
+    }
+
+    // -------- Cannon 形状缓存 --------
+    const shapeCache = new Map();
+    function getCannonShape(type) {
+      if (shapeCache.has(type)) return shapeCache.get(type);
+      const s = CONFIG.physicsSize;
+      let shape;
+      switch(type) {
+        case 'cube': shape = new CANNON.Box(new CANNON.Vec3(s, s, s)); break;
+        case 'sphere': shape = new CANNON.Sphere(s); break;
+        case 'cylinder': shape = new CANNON.Cylinder(s, s, CONFIG.blockSize, 6); break;
+        case 'cone': shape = new CANNON.Cylinder(0, s, CONFIG.blockSize, 6); break;
+        case 'torus': shape = new CANNON.Sphere(s * 0.85); break;
+        case 'pyramid': shape = new CANNON.Cylinder(0, s, CONFIG.blockSize * 0.95, 4); break;
+        case 'capsule': shape = new CANNON.Cylinder(s * 0.7, s * 0.7, CONFIG.blockSize * 0.8, 6); break;
+        case 'octahedron': shape = new CANNON.Sphere(s); break;
+        default: shape = new CANNON.Box(new CANNON.Vec3(s, s, s));
+      }
+      shapeCache.set(type, shape);
+      return shape;
+    }
+
+    // ============================================================
+    //  初始化图形
+    // ============================================================
+    function initGraphics() {
+      const rect = container.getBoundingClientRect();
+      const w = rect.width || 400, h = rect.height || 300;
+      
+      state.renderer = new THREE.WebGLRenderer({ 
+        antialias: true, 
+        powerPreference: 'high-performance' 
+      });
+      state.renderer.setSize(w, h);
+      state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      state.renderer.shadowMap.enabled = true;
+      state.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      state.renderer.setClearColor(0x87CEEB);
+      container.appendChild(state.renderer.domElement);
+
+      state.scene.background = new THREE.Color(0x87CEEB);
+      state.scene.fog = new THREE.Fog(0x87CEEB, 40, 110);
+
+      // 灯光
+      const ambient = new THREE.AmbientLight(0xbcd4f0, 0.6);
+      state.scene.add(ambient);
+
+      const dirLight = new THREE.DirectionalLight(0xfff8e7, 1.2);
+      dirLight.position.set(20, 30, 10);
+      dirLight.castShadow = true;
+      dirLight.shadow.mapSize.width = 512;
+      dirLight.shadow.mapSize.height = 512;
+      dirLight.shadow.camera.near = 0.5;
+      dirLight.shadow.camera.far = 60;
+      dirLight.shadow.camera.left = -25;
+      dirLight.shadow.camera.right = 25;
+      dirLight.shadow.camera.top = 25;
+      dirLight.shadow.camera.bottom = -25;
+      state.scene.add(dirLight);
+
+      // 地面
+      const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(36, 36),
+        new THREE.MeshStandardMaterial({ color: 0xd5c4a1, roughness: 0.8 })
+      );
+      groundMesh.rotation.x = -Math.PI / 2;
+      groundMesh.position.y = -0.2;
+      groundMesh.receiveShadow = true;
+      state.scene.add(groundMesh);
+      state.allObjects.push(groundMesh);
+
+      // 网格
+      const grid = new THREE.GridHelper(36, 24, 0xc4b99a, 0xe0d5c0);
+      state.scene.add(grid);
+
+      // 预览
+      const previewMat = new THREE.MeshStandardMaterial({
+        color: 0xff6b6b,
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false,
+      });
+      state.preview = new THREE.Mesh(getGeometry('cube'), previewMat);
+      state.preview.visible = false;
+      state.scene.add(state.preview);
+
+      // 玩家（用球体表示）
+      const playerMat = new THREE.MeshStandardMaterial({
+        color: 0x4ecdc4,
+        emissive: 0x4ecdc4,
+        emissiveIntensity: 0.15,
+      });
+      const playerMesh = new THREE.Mesh(new THREE.SphereGeometry(CONFIG.playerRadius, 12, 10), playerMat);
+      playerMesh.position.set(0, 2, 8);
+      state.scene.add(playerMesh);
+      state.player.mesh = playerMesh;
+
+      // 相机
+      state.camera.position.set(0, 2.6, 8);
+      state.camera.lookAt(0, 0, 0);
+
+      // Resize
+      const ro = new ResizeObserver(() => {
+        const r = container.getBoundingClientRect();
+        const w2 = r.width || 400, h2 = r.height || 300;
+        state.camera.aspect = w2 / h2;
+        state.camera.updateProjectionMatrix();
+        state.renderer.setSize(w2, h2);
+      });
+      ro.observe(container);
+    }
+
+    // ============================================================
+    //  初始化物理
+    // ============================================================
+    function initPhysics() {
+      state.world = new CANNON.World();
+      state.world.gravity.set(0, CONFIG.gravity, 0);
+      state.world.broadphase = new CANNON.SAPBroadphase(state.world);
+      state.world.allowSleep = true;
+      state.world.defaultContactMaterial.restitution = 0.3;
+
+      // 地面
+      const groundShape = new CANNON.Box(new CANNON.Vec3(18, 0.2, 18));
+      const groundBody = new CANNON.Body({ mass: 0 });
+      groundBody.addShape(groundShape);
+      groundBody.position.set(0, -0.3, 0);
+      state.world.addBody(groundBody);
+
+      // 边界墙
+      const b = CONFIG.worldSize;
+      const walls = [
+        { pos: [0, 5, -b], size: [b*2, 10, 0.5] },
+        { pos: [0, 5, b], size: [b*2, 10, 0.5] },
+        { pos: [-b, 5, 0], size: [0.5, 10, b*2] },
+        { pos: [b, 5, 0], size: [0.5, 10, b*2] },
+      ];
+      walls.forEach(w => {
+        const shape = new CANNON.Box(new CANNON.Vec3(w.size[0], w.size[1], w.size[2]));
+        const body = new CANNON.Body({ mass: 0 });
+        body.addShape(shape);
+        body.position.set(w.pos[0], w.pos[1], w.pos[2]);
+        state.world.addBody(body);
+      });
+
+      // 玩家
+      const playerShape = new CANNON.Sphere(CONFIG.playerRadius);
+      state.player.body = new CANNON.Body({ mass: 1 });
+      state.player.body.addShape(playerShape);
+      state.player.body.position.set(0, 2, 8);
+      state.player.body.linearDamping = 0.9;
+      state.player.body.angularDamping = 0.9;
+      state.world.addBody(state.player.body);
+
+      // 接触事件 - 检测是否在地面
+      state.world.addEventListener('postStep', () => {
+        const p = state.player.body;
+        state.player.isOnGround = p.position.y <= 0.5 && Math.abs(p.velocity.y) < 0.5;
+      });
+    }
+
+    // ============================================================
+    //  物体管理
+    // ============================================================
+    function createPlaced(type, colorHex, position, isStatic = false) {
+      const mesh = new THREE.Mesh(
+        getGeometry(type),
+        new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.35, metalness: 0.05 })
+      );
+      mesh.position.copy(position);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      state.scene.add(mesh);
+      state.allObjects.push(mesh);
+
+      const shape = getCannonShape(type);
+      const body = new CANNON.Body({ mass: isStatic ? 0 : 1 });
+      body.addShape(shape);
+      body.position.set(position.x, position.y, position.z);
+      body.linearDamping = 0.3;
+      body.angularDamping = 0.1;
+      state.world.addBody(body);
+
+      const entry = { mesh, body, type, color: colorHex, isStatic };
+      state.placed.push(entry);
+      return entry;
+    }
+
+    function removePlaced(entry) {
+      state.world.removeBody(entry.body);
+      state.scene.remove(entry.mesh);
+      const idx = state.placed.indexOf(entry);
+      if (idx !== -1) state.placed.splice(idx, 1);
+      const pIdx = state.allObjects.indexOf(entry.mesh);
+      if (pIdx !== -1) state.allObjects.splice(pIdx, 1);
+    }
+
+    function clearWorld() {
+      while (state.placed.length) {
+        const entry = state.placed[0];
+        state.world.removeBody(entry.body);
+        state.scene.remove(entry.mesh);
+        state.placed.splice(0, 1);
+      }
+      state.allObjects = state.allObjects.filter(obj => {
+        return obj === state.player.mesh || obj === state.preview || 
+               obj.type === 'GridHelper' || obj.type === 'PlaneGeometry';
+      });
+    }
+
+    // ============================================================
+    //  射线检测（放置/删除）
+    // ============================================================
+    function getPlacement() {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), state.camera);
+      raycaster.far = state.cheat.range ? 100 : CONFIG.maxDistance;
+      
+      const hits = raycaster.intersectObjects(state.allObjects, false);
+      if (hits.length > 0) {
+        const point = hits[0].point.clone();
+        const normal = hits[0].face.normal.clone()
+          .transformDirection(hits[0].object.matrixWorld);
+        const pos = point.add(normal.multiplyScalar(CONFIG.physicsSize));
+        pos.x = THREE.MathUtils.clamp(pos.x, -CONFIG.worldSize, CONFIG.worldSize);
+        pos.z = THREE.MathUtils.clamp(pos.z, -CONFIG.worldSize, CONFIG.worldSize);
+        pos.y = Math.max(pos.y, 0.2);
+        
+        const valid = state.cheat.range || pos.distanceTo(state.camera.position) >= 0.9;
+        return { pos, valid };
+      }
+      return { pos: null, valid: false };
+    }
+
+    // ============================================================
+    //  玩家控制
+    // ============================================================
+    function updatePlayer(dt) {
+      const body = state.player.body;
+      if (state.isDead) {
+        body.velocity.set(0, 0, 0);
+        body.angularVelocity.set(0, 0, 0);
+        return;
+      }
+
+      const joy = state.input.joystick;
+      const keys = state.input.keys;
+      const deadZone = 0.12;
+      const ax = Math.abs(joy.x) > deadZone ? joy.x : 0;
+      const ay = Math.abs(joy.y) > deadZone ? joy.y : 0;
+
+      // 计算移动方向
+      const forward = new THREE.Vector3();
+      state.camera.getWorldDirection(forward);
+      forward.y = 0;
+      if (forward.length() > 0.001) forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+      let f = 0, r = 0;
+      if (ay > 0 || keys['KeyW']) f++;
+      if (ay < 0 || keys['KeyS']) f--;
+      if (ax < 0 || keys['KeyA']) r--;
+      if (ax > 0 || keys['KeyD']) r++;
+
+      if (state.cheat.fly) {
+        // 飞行模式
+        const speed = CONFIG.moveSpeed * 1.2;
+        const dir = new THREE.Vector3()
+          .addScaledVector(forward, f)
+          .addScaledVector(right, r);
+        if (dir.length() > 0.001) dir.normalize();
+        
+        body.velocity.x = dir.x * speed;
+        body.velocity.z = dir.z * speed;
+        
+        if (keys['ShiftLeft'] || keys['ShiftRight']) {
+          body.velocity.y = -speed * 0.8;
+        } else if (keys['Space']) {
+          body.velocity.y = speed * 0.8;
+        } else {
+          body.velocity.y = 0;
+        }
+      } else {
+        // 地面模式
+        const speed = CONFIG.moveSpeed;
+        const dir = new THREE.Vector3()
+          .addScaledVector(forward, f)
+          .addScaledVector(right, r);
+        if (dir.length() > 0.001) dir.normalize();
+        
+        body.velocity.x = dir.x * speed;
+        body.velocity.z = dir.z * speed;
+      }
+
+      // 跳跃
+      if ((keys['Space'] || keys['KeyW']) && state.player.isOnGround && !state.cheat.fly) {
+        body.velocity.y = CONFIG.jumpForce;
+        state.player.isOnGround = false;
+      }
+    }
+
+    // ============================================================
+    //  交互功能
+    // ============================================================
+    function applyForce(attract) {
+      const p = state.player.body.position;
+      const str = CONFIG.forceStrength;
+      state.placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = p.x - entry.body.position.x;
+        const dy = p.y - entry.body.position.y;
+        const dz = p.z - entry.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 8 && dist > 0.3) {
+          const power = (1 - dist / 8) * str;
+          const factor = attract ? 1 : -1;
+          entry.body.applyForce(
+            new CANNON.Vec3(dx/dist * power * factor, dy/dist * power * factor, dz/dist * power * factor),
+            entry.body.position
+          );
+        }
+      });
+    }
+
+    function explode() {
+      const p = state.player.body.position;
+      const str = CONFIG.forceStrength * 0.7;
+      state.placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = entry.body.position.x - p.x;
+        const dy = entry.body.position.y - p.y;
+        const dz = entry.body.position.z - p.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 10 && dist > 0.3) {
+          const factor = (1 - dist / 10) * str / dist;
+          entry.body.applyImpulse(
+            new CANNON.Vec3(dx * factor, (dy + 0.5) * factor, dz * factor),
+            entry.body.position
+          );
+        }
+      });
+    }
+
+    function vacuum() {
+      const p = state.player.body.position;
+      state.placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = p.x - entry.body.position.x;
+        const dy = p.y + 0.5 - entry.body.position.y;
+        const dz = p.z - entry.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist > 1 && dist < 15) {
+          entry.body.applyImpulse(
+            new CANNON.Vec3(dx * 12, dy * 12, dz * 12),
+            entry.body.position
+          );
+        }
+      });
+    }
+
+    function spawnBatch(count) {
+      const num = Math.min(30, Math.max(1, Math.floor(count)));
+      const type = state.shapes.types[state.shapes.index];
+      const color = state.shapes.colors[state.shapes.colorIndex];
+      const dir = new THREE.Vector3();
+      state.camera.getWorldDirection(dir);
+      const base = state.camera.position.clone().add(dir.multiplyScalar(3));
+      for (let i = 0; i < num; i++) {
+        const ang = (i / num) * Math.PI * 2 + Math.random() * 0.5;
+        const r = 1.5 + Math.random() * 3;
+        const x = base.x + Math.cos(ang) * r;
+        const z = base.z + Math.sin(ang) * r;
+        const y = base.y + Math.random() * 2;
+        createPlaced(type, color, new THREE.Vector3(x, y, z), state.holdK);
+      }
+    }
+
+    // ============================================================
+    //  重置
+    // ============================================================
+    function resetPlayer() {
+      const body = state.player.body;
+      body.position.set(0, 2, 8);
+      body.velocity.set(0, 0, 0);
+      body.quaternion.set(0, 0, 0, 1);
+      body.angularVelocity.set(0, 0, 0);
+      
+      if (!state.cheat.fly) {
+        state.world.gravity.set(0, CONFIG.gravity, 0);
+      }
+      
+      state.camera.position.set(0, 2.6, 8);
+      state.input.euler.set(0, 0, 0);
+      state.camera.quaternion.setFromEuler(state.input.euler);
+      
+      state.isDead = false;
+      dom.deathOverlay.classList.remove('active');
+      
+      // 重置摇杆
+      state.input.joystick.x = 0;
+      state.input.joystick.y = 0;
+      dom.joystickThumb.style.transform = 'translate(0px, 0px)';
+    }
+
+    function die() {
+      if (state.isDead || state.cheat.god) return;
+      state.isDead = true;
+      dom.deathOverlay.classList.add('active');
+      state.player.body.velocity.set(0, 0, 0);
+      state.player.body.angularVelocity.set(0, 0, 0);
+    }
+
+    // ============================================================
+    //  UI 更新
+    // ============================================================
+    function updateUI() {
+      const col = state.shapes.colors[state.shapes.colorIndex];
+      const name = state.shapes.names[state.shapes.index];
+      dom.shapeDot.style.background = col;
+      dom.shapeName.textContent = name;
+      dom.objCount.textContent = state.placed.length;
+      
+      // 更新预览
+      if (state.preview) {
+        const type = state.shapes.types[state.shapes.index];
+        const newGeo = getGeometry(type);
+        if (state.preview.geometry !== newGeo) {
+          state.preview.geometry.dispose();
+          state.preview.geometry = newGeo;
+        }
+        state.preview.material.color.set(col);
+      }
+    }
+
+    // ============================================================
+    //  控制台脚本执行（安全限制）
+    // ============================================================
+    function execScript() {
+      const code = document.getElementById('cheat-script-input').value;
+      try {
+        const sandbox = {
+          setGravity: (v) => {
+            CONFIG.gravity = v;
+            state.world.gravity.set(0, v, 0);
+            document.getElementById('cheat-gravity').value = v;
+          },
+          spawnSphere: (x, y, z, col) => createPlaced('sphere', col || '#ff6b6b', new THREE.Vector3(x, y, z)),
+          spawnCube: (x, y, z, col) => createPlaced('cube', col || '#ff6b6b', new THREE.Vector3(x, y, z)),
+          clearAll: clearWorld,
+          log: console.log,
+        };
+        const fn = new Function(...Object.keys(sandbox), 
+          `"use strict";\n${code}\n//# sourceURL=cheat-script.js`);
+        fn(...Object.values(sandbox));
+      } catch(e) {
+        console.error('脚本错误:', e);
+        alert('脚本错误: ' + e.message);
+      }
+    }
+
+    // ============================================================
+    //  动画循环
+    // ============================================================
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      const dt = Math.min(state.clock.getDelta(), 0.05);
+      
+      // 物理步进（固定时间步长）
+      state.world.step(CONFIG.fixedTimeStep, dt, CONFIG.maxSubSteps);
+      
+      // 更新玩家
+      updatePlayer(dt);
+      
+      // 同步物理→图形
+      const p = state.player.body;
+      state.player.mesh.position.copy(p.position);
+      
+      // 放置物体同步
+      for (const entry of state.placed) {
+        entry.mesh.position.copy(entry.body.position);
+        entry.mesh.quaternion.copy(entry.body.quaternion);
+      }
+      
+      // 相机跟随
+      const camPos = new THREE.Vector3().copy(p.position);
+      camPos.y += 0.6;
+      state.camera.position.copy(camPos);
+      state.camera.quaternion.setFromEuler(state.input.euler);
+      
+      // 预览更新
+      const place = getPlacement();
+      if (place.valid && place.pos) {
+        state.preview.position.copy(place.pos);
+        state.preview.visible = true;
+      } else {
+        state.preview.visible = false;
+      }
+      
+      // 自动放置
+      if (!state.isDead && state.cheat.auto) {
+        state.autoTimer += dt;
+        if (state.autoTimer > 0.2) {
+          state.autoTimer = 0;
+          const pl = getPlacement();
+          if (pl.valid && pl.pos) {
+            createPlaced(
+              state.shapes.types[state.shapes.index],
+              state.shapes.colors[state.shapes.colorIndex],
+              pl.pos,
+              state.holdK
+            );
+          }
+        }
+      }
+      
+      // 死亡检测
+      if (!state.isDead && !state.cheat.god && p.position.y < -8) {
+        die();
+      }
+      
+      // 统计
+      const now = performance.now();
+      state.stats.frames++;
+      if (!state.stats.time) state.stats.time = now;
+      if (now - state.stats.time >= 500) {
+        dom.fpsVal.textContent = Math.round(state.stats.frames / ((now - state.stats.time) / 1000));
+        state.stats.frames = 0;
+        state.stats.time = now;
+      }
+      
+      // 渲染
+      state.renderer.render(state.scene, state.camera);
+    }
+
+    // ============================================================
+    //  事件绑定
+    // ============================================================
+    function setupEvents() {
+      // -------- 摇杆 --------
+      let joyPointerId = null;
+      const maxDist = 30;
+      
+      function updateJoystick(clientX, clientY) {
+        const rect = dom.joystickArea.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        let dx = clientX - cx, dy = clientY - cy;
+        const dist = Math.hypot(dx, dy);
+        const clamped = Math.min(dist, maxDist);
+        if (dist > 0.001) { dx = dx / dist * clamped; dy = dy / dist * clamped; }
+        
+        state.input.joystick.x = Math.max(-1, Math.min(1, dx / maxDist));
+        state.input.joystick.y = Math.max(-1, Math.min(1, -dy / maxDist));
+        dom.joystickThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+      }
+      
+      function resetJoystick() {
+        state.input.joystick.x = 0;
+        state.input.joystick.y = 0;
+        dom.joystickThumb.style.transform = 'translate(0px, 0px)';
+        joyPointerId = null;
+      }
+      
+      dom.joystickArea.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        joyPointerId = e.pointerId;
+        dom.joystickArea.setPointerCapture(e.pointerId);
+        updateJoystick(e.clientX, e.clientY);
+      });
+      
+      dom.joystickArea.addEventListener('pointermove', (e) => {
+        if (joyPointerId === null) return;
+        updateJoystick(e.clientX, e.clientY);
+      });
+      
+      dom.joystickArea.addEventListener('pointerup', (e) => {
+        if (joyPointerId === e.pointerId) resetJoystick();
+      });
+      dom.joystickArea.addEventListener('pointercancel', resetJoystick);
+
+      // -------- 触控板 --------
+      function getTouchPos(e) {
+        const rect = dom.touchpad.getBoundingClientRect();
+        const cx = e.clientX || e.touches?.[0]?.clientX || 0;
+        const cy = e.clientY || e.touches?.[0]?.clientY || 0;
+        return {
+          x: Math.max(0, Math.min(1, (cx - rect.left) / rect.width)),
+          y: Math.max(0, Math.min(1, (cy - rect.top) / rect.height)),
+        };
+      }
+      
+      dom.touchpad.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        const pos = getTouchPos(e);
+        dom.cursorDot.style.left = (pos.x * 100) + '%';
+        dom.cursorDot.style.top = (pos.y * 100) + '%';
+        dom.cursorDot.classList.add('active');
+        
+        if (pos.x < 0.5) {
+          // 放置
+          const pl = getPlacement();
+          if (pl.valid && pl.pos) {
+            createPlaced(
+              state.shapes.types[state.shapes.index],
+              state.shapes.colors[state.shapes.colorIndex],
+              pl.pos,
+              state.holdK
+            );
+          }
+        } else {
+          // 删除
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(new THREE.Vector2(0, 0), state.camera);
+          const hits = raycaster.intersectObjects(state.allObjects, false);
+          for (const hit of hits) {
+            if (hit.object === state.preview || hit.object === state.player.mesh) continue;
+            const entry = state.placed.find(e => e.mesh === hit.object);
+            if (entry) { removePlaced(entry); break; }
+          }
+        }
+      });
+      
+      dom.touchpad.addEventListener('pointerup', () => {
+        dom.cursorDot.classList.remove('active');
+      });
+      dom.touchpad.addEventListener('pointercancel', () => {
+        dom.cursorDot.classList.remove('active');
+      });
+
+      // -------- 视角拖拽（右半屏） --------
+      let viewPointerId = null;
+      let isViewDragging = false;
+      let lastViewX = 0, lastViewY = 0;
+      
+      document.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button') || 
+            e.target.closest('#touchpad-wrap') || 
+            e.target.closest('#toolbar') || 
+            e.target.closest('#control-row') || 
+            e.target.closest('#cheat-panel') ||
+            e.target.closest('#start-overlay') ||
+            e.target.closest('#death-overlay')) return;
+        
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        if (x > rect.width * 0.5) {
+          isViewDragging = true;
+          viewPointerId = e.pointerId;
+          lastViewX = e.clientX;
+          lastViewY = e.clientY;
+          e.preventDefault();
+        }
+      });
+      
+      document.addEventListener('pointermove', (e) => {
+        if (!isViewDragging || viewPointerId !== e.pointerId) return;
+        const dx = e.clientX - lastViewX;
+        const dy = e.clientY - lastViewY;
+        lastViewX = e.clientX;
+        lastViewY = e.clientY;
+        
+        state.input.euler.y -= dx * 0.008;
+        state.input.euler.x -= dy * 0.008;
+        state.input.euler.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, state.input.euler.x));
+        state.camera.quaternion.setFromEuler(state.input.euler);
+      });
+      
+      document.addEventListener('pointerup', (e) => {
+        if (viewPointerId === e.pointerId) {
+          isViewDragging = false;
+          viewPointerId = null;
+        }
+      });
+      document.addEventListener('pointercancel', (e) => {
+        if (viewPointerId === e.pointerId) {
+          isViewDragging = false;
+          viewPointerId = null;
+        }
+      });
+
+      // -------- 按钮 --------
+      const btnMap = {
+        'btn-jump': () => {
+          if (!state.isDead && state.player.isOnGround) {
+            state.player.body.velocity.y = CONFIG.jumpForce;
+          }
+        },
+        'btn-place': () => {
+          const pl = getPlacement();
+          if (pl.valid && pl.pos) {
+            createPlaced(
+              state.shapes.types[state.shapes.index],
+              state.shapes.colors[state.shapes.colorIndex],
+              pl.pos,
+              state.holdK
+            );
+          }
+        },
+        'btn-remove': () => {
+          const raycaster = new THREE.Raycaster();
+          raycaster.setFromCamera(new THREE.Vector2(0, 0), state.camera);
+          const hits = raycaster.intersectObjects(state.allObjects, false);
+          for (const hit of hits) {
+            if (hit.object === state.preview || hit.object === state.player.mesh) continue;
+            const entry = state.placed.find(e => e.mesh === hit.object);
+            if (entry) { removePlaced(entry); break; }
+          }
+        },
+        'btn-next': () => {
+          state.shapes.index = (state.shapes.index + 1) % state.shapes.types.length;
+          updateUI();
+        },
+        'btn-grab': () => applyForce(true),
+        'btn-push': () => applyForce(false),
+        'btn-explode': explode,
+        'btn-vacuum': vacuum,
+        'btn-color': () => {
+          state.shapes.colorIndex = (state.shapes.colorIndex + 1) % state.shapes.colors.length;
+          updateUI();
+        },
+        'btn-panel': () => dom.cheatPanel.classList.toggle('visible'),
+      };
+      
+      Object.keys(btnMap).forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) {
+          btn.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            btnMap[id]();
+          });
+        }
+      });
+
+      // -------- 键盘 --------
+      document.addEventListener('keydown', (e) => {
+        state.input.keys[e.code] = true;
+        if (e.code === 'KeyK') state.holdK = true;
+        if (e.code >= 'Digit1' && e.code <= 'Digit8') {
+          state.shapes.index = parseInt(e.code.slice(-1)) - 1;
+          updateUI();
+        }
+        if (e.code === 'KeyR') {
+          state.shapes.colorIndex = (state.shapes.colorIndex + 1) % state.shapes.colors.length;
+          updateUI();
+        }
+        if (e.code === 'KeyF') resetPlayer();
+        if (e.code === 'KeyG') applyForce(true);
+        if (e.code === 'KeyH') applyForce(false);
+        if (e.code === 'KeyB') explode();
+        if (e.code === 'KeyV') vacuum();
+      });
+      
+      document.addEventListener('keyup', (e) => {
+        state.input.keys[e.code] = false;
+        if (e.code === 'KeyK') state.holdK = false;
+      });
+
+      // -------- 开始/死亡 --------
+      document.getElementById('start-box').addEventListener('click', () => {
+        dom.startOverlay.classList.add('hidden');
+      }, { once: true });
+      
+      document.getElementById('respawn-btn').addEventListener('click', resetPlayer);
+
+      // -------- 控制台 --------
+      document.getElementById('cheat-fly').addEventListener('change', (e) => {
+        state.cheat.fly = e.target.checked;
+        if (e.target.checked) {
+          state.world.gravity.set(0, 0, 0);
+        } else {
+          state.world.gravity.set(0, CONFIG.gravity, 0);
+        }
+      });
+      
+      document.getElementById('cheat-god').addEventListener('change', (e) => {
+        state.cheat.god = e.target.checked;
+      });
+      
+      document.getElementById('cheat-range').addEventListener('change', (e) => {
+        state.cheat.range = e.target.checked;
+      });
+      
+      document.getElementById('cheat-auto').addEventListener('change', (e) => {
+        state.cheat.auto = e.target.checked;
+      });
+      
+      document.getElementById('cheat-gravity').addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        CONFIG.gravity = val;
+        if (!state.cheat.fly) {
+          state.world.gravity.set(0, val, 0);
+        }
+      });
+      
+      document.getElementById('cheat-speed').addEventListener('input', (e) => {
+        CONFIG.moveSpeed = parseFloat(e.target.value);
+      });
+      
+      document.getElementById('cheat-jump').addEventListener('input', (e) => {
+        CONFIG.jumpForce = parseFloat(e.target.value);
+      });
+      
+      document.getElementById('btn-spawn-batch').addEventListener('click', () => spawnBatch(30));
+      
+      document.getElementById('btn-random-color').addEventListener('click', () => {
+        state.shapes.colorIndex = Math.floor(Math.random() * state.shapes.colors.length);
+        updateUI();
+      });
+      
+      document.getElementById('btn-exec-script').addEventListener('click', execScript);
+      
+      document.getElementById('panel-close').addEventListener('click', () => {
+        dom.cheatPanel.classList.remove('visible');
+      });
+
+      // -------- 面板拖拽 --------
+      const panel = dom.cheatPanel;
+      const handle = document.getElementById('panel-drag-handle');
+      let dragData = null;
+      
+      handle.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.close-btn')) return;
+        if (!panel.classList.contains('visible')) return;
+        const rect = panel.getBoundingClientRect();
+        dragData = {
+          pointerId: e.pointerId,
+          offsetX: e.clientX - rect.left,
+          offsetY: e.clientY - rect.top,
+        };
+        panel.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      });
+      
+      document.addEventListener('pointermove', (e) => {
+        if (!dragData || dragData.pointerId !== e.pointerId) return;
+        let x = e.clientX - dragData.offsetX;
+        let y = e.clientY - dragData.offsetY;
+        const panelRect = panel.getBoundingClientRect();
+        x = Math.max(0, Math.min(window.innerWidth - panelRect.width, x));
+        y = Math.max(0, Math.min(window.innerHeight - panelRect.height, y));
+        panel.style.left = x + 'px';
+        panel.style.top = y + 'px';
+        panel.style.right = 'auto';
+      });
+      
+      document.addEventListener('pointerup', (e) => {
+        if (dragData && dragData.pointerId === e.pointerId) {
+          dragData = null;
+        }
+      });
+      document.addEventListener('pointercancel', () => { dragData = null; });
+    }
+
+    // ============================================================
+    //  启动
+    // ============================================================
+    function init() {
+      // 加载提示
+      const loading = document.createElement('div');
+      loading.id = 'loading-overlay';
+      loading.style.cssText = `
+        position:fixed; inset:0; background:#0b0f1a; display:flex;
+        flex-direction:column; align-items:center; justify-content:center;
+        z-index:9999; color:#4ecdc4; font-family:inherit;
+      `;
+      loading.innerHTML = `
+        <div style="width:36px;height:36px;border:3px solid rgba(78,205,196,0.2);border-top:3px solid #4ecdc4;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:12px;"></div>
+        <p style="font-size:0.8rem;">加载中 ...</p>
+        <style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
+      `;
+      document.body.appendChild(loading);
+
+      // 初始化
+      initGraphics();
+      initPhysics();
+      updateUI();
+      setupEvents();
+
+      // 演示场景
+      const demos = [
+        [0, 1, -2, 'cube', '#ff6b6b'],
+        [3, 1, 1, 'sphere', '#4ecdc4'],
+        [-3, 1, 2, 'cylinder', '#ffe66d'],
+        [2, 1, 3, 'pyramid', '#a29bfe'],
+        [-2, 1, -3, 'capsule', '#00d2d3'],
+        [0, 1, 4, 'octahedron', '#fd79a8'],
+      ];
+      demos.forEach(([x, y, z, type, color]) => {
+        createPlaced(type, color, new THREE.Vector3(x, y, z), false);
+      });
+
+      // 加载完成
+      setTimeout(() => {
+        const ld = document.getElementById('loading-overlay');
+        if (ld) { ld.style.opacity = '0'; setTimeout(() => ld.style.display = 'none', 300); }
+      }, 400);
+
+      // 启动循环
+      animate();
+    }
+
+    init();
+  </script>
+</body>
+</html>

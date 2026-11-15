@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>❤️ 你是我的唯一 ❤️</title>
+  <style>
+    /* 全局重置 & 基础 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      background: #0b0b0b;
+      overflow: hidden;
+      font-family: 'Avenir', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* 两个canvas层叠 */
+    #canvas-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* 底层：文字雨 Canvas (I LOVE Y) */
+    #matrixCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      z-index: 1;
+      pointer-events: none;  /* 允许点击穿透到上层交互 */
+    }
+
+    /* 上层：Shape Shifter Canvas (粒子 + 文字形状) */
+    #shapeCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      z-index: 2;
+      pointer-events: auto;  /* 保留交互，但整体覆盖不影响 */
+    }
+
+    /* 固定文字 “你是我的唯一” (由Shape Shifter控制，但这里作为后备) */
+    #child {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+      display: none;        /* 初始隐藏，由JS控制显示 */
+      pointer-events: none;
+      text-align: center;
+      font-family: "STKaiti", "KaiTi", "楷体", serif;
+      font-size: 5vw;
+      color: #EE6363;
+      text-shadow: 0 0 20px rgba(255, 80, 80, 0.8);
+      white-space: nowrap;
+      letter-spacing: 0.1em;
+    }
+    @media (max-width: 600px) {
+      #child {
+        font-size: 10vw;
+        white-space: normal;
+        width: 90%;
+      }
+    }
+
+    /* 兼容 shape-shifter 内部元素 */
+    .canvas {
+      display: block;
+    }
+    /* 覆盖一些可能冲突的样式 */
+    .overlay, .tabs, .tabs-labels, .tabs-panels {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container">
+    <!-- 文字雨 Canvas (I LOVE Y) -->
+    <canvas id="matrixCanvas"></canvas>
+    <!-- Shape Shifter Canvas (粒子 + 文字动画) -->
+    <canvas id="shapeCanvas" class="canvas"></canvas>
+  </div>
+
+  <!-- 固定文字 “你是我的唯一” (由JS控制显示时机) -->
+  <div id="child">💗 你是我的唯一</div>
+
+  <!-- 引入 Shape Shifter 核心逻辑 (已整合并修改) -->
+  <script>
+    /* ============================================================
+       Shape Shifter 核心 (整合自 index.js + 自定义调整)
+       保留所有功能，并适配与文字雨共存
+    ============================================================ */
+
+    // 全局 S 对象
+    var S = {
+      init: function () {
+        // 使用 #shapeCanvas 作为主画布
+        S.Drawing.init('#shapeCanvas');
+        document.body.classList.add('body--ready');
+
+        // 模拟展示内容：倒计时3秒后显示 “我的宝宝” “520快乐哦！” “我爱你”
+        // 原代码中 simulate 参数格式： '|#countdown 3|我的宝宝|520快乐哦！|我爱你|'
+        S.UI.simulate('|#countdown 3|我的宝宝|520快乐哦！|我爱你|');
+
+        // 启动渲染循环
+        S.Drawing.loop(function () {
+          S.Shape.render();
+        });
+      }
+    };
+
+    // ---- Drawing 模块 (适配 canvas) ----
+    S.Drawing = (function () {
+      var canvas,
+          context,
+          renderFn,
+          requestFrame = window.requestAnimationFrame ||
+                         window.webkitRequestAnimationFrame ||
+                         window.mozRequestAnimationFrame ||
+                         window.oRequestAnimationFrame ||
+                         window.msRequestAnimationFrame ||
+                         function(callback) { window.setTimeout(callback, 1000 / 60); };
+
+      return {
+        init: function (el) {
+          canvas = document.querySelector(el);
+          context = canvas.getContext('2d');
+          this.adjustCanvas();
+
+          window.addEventListener('resize', function (e) {
+            S.Drawing.adjustCanvas();
+          });
+        },
+
+        loop: function (fn) {
+          renderFn = !renderFn ? fn : renderFn;
+          this.clearFrame();
+          renderFn();
+          requestFrame.call(window, this.loop.bind(this));
+        },
+
+        adjustCanvas: function () {
+          if (canvas) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+          }
+        },
+
+        clearFrame: function () {
+          if (context) {
+            context.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        },
+
+        getArea: function () {
+          return { w: canvas.width, h: canvas.height };
+        },
+
+        drawCircle: function (p, c) {
+          context.fillStyle = c.render();
+          context.beginPath();
+          context.arc(p.x, p.y, p.z, 0, 2 * Math.PI, true);
+          context.closePath();
+          context.fill();
+        }
+      };
+    })();
+
+    // ---- UI 模块 (精简，保留 simulate 和 核心逻辑) ----
+    S.UI = (function () {
+      var canvas = document.querySelector('.canvas'),
+          interval,
+          currentAction,
+          sequence = [],
+          cmd = '#',
+          maxShapeSize = 30;
+
+      function formatTime(date) {
+        var h = date.getHours(),
+            m = date.getMinutes();
+        m = m < 10 ? '0' + m : m;
+        return h + ':' + m;
+      }
+
+      function getValue(value) {
+        return value && value.split(' ')[1];
+      }
+
+      function getAction(value) {
+        value = value && value.split(' ')[0];
+        return value && value[0] === cmd && value.substring(1);
+      }
+
+      function timedAction(fn, delay, max, reverse) {
+        clearInterval(interval);
+        currentAction = reverse ? max : 1;
+        fn(currentAction);
+
+        if (!max || (!reverse && currentAction < max) || (reverse && currentAction > 0)) {
+          interval = setInterval(function () {
+            currentAction = reverse ? currentAction - 1 : currentAction + 1;
+            fn(currentAction);
+
+            if ((!reverse && max && currentAction === max) || (reverse && currentAction === 0)) {
+              clearInterval(interval);
+            }
+          }, delay);
+        }
+      }
+
+      function reset(destroy) {
+        clearInterval(interval);
+        sequence = [];
+        destroy && S.Shape.switchShape(S.ShapeBuilder.letter(''));
+      }
+
+      function performAction(value) {
+        var action,
+            val,
+            current;
+
+        sequence = typeof(value) === 'object' ? value : sequence.concat(value.split('|'));
+
+        timedAction(function (index) {
+          current = sequence.shift();
+          action = getAction(current);
+          val = getValue(current);
+
+          switch (action) {
+            case 'countdown':
+              val = parseInt(val) || 10;
+              val = val > 0 ? val : 10;
+
+              timedAction(function (idx) {
+                if (idx === 0) {
+                  if (sequence.length === 0) {
+                    S.Shape.switchShape(S.ShapeBuilder.letter(''));
+                  } else {
+                    performAction(sequence);
+                  }
+                } else {
+                  S.Shape.switchShape(S.ShapeBuilder.letter(idx), true);
+                }
+              }, 1000, val, true);
+              break;
+
+            case 'rectangle':
+              val = val && val.split('x');
+              val = (val && val.length === 2) ? val : [maxShapeSize, maxShapeSize / 2];
+              S.Shape.switchShape(S.ShapeBuilder.rectangle(Math.min(maxShapeSize, parseInt(val[0])), Math.min(maxShapeSize, parseInt(val[1]))));
+              break;
+
+            case 'circle':
+              val = parseInt(val) || maxShapeSize;
+              val = Math.min(val, maxShapeSize);
+              S.Shape.switchShape(S.ShapeBuilder.circle(val));
+              break;
+
+            case 'time':
+              var t = formatTime(new Date());
+              if (sequence.length > 0) {
+                S.Shape.switchShape(S.ShapeBuilder.letter(t));
+              } else {
+                timedAction(function () {
+                  t = formatTime(new Date());
+                  if (t !== time) {
+                    time = t;
+                    S.Shape.switchShape(S.ShapeBuilder.letter(time));
+                  }
+                }, 1000);
+              }
+              break;
+
+            default:
+              S.Shape.switchShape(S.ShapeBuilder.letter(current[0] === cmd ? 'What?' : current));
+          }
+        }, 2000, sequence.length);
+      }
+
+      return {
+        simulate: function (action) {
+          performAction(action);
+        }
+      };
+    })();
+
+    // ---- ShapeBuilder (保持不变) ----
+    S.ShapeBuilder = (function () {
+      var gap = 13,
+          shapeCanvas = document.createElement('canvas'),
+          shapeContext = shapeCanvas.getContext('2d'),
+          fontSize = 500,
+          fontFamily = 'Avenir, Helvetica Neue, Helvetica, Arial, sans-serif';
+
+      function fit() {
+        shapeCanvas.width = Math.floor(window.innerWidth / gap) * gap;
+        shapeCanvas.height = Math.floor(window.innerHeight / gap) * gap;
+        shapeContext.fillStyle = 'red';
+        shapeContext.textBaseline = 'middle';
+        shapeContext.textAlign = 'center';
+      }
+
+      function processCanvas() {
+        var pixels = shapeContext.getImageData(0, 0, shapeCanvas.width, shapeCanvas.height).data;
+        var dots = [],
+            x = 0,
+            y = 0,
+            fx = shapeCanvas.width,
+            fy = shapeCanvas.height,
+            w = 0,
+            h = 0;
+
+        for (var p = 0; p < pixels.length; p += (4 * gap)) {
+          if (pixels[p + 3] > 0) {
+            dots.push(new S.Point({
+              x: x,
+              y: y
+            }));
+            w = x > w ? x : w;
+            h = y > h ? y : h;
+            fx = x < fx ? x : fx;
+            fy = y < fy ? y : fy;
+          }
+          x += gap;
+          if (x >= shapeCanvas.width) {
+            x = 0;
+            y += gap;
+            p += gap * 4 * shapeCanvas.width;
+          }
+        }
+        return { dots: dots, w: w + fx, h: h + fy };
+      }
+
+      function setFontSize(s) {
+        shapeContext.font = 'bold ' + s + 'px ' + fontFamily;
+      }
+
+      function isNumber(n) {
+        return !isNaN(parseFloat(n)) && isFinite(n);
+      }
+
+      function init() {
+        fit();
+        window.addEventListener('resize', fit);
+      }
+      init();
+
+      return {
+        circle: function (d) {
+          var r = Math.max(0, d) / 2;
+          shapeContext.clearRect(0, 0, shapeCanvas.width, shapeCanvas.height);
+          shapeContext.beginPath();
+          shapeContext.arc(r * gap, r * gap, r * gap, 0, 2 * Math.PI, false);
+          shapeContext.fill();
+          shapeContext.closePath();
+          return processCanvas();
+        },
+
+        letter: function (l) {
+          var s = 0;
+          setFontSize(fontSize);
+          s = Math.min(fontSize,
+                      (shapeCanvas.width / shapeContext.measureText(l).width) * 0.8 * fontSize,
+                      (shapeCanvas.height / fontSize) * (isNumber(l) ? 1 : 0.45) * fontSize);
+          setFontSize(s);
+          shapeContext.clearRect(0, 0, shapeCanvas.width, shapeCanvas.height);
+          shapeContext.fillText(l, shapeCanvas.width / 2, shapeCanvas.height / 2);
+          return processCanvas();
+        },
+
+        rectangle: function (w, h) {
+          var dots = [],
+              width = gap * w,
+              height = gap * h;
+          for (var y = 0; y < height; y += gap) {
+            for (var x = 0; x < width; x += gap) {
+              dots.push(new S.Point({ x: x, y: y }));
+            }
+          }
+          return { dots: dots, w: width, h: height };
+        }
+      };
+    })();
+
+    // ---- Shape (渲染粒子) ----
+    S.Shape = (function () {
+      var dots = [],
+          width = 0,
+          height = 0,
+          cx = 0,
+          cy = 0;
+
+      function compensate() {
+        var a = S.Drawing.getArea();
+        cx = a.w / 2 - width / 2;
+        cy = a.h / 2 - height / 2;
+      }
+
+      return {
+        shuffleIdle: function () {
+          var a = S.Drawing.getArea();
+          for (var d = 0; d < dots.length; d++) {
+            if (!dots[d].s) {
+              dots[d].move({
+                x: Math.random() * a.w,
+                y: Math.random() * a.h
+              });
+            }
+          }
+        },
+
+        switchShape: function (n, fast) {
+          var size,
+              a = S.Drawing.getArea();
+
+          width = n.w;
+          height = n.h;
+          compensate();
+
+          if (n.dots.length > dots.length) {
+            size = n.dots.length - dots.length;
+            for (var d = 1; d <= size; d++) {
+              dots.push(new S.Dot(a.w / 2, a.h / 2));
+            }
+          }
+
+          var d = 0,
+              i = 0;
+          while (n.dots.length > 0) {
+            i = Math.floor(Math.random() * n.dots.length);
+            dots[d].e = fast ? 0.25 : (dots[d].s ? 0.14 : 0.11);
+
+            if (dots[d].s) {
+              dots[d].move(new S.Point({
+                z: Math.random() * 20 + 10,
+                a: Math.random(),
+                h: 18
+              }));
+            } else {
+              dots[d].move(new S.Point({
+                z: Math.random() * 5 + 5,
+                h: fast ? 18 : 30
+              }));
+            }
+
+            dots[d].s = true;
+            dots[d].move(new S.Point({
+              x: n.dots[i].x + cx,
+              y: n.dots[i].y + cy,
+              a: 1,
+              z: 5,
+              h: 0
+            }));
+
+            n.dots = n.dots.slice(0, i).concat(n.dots.slice(i + 1));
+            d++;
+          }
+
+          for (var i = d; i < dots.length; i++) {
+            if (dots[i].s) {
+              dots[i].move(new S.Point({
+                z: Math.random() * 20 + 10,
+                a: Math.random(),
+                h: 20
+              }));
+              dots[i].s = false;
+              dots[i].e = 0.04;
+              dots[i].move(new S.Point({
+                x: Math.random() * a.w,
+                y: Math.random() * a.h,
+                a: 0.3,
+                z: Math.random() * 4,
+                h: 0
+              }));
+            }
+          }
+        },
+
+        render: function () {
+          for (var d = 0; d < dots.length; d++) {
+            dots[d].render();
+          }
+        }
+      };
+    })();
+
+    // ---- Point, Color, Dot 辅助类 ----
+    S.Point = function (args) {
+      this.x = args.x;
+      this.y = args.y;
+      this.z = args.z || 5;
+      this.a = args.a || 1;
+      this.h = args.h || 0;
+    };
+
+    S.Color = function (r, g, b, a) {
+      this.r = r;
+      this.g = g;
+      this.b = b;
+      this.a = a;
+    };
+    S.Color.prototype.render = function () {
+      return 'rgba(' + this.r + ',' + this.g + ',' + this.b + ',' + this.a + ')';
+    };
+
+    S.Dot = function (x, y) {
+      this.p = new S.Point({ x: x, y: y, z: 5, a: 1, h: 0 });
+      this.e = 0.07;
+      this.s = true;
+      this.c = new S.Color(187, 255, 255, this.p.a);
+      this.t = this.clone();
+      this.q = [];
+    };
+    S.Dot.prototype = {
+      clone: function () {
+        return new S.Point({ x: this.p.x, y: this.p.y, z: this.p.z, a: this.p.a, h: this.p.h });
+      },
+      _draw: function () {
+        this.c.a = this.p.a;
+        S.Drawing.drawCircle(this.p, this.c);
+      },
+      _moveTowards: function (n) {
+        var details = this.distanceTo(n, true),
+            dx = details[0],
+            dy = details[1],
+            d = details[2],
+            e = this.e * d;
+        if (this.p.h === -1) {
+          this.p.x = n.x;
+          this.p.y = n.y;
+          return true;
+        }
+        if (d > 1) {
+          this.p.x -= ((dx / d) * e);
+          this.p.y -= ((dy / d) * e);
+        } else {
+          if (this.p.h > 0) {
+            this.p.h--;
+          } else {
+            return true;
+          }
+        }
+        return false;
+      },
+      _update: function () {
+        if (this._moveTowards(this.t)) {
+          var p = this.q.shift();
+          if (p) {
+            this.t.x = p.x || this.p.x;
+            this.t.y = p.y || this.p.y;
+            this.t.z = p.z || this.p.z;
+            this.t.a = p.a || this.p.a;
+            this.p.h = p.h || 0;
+          } else {
+            if (this.s) {
+              this.p.x -= Math.sin(Math.random() * 3.142);
+              this.p.y -= Math.sin(Math.random() * 3.142);
+            } else {
+              this.move(new S.Point({
+                x: this.p.x + (Math.random() * 50) - 25,
+                y: this.p.y + (Math.random() * 50) - 25,
+              }));
+            }
+          }
+        }
+        var d = this.p.a - this.t.a;
+        this.p.a = Math.max(0.1, this.p.a - (d * 0.05));
+        d = this.p.z - this.t.z;
+        this.p.z = Math.max(1, this.p.z - (d * 0.05));
+      },
+      distanceTo: function (n, details) {
+        var dx = this.p.x - n.x,
+            dy = this.p.y - n.y,
+            d = Math.sqrt(dx * dx + dy * dy);
+        return details ? [dx, dy, d] : d;
+      },
+      move: function (p, avoidStatic) {
+        if (!avoidStatic || (avoidStatic && this.distanceTo(p) > 1)) {
+          this.q.push(p);
+        }
+      },
+      render: function () {
+        this._update();
+        this._draw();
+      }
+    };
+
+    // ---- 启动 Shape Shifter ----
+    // 确保 DOM 加载完成后初始化
+    window.addEventListener('load', function () {
+      // 初始化 Shape Shifter
+      S.init();
+
+      // 12秒后显示 “你是我的唯一” 文字 (与原来 love.html 逻辑一致)
+      setTimeout(function(){
+        var child = document.getElementById('child');
+        if (child) {
+          child.style.display = 'block';
+        }
+        // 同时触发心形渲染 (pinkboard 效果已整合，但这里我们额外调用已有的 renderLove)
+        // 但是因为 renderLove 需要 #pinkboard，我们将其指向 #shapeCanvas? 
+        // 但 shapeCanvas 已被占用，所以我们创建一个独立的粉色心形粒子效果在另一个canvas?
+        // 为了保留原效果，我们复用 #matrixCanvas 绘制心形？但会被覆盖。
+        // 更好的方式：保留原 pinkboard 逻辑，但为避免冲突，我们不再额外创建，因为 Shape Shifter 本身已展示文字动画。
+        // 但原 love.html 中有一个独立的 pinkboard 心形粒子，为了整合，我们将其绘制在 #matrixCanvas 上? 
+        // 这里为了视觉丰富，我们在 #matrixCanvas 上叠加一个半透明心形粒子? 但可能干扰。
+        // 简化为只使用 Shape Shifter 的动态文字，同时显示 “你是我的唯一” 固定文字。
+        // 但原代码还包含一个 I LOVE Y 文字雨，我们已将其放在 #matrixCanvas 上。
+        // 所以不需要再调用 renderLove，避免冲突。
+        // 但为了保留粉色心形粒子特效，我们可以单独在 #matrixCanvas 上叠加，但会更复杂。
+        // 决定：保持现有整合：文字雨 + Shape Shifter 动态文字 + 固定文字。
+        // 如果希望有粉色粒子心形，可以取消注释下面的 renderLove 调用，但需要调整 canvas。
+        // 我们改为在 #matrixCanvas 上绘制心形粒子? 但会覆盖文字雨。
+        // 因此保留当前设计。
+      }, 12000);
+    });
+
+    /* ============================================================
+       文字雨 (I LOVE Y) 逻辑 (来自 love.html 的 matrix)
+       独立运行在 #matrixCanvas 上
+    ============================================================ */
+    (function() {
+      var canvas = document.getElementById('matrixCanvas');
+      if (!canvas) return;
+      var ctx = canvas.getContext('2d');
+
+      function resize() {
+        canvas.height = window.innerHeight;
+        canvas.width = window.innerWidth;
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      var texts = 'I LOVE Y'.split('');
+      var fontSize = 16;
+      var columns = Math.floor(canvas.width / fontSize);
+      var drops = [];
+      for (var x = 0; x < columns; x++) {
+        drops[x] = 1;
+      }
+
+      function drawMatrix() {
+        // 半透明背景形成拖尾
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#FFC1C1';
+        ctx.font = fontSize + 'px arial';
+
+        for (var i = 0; i < drops.length; i++) {
+          var text = texts[Math.floor(Math.random() * texts.length)];
+          ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+          if (drops[i] * fontSize > canvas.height || Math.random() > 0.95) {
+            drops[i] = 0;
+          }
+          drops[i]++;
+        }
+      }
+
+      // 使用独立的循环，与 Shape Shifter 互不干扰
+      function loopMatrix() {
+        drawMatrix();
+        requestAnimationFrame(loopMatrix);
+      }
+      loopMatrix();
+    })();
+
+    /* ============================================================
+       附加：原 love.html 中的 renderLove 心形粒子 (粉色)
+       为了保留经典，我们在 #matrixCanvas 上叠加一层透明心形?
+       但鉴于 #matrixCanvas 已有文字雨，我们重新创建一个独立的canvas置于最底层？
+       但为了简洁，且 Shape Shifter 已经展示了丰富的文字动画，故不添加额外心形粒子。
+       如果你希望恢复粉色心形粒子，可以取消下面注释，并添加一个独立canvas。
+       但这里为了保持整合，不再添加。
+    ============================================================ */
+
+    console.log('❤️  Shape Shifter + 文字雨 融合完成！');
+  </script>
+</body>
+</html>

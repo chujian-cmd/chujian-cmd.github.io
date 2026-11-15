@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meowish Wireframe Creature</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #111;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        });
+
+        // 鼠标位置追踪
+        const mouse = { x: width / 2, y: height / 2 };
+        window.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        // 节点类
+        class Node {
+            constructor(x, y, size) {
+                this.x = x;
+                this.y = y;
+                this.size = size; // 与下一个节点的距离
+                this.angle = 0;
+            }
+        }
+
+        // 生物类
+        class Meowish {
+            constructor() {
+                this.nodes = [];
+                this.speed = 4; // 移动速度
+                const nodeCount = 35; // 节点数量
+                const segmentLength = 12; // 每段长度
+
+                // 初始化节点（nodes[0] 是尾巴，最后一个节点是头）
+                for (let i = 0; i < nodeCount; i++) {
+                    this.nodes.push(new Node(width / 2, height / 2, segmentLength));
+                }
+            }
+
+            // 完全按照截图中的 moveTo 逻辑
+            update(targetX, targetY) {
+                let head = this.nodes[this.nodes.length - 1];
+                
+                // 计算目标与当前头部的距离
+                let dist = Math.sqrt((targetX - head.x) ** 2 + (targetY - head.y) ** 2);
+                let len = Math.max(0, dist - this.speed);
+
+                let x = targetX;
+                let y = targetY;
+                
+                // 从尾部向头部遍历（i 从 length-1 到 0）
+                for (let i = this.nodes.length - 1; i >= 0; i--) {
+                    let node = this.nodes[i];
+                    let ang = Math.atan2(node.y - y, node.x - x);
+                    
+                    node.x = x + len * Math.cos(ang);
+                    node.y = y + len * Math.sin(ang);
+                    
+                    x = node.x;
+                    y = node.y;
+                    len = node.size;
+                }
+            }
+
+            draw() {
+                // 计算每个节点的朝向角度
+                for (let i = 0; i < this.nodes.length - 1; i++) {
+                    let node = this.nodes[i];
+                    let nextNode = this.nodes[i + 1];
+                    node.angle = Math.atan2(nextNode.y - node.y, nextNode.x - node.x);
+                }
+                // 头部朝向鼠标
+                let head = this.nodes[this.nodes.length - 1];
+                head.angle = Math.atan2(mouse.y - head.y, mouse.x - head.x);
+
+                ctx.strokeStyle = '#e0e0e0';
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+
+                // 1. 绘制脊椎（Spine）
+                ctx.beginPath();
+                ctx.moveTo(this.nodes[0].x, this.nodes[0].y);
+                for (let i = 1; i < this.nodes.length; i++) {
+                    ctx.lineTo(this.nodes[i].x, this.nodes[i].y);
+                }
+                ctx.stroke();
+
+                // 2. 绘制肋骨（Ribs）
+                for (let i = 2; i < this.nodes.length - 1; i++) {
+                    let node = this.nodes[i];
+                    let perpAngle = node.angle + Math.PI / 2;
+                    let ribWidth = 18; // 肋骨半宽
+
+                    // 左侧肋骨
+                    let leftX = node.x + Math.cos(perpAngle) * ribWidth;
+                    let leftY = node.y + Math.sin(perpAngle) * ribWidth;
+                    
+                    // 右侧肋骨
+                    let rightX = node.x - Math.cos(perpAngle) * ribWidth;
+                    let rightY = node.y - Math.sin(perpAngle) * ribWidth;
+
+                    // 使用贝塞尔曲线模拟肋骨弧度
+                    let controlX = node.x + Math.cos(node.angle) * 8;
+                    let controlY = node.y + Math.sin(node.angle) * 8;
+
+                    ctx.beginPath();
+                    ctx.moveTo(leftX, leftY);
+                    ctx.quadraticCurveTo(controlX, controlY, rightX, rightY);
+                    ctx.stroke();
+                }
+
+                // 3. 绘制腿（Legs）
+                for (let i = 5; i < this.nodes.length - 3; i += 4) {
+                    let node = this.nodes[i];
+                    let legLength = 22;
+                    let legBend = 0.6;
+
+                    // 左腿
+                    let legAngleL = node.angle + Math.PI / 2;
+                    let kneeXL = node.x + Math.cos(legAngleL) * legLength;
+                    let kneeYL = node.y + Math.sin(legAngleL) * legLength;
+                    let footAngleL = legAngleL + legBend;
+                    let footXL = kneeXL + Math.cos(footAngleL) * legLength;
+                    let footYL = kneeYL + Math.sin(footAngleL) * legLength;
+
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(kneeXL, kneeYL);
+                    ctx.lineTo(footXL, footYL);
+                    ctx.stroke();
+
+                    // 右腿
+                    let legAngleR = node.angle - Math.PI / 2;
+                    let kneeXR = node.x + Math.cos(legAngleR) * legLength;
+                    let kneeYR = node.y + Math.sin(legAngleR) * legLength;
+                    let footAngleR = legAngleR - legBend;
+                    let footXR = kneeXR + Math.cos(footAngleR) * legLength;
+                    let footYR = kneeYR + Math.sin(footAngleR) * legLength;
+
+                    ctx.beginPath();
+                    ctx.moveTo(node.x, node.y);
+                    ctx.lineTo(kneeXR, kneeYR);
+                    ctx.lineTo(footXR, footYR);
+                    ctx.stroke();
+                }
+
+                // 4. 绘制头部触角（Antennae）
+                let antennaLength = 25;
+                let antennaSpread = Math.PI / 5;
+
+                // 左触角
+                let antAngleL = head.angle + antennaSpread;
+                ctx.beginPath();
+                ctx.moveTo(head.x, head.y);
+                ctx.lineTo(head.x + Math.cos(antAngleL) * antennaLength, head.y + Math.sin(antAngleL) * antennaLength);
+                ctx.stroke();
+
+                // 右触角
+                let antAngleR = head.angle - antennaSpread;
+                ctx.beginPath();
+                ctx.moveTo(head.x, head.y);
+                ctx.lineTo(head.x + Math.cos(antAngleR) * antennaLength, head.y + Math.sin(antAngleR) * antennaLength);
+                ctx.stroke();
+            }
+        }
+
+        const creature = new Meowish();
+
+        // 动画循环
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+            
+            // 更新位置
+            creature.update(mouse.x, mouse.y);
+            
+            // 绘制
+            creature.draw();
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

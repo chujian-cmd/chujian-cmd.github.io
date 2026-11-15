@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AR双手滤镜 · tasks-vision</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+    body {
+      background: #0b0b0b;
+      overflow: hidden;
+      font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      width: 100vw;
+      position: relative;
+    }
+    #video-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #1a1a1a;
+      overflow: hidden;
+    }
+    video {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      min-width: 100%;
+      min-height: 100%;
+      object-fit: cover;
+      background: #222;
+    }
+    #output-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #controls {
+      position: absolute;
+      bottom: 32px;
+      left: 0;
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px 20px;
+      padding: 12px 20px;
+      background: rgba(10, 10, 10, 0.55);
+      backdrop-filter: blur(4px);
+      border-top: 1px solid rgba(255,255,255,0.08);
+      z-index: 30;
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      pointer-events: auto;
+    }
+    #controls.hidden {
+      opacity: 0;
+      transform: translateY(20px);
+      pointer-events: none;
+    }
+    #controls button {
+      background: rgba(30,30,30,0.7);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #f0f0f0;
+      padding: 8px 18px;
+      border-radius: 30px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      min-width: 70px;
+      font-family: inherit;
+    }
+    #controls button:hover {
+      background: rgba(70,70,70,0.8);
+      border-color: rgba(255,255,255,0.4);
+      transform: scale(1.02);
+    }
+    #controls label {
+      color: #ccc;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0,0,0,0.3);
+      padding: 4px 12px 4px 16px;
+      border-radius: 40px;
+    }
+    #controls input[type="range"] {
+      width: 90px;
+      height: 4px;
+      -webkit-appearance: none;
+      background: #555;
+      border-radius: 10px;
+      outline: none;
+    }
+    #controls input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      cursor: pointer;
+    }
+    #status-tip {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(8px);
+      padding: 12px 28px;
+      border-radius: 60px;
+      color: #eee;
+      font-size: 0.95rem;
+      z-index: 40;
+      border: 1px solid rgba(255,255,255,0.08);
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: opacity 0.4s ease;
+    }
+    #status-tip.hidden { opacity: 0; }
+    #progress-bar-container {
+      width: 120px;
+      height: 4px;
+      background: #2a2a2a;
+      border-radius: 4px;
+      overflow: hidden;
+      display: inline-block;
+    }
+    #progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6a8cff, #b388ff);
+      border-radius: 4px;
+      transition: width 0.2s ease;
+    }
+    #progress-text {
+      font-size: 0.8rem;
+      color: #aaa;
+      min-width: 36px;
+      text-align: right;
+    }
+    #error-detail {
+      position: absolute;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(200,40,40,0.85);
+      backdrop-filter: blur(6px);
+      padding: 12px 24px;
+      border-radius: 40px;
+      color: #fff;
+      font-size: 0.9rem;
+      z-index: 50;
+      display: none;
+      text-align: center;
+      max-width: 80%;
+    }
+    @media (max-width: 600px) {
+      #controls button { font-size: 0.75rem; padding: 6px 12px; min-width: 60px; }
+      #controls label { font-size: 0.7rem; padding: 2px 8px; }
+      #status-tip { font-size: 0.8rem; padding: 8px 16px; gap: 8px; }
+      #progress-bar-container { width: 80px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="video-container">
+    <video id="video" playsinline></video>
+  </div>
+  <canvas id="output-canvas"></canvas>
+
+  <div id="status-tip">
+    <span id="status-message">⏳ 加载模型中...</span>
+    <div id="progress-bar-container">
+      <div id="progress-fill" style="width: 0%;"></div>
+    </div>
+    <span id="progress-text">0%</span>
+  </div>
+
+  <div id="error-detail"></div>
+
+  <div id="controls">
+    <button id="btn-start">📷 启动摄像头</button>
+    <button id="btn-demo">🎮 演示模式</button>
+    <button id="btn-reset">↺ 重置</button>
+    <label>🖐 跟手平滑度 <input type="range" id="smoothness" min="0.1" max="0.9" step="0.05" value="0.6"></label>
+  </div>
+
+  <!-- 使用 @mediapipe/tasks-vision CDN (WASM 版本) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.7/wasm/vision_bundle.js" crossorigin="anonymous"></script>
+  <script>
+    (function() {
+      'use strict';
+
+      // ---- DOM 引用 ----
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('output-canvas');
+      const ctx = canvas.getContext('2d');
+      const statusTip = document.getElementById('status-tip');
+      const statusMsg = document.getElementById('status-message');
+      const progressFill = document.getElementById('progress-fill');
+      const progressText = document.getElementById('progress-text');
+      const errorDetail = document.getElementById('error-detail');
+      const controls = document.getElementById('controls');
+      const btnStart = document.getElementById('btn-start');
+      const btnDemo = document.getElementById('btn-demo');
+      const btnReset = document.getElementById('btn-reset');
+      const smoothnessInput = document.getElementById('smoothness');
+
+      // ---- 状态 ----
+      let camera = null;
+      let handLandmarker = null;
+      let imageSegmenter = null;
+      let isRunning = false;
+      let isDemoMode = false;
+      let lastVideoTime = -1;
+      let results = null;
+      let segmentationMask = null;
+      let handLandmarks = [];
+      let smoothedLandmarks = { left: null, right: null };
+      let smoothFactor = 0.6;
+
+      // 关键点索引
+      const THUMB_TIP = 4;
+      const INDEX_TIP = 8;
+      const MIDDLE_TIP = 12;
+      const PINKY_TIP = 20;
+
+      // ---- 工具: 显示错误 ----
+      function showError(msg) {
+        errorDetail.textContent = '❌ ' + msg;
+        errorDetail.style.display = 'block';
+        setTimeout(() => { errorDetail.style.display = 'none'; }, 8000);
+      }
+
+      // ---- 工具: 更新进度 ----
+      function updateProgress(pct, msg) {
+        const clamped = Math.min(100, Math.max(0, pct));
+        progressFill.style.width = clamped + '%';
+        progressText.textContent = Math.round(clamped) + '%';
+        if (msg) statusMsg.textContent = msg;
+      }
+
+      // ---- 工具: 隐藏状态 ----
+      function hideStatus() {
+        statusTip.classList.add('hidden');
+      }
+
+      function showStatus(msg) {
+        statusTip.classList.remove('hidden');
+        statusMsg.textContent = msg;
+      }
+
+      // ---- 平滑插值 ----
+      function smoothPoints(prev, curr, factor) {
+        if (!prev) return curr.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
+        return curr.map((p, i) => {
+          if (!prev[i]) return { x: p.x, y: p.y, z: p.z || 0 };
+          return {
+            x: prev[i].x + factor * (p.x - prev[i].x),
+            y: prev[i].y + factor * (p.y - prev[i].y),
+            z: (prev[i].z || 0) + factor * ((p.z || 0) - (prev[i].z || 0))
+          };
+        });
+      }
+
+      // ---- 对左右手排序 (按x坐标) ----
+      function sortHandsByPosition(hands) {
+        if (!hands || hands.length < 2) return hands;
+        return [...hands].sort((a, b) => {
+          const ax = a.landmarks.reduce((s, p) => s + p.x, 0) / a.landmarks.length;
+          const bx = b.landmarks.reduce((s, p) => s + p.x, 0) / b.landmarks.length;
+          return ax - bx;
+        });
+      }
+
+      // ---- 绘制四边形滤镜 ----
+      function drawFilterQuad(ctx, pts, colorStyle, label) {
+        if (pts.length !== 4) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x * canvas.width, pts[0].y * canvas.height);
+        for (let i = 1; i < 4; i++) {
+          ctx.lineTo(pts[i].x * canvas.width, pts[i].y * canvas.height);
+        }
+        ctx.closePath();
+        ctx.clip();
+
+        // 填充颜色
+        ctx.fillStyle = colorStyle;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 添加纹理效果
+        const w = canvas.width, h = canvas.height;
+        // 半调网点效果
+        const spacing = 12;
+        for (let y = 0; y < h; y += spacing) {
+          for (let x = 0; x < w; x += spacing) {
+            const brightness = 0.3 + 0.7 * Math.sin(x * 0.05 + y * 0.03 + Date.now() * 0.001);
+            const radius = 1 + brightness * 3;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255,255,255,${0.1 + brightness * 0.2})`;
+            ctx.fill();
+          }
+        }
+
+        // 边框线
+        ctx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x * canvas.width, pts[0].y * canvas.height);
+        for (let i = 1; i < 4; i++) {
+          ctx.lineTo(pts[i].x * canvas.width, pts[i].y * canvas.height);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // ---- 生成三块滤镜 ----
+      function renderFilters(hands) {
+        if (!hands || hands.length < 2) return;
+
+        const leftHand = hands[0];
+        const rightHand = hands[1];
+
+        const getPt = (hand, idx) => hand.landmarks[idx] || hand.landmarks[0];
+
+        // 红色: 拇指-食指 (左右手)
+        const redPts = [
+          getPt(leftHand, THUMB_TIP),
+          getPt(leftHand, INDEX_TIP),
+          getPt(rightHand, INDEX_TIP),
+          getPt(rightHand, THUMB_TIP)
+        ];
+
+        // 蓝色: 食指-中指
+        const bluePts = [
+          getPt(leftHand, INDEX_TIP),
+          getPt(leftHand, MIDDLE_TIP),
+          getPt(rightHand, MIDDLE_TIP),
+          getPt(rightHand, INDEX_TIP)
+        ];
+
+        // 绿色: 食指-中指 (另一组)
+        const greenPts = [
+          getPt(leftHand, MIDDLE_TIP),
+          getPt(leftHand, PINKY_TIP),
+          getPt(rightHand, PINKY_TIP),
+          getPt(rightHand, MIDDLE_TIP)
+        ];
+
+        // 应用滤镜
+        drawFilterQuad(ctx, redPts, 'rgba(180,40,40,0.5)', '红色');
+        drawFilterQuad(ctx, bluePts, 'rgba(30,80,160,0.5)', '蓝色');
+        drawFilterQuad(ctx, greenPts, 'rgba(40,120,60,0.5)', '绿色');
+      }
+
+      // ---- 主绘制循环 ----
+      function drawFrame() {
+        if (!isRunning) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 绘制视频帧
+        if (video.readyState >= 2) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
+
+        // 如果有手部结果，渲染滤镜
+        if (results && results.landmarks && results.landmarks.length >= 2) {
+          const sorted = sortHandsByPosition(results);
+          // 平滑处理
+          const factor = parseFloat(smoothnessInput.value) || 0.6;
+          if (!smoothedLandmarks.left || !smoothedLandmarks.right) {
+            smoothedLandmarks.left = sorted[0].landmarks.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
+            smoothedLandmarks.right = sorted[1].landmarks.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
+          } else {
+            const leftSmoothed = smoothPoints(smoothedLandmarks.left, sorted[0].landmarks, factor);
+            const rightSmoothed = smoothPoints(smoothedLandmarks.right, sorted[1].landmarks, factor);
+            smoothedLandmarks.left = leftSmoothed;
+            smoothedLandmarks.right = rightSmoothed;
+          }
+
+          const processedHands = [
+            { landmarks: smoothedLandmarks.left },
+            { landmarks: smoothedLandmarks.right }
+          ];
+          renderFilters(processedHands);
+        } else if (isDemoMode) {
+          // 演示模式：显示三块固定面片
+          const w = canvas.width, h = canvas.height;
+          const cx = w/2, cy = h/2;
+          const size = 150;
+          // 红色
+          drawFilterQuad(ctx, [
+            {x: (cx-size)/w, y: (cy-size)/h},
+            {x: (cx)/w, y: (cy-size)/h},
+            {x: (cx)/w, y: (cy)/h},
+            {x: (cx-size)/w, y: (cy)/h}
+          ], 'rgba(200,60,60,0.6)', '红色');
+          // 蓝色
+          drawFilterQuad(ctx, [
+            {x: (cx)/w, y: (cy-size)/h},
+            {x: (cx+size)/w, y: (cy-size)/h},
+            {x: (cx+size)/w, y: (cy)/h},
+            {x: (cx)/w, y: (cy)/h}
+          ], 'rgba(40,100,200,0.6)', '蓝色');
+          // 绿色
+          drawFilterQuad(ctx, [
+            {x: (cx-size)/w, y: (cy)/h},
+            {x: (cx)/w, y: (cy)/h},
+            {x: (cx)/w, y: (cy+size)/h},
+            {x: (cx-size)/w, y: (cy+size)/h}
+          ], 'rgba(60,160,80,0.6)', '绿色');
+        }
+
+        requestAnimationFrame(drawFrame);
+      }
+
+      // ---- 初始化 HandLandmarker ----
+      async function initHandLandmarker() {
+        try {
+          showStatus('⏳ 加载手部模型...');
+          updateProgress(10, '加载手部模型...');
+
+          const vision = await window.FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.7/wasm'
+          );
+
+          updateProgress(30, '初始化手部检测器...');
+
+          handLandmarker = await window.HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+              delegate: 'GPU'
+            },
+            numHands: 2,
+            runningMode: 'VIDEO',
+            minHandDetectionConfidence: 0.5,
+            minHandPresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5
+          });
+
+          updateProgress(60, '手部模型加载完成');
+          return true;
+        } catch (err) {
+          console.error('HandLandmarker 加载失败:', err);
+          showError('手部模型加载失败: ' + err.message);
+          return false;
+        }
+      }
+
+      // ---- 初始化 ImageSegmenter ----
+      async function initImageSegmenter() {
+        try {
+          updateProgress(70, '加载分割模型...');
+          const vision = await window.FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.7/wasm'
+          );
+
+          imageSegmenter = await window.ImageSegmenter.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/selfie_segmenter/selfie_segmenter/float16/1/selfie_segmenter.task',
+              delegate: 'GPU'
+            },
+            runningMode: 'VIDEO',
+            outputType: 'CATEGORY_MASK'
+          });
+
+          updateProgress(90, '分割模型加载完成');
+          return true;
+        } catch (err) {
+          console.warn('ImageSegmenter 加载失败 (可选):', err);
+          // 分割失败不影响主要功能
+          return false;
+        }
+      }
+
+      // ---- 启动摄像头 ----
+      async function startCamera() {
+        try {
+          showStatus('📷 正在启动摄像头...');
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+          });
+          video.srcObject = stream;
+          await video.play();
+
+          // 设置 canvas 尺寸
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+
+          controls.classList.add('hidden');
+          hideStatus();
+          isRunning = true;
+          isDemoMode = false;
+
+          // 开始预测循环
+          predictLoop();
+          drawFrame();
+
+          return true;
+        } catch (err) {
+          console.error('摄像头启动失败:', err);
+          if (err.name === 'NotAllowedError') {
+            showError('摄像头权限被拒绝，请在浏览器中允许访问摄像头');
+          } else if (err.name === 'NotFoundError') {
+            showError('没有找到摄像头，请连接摄像头后重试');
+          } else if (err.name === 'NotReadableError') {
+            showError('摄像头被其他软件占用，请关闭其他使用摄像头的程序');
+          } else {
+            showError('摄像头启动失败: ' + err.message);
+          }
+          return false;
+        }
+      }
+
+      // ---- 预测循环 ----
+      async function predictLoop() {
+        if (!isRunning || !handLandmarker) return;
+
+        try {
+          if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+            lastVideoTime = video.currentTime;
+            const detections = handLandmarker.detectForVideo(video, performance.now());
+            results = detections;
+
+            // 分割
+            if (imageSegmenter) {
+              try {
+                const segResult = imageSegmenter.segmentForVideo(video, performance.now());
+                segmentationMask = segResult.categoryMask;
+              } catch (e) { /* ignore */ }
+            }
+          }
+        } catch (err) {
+          console.warn('预测错误:', err);
+        }
+
+        if (isRunning) {
+          requestAnimationFrame(predictLoop);
+        }
+      }
+
+      // ---- 演示模式 ----
+      function startDemo() {
+        if (camera) {
+          camera.stop();
+          camera = null;
+        }
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(t => t.stop());
+          video.srcObject = null;
+        }
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        isRunning = true;
+        isDemoMode = true;
+        controls.classList.add('hidden');
+        hideStatus();
+        drawFrame();
+
+        // 显示三块彩色面片
+        showStatus('🎮 演示模式 - 三块滤镜');
+        setTimeout(hideStatus, 2000);
+      }
+
+      // ---- 重置 ----
+      function resetAll() {
+        isRunning = false;
+        isDemoMode = false;
+        if (camera) {
+          camera.stop();
+          camera = null;
+        }
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(t => t.stop());
+          video.srcObject = null;
+        }
+        results = null;
+        smoothedLandmarks = { left: null, right: null };
+        controls.classList.remove('hidden');
+        showStatus('↺ 已重置');
+        setTimeout(hideStatus, 1500);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // ---- 初始化 ----
+      async function init() {
+        try {
+          // 加载模型
+          const handOk = await initHandLandmarker();
+          if (!handOk) {
+            showError('手部模型加载失败，请检查网络后刷新重试');
+            updateProgress(100, '❌ 加载失败');
+            return;
+          }
+
+          const segOk = await initImageSegmenter();
+          if (!segOk) {
+            console.warn('分割模型加载失败，继续使用');
+          }
+
+          updateProgress(100, '✅ 模型加载完成');
+          setTimeout(hideStatus, 1000);
+
+          // 设置 canvas 尺寸
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+
+          // 事件绑定
+          btnStart.addEventListener('click', startCamera);
+          btnDemo.addEventListener('click', startDemo);
+          btnReset.addEventListener('click', resetAll);
+
+          // 窗口变化
+          window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+          });
+
+        } catch (err) {
+          console.error('初始化失败:', err);
+          showError('初始化失败: ' + err.message);
+        }
+      }
+
+      // 启动
+      init();
+    })();
+  </script>
+</body>
+</html>

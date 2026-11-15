@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>蓝线扫描 Time Warp</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06070c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(6,7,12,0.8), rgba(6,7,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(63,169,255,0.25); border-color: rgba(63,169,255,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">蓝线扫描 <b id="m">向右</b></div>
+  <button class="btn" id="btn-dir">换方向</button>
+  <button class="btn pri" id="btn-mode">换模式</button>
+</div>
+
+<div id="hint">扫描线扫过 = 冻结画面 · 拖动 = 手动扫描</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ========== 参数 ==========
+  const CFG = {
+    // 扫描
+    direction: 'right',       // right | left | down | up
+    speed: 0.16,              // 每秒扫过整幅比例
+    lineW: 3,                 // 线宽
+    lineColor: '#3fa9ff',     // 线色
+
+    // 行为
+    behavior: 'hold',         // hold 定格 | restart 重扫 | pingpong 往返
+    stretchMode: 'freeze'     // freeze 冻结 | stretch 单列拉伸 | mirror 镜像
+  };
+
+  // ========== 内容生成 ==========
+  // 因为没有上传，用文字作为"素材"：
+  // 内容 = 一组随时间变化的图案（让扫描有东西可"冻结"）
+  const content = {
+    mode: 'wave',            // wave | text | plasma
+    text: 'AURORA',
+    hue: 0
+  };
+
+  function drawContent(g, w, h, t) {
+    // 随时间变化的动态内容 —— 供扫描冻结
+    const [br, bg, bb] = hex2rgb('#05060c');
+    g.fillStyle = `rgb(${br},${bg},${bb})`;
+    g.fillRect(0, 0, w, h);
+
+    if (content.mode === 'wave') {
+      // 同心波
+      g.globalCompositeOperation = 'lighter';
+      const cx = w / 2, cy = h / 2;
+      const maxR = Math.hypot(w, h) / 2;
+      for (let i = 0; i < 6; i++) {
+        const r = ((t * 60 + i * 40) % maxR);
+        const hue = (t * 30 + i * 40) % 360;
+        g.strokeStyle = `hsla(${hue}, 80%, 62%, ${1 - r / maxR})`;
+        g.lineWidth = 3 + (1 - r / maxR) * 6;
+        g.beginPath();
+        g.arc(cx, cy, r, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.globalCompositeOperation = 'source-over';
+    } else if (content.mode === 'text') {
+      // 文字 + 渐变
+      const grad = g.createLinearGradient(0, 0, w, h);
+      const hue = (t * 30) % 360;
+      grad.addColorStop(0, `hsl(${hue}, 80%, 60%)`);
+      grad.addColorStop(0.5, `hsl(${(hue + 120) % 360}, 80%, 60%)`);
+      grad.addColorStop(1, `hsl(${(hue + 240) % 360}, 80%, 60%)`);
+      g.fillStyle = grad;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      const lines = (content.text || 'AURORA').split('\n').filter(l => l.length > 0);
+      const maxW = w * 0.85, maxH = h * 0.8;
+      let size = Math.floor(Math.min(maxH / lines.length, maxW) * 0.85);
+      const setFont = s => { g.font = `900 ${s}px -apple-system, "PingFang SC", sans-serif`; };
+      setFont(size);
+      let widest = 0;
+      for (const l of lines) widest = Math.max(widest, g.measureText(l).width);
+      if (widest > maxW) {
+        size = Math.floor(size * maxW / widest);
+        setFont(size);
+      }
+      const lineH = size * 1.15;
+      const startY = h / 2 - (lines.length - 1) * lineH / 2;
+      for (let i = 0; i < lines.length; i++) {
+        g.fillText(lines[i], w / 2, startY + i * lineH);
+      }
+    } else if (content.mode === 'plasma') {
+      // 等离子
+      const img = g.createImageData(w, h);
+      const data = img.data;
+      const t2 = t * 1.5;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const v = Math.sin(x * 0.02 + t2) +
+                    Math.sin(y * 0.02 + t2 * 0.7) +
+                    Math.sin((x + y) * 0.015 + t2 * 0.5) +
+                    Math.sin(Math.sqrt(x * x + y * y) * 0.02 + t2);
+          const k = (v * 0.25 + 0.5);
+          const idx = (y * w + x) * 4;
+          data[idx] = k * 255;
+          data[idx + 1] = (1 - Math.abs(k - 0.5) * 2) * 200;
+          data[idx + 2] = (1 - k) * 255;
+          data[idx + 3] = 255;
+        }
+      }
+      g.putImageData(img, 0, 0);
+    }
+  }
+
+  const hex2rgb = h => {
+    const s = h.replace('#', '');
+    const n = parseInt(s.length === 3 ? s.split('').map(c => c + c).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  };
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    initBuffers();
+  }
+
+  // ========== 缓冲区 ==========
+  // live: 实时内容
+  // freeze: 已冻结部分
+  let liveCv, liveCtx;
+  let freezeCv, freezeCtx;
+  let progress = 0;
+  let dirSign = 1;
+  let prevPos = 0;
+
+  function initBuffers() {
+    liveCv = document.createElement('canvas');
+    liveCv.width = W;
+    liveCv.height = H;
+    liveCtx = liveCv.getContext('2d');
+
+    freezeCv = document.createElement('canvas');
+    freezeCv.width = W;
+    freezeCv.height = H;
+    freezeCtx = freezeCv.getContext('2d');
+
+    progress = 0;
+    dirSign = 1;
+    prevPos = 0;
+  }
+
+  // ========== 指针 ==========
+  const pointer = { x: 0, y: 0, down: false, inside: false };
+  const rect = () => cv.getBoundingClientRect();
+
+  cv.addEventListener('mousedown', e => {
+    const r = rect();
+    pointer.x = e.clientX - r.left;
+    pointer.y = e.clientY - r.top;
+    pointer.down = true;
+    pointer.inside = true;
+  });
+  cv.addEventListener('mousemove', e => {
+    const r = rect();
+    pointer.x = e.clientX - r.left;
+    pointer.y = e.clientY - r.top;
+    pointer.inside = true;
+  });
+  window.addEventListener('mouseup', () => { pointer.down = false; });
+  cv.addEventListener('mouseleave', () => { pointer.inside = false; });
+
+  cv.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    const r = rect();
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.down = true;
+    pointer.inside = true;
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchmove', e => {
+    const t = e.touches[0];
+    const r = rect();
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchend', () => { pointer.down = false; });
+
+  // ========== 扫描位置 ==========
+  function posOf(p, size) {
+    // p: 0~1, size: 沿扫描方向的像素大小
+    const d = CFG.direction;
+    return (d === 'left' || d === 'up') ? (1 - p) * size : p * size;
+  }
+
+  // ========== 冻结区域 ==========
+  function freezeStrip(from, to, dir, mode) {
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    if (hi - lo < 0.5) return;
+
+    const d = dir;
+    const horiz = (d === 'right' || d === 'left');
+    const total = horiz ? W : H;
+
+    const a = Math.max(0, Math.min(total - 1, Math.floor(lo)));
+    const b = Math.max(0, Math.min(total - 1, Math.ceil(hi)));
+    const len = b - a;
+    if (len <= 0) return;
+
+    if (mode === 'freeze') {
+      // 直接把 live 的部分拷贝到 freeze
+      if (horiz) {
+        freezeCtx.drawImage(liveCv, a, 0, len, H, a, 0, len, H);
+      } else {
+        freezeCtx.drawImage(liveCv, 0, a, W, len, 0, a, W, len);
+      }
+    } else if (mode === 'stretch') {
+      // 用 live 的中间一列/一行拉出整条
+      if (horiz) {
+        const col = Math.max(0, Math.min(W - 1, Math.floor(a)));
+        freezeCtx.drawImage(liveCv, col, 0, 1, H, a, 0, len, H);
+      } else {
+        const row = Math.max(0, Math.min(H - 1, Math.floor(a)));
+        freezeCtx.drawImage(liveCv, 0, row, W, 1, 0, a, W, len);
+      }
+    } else if (mode === 'mirror') {
+      // 用 live 的镜像
+      if (horiz) {
+        const col = Math.max(0, Math.min(W - 1, Math.floor(a)));
+        freezeCtx.save();
+        freezeCtx.translate(W, 0);
+        freezeCtx.scale(-1, 1);
+        freezeCtx.drawImage(liveCv, W - (col + len), 0, len, H, W - (a + len), 0, len, H);
+        freezeCtx.restore();
+      } else {
+        const row = Math.max(0, Math.min(H - 1, Math.floor(a)));
+        freezeCtx.save();
+        freezeCtx.translate(0, H);
+        freezeCtx.scale(1, -1);
+        freezeCtx.drawImage(liveCv, 0, H - (row + len), W, len, 0, H - (a + len), W, len);
+        freezeCtx.restore();
+      }
+    }
+  }
+
+  // ========== 主循环 ==========
+  let startTime = performance.now();
+  let lastTime = startTime;
+
+  function frame(now) {
+    const t = (now - startTime) / 1000;
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    // ---- 1. 更新 live 内容 ----
+    drawContent(liveCtx, W, H, t);
+
+    // ---- 2. 计算扫描进度 ----
+    const behavior = CFG.behavior;
+    const speed = CFG.speed;
+
+    // 手动拖动优先
+    let manualPos = null;
+    if (pointer.down && pointer.inside) {
+      const d = CFG.direction;
+      const horiz = (d === 'right' || d === 'left');
+      const p = horiz ? pointer.x / W : pointer.y / H;
+      manualPos = (d === 'left' || d === 'up') ? 1 - p : p;
+      manualPos = Math.max(0, Math.min(1, manualPos));
+    }
+
+    if (manualPos !== null) {
+      // 手动：直接把 freeze 补到 manualPos
+      const total = (CFG.direction === 'right' || CFG.direction === 'left') ? W : H;
+      const newPos = manualPos * total;
+      freezeStrip(prevPos, newPos, CFG.direction, CFG.stretchMode);
+      prevPos = newPos;
+      progress = manualPos;
+    } else {
+      // 自动
+      if (behavior === 'hold') {
+        if (progress < 1) {
+          progress = Math.min(1, progress + dt * speed);
+        }
+      } else if (behavior === 'restart') {
+        progress += dt * speed;
+        if (progress >= 1) {
+          progress = 0;
+          freezeCtx.clearRect(0, 0, W, H);
+          prevPos = posOf(0, (CFG.direction === 'right' || CFG.direction === 'left') ? W : H);
+        }
+      } else if (behavior === 'pingpong') {
+        progress += dt * speed * dirSign;
+        if (progress >= 1) { progress = 1; dirSign = -1; }
+        else if (progress <= 0) { progress = 0; dirSign = 1; }
+      }
+
+      const total = (CFG.direction === 'right' || CFG.direction === 'left') ? W : H;
+      const newPos = posOf(progress, total);
+      freezeStrip(prevPos, newPos, CFG.direction, CFG.stretchMode);
+      prevPos = newPos;
+    }
+
+    // ---- 3. 渲染 ----
+    const [br, bg, bb] = hex2rgb('#06070c');
+    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.drawImage(liveCv, 0, 0);
+    ctx.drawImage(freezeCv, 0, 0);
+
+    // ---- 4. 画扫描线 ----
+    if (!(behavior === 'hold' && progress >= 1 && manualPos === null)) {
+      const total = (CFG.direction === 'right' || CFG.direction === 'left') ? W : H;
+      const pos = posOf(progress, total);
+      const d = CFG.direction;
+      const horiz = (d === 'right' || d === 'left');
+      const lw = CFG.lineW;
+
+      ctx.save();
+      ctx.shadowColor = CFG.lineColor;
+      ctx.shadowBlur = lw * 4 + 10;
+      ctx.fillStyle = CFG.lineColor;
+
+      if (horiz) {
+        ctx.fillRect(pos - lw / 2, 0, lw, H);
+      } else {
+        ctx.fillRect(0, pos - lw / 2, W, lw);
+      }
+
+      // 白色内芯
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#ffffff';
+      if (horiz) {
+        ctx.fillRect(pos - Math.max(0.5, lw * 0.15), 0, Math.max(1, lw * 0.3), H);
+      } else {
+        ctx.fillRect(0, pos - Math.max(0.5, lw * 0.15), W, Math.max(1, lw * 0.3));
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  // ========== 按钮 ==========
+  const mEl = document.getElementById('m');
+  const DIRS = ['right', 'left', 'down', 'up'];
+  const DIR_NAMES = { right: '向右', left: '向左', down: '向下', up: '向上' };
+
+  document.getElementById('btn-dir').addEventListener('click', () => {
+    const i = DIRS.indexOf(CFG.direction);
+    CFG.direction = DIRS[(i + 1) % DIRS.length];
+    mEl.textContent = DIR_NAMES[CFG.direction];
+    // 重置
+    progress = 0;
+    dirSign = 1;
+    freezeCtx.clearRect(0, 0, W, H);
+    prevPos = posOf(0, (CFG.direction === 'right' || CFG.direction === 'left') ? W : H);
+  });
+
+  document.getElementById('btn-mode').addEventListener('click', () => {
+    // 循环：hold-freeze → restart-stretch → pingpong-mirror → hold-freeze
+    const modes = [
+      { name: '定格 + 冻结', behavior: 'hold', stretchMode: 'freeze' },
+      { name: '重扫 + 拉伸', behavior: 'restart', stretchMode: 'stretch' },
+      { name: '往返 + 镜像', behavior: 'pingpong', stretchMode: 'mirror' }
+    ];
+    const curIdx = modes.findIndex(m => m.behavior === CFG.behavior && m.stretchMode === CFG.stretchMode);
+    const next = modes[(curIdx + 1) % modes.length];
+    CFG.behavior = next.behavior;
+    CFG.stretchMode = next.stretchMode;
+    mEl.textContent = `${DIR_NAMES[CFG.direction]} · ${next.name}`;
+    progress = 0;
+    dirSign = 1;
+    freezeCtx.clearRect(0, 0, W, H);
+    prevPos = posOf(0, (CFG.direction === 'right' || CFG.direction === 'left') ? W : H);
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  mEl.textContent = DIR_NAMES[CFG.direction];
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

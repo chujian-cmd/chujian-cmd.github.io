@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>立体魔方 · 滚轮切换 · 灵动波纹</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background: radial-gradient(circle at 30% 20%, #f8f9fc, #eef2f5);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            font-family: 'Segoe UI', 'Poppins', system-ui, -apple-system, 'Inter', sans-serif;
+        }
+
+        /* 主场景容器 */
+        .scene {
+            width: 130px;
+            height: 130px;
+            perspective: 1200px;
+            position: relative;
+            z-index: 10;
+            cursor: grab;
+            transition: filter 0.2s ease;
+        }
+        .scene:active {
+            cursor: grabbing;
+        }
+
+        .shape-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transform-style: preserve-3d;
+            will-change: transform;
+            transition: transform 0.08s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+        }
+
+        /* 基础立方体样式 */
+        .common-cube {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100px;
+            height: 100px;
+            transform: translate(-50%, -50%);
+            transform-style: preserve-3d;
+        }
+
+        .face {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.92);
+            border: 3px solid #1e2a3e;
+            box-sizing: border-box;
+            backface-visibility: visible;
+            border-radius: 8px;
+            box-shadow: inset 0 0 0 1px rgba(0,0,0,0.02), 0 4px 12px rgba(0,0,0,0.05);
+            transition: background 0.2s;
+        }
+
+        /* 轻微光泽感 */
+        .face::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0) 60%);
+            pointer-events: none;
+            border-radius: 6px;
+        }
+
+        .common-cube .face {
+            width: 100px;
+            height: 100px;
+        }
+
+        .common-cube .front  { transform: translateZ(50px); background: #ffffff; }
+        .common-cube .back   { transform: rotateY(180deg) translateZ(50px); background: #f4f7fb; }
+        .common-cube .right  { transform: rotateY(90deg) translateZ(50px); background: #fef7e6; }
+        .common-cube .left   { transform: rotateY(-90deg) translateZ(50px); background: #eef3fc; }
+        .common-cube .top    { transform: rotateX(90deg) translateZ(50px); background: #faf3e0; }
+        .common-cube .bottom { transform: rotateX(-90deg) translateZ(50px); background: #e9edf2; }
+
+        /* 波纹动画 (现代化大波纹) */
+        .ripple {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 30px;
+            height: 30px;
+            border: 2.5px solid #1e2a3e;
+            border-radius: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            opacity: 0.65;
+            pointer-events: none;
+            z-index: 1000;
+            filter: blur(0px);
+            animation: rippleExpand 0.75s cubic-bezier(0.2, 0.9, 0.4, 1.1) forwards;
+        }
+
+        @keyframes rippleExpand {
+            0% {
+                transform: translate(-50%, -50%) scale(0);
+                opacity: 0.7;
+                border-width: 3px;
+            }
+            50% {
+                opacity: 0.5;
+                border-width: 2px;
+            }
+            100% {
+                transform: translate(-50%, -50%) scale(7);
+                opacity: 0;
+                border-width: 1px;
+            }
+        }
+
+        /* 切换形状时的脉冲辅助动画 */
+        .shape-pulse {
+            animation: shapeGlow 0.28s ease-out forwards;
+        }
+
+        @keyframes shapeGlow {
+            0% {
+                filter: drop-shadow(0 0 0px rgba(0,0,0,0));
+                transform: scale(1);
+            }
+            40% {
+                filter: drop-shadow(0 0 12px rgba(0,0,0,0.2));
+                transform: scale(1.05);
+            }
+            100% {
+                filter: drop-shadow(0 0 0px rgba(0,0,0,0));
+                transform: scale(1);
+            }
+        }
+
+        /* 提示浮层 - 滚轮与形状名称 */
+        .info-tip {
+            position: fixed;
+            bottom: 24px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            pointer-events: none;
+            z-index: 20;
+            font-size: 14px;
+            font-weight: 500;
+            color: #2c3e4e;
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            width: fit-content;
+            margin: 0 auto;
+            padding: 8px 18px;
+            border-radius: 60px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            border: 1px solid rgba(30, 42, 62, 0.15);
+            font-family: monospace;
+            letter-spacing: 0.5px;
+        }
+
+        .shape-badge {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            background: rgba(30, 42, 62, 0.75);
+            backdrop-filter: blur(12px);
+            padding: 6px 16px;
+            border-radius: 40px;
+            color: white;
+            font-size: 13px;
+            font-weight: 500;
+            font-family: monospace;
+            letter-spacing: 1px;
+            pointer-events: none;
+            z-index: 20;
+            border: 1px solid rgba(255,255,255,0.25);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 560px) {
+            .scene { width: 110px; height: 110px; }
+            .common-cube .face { width: 86px; height: 86px; }
+            .common-cube .front,
+            .common-cube .back { transform: translateZ(43px); }
+            .common-cube .right { transform: rotateY(90deg) translateZ(43px); }
+            .common-cube .left { transform: rotateY(-90deg) translateZ(43px); }
+            .common-cube .top { transform: rotateX(90deg) translateZ(43px); }
+            .common-cube .bottom { transform: rotateX(-90deg) translateZ(43px); }
+            .info-tip { font-size: 11px; bottom: 18px; padding: 6px 14px; }
+            .shape-badge { font-size: 11px; top: 16px; right: 16px; }
+        }
+
+        /* 优雅提示 */
+        .instruction {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.35);
+            backdrop-filter: blur(4px);
+            font-size: 10px;
+            color: #eee;
+            padding: 4px 10px;
+            border-radius: 20px;
+            pointer-events: none;
+            z-index: 20;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="scene">
+        <div class="shape-container" id="shapeContainer">
+            <div class="common-cube">
+                <div class="face front"></div>
+                <div class="face back"></div>
+                <div class="face right"></div>
+                <div class="face left"></div>
+                <div class="face top"></div>
+                <div class="face bottom"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="shape-badge" id="shapeBadge">⬡ 立方体</div>
+    <div class="info-tip">🖱️ 滚轮切换形态 | 🖱️ 按住拖动旋转 | ✨ 双击自旋 | 🖱️ 中键回正</div>
+    <div class="instruction">⚡ 波纹反馈 · 流畅3D</div>
+
+    <script>
+        (function() {
+            // ---- 获取元素 ----
+            const container = document.getElementById('shapeContainer');
+            const scene = document.querySelector('.scene');
+            const badgeEl = document.getElementById('shapeBadge');
+
+            // ---- 形状配置 (x, y, z 缩放系数) ----
+            const SHAPES = [
+                { name: '⬡ 立方体', scale: { x: 1.0, y: 1.0, z: 1.0 } },
+                { name: '▯ 长板砖', scale: { x: 1.65, y: 0.78, z: 0.78 } },
+                { name: '▭ 薄片', scale: { x: 1.25, y: 1.25, z: 0.32 } }
+            ];
+            let currentShapeIndex = 0;
+            let currentScale = { ...SHAPES[currentShapeIndex].scale };
+
+            // ---- 旋转状态 (平滑跟随) ----
+            let targetRotateX = 0, targetRotateY = 0;
+            let currentRotateX = 0, currentRotateY = 0;
+            const SMOOTH_FACTOR = 0.12;
+            const MAX_TILT = 48;        // 最大倾斜角度
+
+            // 交互标志
+            let isSpinning = false;       // 自旋动画中
+            let isPressed = false;        // 按压(收缩)状态
+            let pressTimer = null;
+            
+            // 节流滚轮 (避免滚轮切换过速)
+            let wheelThrottle = false;
+            let wheelPending = false;
+
+            // ---- 辅助函数: 生成当前transform字符串 ----
+            function getTransformString() {
+                const { x, y, z } = currentScale;
+                // 避免因为浮点精度导致抖动, 直接拼接三个小数
+                return `rotateX(${currentRotateX}deg) rotateY(${currentRotateY}deg) scale3d(${x}, ${y}, ${z})`;
+            }
+
+            // 直接应用变换 (不使用强制过渡)
+            function updateTransformImmediately() {
+                if (container) {
+                    container.style.transform = getTransformString();
+                }
+            }
+
+            // 更新形状UI (更改缩放 + badge文字 + 脉冲效果)
+            function applyShapeChange(index, addPulse = true) {
+                const shape = SHAPES[index];
+                if (!shape) return;
+                currentScale = { ...shape.scale };
+                currentShapeIndex = index;
+                // 更新右上角徽章
+                if (badgeEl) badgeEl.textContent = shape.name;
+                
+                // 如果没有按压和自旋，立刻刷新变换
+                if (!isPressed && !isSpinning) {
+                    updateTransformImmediately();
+                } else if (isPressed) {
+                    // 如果正处于按压状态，先取消按压外观再更新形状，避免视觉卡壳
+                    // 为了保证滚轮按压时切换也能看到形状切换，解除按压标志并重置过渡
+                    cancelPressEffect(true);
+                    updateTransformImmediately();
+                } else if (isSpinning) {
+                    // 自旋中切换形状: 更新scale变量但自旋动画会持续使用最新scale (下次动画帧会读到currentScale)
+                    // 同时为了防止撕裂，主动更新一次当前帧
+                    if (container && !isPressed) {
+                        container.style.transform = getTransformString();
+                    }
+                } else {
+                    updateTransformImmediately();
+                }
+                
+                // 添加脉冲视觉反馈 (让用户感知形状已切换)
+                if (addPulse && container) {
+                    container.classList.add('shape-pulse');
+                    setTimeout(() => {
+                        if (container) container.classList.remove('shape-pulse');
+                    }, 280);
+                }
+            }
+
+            // 切换到下一个/上一个形状
+            function nextShape() {
+                const nextIdx = (currentShapeIndex + 1) % SHAPES.length;
+                applyShapeChange(nextIdx, true);
+                // 额外创建一个小波纹在中心作为反馈 (滚轮专用)
+                createRipple(true, 0.55);
+            }
+            
+            function prevShape() {
+                const prevIdx = (currentShapeIndex - 1 + SHAPES.length) % SHAPES.length;
+                applyShapeChange(prevIdx, true);
+                createRipple(true, 0.55);
+            }
+
+            // ---- 取消按压效果: 恢复原始缩放并清理过渡 ----
+            function cancelPressEffect(keepPressedFlag = false) {
+                if (!container) return;
+                // 移除按压标志下的临时缩放过渡
+                if (!keepPressedFlag) {
+                    isPressed = false;
+                }
+                container.style.transition = '';
+                // 强制恢复真实变换
+                updateTransformImmediately();
+            }
+
+            // 按压效果 (缩小一点点)
+            function applyPressEffect(pressActive) {
+                if (isSpinning) return;
+                if (pressActive) {
+                    if (pressTimer) clearTimeout(pressTimer);
+                    isPressed = true;
+                    // 快速收缩，cubic-bezier 带来弹性按压感
+                    container.style.transition = 'transform 0.07s cubic-bezier(0.34, 1.2, 0.64, 1)';
+                    const { x, y, z } = currentScale;
+                    const pressScaleX = x * 0.92;
+                    const pressScaleY = y * 0.92;
+                    const pressScaleZ = z * 0.92;
+                    container.style.transform = `rotateX(${currentRotateX}deg) rotateY(${currentRotateY}deg) scale3d(${pressScaleX}, ${pressScaleY}, ${pressScaleZ})`;
+                } else {
+                    if (!container) return;
+                    isPressed = false;
+                    container.style.transition = 'transform 0.12s cubic-bezier(0.2, 0.9, 0.4, 1.2)';
+                    updateTransformImmediately();
+                    // 过渡结束后清除transition，避免干扰后续平滑旋转
+                    setTimeout(() => {
+                        if (container && !isPressed && !isSpinning) {
+                            container.style.transition = '';
+                        }
+                    }, 130);
+                }
+            }
+
+            // ---- 波纹特效 (核心视觉) ----
+            function createRipple(small = false, customOpacity = null) {
+                if (!scene) return;
+                const rect = scene.getBoundingClientRect();
+                if (rect.width === 0) return;
+                const ripple = document.createElement('div');
+                ripple.className = 'ripple';
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                ripple.style.left = centerX + 'px';
+                ripple.style.top = centerY + 'px';
+                if (small) {
+                    ripple.style.width = '22px';
+                    ripple.style.height = '22px';
+                    ripple.style.animation = 'rippleExpand 0.6s ease-out forwards';
+                    ripple.style.borderWidth = '2.5px';
+                }
+                if (customOpacity !== null) {
+                    ripple.style.opacity = customOpacity;
+                }
+                document.body.appendChild(ripple);
+                setTimeout(() => {
+                    if (ripple && ripple.remove) ripple.remove();
+                }, small ? 650 : 800);
+            }
+
+            // ---- 自旋动画 (双击触发) ----
+            function startSpin() {
+                if (isSpinning) return;
+                // 如果正处于按压状态，先取消按压
+                if (isPressed) {
+                    cancelPressEffect(false);
+                }
+                isSpinning = true;
+                isPressed = false;
+                const startRotX = currentRotateX;
+                const startRotY = currentRotateY;
+                const startTime = performance.now();
+                const duration = 620;
+                
+                function spinAnimation(now) {
+                    const elapsed = now - startTime;
+                    let t = Math.min(1, elapsed / duration);
+                    // 缓动曲线：easeOutCubic
+                    const ease = 1 - Math.pow(1 - t, 3);
+                    // 优雅自旋：X轴轻微点头，Y轴一整圈多一点儿更有张力
+                    currentRotateX = startRotX + 28 * Math.sin(Math.PI * t);
+                    currentRotateY = startRotY + 400 * ease;
+                    if (container) {
+                        container.style.transition = '';
+                        container.style.transform = `rotateX(${currentRotateX}deg) rotateY(${currentRotateY}deg) scale3d(${currentScale.x}, ${currentScale.y}, ${currentScale.z})`;
+                    }
+                    if (t < 1) {
+                        requestAnimationFrame(spinAnimation);
+                    } else {
+                        // 收尾规范化角度
+                        currentRotateX = currentRotateX % 360;
+                        currentRotateY = currentRotateY % 360;
+                        targetRotateX = currentRotateX;
+                        targetRotateY = currentRotateY;
+                        isSpinning = false;
+                        // 恢复平滑旋转模式
+                        if (container && !isPressed) {
+                            container.style.transition = '';
+                            updateTransformImmediately();
+                        }
+                    }
+                }
+                requestAnimationFrame(spinAnimation);
+            }
+
+            // 重置旋转角度 (中键)
+            function resetRotation() {
+                if (isSpinning) return;
+                targetRotateX = 0;
+                targetRotateY = 0;
+                // 如果按压状态临时取消让位
+                if (isPressed) {
+                    cancelPressEffect(false);
+                }
+                createRipple(true, 0.5);
+            }
+
+            // ---- 鼠标/触摸 旋转逻辑 (基于scene中心偏移) ----
+            function handleRotateFromEvent(clientX, clientY) {
+                if (isSpinning) return;
+                const rect = scene.getBoundingClientRect();
+                if (rect.width === 0) return;
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                let offX = (clientX - centerX) / (rect.width / 2);
+                let offY = (clientY - centerY) / (rect.height / 2);
+                offX = Math.min(Math.max(offX, -1), 1);
+                offY = Math.min(Math.max(offY, -1), 1);
+                targetRotateX = -offY * MAX_TILT;
+                targetRotateY = offX * MAX_TILT;
+            }
+
+            // ---- 动画循环: 平滑插值旋转 ----
+            function animateRotationLoop() {
+                if (!isSpinning && !isPressed) {
+                    // 旋转平滑趋近目标
+                    let dx = targetRotateX - currentRotateX;
+                    let dy = targetRotateY - currentRotateY;
+                    // 处理角度环绕 (避免跨越360度产生大跳)
+                    if (dx > 180) dx -= 360;
+                    if (dx < -180) dx += 360;
+                    if (dy > 180) dy -= 360;
+                    if (dy < -180) dy += 360;
+                    currentRotateX += dx * SMOOTH_FACTOR;
+                    currentRotateY += dy * SMOOTH_FACTOR;
+                    // 边界微小限制，避免累加过大
+                    if (Math.abs(currentRotateX) > 120) currentRotateX = currentRotateX * 0.98;
+                    if (Math.abs(currentRotateY) > 200) currentRotateY = currentRotateY * 0.98;
+                    // 仅当容器没有被按压的特殊过渡覆盖时才更新样式
+                    if (container && !isPressed && !isSpinning) {
+                        container.style.transform = getTransformString();
+                    }
+                }
+                requestAnimationFrame(animateRotationLoop);
+            }
+            
+            // ---- 节流滚轮 (提升性能, 顺畅切换) ----
+            function throttledWheelAction(deltaY) {
+                if (wheelThrottle) {
+                    wheelPending = true;
+                    return;
+                }
+                wheelThrottle = true;
+                if (deltaY > 0) {
+                    nextShape();
+                } else if (deltaY < 0) {
+                    prevShape();
+                } else {
+                    wheelThrottle = false;
+                    return;
+                }
+                // 额外增加一个较大波纹配合滚轮切换，视觉反馈足够
+                createRipple(false, 0.6);
+                setTimeout(() => {
+                    wheelThrottle = false;
+                    if (wheelPending) {
+                        wheelPending = false;
+                        // 执行积压的最后一次滚轮方向（取最后一次delta方向比较合理）
+                        // 为防止连跳过度，只做一次额外切换，但保留体验流畅
+                        if (deltaY > 0) nextShape();
+                        else if (deltaY < 0) prevShape();
+                        createRipple(true, 0.5);
+                    }
+                }, 130);
+            }
+
+            // ---- 滚轮事件绑定 (确保在任何地方滚动都能切换) ----
+            function onWheel(e) {
+                e.preventDefault();
+                // 无论页面何处滚动，都触发形状切换 + 波纹节流
+                const delta = e.deltaY;
+                if (delta !== 0) {
+                    throttledWheelAction(delta);
+                }
+                return false;
+            }
+
+            // ---- 鼠标/触摸 旋转监听 ----
+            function onMouseMove(e) {
+                if (isSpinning) return;
+                handleRotateFromEvent(e.clientX, e.clientY);
+            }
+            
+            function onTouchMove(e) {
+                if (isSpinning) return;
+                if (e.touches.length) {
+                    handleRotateFromEvent(e.touches[0].clientX, e.touches[0].clientY);
+                    e.preventDefault();
+                }
+            }
+            
+            function onTouchStart(e) {
+                if (isSpinning) return;
+                if (e.touches.length) {
+                    handleRotateFromEvent(e.touches[0].clientX, e.touches[0].clientY);
+                    applyPressEffect(true);
+                }
+            }
+            
+            function onMouseDown(e) {
+                if (e.button === 0) {
+                    applyPressEffect(true);
+                }
+            }
+            
+            function onMouseUp(e) {
+                if (e.button === 0) {
+                    applyPressEffect(false);
+                }
+            }
+            
+            // 全局清除按压状态（鼠标离开窗口）
+            function onWindowMouseUp() {
+                if (isPressed) applyPressEffect(false);
+            }
+
+            // ---- 点击波纹 + 双击自旋 ----
+            function onContainerClick(e) {
+                e.stopPropagation();
+                createRipple(false, 0.7);
+            }
+            
+            function onDoubleClick(e) {
+                e.stopPropagation();
+                startSpin();
+                createRipple(true, 0.65);
+            }
+            
+            // 中键重置旋转
+            function onAuxClick(e) {
+                if (e.button === 1) {
+                    e.preventDefault();
+                    resetRotation();
+                    createRipple(true, 0.6);
+                }
+            }
+
+            // ---- 阻止拖拽选中及默认上下文菜单 ----
+            function preventDrag(e) {
+                e.preventDefault();
+                return false;
+            }
+            
+            // ---- 重置按压状态的备用逻辑 ----
+            function clearPressOnLeave() {
+                if (isPressed) applyPressEffect(false);
+            }
+
+            // ---- 监听页面失去焦点或弹起所有按键 ----
+            window.addEventListener('mouseup', onWindowMouseUp);
+            document.addEventListener('contextmenu', (e) => e.preventDefault());
+            
+            // ---- 绑定全部交互事件 ----
+            function bindEvents() {
+                // 滚轮: 在整个窗口作用，确保切换有效，preventDefault阻止滚动条
+                window.addEventListener('wheel', onWheel, { passive: false });
+                // 鼠标拖动旋转
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mousedown', onMouseDown);
+                document.addEventListener('mouseup', onMouseUp);
+                // 触摸事件
+                scene.addEventListener('touchstart', onTouchStart, { passive: false });
+                scene.addEventListener('touchmove', onTouchMove, { passive: false });
+                scene.addEventListener('touchend', () => applyPressEffect(false));
+                // 容器核心交互
+                if (container) {
+                    container.addEventListener('click', onContainerClick);
+                    container.addEventListener('dblclick', onDoubleClick);
+                    container.addEventListener('auxclick', onAuxClick);
+                    container.addEventListener('dragstart', preventDrag);
+                    container.addEventListener('mouseleave', clearPressOnLeave);
+                }
+                // 场景区域离开时取消按压
+                scene.addEventListener('mouseleave', clearPressOnLeave);
+            }
+            
+            // ---- 尺寸自适应保证旋转中心准确 (无需额外操作) ----
+            function updateTransformOnResize() {
+                // 如果没有任何按压，重新同步变换 (防止矩形变化偏移幻觉)
+                if (!isPressed && !isSpinning && container) {
+                    updateTransformImmediately();
+                }
+            }
+            
+            // ---- 初始化形状及显示 ----
+            function init() {
+                // 设置起始立方体形态
+                applyShapeChange(0, false);
+                // 设置一个优雅的初始倾斜角度 (微微展示3D效果)
+                targetRotateX = -12;
+                targetRotateY = 18;
+                currentRotateX = -8;
+                currentRotateY = 12;
+                updateTransformImmediately();
+                bindEvents();
+                window.addEventListener('resize', () => {
+                    setTimeout(updateTransformOnResize, 60);
+                });
+                // 启动旋转动画循环
+                animateRotationLoop();
+                // 输出控制台友好提示，便于调试
+                ('✨ 3D立体图形已启动 | 滚轮切换形状 + 波纹反馈 | 拖动旋转/双击自旋/中键回正');
+            }
+            
+            init();
+        })();
+    </script>
+</body>
+</html>

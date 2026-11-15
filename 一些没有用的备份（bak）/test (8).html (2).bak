@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>全屏拖拽翻页测试</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: #000;
+            color: #fff;
+            font-family: sans-serif;
+            touch-action: none;
+            overscroll-behavior: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        #pages-viewport {
+            width: 100vw; height: 100vh;
+            overflow: hidden;
+            position: relative;
+            touch-action: none;
+        }
+
+        #pages-track {
+            display: flex;
+            height: 100%;
+            width: 300vw;
+            transition: transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+            transform: translateX(0px);
+            will-change: transform;
+            touch-action: none;
+        }
+
+        .page {
+            width: 100vw; height: 100%;
+            flex-shrink: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 40px;
+            font-weight: bold;
+            touch-action: none;
+        }
+        .page:nth-child(1) { background: linear-gradient(135deg, #ff4757, #ff6b81); }
+        .page:nth-child(2) { background: linear-gradient(135deg, #2ed573, #7bed9f); }
+        .page:nth-child(3) { background: linear-gradient(135deg, #1e90ff, #70a1ff); }
+
+        .longpress-alert {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.5);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px 40px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.2);
+            font-size: 20px;
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 100;
+        }
+        .longpress-alert.show {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        #control-bar {
+            position: fixed;
+            bottom: 0; left: 0;
+            width: 100%; height: 100px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #dots-track {
+            display: flex;
+            gap: 15px;
+            padding: 15px 25px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 30px;
+            backdrop-filter: blur(10px);
+            pointer-events: auto;
+        }
+
+        .dot {
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            transition: transform 0.2s, background 0.2s;
+            cursor: pointer;
+            position: relative;
+            touch-action: none;
+        }
+        /* 扩大点击热区 */
+        .dot::after {
+            content: '';
+            position: absolute;
+            top: -12px; left: -12px;
+            right: -12px; bottom: -12px;
+        }
+        .dot.active {
+            background: #fff;
+            transform: scale(1.3);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="pages-viewport">
+        <div id="pages-track">
+            <div class="page">Page 1</div>
+            <div class="page">Page 2</div>
+            <div class="page">Page 3</div>
+        </div>
+    </div>
+
+    <div class="longpress-alert" id="alertBox">触发长按！</div>
+
+    <div id="control-bar">
+        <div id="dots-track">
+            <div class="dot active"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+    </div>
+
+    <script>
+        const pagesTrack = document.getElementById('pages-track');
+        const dots = document.querySelectorAll('.dot');
+        const alertBox = document.getElementById('alertBox');
+        const pageCount = dots.length;
+        let pageWidth = window.innerWidth;
+
+        let currentIndex = 0;
+        let currentTranslateX = 0;
+
+        let startX = 0;
+        let startY = 0;
+        let isPressed = false;
+        let isDragging = false;
+        let isLongPress = false;
+        let longPressTimer = null;
+        let activePointerId = null;
+
+        pagesTrack.style.width = `${pageCount * 100}vw`;
+
+        function updateDotsByIndex(idx) {
+            dots.forEach((dot, i) => dot.classList.toggle('active', i === idx));
+        }
+        function updateDots() { updateDotsByIndex(currentIndex); }
+
+        function snapToPage() {
+            pagesTrack.classList.remove('is-dragging');
+            pagesTrack.style.transition = 'transform 0.35s cubic-bezier(0.25, 0.8, 0.25, 1)';
+            currentTranslateX = -currentIndex * pageWidth;
+            pagesTrack.style.transform = `translateX(${currentTranslateX}px)`;
+            updateDots();
+        }
+
+        function clearLongPressTimer() {
+            if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        }
+
+        function handleStart(clientX, clientY, target) {
+            if (target && target.closest && target.closest('#dots-track')) return false;
+
+            startX = clientX;
+            startY = clientY;
+            currentTranslateX = -currentIndex * pageWidth;
+
+            isPressed = true;
+            isDragging = false;
+            isLongPress = false;
+
+            clearLongPressTimer();
+            longPressTimer = setTimeout(() => {
+                if (isPressed && !isDragging) {
+                    isLongPress = true;
+                    alertBox.classList.add('show');
+                    if (navigator.vibrate) navigator.vibrate(50);
+                }
+            }, 500);
+
+            return true;
+        }
+
+        function handleMove(clientX, clientY) {
+            if (!isPressed) return;
+
+            const dx = clientX - startX;
+            const dy = clientY - startY;
+
+            if (!isDragging) {
+                // 判定是否进入水平拖拽
+                if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+                    isDragging = true;
+                    clearLongPressTimer();
+                    if (isLongPress) {
+                        isLongPress = false;
+                        alertBox.classList.remove('show');
+                    }
+                    // ★ 关键修复：直接覆盖内联 transition，否则拖拽不跟手
+                    pagesTrack.style.transition = 'none';
+                    pagesTrack.classList.add('is-dragging');
+                } else if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                    clearLongPressTimer();
+                }
+            }
+
+            if (isDragging) {
+                // 实时跟手
+                const pos = currentTranslateX + dx;
+                pagesTrack.style.transform = `translateX(${pos}px)`;
+
+                // ★ 实时更新圆点
+                const previewIndex = Math.max(0, Math.min(Math.round(-pos / pageWidth), pageCount - 1));
+                updateDotsByIndex(previewIndex);
+            }
+        }
+
+        function handleEnd(clientX) {
+            clearLongPressTimer();
+
+            if (isLongPress) {
+                isLongPress = false;
+                isPressed = false;
+                isDragging = false;
+                setTimeout(() => alertBox.classList.remove('show'), 1000);
+                snapToPage();
+                return;
+            }
+
+            if (isDragging) {
+                const dx = clientX - startX;
+                const finalX = currentTranslateX + dx;
+                // ★ 根据最终位置吸附到最近页
+                const targetIndex = Math.round(-finalX / pageWidth);
+                currentIndex = Math.max(0, Math.min(targetIndex, pageCount - 1));
+            }
+
+            isPressed = false;
+            isDragging = false;
+            snapToPage();
+        }
+
+        function handleCancel() {
+            clearLongPressTimer();
+            alertBox.classList.remove('show');
+            isPressed = false;
+            isDragging = false;
+            isLongPress = false;
+            activePointerId = null;
+            snapToPage();
+        }
+
+        // ===== 圆点：pointerdown 立即切页 =====
+        dots.forEach((dot, index) => {
+            dot.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                clearLongPressTimer();
+                alertBox.classList.remove('show');
+                isPressed = false;
+                isDragging = false;
+                isLongPress = false;
+                activePointerId = null;
+                currentIndex = index;
+                snapToPage();
+            });
+        });
+
+        // ===== 全局手势：Pointer Events =====
+        if (window.PointerEvent) {
+            window.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                if (isPressed) return;
+                activePointerId = e.pointerId;
+                if (!handleStart(e.clientX, e.clientY, e.target)) {
+                    activePointerId = null;
+                }
+            }, { passive: true });
+
+            window.addEventListener('pointermove', (e) => {
+                if (!isPressed || e.pointerId !== activePointerId) return;
+                if (isDragging) e.preventDefault();
+                handleMove(e.clientX, e.clientY);
+            }, { passive: false });
+
+            window.addEventListener('pointerup', (e) => {
+                if (!isPressed || e.pointerId !== activePointerId) return;
+                handleEnd(e.clientX);
+                activePointerId = null;
+            });
+
+            window.addEventListener('pointercancel', (e) => {
+                if (e.pointerId !== activePointerId) return;
+                handleCancel();
+            });
+
+            window.addEventListener('blur', handleCancel);
+        } else {
+            // 降级：Touch + Mouse
+            let touchId = null;
+
+            window.addEventListener('touchstart', (e) => {
+                if (isPressed || e.touches.length > 1) return;
+                touchId = e.touches[0].identifier;
+                handleStart(e.touches[0].clientX, e.touches[0].clientY, e.target);
+            }, { passive: true });
+
+            window.addEventListener('touchmove', (e) => {
+                if (!isPressed) return;
+                if (isDragging) e.preventDefault();
+                const t = Array.from(e.touches).find(t => t.identifier === touchId);
+                if (t) handleMove(t.clientX, t.clientY);
+            }, { passive: false });
+
+            window.addEventListener('touchend', (e) => {
+                if (!isPressed) return;
+                const t = Array.from(e.changedTouches).find(t => t.identifier === touchId);
+                if (t) { handleEnd(t.clientX); touchId = null; }
+            });
+
+            window.addEventListener('touchcancel', () => {
+                if (isPressed) { handleCancel(); touchId = null; }
+            });
+
+            window.addEventListener('mousedown', (e) => {
+                if (e.button !== 0 || isPressed) return;
+                handleStart(e.clientX, e.clientY, e.target);
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (isPressed) handleMove(e.clientX, e.clientY);
+            });
+
+            window.addEventListener('mouseup', (e) => {
+                if (isPressed) handleEnd(e.clientX);
+            });
+
+            window.addEventListener('blur', handleCancel);
+        }
+
+        window.addEventListener('resize', () => {
+            pageWidth = window.innerWidth;
+            snapToPage();
+        });
+    </script>
+</body>
+</html>

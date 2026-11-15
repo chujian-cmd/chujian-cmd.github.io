@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>动态日历 - 丝滑动画版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft Yahei", Tahoma, Simsun, sans-serif;
+            overflow: hidden; 
+            -webkit-user-select: none;
+            user-select: none; 
+            -webkit-touch-callout: none;
+        }
+
+        /* --- 核心卡片样式 --- */
+        .calendar-card {
+            position: relative; 
+            width: 100%;
+            max-width: 680px;
+            border-radius: 24px;
+            padding: clamp(24px, 6vw, 50px) clamp(20px, 8vw, 60px);
+            overflow: hidden;
+            
+            /* 背景光效 */
+            background: 
+                linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+                radial-gradient(circle at 0% 100%, rgba(0, 80, 50, 0.9) 0%, rgba(0, 40, 25, 0.4) 40%, transparent 70%),
+                radial-gradient(circle at 100% 80%, rgba(60, 20, 100, 0.6) 0%, transparent 60%),
+                #040408;
+
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            
+            /* 🌟 性能优化核心：只对 transform 和 opacity 进行动画，并使用回弹曲线 */
+            transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), 
+                        opacity 0.3s ease;
+            
+            transform-origin: center center;
+            z-index: 10;
+            
+            /* 🌟 开启硬件加速 (GPU) */
+            will-change: transform, opacity;
+            transform: translate3d(0, 0, 0);
+        }
+
+        /* 🌟 长按缩小的状态 */
+        .calendar-card.is-minimized {
+            transform: scale(0.6) translate3d(0, 0, 0);
+            opacity: 0.9;
+        }
+
+        /* 🌟 点击减号，彻底消失的状态 */
+        .calendar-card.is-hidden {
+            transform: scale(0.3) translate3d(0, 50px, 0);
+            opacity: 0;
+            pointer-events: none; 
+            transition: transform 0.4s ease-in, opacity 0.3s ease-in;
+        }
+
+        /* --- 卡片右上角的关闭按钮 --- */
+        .close-btn {
+            position: absolute; 
+            top: 20px;
+            right: 20px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15); /* 取消模糊，改用纯色半透明 */
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            
+            opacity: 0;
+            visibility: hidden;
+            transform: scale(0.5);
+            transition: transform 0.3s ease, opacity 0.3s ease; /* 仅对这两个属性做动画 */
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        /* 缩小状态下，显示按钮 */
+        .calendar-card.is-minimized .close-btn {
+            opacity: 1;
+            visibility: visible;
+            transform: scale(1);
+            pointer-events: auto;
+        }
+
+        .close-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* 纯 CSS 画横线，绝对居中 */
+        .close-btn::before {
+            content: '';
+            width: 12px;
+            height: 2px;
+            background-color: #ffffff;
+            border-radius: 1px;
+        }
+
+        /* --- 内部的日历布局样式 --- */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: clamp(30px, 6vw, 50px);
+        }
+
+        .title {
+            color: #ffffff;
+            font-size: clamp(40px, 10vw, 72px);
+            font-weight: 400;
+            line-height: 1;
+            letter-spacing: 2px;
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+
+        .subtitle {
+            color: rgba(255, 255, 255, 0.45);
+            font-size: clamp(12px, 3vw, 16px);
+            font-weight: 300;
+            letter-spacing: 2px;
+            margin-bottom: 8px;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            row-gap: clamp(15px, 4vw, 30px);
+            text-align: center;
+        }
+
+        .weekday {
+            color: rgba(255, 255, 255, 0.35);
+            font-size: clamp(14px, 3.5vw, 18px);
+            font-weight: 300;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .day {
+            color: #ffffff;
+            font-size: clamp(16px, 4vw, 24px);
+            font-weight: 300;
+            width: 100%;
+            max-width: 52px;
+            aspect-ratio: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .day.active {
+            border: 1px solid rgba(160, 130, 255, 0.5);
+            border-radius: 50%;
+            background: rgba(120, 90, 255, 0.08);
+            box-shadow: 0 0 15px rgba(120, 90, 255, 0.15);
+            font-weight: 400;
+        }
+
+        .calendar-card::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, #00ff88 0%, #00ccff 30%, #6b21a8 100%);
+            box-shadow: 0 -2px 10px rgba(0, 255, 136, 0.5), 0 -2px 10px rgba(107, 33, 168, 0.5);
+            border-bottom-left-radius: 24px;
+            border-bottom-right-radius: 24px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="calendar-card" id="calendarCard">
+        <div class="close-btn" id="closeBtn"></div>
+
+        <div class="header">
+            <div class="title" id="current-weekday-title">周六</div>
+            <div class="subtitle">CALENDAR</div>
+        </div>
+
+        <div class="calendar-grid">
+            <div class="weekday">日</div>
+            <div class="weekday">一</div>
+            <div class="weekday">二</div>
+            <div class="weekday">三</div>
+            <div class="weekday">四</div>
+            <div class="weekday">五</div>
+            <div class="weekday">六</div>
+            <div id="dynamic-days-container" style="display: contents;"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. 日历渲染逻辑 ---
+        function renderCalendar() {
+            const today = new Date();
+            const weekdaysChinese = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+            document.getElementById('current-weekday-title').textContent = weekdaysChinese[today.getDay()];
+
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay());
+
+            const container = document.getElementById('dynamic-days-container');
+            container.innerHTML = '';
+
+            for (let i = 0; i < 7; i++) {
+                const currentDate = new Date(startOfWeek);
+                currentDate.setDate(startOfWeek.getDate() + i);
+
+                const dayDiv = document.createElement('div');
+                dayDiv.className = 'day';
+                dayDiv.textContent = currentDate.getDate();
+
+                if (currentDate.getDate() === today.getDate() && 
+                    currentDate.getMonth() === today.getMonth() && 
+                    currentDate.getFullYear() === today.getFullYear()) {
+                    dayDiv.classList.add('active');
+                }
+                container.appendChild(dayDiv);
+            }
+        }
+        renderCalendar();
+        setInterval(renderCalendar, 60000);
+
+
+        // --- 2. 交互逻辑 ---
+        const card = document.getElementById('calendarCard');
+        const closeBtn = document.getElementById('closeBtn');
+        
+        let pressTimer = null;
+        let isMinimized = false;
+        let isHidden = false;
+        let isLongPressTriggered = false; 
+
+        const startPress = (e) => {
+            if (isHidden || e.target === closeBtn) return;
+            isLongPressTriggered = false;
+            
+            // 可以加一个前置反馈，按下时稍微缩小一点点（可选，让长按更有感知）
+            // card.style.transform = 'scale(0.98)';
+
+            pressTimer = setTimeout(() => {
+                isLongPressTriggered = true;
+                minimizeCard();
+            }, 500); // 缩短到 500ms，响应更跟手
+        };
+
+        const cancelPress = () => {
+            if (pressTimer) {
+                clearTimeout(pressTimer);
+                pressTimer = null;
+                // 如果没触发长按，恢复原样
+                // if(!isMinimized) card.style.transform = ''; 
+            }
+        };
+
+        const minimizeCard = () => {
+            isMinimized = true;
+            card.classList.add('is-minimized');
+            // 震动反馈去掉，或者改成轻震动，避免安卓某些机型卡顿
+            if (navigator.vibrate) navigator.vibrate(10); 
+        };
+
+        const restoreCard = () => {
+            if (!isMinimized || isHidden) return;
+            isMinimized = false;
+            card.classList.remove('is-minimized');
+        };
+
+        const hideCard = () => {
+            isHidden = true;
+            isMinimized = false;
+            card.classList.remove('is-minimized');
+            card.classList.add('is-hidden');
+        };
+
+        // --- 全局事件绑定 ---
+        document.addEventListener('mousedown', startPress);
+        document.addEventListener('touchstart', startPress, { passive: true });
+        
+        document.addEventListener('mouseup', cancelPress);
+        document.addEventListener('touchend', cancelPress);
+        document.addEventListener('touchcancel', cancelPress);
+
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            hideCard();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (isLongPressTriggered) {
+                isLongPressTriggered = false;
+                return;
+            }
+            if (isMinimized && !card.contains(e.target)) {
+                restoreCard();
+            }
+        });
+
+        document.addEventListener('touchstart', (e) => {
+            if (isLongPressTriggered) {
+                isLongPressTriggered = false;
+                return;
+            }
+            if (isMinimized && !card.contains(e.target)) {
+                restoreCard();
+            }
+        }, { passive: true });
+
+    </script>
+</body>
+</html>

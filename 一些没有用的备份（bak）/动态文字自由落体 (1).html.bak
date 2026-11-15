@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>动态文字自由落体 · 视觉创作工具</title>
+  <!-- 引入 Matter.js 物理引擎 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #1e1e2f;
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+      color: #e0e0e0;
+    }
+
+    /* 左侧控制面板：专业、克制、深色系 */
+    .panel {
+      width: 320px;
+      background: #25253a;
+      display: flex;
+      flex-direction: column;
+      padding: 20px 16px;
+      box-shadow: 2px 0 15px rgba(0,0,0,0.5);
+      z-index: 10;
+      overflow-y: auto;
+      height: 100vh;
+      border-right: 1px solid #3a3a55;
+      backdrop-filter: blur(10px);
+      scrollbar-width: thin;
+      scrollbar-color: #4a4a6a #25253a;
+    }
+    .panel::-webkit-scrollbar {
+      width: 6px;
+    }
+    .panel::-webkit-scrollbar-track {
+      background: #25253a;
+    }
+    .panel::-webkit-scrollbar-thumb {
+      background: #4a4a6a;
+      border-radius: 3px;
+    }
+
+    .panel h2 {
+      font-size: 1.3rem;
+      font-weight: 400;
+      letter-spacing: 1px;
+      margin-bottom: 20px;
+      color: #c0c0e0;
+      border-bottom: 1px solid #3a3a55;
+      padding-bottom: 10px;
+      text-transform: uppercase;
+    }
+
+    .control-group {
+      margin-bottom: 18px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    label {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #9a9ab0;
+      margin-bottom: 5px;
+    }
+
+    input, select, textarea {
+      background: #1a1a2c;
+      border: 1px solid #3a3a55;
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #e0e0f0;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border 0.2s;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: #7a7acc;
+    }
+
+    textarea {
+      min-height: 70px;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .row input {
+      flex: 1;
+    }
+
+    button {
+      background: #3a3a6a;
+      border: none;
+      color: white;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 0.9rem;
+      letter-spacing: 0.3px;
+      transition: background 0.2s, transform 0.1s;
+      border: 1px solid #5a5a8a;
+      background: #2f2f55;
+    }
+    button:hover {
+      background: #4a4a7a;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+
+    .file-area {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .font-meta {
+      font-size: 0.75rem;
+      color: #aaaacc;
+      background: #1e1e30;
+      padding: 8px;
+      border-radius: 6px;
+      margin-top: 5px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
+
+    hr {
+      border-color: #3a3a55;
+      margin: 12px 0 10px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+    }
+    .checkbox-group input {
+      width: 18px;
+      height: 18px;
+      accent-color: #7a7acc;
+    }
+
+    /* 右侧画布区域 */
+    .canvas-container {
+      flex: 1;
+      position: relative;
+      background: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      background: #0f0f1a;
+      box-shadow: 0 0 30px rgba(0,0,0,0.7);
+      border-radius: 4px;
+    }
+
+    .angle-indicator {
+      position: absolute;
+      bottom: 20px;
+      right: 30px;
+      background: rgba(20,20,40,0.85);
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      border: 1px solid #5a5a8a;
+      color: #ccc;
+      backdrop-filter: blur(5px);
+    }
+
+    .instruction {
+      font-size: 0.7rem;
+      color: #7a7ab0;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h2>⚡ 自由落体工具</h2>
+    
+    <div class="control-group">
+      <label>📝 文字序列 (按顺序生成)</label>
+      <textarea id="textSequence" placeholder="输入文字，例如：创意 编码 设计">梦 想 重 力</textarea>
+      <div class="instruction">每个字符/词将依次出现</div>
+    </div>
+
+    <div class="control-group file-area">
+      <label>🔤 自定义字体 (TTF/OTF/WOFF)</label>
+      <input type="file" id="fontUpload" accept=".ttf,.otf,.woff,.woff2">
+      <div id="fontMeta" class="font-meta">
+        字符数: 0 | 唯一字形: 0 | 可用: 0
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>🎚️ 字号</label>
+      <input type="range" id="fontSize" min="16" max="120" value="48" step="1">
+      <span id="fontSizeValue" style="align-self: flex-end; font-size:0.8rem;">48px</span>
+    </div>
+
+    <div class="control-group">
+      <label>🌍 重力</label>
+      <input type="range" id="gravity" min="0.2" max="3.0" value="1.0" step="0.1">
+      <span id="gravityValue" style="align-self: flex-end;">1.0</span>
+    </div>
+
+    <div class="row">
+      <div class="control-group" style="flex:1">
+        <label>🛞 摩擦</label>
+        <input type="range" id="friction" min="0.01" max="0.5" value="0.08" step="0.01">
+      </div>
+      <div class="control-group" style="flex:1">
+        <label>🔄 回弹</label>
+        <input type="range" id="restitution" min="0" max="0.8" value="0.2" step="0.01">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="control-group" style="flex:1">
+        <label>⚖️ 密度</label>
+        <input type="range" id="density" min="0.0005" max="0.005" value="0.002" step="0.0001">
+      </div>
+      <div class="control-group" style="flex:1">
+        <label>💨 线性阻尼</label>
+        <input type="range" id="linearDamping" min="0" max="0.1" value="0.01" step="0.001">
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="control-group" style="flex:1">
+        <label>🌀 旋转阻尼</label>
+        <input type="range" id="angularDamping" min="0" max="0.1" value="0.01" step="0.001">
+      </div>
+      <div class="control-group" style="flex:1">
+        <label>📏 出现高度(%)</label>
+        <input type="range" id="spawnHeight" min="5" max="40" value="12" step="1">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label>📐 底部留白 (%)</label>
+      <input type="range" id="bottomPadding" min="0" max="25" value="8" step="1">
+    </div>
+
+    <div class="control-group">
+      <label>🖼️ 画布旋转 (°)</label>
+      <input type="range" id="canvasRotation" min="0" max="360" value="0" step="0.5">
+      <span id="rotationValue" style="align-self: flex-end;">0.0°</span>
+    </div>
+
+    <div class="checkbox-group">
+      <input type="checkbox" id="showBounds" checked>
+      <label style="margin:0;">显示画布边界框</label>
+    </div>
+
+    <div style="margin-top: 12px; display: flex; gap: 10px;">
+      <button id="addNextBtn">🔽 添加下一个文字 (或Enter)</button>
+    </div>
+    <div style="margin-top: 8px;">
+      <button id="resetBtn" style="width:100%; background:#3a3050;">🔄 重置场景</button>
+    </div>
+    <div class="instruction" style="margin-top: 8px;">点击画布或按Enter键让当前文字下落</div>
+  </div>
+
+  <div class="canvas-container">
+    <canvas id="physicsCanvas" width="900" height="700"></canvas>
+    <div class="angle-indicator" id="angleDisplay">旋转: 0°</div>
+  </div>
+
+  <script>
+    (function() {
+      // ---------- 物理引擎初始化 ----------
+      const { Engine, World, Bodies, Body, Composite, Events, Vector } = Matter;
+      
+      const canvas = document.getElementById('physicsCanvas');
+      const ctx = canvas.getContext('2d');
+      
+      // 固定画布尺寸
+      const CW = 900, CH = 700;
+      canvas.width = CW;
+      canvas.height = CH;
+
+      // 创建引擎
+      const engine = Engine.create({
+        gravity: { x: 0, y: 1.0, scale: 0.001 }
+      });
+      const world = engine.world;
+
+      // 存储动态文字体
+      let textBodies = [];            // { body, text, fontName, size }
+      let currentPendingText = null; // 当前待放置的文字对象(还没下落)
+      let textSequenceArray = [];
+      let seqIndex = 0;
+
+      // 边界墙壁
+      let walls = [];
+
+      // 自定义字体相关
+      let customFontFace = null;
+      let customFontName = 'CustomFont';
+
+      // 参数变量
+      let params = {
+        fontSize: 48,
+        gravity: 1.0,
+        friction: 0.08,
+        restitution: 0.2,
+        density: 0.002,
+        linearDamping: 0.01,
+        angularDamping: 0.01,
+        spawnHeightPercent: 12,
+        bottomPaddingPercent: 8,
+        canvasRotation: 0,
+        showBounds: true,
+      };
+
+      // ---------- DOM 元素引用 ----------
+      const textSeqInput = document.getElementById('textSequence');
+      const fontUpload = document.getElementById('fontUpload');
+      const fontMetaDiv = document.getElementById('fontMeta');
+      const fontSizeInput = document.getElementById('fontSize');
+      const fontSizeValue = document.getElementById('fontSizeValue');
+      const gravityInput = document.getElementById('gravity');
+      const gravityValue = document.getElementById('gravityValue');
+      const frictionInput = document.getElementById('friction');
+      const restitutionInput = document.getElementById('restitution');
+      const densityInput = document.getElementById('density');
+      const linearDampingInput = document.getElementById('linearDamping');
+      const angularDampingInput = document.getElementById('angularDamping');
+      const spawnHeightInput = document.getElementById('spawnHeight');
+      const bottomPaddingInput = document.getElementById('bottomPadding');
+      const rotationInput = document.getElementById('canvasRotation');
+      const rotationValue = document.getElementById('rotationValue');
+      const showBoundsCheck = document.getElementById('showBounds');
+      const addNextBtn = document.getElementById('addNextBtn');
+      const resetBtn = document.getElementById('resetBtn');
+      const angleDisplay = document.getElementById('angleDisplay');
+
+      // ---------- 工具函数：更新字体元数据 ----------
+      function updateFontMeta() {
+        const text = textSeqInput.value.trim();
+        const chars = text.replace(/\s/g, '');
+        const uniqueChars = new Set(chars);
+        const uniqueCount = uniqueChars.size;
+        const totalChars = chars.length;
+        
+        let available = 0;
+        if (customFontFace) {
+          // 粗略检查：尝试用当前字体测量每个唯一字符宽度，若为0可能不可用
+          const testCanvas = document.createElement('canvas');
+          const testCtx = testCanvas.getContext('2d');
+          testCtx.font = `48px "${customFontName}"`;
+          for (let ch of uniqueChars) {
+            const metrics = testCtx.measureText(ch);
+            if (metrics.width > 0) available++;
+          }
+        } else {
+          available = uniqueCount; // 系统字体默认可用
+        }
+        fontMetaDiv.innerHTML = `字符数: ${totalChars} | 唯一字形: ${uniqueCount} | 可用: ${available}`;
+      }
+
+      // 加载自定义字体
+      fontUpload.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            fontMetaDiv.innerHTML = `加载中: ${percent}%`;
+          }
+        };
+        
+        reader.onload = async (ev) => {
+          try {
+            const fontData = ev.target.result;
+            const fontName = 'custom-font-' + Date.now();
+            const fontFace = new FontFace(fontName, fontData);
+            const loadedFont = await fontFace.load();
+            document.fonts.add(loadedFont);
+            
+            customFontFace = loadedFont;
+            customFontName = fontName;
+            fontMetaDiv.innerHTML = `字体已加载: ${file.name}`;
+            updateFontMeta();
+          } catch (err) {
+            fontMetaDiv.innerHTML = '字体加载失败';
+            console.error(err);
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+
+      textSeqInput.addEventListener('input', updateFontMeta);
+      window.addEventListener('load', updateFontMeta);
+
+      // ---------- 参数绑定 ----------
+      fontSizeInput.addEventListener('input', (e) => {
+        params.fontSize = parseInt(e.target.value);
+        fontSizeValue.textContent = params.fontSize + 'px';
+      });
+      gravityInput.addEventListener('input', (e) => {
+        params.gravity = parseFloat(e.target.value);
+        gravityValue.textContent = params.gravity;
+        engine.gravity.y = params.gravity;
+      });
+      frictionInput.addEventListener('input', (e) => { params.friction = parseFloat(e.target.value); });
+      restitutionInput.addEventListener('input', (e) => { params.restitution = parseFloat(e.target.value); });
+      densityInput.addEventListener('input', (e) => { params.density = parseFloat(e.target.value); });
+      linearDampingInput.addEventListener('input', (e) => { params.linearDamping = parseFloat(e.target.value); });
+      angularDampingInput.addEventListener('input', (e) => { params.angularDamping = parseFloat(e.target.value); });
+      spawnHeightInput.addEventListener('input', (e) => { params.spawnHeightPercent = parseInt(e.target.value); });
+      bottomPaddingInput.addEventListener('input', (e) => { params.bottomPaddingPercent = parseInt(e.target.value); });
+      
+      rotationInput.addEventListener('input', (e) => {
+        let val = parseFloat(e.target.value);
+        // 吸附阻力：每45度附近吸附
+        const snap = 45;
+        const remainder = val % snap;
+        if (Math.abs(remainder) < 2.5 || Math.abs(remainder - snap) < 2.5) {
+          val = Math.round(val / snap) * snap;
+        }
+        params.canvasRotation = val;
+        rotationValue.textContent = val.toFixed(1) + '°';
+        angleDisplay.textContent = `旋转: ${val.toFixed(1)}°`;
+      });
+      
+      showBoundsCheck.addEventListener('change', (e) => {
+        params.showBounds = e.target.checked;
+      });
+
+      // ---------- 创建墙壁 (根据旋转和底部留白动态更新) ----------
+      function createWalls() {
+        // 移除旧墙壁
+        walls.forEach(w => World.remove(world, w));
+        walls = [];
+        
+        const bottomPad = (params.bottomPaddingPercent / 100) * CH;
+        const wallThickness = 50;
+        
+        // 静态墙壁：左、右、下、上(但上边界通常不阻挡下落，但需要封闭)
+        const options = { isStatic: true, friction: params.friction, restitution: params.restitution };
+        
+        const leftWall = Bodies.rectangle(-wallThickness/2, CH/2, wallThickness, CH + 100, options);
+        const rightWall = Bodies.rectangle(CW + wallThickness/2, CH/2, wallThickness, CH + 100, options);
+        const ground = Bodies.rectangle(CW/2, CH - bottomPad + wallThickness/2, CW + 100, wallThickness, options);
+        const ceiling = Bodies.rectangle(CW/2, -wallThickness/2, CW + 100, wallThickness, options);
+        
+        walls.push(leftWall, rightWall, ground, ceiling);
+        Composite.add(world, walls);
+      }
+
+      // 更新所有动态体的物理属性
+      function updateBodyProperties() {
+        textBodies.forEach(item => {
+          const body = item.body;
+          body.friction = params.friction;
+          body.restitution = params.restitution;
+          body.density = params.density;
+          Body.setDensity(body, params.density);
+          // 阻尼
+          body.linearDamping = params.linearDamping;
+          body.angularDamping = params.angularDamping;
+        });
+      }
+
+      // ---------- 文字转物理体 (贴合外形) ----------
+      function createTextBody(text, x, y, isStatic = false) {
+        const fontSize = params.fontSize;
+        const fontStr = `${fontSize}px "${customFontName}"`;
+        
+        // 临时canvas测量文字尺寸
+        const measureCanvas = document.createElement('canvas');
+        const mCtx = measureCanvas.getContext('2d');
+        mCtx.font = fontStr;
+        const metrics = mCtx.measureText(text);
+        const textWidth = metrics.width;
+        const textHeight = fontSize; // 近似
+        
+        // 使用矩形近似，但为了贴合外形，采用多个圆形/矩形组合？这里使用矩形并调整碰撞箱为贴合文字宽高。
+        // Matter.js 原生不支持复杂多边形文本，我们使用矩形并设置宽高为文字实际尺寸。
+        const body = Bodies.rectangle(x, y, textWidth, textHeight * 0.75, {
+          friction: params.friction,
+          restitution: params.restitution,
+          density: params.density,
+          linearDamping: params.linearDamping,
+          angularDamping: params.angularDamping,
+          isStatic: isStatic,
+          label: 'textBody',
+        });
+        
+        return { body, text, fontName: customFontName, size: fontSize, width: textWidth, height: textHeight };
+      }
+
+      // 添加文字到世界 (静态待放置或动态)
+      function addTextToWorld(textObj, isStatic = false) {
+        World.add(world, textObj.body);
+        textBodies.push(textObj);
+      }
+
+      // 移除所有文字体
+      function clearAllTextBodies() {
+        textBodies.forEach(item => World.remove(world, item.body));
+        textBodies = [];
+        currentPendingText = null;
+      }
+
+      // 准备下一个文字 (出现在顶部)
+      function prepareNextText() {
+        if (textSequenceArray.length === 0) {
+          alert('请输入文字序列');
+          return;
+        }
+        if (seqIndex >= textSequenceArray.length) {
+          seqIndex = 0; // 循环
+        }
+        const text = textSequenceArray[seqIndex];
+        seqIndex++;
+        
+        // 移除之前的待放置文字
+        if (currentPendingText) {
+          World.remove(world, currentPendingText.body);
+          textBodies = textBodies.filter(t => t !== currentPendingText);
+        }
+        
+        const spawnYPercent = params.spawnHeightPercent / 100;
+        const spawnY = CH * spawnYPercent;
+        // 水平随机位置，但允许用户拖动调整
+        const spawnX = CW/2 + (Math.random() * 200 - 100);
+        
+        const textObj = createTextBody(text, spawnX, spawnY, true);
+        addTextToWorld(textObj, true);
+        currentPendingText = textObj;
+        
+        // 允许用户水平拖动当前文字 (通过鼠标事件)
+      }
+
+      // 释放当前文字 (变为动态)
+      function releaseCurrentText() {
+        if (!currentPendingText) return;
+        Body.setStatic(currentPendingText.body, false);
+        currentPendingText = null;
+      }
+
+      // ---------- 鼠标交互：拖动待放置文字、点击释放 ----------
+      let isDragging = false;
+      let dragOffsetX = 0;
+
+      canvas.addEventListener('mousedown', (e) => {
+        if (!currentPendingText) {
+          // 如果没有待放置文字，点击画布可尝试释放？但更合理是添加下一个
+          return;
+        }
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const body = currentPendingText.body;
+        if (body && Matter.Vertices.contains(body.vertices, {x: mouseX, y: mouseY})) {
+          isDragging = true;
+          dragOffsetX = body.position.x - mouseX;
+          canvas.style.cursor = 'grabbing';
+        } else {
+          // 点击空白区域释放文字
+          releaseCurrentText();
+        }
+      });
+
+      canvas.addEventListener('mousemove', (e) => {
+        if (!isDragging || !currentPendingText) return;
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const newX = Math.min(Math.max(mouseX + dragOffsetX, 30), CW-30);
+        Body.setPosition(currentPendingText.body, { x: newX, y: currentPendingText.body.position.y });
+      });
+
+      canvas.addEventListener('mouseup', () => {
+        isDragging = false;
+        canvas.style.cursor = 'default';
+      });
+
+      // 键盘Enter释放
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && document.activeElement?.tagName !== 'TEXTAREA' && document.activeElement?.tagName !== 'INPUT') {
+          e.preventDefault();
+          if (currentPendingText) {
+            releaseCurrentText();
+          } else {
+            prepareNextText();
+          }
+        }
+      });
+
+      addNextBtn.addEventListener('click', () => {
+        if (currentPendingText) {
+          releaseCurrentText();
+        } else {
+          prepareNextText();
+        }
+      });
+
+      resetBtn.addEventListener('click', () => {
+        clearAllTextBodies();
+        seqIndex = 0;
+        textSequenceArray = textSeqInput.value.trim().split(/\s+/).filter(s => s.length > 0);
+        if (textSequenceArray.length === 0) textSequenceArray = ['文字'];
+        createWalls();
+        currentPendingText = null;
+      });
+
+      // ---------- 渲染循环 ----------
+      function render() {
+        ctx.clearRect(0, 0, CW, CH);
+        
+        // 绘制边界框
+        if (params.showBounds) {
+          ctx.save();
+          ctx.strokeStyle = '#5a5a8a';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(2, 2, CW-4, CH-4);
+          ctx.restore();
+        }
+        
+        // 应用画布旋转绘制 (围绕中心)
+        const angleRad = (params.canvasRotation * Math.PI) / 180;
+        ctx.save();
+        ctx.translate(CW/2, CH/2);
+        ctx.rotate(angleRad);
+        ctx.translate(-CW/2, -CH/2);
+        
+        // 绘制所有文字体
+        textBodies.forEach(item => {
+          const { body, text, size } = item;
+          const pos = body.position;
+          const angle = body.angle;
+          
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(angle);
+          
+          ctx.font = `${size}px "${customFontName}"`;
+          ctx.fillStyle = '#f0f0ff';
+          ctx.shadowColor = '#00000080';
+          ctx.shadowBlur = 8;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(text, 0, 0);
+          ctx.restore();
+        });
+        
+        ctx.restore();
+        
+        // 旋转后重力方向：引擎重力始终向下，但画布视觉旋转，我们需要调整重力方向以匹配视觉。
+        // 重要：旋转画布后，已有文字应重新受到垂直向下的重力影响(相对于画布)。
+        // 因此需要根据旋转角度动态设置引擎重力方向。
+        updateGravityDirection();
+      }
+
+      function updateGravityDirection() {
+        const angleRad = (params.canvasRotation * Math.PI) / 180;
+        // 默认重力向下 (0, 1) ，旋转后重力方向相对于世界坐标
+        const baseGravity = params.gravity;
+        const gx = Math.sin(angleRad) * baseGravity;
+        const gy = Math.cos(angleRad) * baseGravity;
+        engine.gravity.x = gx;
+        engine.gravity.y = gy;
+      }
+
+      // 事件更新
+      Events.on(engine, 'afterUpdate', () => {
+        // 可以在这里微调
+      });
+
+      // 动画循环
+      function gameLoop() {
+        Engine.update(engine, 1000 / 60);
+        render();
+        requestAnimationFrame(gameLoop);
+      }
+
+      // 初始化场景
+      function initScene() {
+        textSequenceArray = textSeqInput.value.trim().split(/\s+/).filter(s => s.length > 0);
+        if (textSequenceArray.length === 0) textSequenceArray = ['梦','想'];
+        createWalls();
+        updateFontMeta();
+        // 预设第一个文字
+        prepareNextText();
+      }
+
+      // 监听参数变化以更新物理属性
+      [frictionInput, restitutionInput, densityInput, linearDampingInput, angularDampingInput].forEach(inp => {
+        inp.addEventListener('input', updateBodyProperties);
+      });
+      
+      // 底部留白变化重建墙壁
+      bottomPaddingInput.addEventListener('input', () => {
+        params.bottomPaddingPercent = parseInt(bottomPaddingInput.value);
+        createWalls();
+      });
+
+      initScene();
+      gameLoop();
+
+      // 清理资源(非必须)
+      window.addEventListener('beforeunload', () => {
+        World.clear(world);
+        Engine.clear(engine);
+      });
+    })();
+  </script>
+</body>
+</html>

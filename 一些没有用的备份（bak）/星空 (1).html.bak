@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>3D 星空 · 纯净视角</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: black;
+            font-family: sans-serif;
+            touch-action: none; /* 阻止触摸滚动/缩放，保留手势控制 */
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: black;
+        }
+        /* 完全无提示，无多余元素 */
+    </style>
+</head>
+<body>
+    <canvas id="starfield"></canvas>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('starfield');
+            const ctx = canvas.getContext('2d');
+
+            // ---------- 尺寸适配 ----------
+            let width, height;
+            function resize() {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width;
+                canvas.height = height;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            // ---------- 星星参数 ----------
+            const STAR_COUNT = 1800;          // 数量适中，移动端流畅
+            const SPREAD = 1200;              // 分布半径
+            const MIN_SIZE = 0.5;
+            const MAX_SIZE = 2.0;
+
+            // 星星数据：每个星星包含 3D 坐标 (x,y,z) 和大小
+            const stars = [];
+            for (let i = 0; i < STAR_COUNT; i++) {
+                // 在球壳内均匀分布，产生深度感
+                const radius = SPREAD * (0.3 + 0.7 * Math.random()); // 从近到远
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                const x = radius * Math.sin(phi) * Math.cos(theta);
+                const y = radius * Math.sin(phi) * Math.sin(theta);
+                const z = radius * Math.cos(phi);
+
+                // 随机大小，远处的星星稍微小一点（但保留随机变化）
+                const baseSize = MIN_SIZE + Math.random() * (MAX_SIZE - MIN_SIZE);
+                // 根据距离微调大小：远处更小，但保留闪烁感（随机）
+                const distanceFactor = 0.6 + 0.4 * (radius / SPREAD);
+                const size = baseSize * (0.8 + 0.4 * Math.random()) * (1 - 0.3 * (radius / SPREAD));
+
+                stars.push({
+                    x, y, z,
+                    size: Math.max(0.3, size),
+                    // 用于微动态闪烁 (可选)
+                    twinkleSpeed: 0.5 + Math.random() * 1.5,
+                    twinkleOffset: Math.random() * 100
+                });
+            }
+
+            // ---------- 视角控制 ----------
+            // 使用球坐标旋转：水平角 (azimuth) 和 仰角 (pitch)
+            let azimuth = 0;      // 水平旋转 (弧度)
+            let pitch = 0.2;      // 垂直旋转 (弧度)，初始稍微仰视
+
+            // 触摸/鼠标拖拽状态
+            let isDragging = false;
+            let lastX = 0, lastY = 0;
+
+            // 设备方向 (陀螺仪)
+            let beta = 0;         // 前后倾斜 (-180 ~ 180)
+            let gamma = 0;        // 左右倾斜 (-90 ~ 90)
+            let isDeviceOrientationSupported = false;
+            let deviceOrientationInitialized = false;
+
+            // 平滑系数 (使陀螺仪变化更柔和)
+            const SMOOTH_FACTOR = 0.12;
+
+            // ---------- 鼠标/触摸事件绑定 ----------
+            function getEventPos(e) {
+                if (e.touches) {
+                    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                }
+                return { x: e.clientX, y: e.clientY };
+            }
+
+            function onPointerDown(e) {
+                isDragging = true;
+                const pos = getEventPos(e);
+                lastX = pos.x;
+                lastY = pos.y;
+                // 如果设备方向支持，拖拽时暂时禁用陀螺仪影响? 
+                // 但这里我们让两者共存：陀螺仪持续更新，但拖拽时以拖拽为准，松开后陀螺仪继续。
+                // 更好的体验：拖拽时阻止陀螺仪更新? 但为了简洁，拖拽时依然叠加陀螺仪，但用户期望拖拽时完全控制。
+                // 因此我们设定：拖拽时禁用陀螺仪更新 (将 deviceOrientation 贡献置零)
+                // 但为了更自然，这里采用混合方式：拖拽时完全由拖拽控制，松开后平滑回到陀螺仪。
+                // 实现方案：在拖拽期间不更新 azimuth/pitch 来自陀螺仪，而是直接由拖拽增量控制。
+                // 我们增加一个标志：ignoreGyro = true 在拖拽期间，并在松开后逐渐恢复。
+                // 简单起见：拖拽时忽略陀螺仪输入，直接控制。
+                window.ignoreGyro = true;
+            }
+
+            function onPointerMove(e) {
+                if (!isDragging) return;
+                e.preventDefault(); // 防止滚动
+
+                const pos = getEventPos(e);
+                const dx = pos.x - lastX;
+                const dy = pos.y - lastY;
+
+                // 灵敏度
+                const sensitivity = 0.006;
+                azimuth -= dx * sensitivity;
+                pitch += dy * sensitivity;
+
+                // 限制 pitch 范围避免翻转
+                pitch = Math.max(-1.2, Math.min(1.2, pitch));
+
+                lastX = pos.x;
+                lastY = pos.y;
+            }
+
+            function onPointerUp(e) {
+                if (isDragging) {
+                    isDragging = false;
+                    // 松开后允许陀螺仪控制，但添加平滑过渡
+                    window.ignoreGyro = false;
+                    // 为了让过渡更自然，重置一些状态? 不需要
+                }
+            }
+
+            // 鼠标事件
+            canvas.addEventListener('mousedown', onPointerDown);
+            window.addEventListener('mousemove', onPointerMove);
+            window.addEventListener('mouseup', onPointerUp);
+
+            // 触摸事件
+            canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+            window.addEventListener('touchmove', onPointerMove, { passive: false });
+            window.addEventListener('touchend', onPointerUp, { passive: false });
+            window.addEventListener('touchcancel', onPointerUp, { passive: false });
+
+            // 防止右键菜单
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // ---------- 设备方向 (陀螺仪) ----------
+            function handleDeviceOrientation(event) {
+                if (window.ignoreGyro) return;
+
+                // 获取 beta (前后倾斜) 和 gamma (左右倾斜)
+                let b = event.beta;    // -180 ~ 180, 前后
+                let g = event.gamma;   // -90 ~ 90, 左右
+
+                if (b === null || g === null) return;
+
+                // 限制范围
+                b = Math.max(-90, Math.min(90, b));
+                g = Math.max(-90, Math.min(90, g));
+
+                // 将设备方向映射到 azimuth 和 pitch
+                // gamma: 左右倾斜 => 水平旋转 (azimuth)
+                // beta: 前后倾斜 => 垂直旋转 (pitch)
+                // 校准：使手机平放时 (beta=0, gamma=0) 视角居中
+                // 映射范围：gamma -45~45 映射到 azimuth -PI ~ PI
+                // beta -45~45 映射到 pitch -0.8 ~ 0.8
+                const targetAzimuth = (g / 90) * Math.PI * 0.8; 
+                const targetPitch = (b / 90) * 0.9; 
+
+                // 平滑更新 (避免突兀)
+                azimuth += (targetAzimuth - azimuth) * SMOOTH_FACTOR;
+                pitch += (targetPitch - pitch) * SMOOTH_FACTOR;
+
+                // 限制 pitch
+                pitch = Math.max(-1.2, Math.min(1.2, pitch));
+            }
+
+            // 检测是否支持 DeviceOrientation
+            if (window.DeviceOrientationEvent) {
+                // 对于 iOS 13+ 需要请求权限
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    DeviceOrientationEvent.requestPermission()
+                        .then(state => {
+                            if (state === 'granted') {
+                                window.addEventListener('deviceorientation', handleDeviceOrientation);
+                                isDeviceOrientationSupported = true;
+                            }
+                        })
+                        .catch(() => {});
+                } else {
+                    // 非 iOS 或旧版本
+                    window.addEventListener('deviceorientation', handleDeviceOrientation);
+                    isDeviceOrientationSupported = true;
+                }
+            }
+
+            // ---------- 渲染 ----------
+            function draw() {
+                ctx.clearRect(0, 0, width, height);
+
+                // 计算旋转矩阵
+                const cosA = Math.cos(azimuth);
+                const sinA = Math.sin(azimuth);
+                const cosP = Math.cos(pitch);
+                const sinP = Math.sin(pitch);
+
+                // 投影参数
+                const focalLength = 500;  // 类似焦距，控制透视强度
+
+                // 遍历所有星星
+                for (let i = 0; i < stars.length; i++) {
+                    const star = stars[i];
+                    // 原始坐标
+                    let x = star.x;
+                    let y = star.y;
+                    let z = star.z;
+
+                    // 应用旋转：先绕 Y 轴 (azimuth)，再绕 X 轴 (pitch)
+                    // 绕 Y 轴旋转
+                    let x1 = x * cosA - z * sinA;
+                    let z1 = x * sinA + z * cosA;
+                    let y1 = y;
+
+                    // 绕 X 轴旋转 (pitch)
+                    let y2 = y1 * cosP - z1 * sinP;
+                    let z2 = y1 * sinP + z1 * cosP;
+                    let x2 = x1;
+
+                    // 透视投影
+                    if (z2 < 10) z2 = 10; // 避免除以零或过近
+                    const scale = focalLength / z2;
+                    const screenX = width / 2 + x2 * scale;
+                    const screenY = height / 2 - y2 * scale; // Y轴翻转
+
+                    // 根据距离调整大小 (z2 越大越远，星星越小)
+                    const sizeFactor = Math.max(0.3, Math.min(1.8, 500 / z2));
+                    const finalSize = star.size * sizeFactor * 0.8;
+
+                    // 裁剪：只绘制在屏幕内的星星 (优化性能)
+                    if (screenX < -50 || screenX > width + 50 || screenY < -50 || screenY > height + 50) continue;
+
+                    // 白色星星，略带透明度随距离变化 (远处稍暗)
+                    const alpha = Math.min(1, 0.7 + 0.3 * (z2 / SPREAD));
+                    ctx.beginPath();
+                    ctx.arc(screenX, screenY, Math.max(0.3, finalSize), 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+                    ctx.fill();
+                }
+
+                requestAnimationFrame(draw);
+            }
+
+            draw();
+
+            // 窗口尺寸变化重置
+            window.addEventListener('resize', () => {
+                resize();
+            });
+
+           
+            console.log('3D 星空已启动 · 纯净无提示');
+        })();
+    </script>
+</body>
+</html>

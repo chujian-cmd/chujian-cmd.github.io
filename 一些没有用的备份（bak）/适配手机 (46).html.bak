@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>体素沙盒 · 双人联机版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', 'PingFang SC', sans-serif; overflow: hidden; background: #0b0f1a; user-select: none; touch-action: none; position: fixed; width: 100%; height: 100%; }
+    #scene-container { width: 100vw; height: 100vh; background: #151e2e; overflow: hidden; position: relative; }
+    #scene-container canvas { display: block; width: 100% !important; height: 100% !important; }
+    
+    #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 14px; padding: 6px 20px; background: rgba(8, 14, 30, 0.75); border-radius: 40px; border: 1px solid rgba(255,255,255,0.06); color: #b0c8e8; font-size: 0.6rem; pointer-events: none; white-space: nowrap; box-shadow: 0 4px 24px rgba(0,0,0,0.3); }
+    #hud .dot { width: 16px; height: 16px; border-radius: 4px; display: inline-block; border: 1.5px solid rgba(255,255,255,0.1); margin-right: 4px; }
+    #hud .name { color: #e0ecff; font-weight: 600; }
+    #hud .right { display: flex; gap: 12px; font-family: monospace; font-size: 0.5rem; color: #4ecdc4; }
+    
+    #bottom-controls { position: absolute; bottom: 16px; left: 0; right: 0; z-index: 30; display: flex; flex-direction: column; gap: 8px; padding: 0 12px; pointer-events: none; }
+    #bottom-controls > * { pointer-events: auto; }
+
+    #toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 0;
+      position: relative;
+    }
+    .tool-group { display: flex; gap: 6px; align-items: center; }
+    .btn-icon {
+      width: 42px; height: 42px; border: none; border-radius: 12px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #ffffff;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; touch-action: none; transition: 0.08s;
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      font-family: inherit;
+    }
+    .btn-icon:active { transform: scale(0.85); background: rgba(78,205,196,0.35); }
+    .btn-icon.action:active { background: rgba(255,107,107,0.35); }
+    .btn-icon svg { width: 22px; height: 22px; fill: currentColor; display: block; }
+    
+    #shape-indicator { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.45); padding: 3px 12px 3px 6px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.05); }
+    #shape-dot { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid rgba(255,255,255,0.1); flex-shrink: 0; }
+    #shape-name { color: #e0ecff; font-size: 0.6rem; font-weight: 500; }
+
+    #control-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 0;
+    }
+    #joystick-area { position: relative; width: 100px; height: 100px; touch-action: none; flex-shrink: 0; }
+    #joystick-base {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: transparent;
+      border: 2px solid rgba(255,255,255,0.18);
+    }
+    #joystick-thumb {
+      position: absolute; width: 44%; height: 44%; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #8cf0e8, #1f8a82);
+      border: 2.5px solid rgba(255,255,255,0.25);
+      box-shadow: 0 0 20px rgba(78,205,196,0.25);
+      top: 28%; left: 28%; pointer-events: none; transition: none;
+    }
+    #btn-jump {
+      width: 80px; height: 80px; border: none; border-radius: 50%;
+      color: #fff;
+      background: linear-gradient(145deg, #ff6b6b, #d63031);
+      box-shadow: 0 6px 24px rgba(255,107,107,0.25), inset 0 -4px 0 rgba(0,0,0,0.1);
+      cursor: pointer; touch-action: none; transition: 0.06s;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; border: 2px solid rgba(255,255,255,0.08);
+    }
+    #btn-jump:active { transform: scale(0.85); box-shadow: 0 3px 12px rgba(255,107,107,0.15); }
+    #btn-jump svg { width: 32px; height: 32px; fill: #fff; }
+
+    #color-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+    #color-overlay.show { opacity: 1; visibility: visible; }
+    #color-panel {
+      background: rgba(18, 26, 48, 0.98);
+      border: 1.5px solid rgba(78,205,196,0.25);
+      border-radius: 28px;
+      padding: 22px 22px 18px;
+      width: 300px; max-width: 88vw;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 60px rgba(78,205,196,0.08);
+      transform: scale(0.88) translateY(12px);
+      opacity: 0;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    #color-overlay.show #color-panel { transform: scale(1) translateY(0); opacity: 1; }
+    .cp-header {
+      display: flex; align-items: center; justify-content: space-between;
+      color: #e0ecff; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px;
+    }
+    .cp-header .cp-preview {
+      width: 32px; height: 32px; border-radius: 10px;
+      border: 2px solid rgba(255,255,255,0.12);
+      background: #4ecdc4;
+      transition: background 0.1s;
+    }
+    .cp-row { display: flex; flex-direction: column; gap: 6px; }
+    .cp-row label {
+      color: #8aa4c8; font-size: 0.65rem;
+      display: flex; justify-content: space-between; font-weight: 500;
+    }
+    .cp-row label span { color: #4ecdc4; font-family: monospace; font-size: 0.6rem; }
+    .cp-slider {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 8px; border-radius: 6px;
+      outline: none; cursor: pointer; touch-action: none;
+    }
+    .cp-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #fff; border: 3px solid #4ecdc4;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5); cursor: pointer;
+    }
+    .cp-slider::-moz-range-thumb {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #fff; border: 3px solid #4ecdc4;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.5); cursor: pointer;
+    }
+    #cp-hue { background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000); }
+    #cp-sat { background: linear-gradient(to right, #808080, #ff6b6b); }
+    #cp-light { background: linear-gradient(to right, #000000, #ff6b6b, #ffffff); }
+    #cp-alpha { background: linear-gradient(to right, rgba(255,255,255,0.05), #ff6b6b); }
+    .cp-actions { display: flex; gap: 10px; margin-top: 4px; }
+    .cp-btn {
+      flex: 1; padding: 10px 0; border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      font-size: 0.75rem; font-weight: 600;
+      cursor: pointer; transition: 0.1s;
+      font-family: inherit; touch-action: manipulation;
+    }
+    .cp-btn:active { transform: scale(0.96); }
+    .cp-btn.cancel { background: rgba(255,255,255,0.06); color: #b0c8e8; }
+    .cp-btn.confirm {
+      background: linear-gradient(145deg, #4ecdc4, #1f8a82);
+      color: #fff; border: none;
+      box-shadow: 0 4px 16px rgba(78,205,196,0.3);
+    }
+
+    #profile-overlay {
+      position: fixed; inset: 0; z-index: 210;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+    #profile-overlay.show { opacity: 1; visibility: visible; }
+    #profile-panel {
+      background: rgba(18, 26, 48, 0.98);
+      border: 1.5px solid rgba(78,205,196,0.25);
+      border-radius: 28px;
+      padding: 22px 22px 18px;
+      width: 300px; max-width: 88vw;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.7);
+      transform: scale(0.88) translateY(12px);
+      opacity: 0;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    #profile-overlay.show #profile-panel { transform: scale(1) translateY(0); opacity: 1; }
+    .pf-header {
+      display: flex; align-items: center; justify-content: space-between;
+      color: #e0ecff; font-size: 0.9rem; font-weight: 600;
+    }
+    .pf-role {
+      font-size: 0.6rem; padding: 2px 10px; border-radius: 20px;
+      background: rgba(78,205,196,0.15); color: #4ecdc4; font-weight: 500;
+    }
+    .pf-role.member { background: rgba(255,159,67,0.15); color: #ff9f43; }
+    .pf-row { display: flex; flex-direction: column; gap: 6px; }
+    .pf-row label { color: #8aa4c8; font-size: 0.65rem; font-weight: 500; }
+    .pf-input {
+      width: 100%; padding: 10px 12px; border-radius: 12px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: #eaf2ff; font-size: 0.8rem; font-family: inherit;
+      outline: none; transition: border 0.15s;
+    }
+    .pf-input:focus { border-color: rgba(78,205,196,0.5); }
+    .pf-color-row { display: flex; align-items: center; gap: 10px; }
+    .pf-color-swatch {
+      width: 40px; height: 40px; border-radius: 12px;
+      border: 2px solid rgba(255,255,255,0.12); flex-shrink: 0;
+      cursor: pointer; transition: 0.1s;
+    }
+    .pf-color-swatch:active { transform: scale(0.9); }
+    .pf-color-hint { color: #8aa4c8; font-size: 0.55rem; }
+
+    #start-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at center, rgba(8,12,26,0.98), rgba(0,0,0,0.99)); transition: opacity 0.4s ease, visibility 0.4s ease; visibility: visible; }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+    #start-box { background: rgba(18,26,48,0.95); border: 1.5px solid rgba(78,205,196,0.15); border-radius: 32px; padding: 28px 24px; text-align: center; color: #eaf2ff; max-width: 320px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.5); animation: breathe 2.4s ease-in-out infinite; cursor: pointer; }
+    @keyframes breathe { 0%, 100% { transform: scale(1); box-shadow: 0 20px 60px rgba(0,0,0,0.5); } 50% { transform: scale(1.02); box-shadow: 0 20px 80px rgba(78,205,196,0.15); } }
+    #start-box h1 { font-size: 1.8rem; margin-bottom: 2px; background: linear-gradient(135deg, #4ecdc4, #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    #start-box .sub { color: #4ecdc4; font-size: 0.9rem; margin-bottom: 6px; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+    #start-box p { font-size: 0.65rem; color: #8aa4c8; margin: 2px 0; }
+    #start-box .key { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 6px; font-size: 0.5rem; display: inline-block; color: #b0c8e8; }
+    
+    #net-status { position: absolute; bottom: 20px; left: 20px; color: #4ecdc4; font-size: 0.7rem; z-index: 99; pointer-events: none; text-shadow: 0 2px 4px #000; }
+
+    @media (max-width: 600px) { 
+      #hud { font-size: 0.5rem; gap: 8px; padding: 4px 14px; top: 10px; } 
+      #hud .right { font-size: 0.45rem; gap: 6px; } 
+      .btn-icon { width: 36px; height: 36px; border-radius: 10px; } 
+      .btn-icon svg { width: 18px; height: 18px; }
+      #shape-indicator { padding: 2px 8px 2px 4px; } 
+      #shape-dot { width: 16px; height: 16px; } 
+      #shape-name { font-size: 0.5rem; } 
+      #joystick-area { width: 80px; height: 80px; } 
+      #btn-jump { width: 64px; height: 64px; }
+      #btn-jump svg { width: 26px; height: 26px; }
+      #toolbar { padding: 4px 0; } 
+      #color-panel, #profile-panel { width: 280px; padding: 18px; }
+    }
+    @media (max-width: 420px) { 
+      .btn-icon { width: 32px; height: 32px; border-radius: 8px; } 
+      .btn-icon svg { width: 15px; height: 15px; }
+      #shape-dot { width: 12px; height: 12px; } 
+      #shape-name { font-size: 0.45rem; } 
+      #joystick-area { width: 68px; height: 68px; } 
+      #btn-jump { width: 54px; height: 54px; }
+      #btn-jump svg { width: 22px; height: 22px; }
+      #hud { font-size: 0.4rem; gap: 4px; padding: 2px 10px; } 
+      #hud .right { font-size: 0.35rem; gap: 4px; } 
+      #color-panel, #profile-panel { width: 260px; padding: 16px; border-radius: 22px; }
+      .cp-header, .pf-header { font-size: 0.8rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="start-overlay">
+    <div id="start-box">
+      <h1>沙盒 · 双人联机</h1>
+      <p class="sub" id="role-text">正在连接服务器...</p>
+      <p><span class="key">摇杆</span> 移动 · <span class="key">跳跃</span> 大按钮</p>
+      <p><span class="key">点击屏幕</span> 放置 · <span class="key">右滑</span> 视角</p>
+    </div>
+  </div>
+
+  <div id="scene-container">
+    <div id="net-status">未连接</div>
+    
+    <div id="hud">
+      <span id="shape-indicator">
+        <span id="shape-dot" class="dot"></span>
+        <span id="shape-name" class="name">立方体</span>
+      </span>
+      <span class="right">
+        <span style="display:flex;align-items:center;gap:2px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span id="obj-count">0</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:2px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span id="fps-val">60</span>fps
+        </span>
+      </span>
+    </div>
+
+    <div id="bottom-controls">
+      <div id="toolbar">
+        <div class="tool-group">
+          <button class="btn-icon action" id="btn-place">
+            <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
+          <button class="btn-icon action" id="btn-remove">
+            <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-next">
+            <svg viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-grab">
+            <svg viewBox="0 0 24 24"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74A4.5 4.5 0 0 0 11.5 3 4.5 4.5 0 0 0 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6a1.5 1.5 0 0 0-3 0v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-push">
+            <svg viewBox="0 0 24 24"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
+          </button>
+        </div>
+        <div class="tool-group">
+          <button class="btn-icon" id="btn-explode">
+            <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-vacuum">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-color">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.2-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8 8 8.67 8 9.5 7.33 11 6.5 11zm3-4C8.67 7 8 6.33 8 5.5S8.67 4 9.5 4s1.5.67 1.5 1.5S10.33 7 9.5 7zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 4 14.5 4s1.5.67 1.5 1.5S15.33 7 14.5 7zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 8 17.5 8s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-profile">
+            <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="control-row">
+        <div id="joystick-area">
+          <div id="joystick-base"></div>
+          <div id="joystick-thumb"></div>
+        </div>
+        <button id="btn-jump">
+          <svg viewBox="0 0 24 24"><path d="M12 4l-8 8h5v8h6v-8h5z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="color-overlay">
+    <div id="color-panel">
+      <div class="cp-header">
+        <span>颜色调节</span>
+        <div class="cp-preview" id="cp-preview"></div>
+      </div>
+      <div class="cp-row">
+        <label>色相 <span id="cp-hue-val">200</span>°</label>
+        <input type="range" class="cp-slider" id="cp-hue" min="0" max="360" value="200">
+      </div>
+      <div class="cp-row">
+        <label>饱和度 <span id="cp-sat-val">70</span>%</label>
+        <input type="range" class="cp-slider" id="cp-sat" min="0" max="100" value="70">
+      </div>
+      <div class="cp-row">
+        <label>亮度 <span id="cp-light-val">60</span>%</label>
+        <input type="range" class="cp-slider" id="cp-light" min="0" max="100" value="60">
+      </div>
+      <div class="cp-row">
+        <label>透明度 <span id="cp-alpha-val">100</span>%</label>
+        <input type="range" class="cp-slider" id="cp-alpha" min="0" max="100" value="100">
+      </div>
+      <div class="cp-actions">
+        <button class="cp-btn cancel" id="cp-cancel">取消</button>
+        <button class="cp-btn confirm" id="cp-confirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="profile-overlay">
+    <div id="profile-panel">
+      <div class="pf-header">
+        <span>玩家设置</span>
+        <span class="pf-role" id="pf-role">房主</span>
+      </div>
+      <div class="pf-row">
+        <label>称呼</label>
+        <input type="text" class="pf-input" id="pf-name" maxlength="12" placeholder="输入称呼...">
+      </div>
+      <div class="pf-row">
+        <label>球体颜色</label>
+        <div class="pf-color-row">
+          <div class="pf-color-swatch" id="pf-color-swatch"></div>
+          <span class="pf-color-hint">点击打开调色板</span>
+        </div>
+      </div>
+      <div class="cp-actions">
+        <button class="cp-btn cancel" id="pf-cancel">取消</button>
+        <button class="cp-btn confirm" id="pf-confirm">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    const CFG = { moveSpeed: 6, jumpForce: 7, gravity: -12, playerRadius: 0.4, blockSize: 0.95, physicsSize: 0.475, worldSize: 17 };
+    
+    // ⚠️ 你的服务器 IP
+    const SERVER_URL = 'ws://192.168.0.100:8765';
+    let ws = null;
+    let lastSyncTime = 0;
+
+    const container = document.getElementById('scene-container');
+    const dom = {
+      startOverlay: document.getElementById('start-overlay'),
+      roleText: document.getElementById('role-text'),
+      netStatus: document.getElementById('net-status'),
+      joystickArea: document.getElementById('joystick-area'),
+      joystickThumb: document.getElementById('joystick-thumb'),
+      btnJump: document.getElementById('btn-jump'),
+      btnPlace: document.getElementById('btn-place'),
+      btnRemove: document.getElementById('btn-remove'),
+      btnNext: document.getElementById('btn-next'),
+      btnGrab: document.getElementById('btn-grab'),
+      btnPush: document.getElementById('btn-push'),
+      btnExplode: document.getElementById('btn-explode'),
+      btnVacuum: document.getElementById('btn-vacuum'),
+      btnColor: document.getElementById('btn-color'),
+      btnProfile: document.getElementById('btn-profile'),
+      colorOverlay: document.getElementById('color-overlay'),
+      cpPreview: document.getElementById('cp-preview'),
+      cpHue: document.getElementById('cp-hue'),
+      cpSat: document.getElementById('cp-sat'),
+      cpLight: document.getElementById('cp-light'),
+      cpAlpha: document.getElementById('cp-alpha'),
+      cpHueVal: document.getElementById('cp-hue-val'),
+      cpSatVal: document.getElementById('cp-sat-val'),
+      cpLightVal: document.getElementById('cp-light-val'),
+      cpAlphaVal: document.getElementById('cp-alpha-val'),
+      cpCancel: document.getElementById('cp-cancel'),
+      cpConfirm: document.getElementById('cp-confirm'),
+      profileOverlay: document.getElementById('profile-overlay'),
+      pfRole: document.getElementById('pf-role'),
+      pfName: document.getElementById('pf-name'),
+      pfColorSwatch: document.getElementById('pf-color-swatch'),
+      pfCancel: document.getElementById('pf-cancel'),
+      pfConfirm: document.getElementById('pf-confirm'),
+      objCount: document.getElementById('obj-count'),
+      fpsVal: document.getElementById('fps-val'),
+      shapeDot: document.getElementById('shape-dot'),
+      shapeName: document.getElementById('shape-name'),
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB);
+    scene.fog = new THREE.Fog(0x87CEEB, 40, 110);
+
+    const camera = new THREE.PerspectiveCamera(68, container.clientWidth / container.clientHeight, 0.1, 200);
+    camera.position.set(0, 2.6, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    const ambient = new THREE.AmbientLight(0xbcd4f0, 0.6);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xfff8e7, 1.2);
+    dirLight.position.set(20, 30, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 512;
+    dirLight.shadow.mapSize.height = 512;
+    scene.add(dirLight);
+
+    const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(36, 36), new THREE.MeshStandardMaterial

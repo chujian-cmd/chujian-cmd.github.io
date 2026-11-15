@@ -1,0 +1,2406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>体素沙盒 · 多人联机版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', 'PingFang SC', sans-serif; overflow: hidden; background: #0b0f1a; user-select: none; touch-action: none; position: fixed; width: 100%; height: 100%; }
+    #scene-container { width: 100vw; height: 100vh; background: #151e2e; overflow: hidden; position: relative; }
+    #scene-container canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 14px; padding: 6px 20px; background: rgba(8, 14, 30, 0.75); border-radius: 40px; border: 1px solid rgba(255,255,255,0.06); color: #b0c8e8; font-size: 0.6rem; pointer-events: none; white-space: nowrap; box-shadow: 0 4px 24px rgba(0,0,0,0.3); }
+    #hud .dot { width: 16px; height: 16px; border-radius: 4px; display: inline-block; border: 1.5px solid rgba(255,255,255,0.1); margin-right: 4px; }
+    #hud .name { color: #e0ecff; font-weight: 600; }
+    #hud .right { display: flex; gap: 12px; font-family: monospace; font-size: 0.5rem; color: #4ecdc4; align-items: center; }
+
+    .hud-btn { pointer-events: auto; position: relative; width: 24px; height: 24px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(78,205,196,0.15); color: #4ecdc4; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; transition: 0.1s; }
+    .hud-btn:active { transform: scale(0.86); background: rgba(78,205,196,0.4); }
+    .hud-btn svg { width: 15px; height: 15px; fill: currentColor; display: block; }
+    .hud-btn.chat { background: rgba(255,159,67,0.15); color: #ff9f43; border-color: rgba(255,159,67,0.25); }
+    .hud-btn.chat:active { background: rgba(255,159,67,0.4); }
+    .hud-btn.chat .badge { position: absolute; top: -4px; right: -4px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #ff6b6b; color: #fff; font-size: 0.45rem; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: monospace; line-height: 1; pointer-events: none; }
+    .hud-btn.chat .badge.hidden { display: none; }
+    .hud-btn.panel { background: rgba(162,155,254,0.15); color: #a29bfe; border-color: rgba(162,155,254,0.25); }
+    .hud-btn.panel:active { background: rgba(162,155,254,0.4); }
+    .hud-btn.editor { background: rgba(255,217,59,0.15); color: #ffd93b; border-color: rgba(255,217,59,0.25); }
+    .hud-btn.editor:active { background: rgba(255,217,59,0.4); }
+
+    #bottom-controls { position: absolute; bottom: 16px; left: 0; right: 0; z-index: 30; display: flex; flex-direction: column; gap: 8px; padding: 0 12px; pointer-events: none; }
+    #bottom-controls > * { pointer-events: auto; }
+
+    #toolbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; position: relative; }
+    .tool-group { display: flex; gap: 6px; align-items: center; }
+    .btn-icon { width: 42px; height: 42px; border: none; border-radius: 12px; background: rgba(0, 0, 0, 0.55); color: #ffffff; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: none; transition: 0.08s; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 2px 10px rgba(0,0,0,0.3); font-family: inherit; }
+    .btn-icon:active { transform: scale(0.85); background: rgba(78,205,196,0.35); }
+    .btn-icon.action:active { background: rgba(255,107,107,0.35); }
+    .btn-icon svg { width: 22px; height: 22px; fill: currentColor; display: block; }
+    .btn-icon.weld { color: #ffd93b; }
+
+    #shape-indicator { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.45); padding: 3px 12px 3px 6px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.05); }
+    #shape-dot { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid rgba(255,255,255,0.1); flex-shrink: 0; }
+    #shape-name { color: #e0ecff; font-size: 0.6rem; font-weight: 500; }
+
+    #control-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+    #joystick-area { position: relative; width: 100px; height: 100px; touch-action: none; flex-shrink: 0; }
+    #joystick-base { position: absolute; inset: 0; border-radius: 50%; background: transparent; border: 2px solid rgba(255,255,255,0.18); }
+    #joystick-thumb { position: absolute; width: 44%; height: 44%; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #6e6e6e, #050505); border: 2.5px solid rgba(255,255,255,0.18); box-shadow: 0 0 20px rgba(0,0,0,0.5); top: 28%; left: 28%; pointer-events: none; transition: none; }
+    #btn-jump { width: 80px; height: 80px; border: none; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #3a3a3a, #0a0a0a); box-shadow: 0 6px 24px rgba(0,0,0,0.45), inset 0 -4px 0 rgba(0,0,0,0.15); cursor: pointer; touch-action: none; transition: 0.06s; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.12); }
+    #btn-jump:active { transform: scale(0.85); box-shadow: 0 3px 12px rgba(0,0,0,0.35); }
+    #btn-jump svg { width: 32px; height: 32px; fill: #fff; }
+
+    #color-overlay, #profile-overlay, #chat-overlay, #editor-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.25s ease, visibility 0.25s ease; }
+    #color-overlay { z-index: 205; }
+    #profile-overlay { z-index: 210; }
+    #chat-overlay { z-index: 215; }
+    #editor-overlay { z-index: 218; }
+    #color-overlay.show, #profile-overlay.show, #chat-overlay.show, #editor-overlay.show { opacity: 1; visibility: visible; }
+    #color-panel, #profile-panel, #chat-panel, #editor-panel { background: rgba(18, 26, 48, 0.98); border: 1.5px solid rgba(78,205,196,0.25); border-radius: 28px; padding: 22px 22px 18px; width: 300px; max-width: 88vw; box-shadow: 0 24px 80px rgba(0,0,0,0.7); transform: scale(0.88) translateY(12px); opacity: 0; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease; display: flex; flex-direction: column; gap: 14px; }
+    #chat-panel { width: 340px; max-width: 92vw; max-height: 76vh; padding: 16px; gap: 10px; border-color: rgba(255,159,67,0.25); }
+    #editor-panel { width: 340px; max-width: 92vw; max-height: 82vh; padding: 16px; gap: 10px; border-color: rgba(255,217,59,0.3); overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+    #color-overlay.show #color-panel, #profile-overlay.show #profile-panel, #chat-overlay.show #chat-panel, #editor-overlay.show #editor-panel { transform: scale(1) translateY(0); opacity: 1; }
+
+    .cp-header, .pf-header, .ch-header, .ed-header { display: flex; align-items: center; justify-content: space-between; color: #e0ecff; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px; gap: 8px; }
+    .ch-header .ch-status, .ed-header .ed-status { font-size: 0.55rem; font-weight: 400; color: #ff9f43; font-family: monospace; flex: 1; text-align: right; }
+    .ch-close, .ed-close { width: 26px; height: 26px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.06); color: #b0c8e8; font-size: 0.9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: inherit; flex-shrink: 0; }
+    .ch-close:active, .ed-close:active { transform: scale(0.9); background: rgba(255,107,107,0.3); color: #fff; }
+
+    .cp-header .cp-preview { width: 32px; height: 32px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.12); background: #4ecdc4; transition: background 0.1s; }
+    .cp-row, .pf-row { display: flex; flex-direction: column; gap: 6px; }
+    .cp-row label, .pf-row label { color: #8aa4c8; font-size: 0.65rem; display: flex; justify-content: space-between; font-weight: 500; }
+    .cp-row label span { color: #4ecdc4; font-family: monospace; font-size: 0.6rem; }
+    .cp-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 6px; outline: none; cursor: pointer; touch-action: none; }
+    .cp-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 3px solid #4ecdc4; box-shadow: 0 2px 10px rgba(0,0,0,0.5); cursor: pointer; }
+    .cp-slider::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 3px solid #4ecdc4; box-shadow: 0 2px 10px rgba(0,0,0,0.5); cursor: pointer; }
+    #cp-hue { background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000); }
+    #cp-sat { background: linear-gradient(to right, #808080, #ff6b6b); }
+    #cp-light { background: linear-gradient(to right, #000000, #ff6b6b, #ffffff); }
+    #cp-alpha { background: linear-gradient(to right, rgba(255,255,255,0.05), #ff6b6b); }
+
+    .cp-actions { display: flex; gap: 10px; margin-top: 4px; }
+    .cp-btn { flex: 1; padding: 10px 0; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: 0.1s; font-family: inherit; touch-action: manipulation; }
+    .cp-btn:active { transform: scale(0.96); }
+    .cp-btn.cancel { background: rgba(255,255,255,0.06); color: #b0c8e8; }
+    .cp-btn.confirm { background: linear-gradient(145deg, #4ecdc4, #1f8a82); color: #fff; border: none; box-shadow: 0 4px 16px rgba(78,205,196,0.3); }
+
+    .pf-role { font-size: 0.6rem; padding: 2px 10px; border-radius: 20px; background: rgba(78,205,196,0.15); color: #4ecdc4; font-weight: 500; }
+    .pf-role.member { background: rgba(255,159,67,0.15); color: #ff9f43; }
+    .pf-input { width: 100%; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.8rem; font-family: inherit; outline: none; transition: border 0.15s; }
+    .pf-input:focus { border-color: rgba(78,205,196,0.5); }
+    .pf-color-row { display: flex; align-items: center; gap: 10px; }
+    .pf-color-swatch { width: 40px; height: 40px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.12); flex-shrink: 0; cursor: pointer; transition: 0.1s; }
+    .pf-color-swatch:active { transform: scale(0.9); }
+    .pf-color-hint { color: #8aa4c8; font-size: 0.55rem; }
+
+    #chat-log { flex: 1; min-height: 180px; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 10px; font-size: 0.7rem; line-height: 1.5; color: #eaf2ff; display: flex; flex-direction: column; gap: 6px; }
+    .chat-msg { display: flex; flex-direction: column; gap: 2px; }
+    .chat-msg .chat-meta { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+    .chat-msg .chat-from { font-weight: 700; font-size: 0.6rem; }
+    .chat-msg .chat-time { font-size: 0.5rem; color: #5d7291; font-family: monospace; }
+    .chat-msg .chat-text { word-break: break-word; white-space: pre-wrap; }
+    .chat-msg.me .chat-from { color: #4ecdc4; }
+    .chat-msg.other .chat-from { color: #ff9f43; }
+    .chat-msg.sys { color: #8aa4c8; font-style: italic; font-size: 0.62rem; }
+    .chat-input-row { display: flex; gap: 8px; }
+    .chat-input { flex: 1; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.72rem; font-family: inherit; outline: none; transition: border 0.15s; min-width: 0; }
+    .chat-input:focus { border-color: rgba(255,159,67,0.5); }
+    .chat-send { padding: 0 16px; border-radius: 12px; border: none; background: linear-gradient(145deg, #ff9f43, #e17055); color: #fff; font-size: 0.72rem; font-weight: 600; font-family: inherit; cursor: pointer; box-shadow: 0 4px 16px rgba(255,159,67,0.25); flex-shrink: 0; }
+    .chat-send:active { transform: scale(0.95); }
+    .chat-hint { color: #5d7291; font-size: 0.52rem; line-height: 1.4; }
+
+    .chat-bubble { position: absolute; z-index: 50; pointer-events: none; background: #ffffff; color: #000000; font-size: 0.65rem; font-weight: 600; line-height: 1.35; padding: 4px 10px; border-radius: 12px; max-width: 160px; text-align: center; word-break: break-word; white-space: pre-wrap; box-shadow: 0 4px 16px rgba(0,0,0,0.25); transform: translate(-50%, -100%); transition: opacity 0.3s ease; }
+    .chat-bubble::after { content: ''; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #ffffff; }
+    .chat-bubble.hidden { opacity: 0; }
+
+    #console-overlay, #gpanel-overlay { position: fixed; inset: 0; z-index: 220; background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.25s ease, visibility 0.25s ease; }
+    #gpanel-overlay { z-index: 221; }
+    #console-overlay.show, #gpanel-overlay.show { opacity: 1; visibility: visible; }
+    #console-panel, #gpanel-panel { background: rgba(18, 26, 48, 0.98); border: 1.5px solid rgba(78,205,196,0.25); border-radius: 24px; padding: 16px; width: 340px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 24px 80px rgba(0,0,0,0.7); transform: scale(0.88) translateY(12px); opacity: 0; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease; }
+    #gpanel-panel { border-color: rgba(162,155,254,0.3); }
+    #console-overlay.show #console-panel, #gpanel-overlay.show #gpanel-panel { transform: scale(1) translateY(0); opacity: 1; }
+    .cs-header { display: flex; align-items: center; justify-content: space-between; color: #e0ecff; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.5px; gap: 8px; }
+    .cs-header .cs-status { font-size: 0.55rem; font-weight: 400; color: #4ecdc4; font-family: monospace; flex: 1; text-align: right; }
+    .cs-close { width: 26px; height: 26px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.06); color: #b0c8e8; font-size: 0.9rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; font-family: inherit; flex-shrink: 0; }
+    .cs-close:active { transform: scale(0.9); background: rgba(255,107,107,0.3); color: #fff; }
+    .cs-log { flex: 1; min-height: 150px; max-height: 40vh; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 10px; font-family: monospace; font-size: 0.62rem; line-height: 1.55; color: #9fb6d4; display: flex; flex-direction: column; gap: 2px; }
+    .cs-line { white-space: pre-wrap; word-break: break-all; }
+    .cs-line.info { color: #9fb6d4; }
+    .cs-line.cmd { color: #4ecdc4; font-weight: 600; }
+    .cs-line.warn { color: #ff9f43; }
+    .cs-line.error { color: #ff6b6b; }
+    .cs-input-row { display: flex; gap: 8px; }
+    .cs-input { flex: 1; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.72rem; font-family: monospace; outline: none; transition: border 0.15s; min-width: 0; }
+    .cs-input:focus { border-color: rgba(78,205,196,0.5); }
+    .cs-send { padding: 0 16px; border-radius: 12px; border: none; background: linear-gradient(145deg, #4ecdc4, #1f8a82); color: #fff; font-size: 0.72rem; font-weight: 600; font-family: inherit; cursor: pointer; box-shadow: 0 4px 16px rgba(78,205,196,0.25); flex-shrink: 0; }
+    .cs-send:active { transform: scale(0.95); }
+    .cs-hint { color: #5d7291; font-size: 0.52rem; line-height: 1.4; font-family: monospace; }
+
+    .gp-info { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 10px 12px; font-family: monospace; font-size: 0.62rem; line-height: 1.6; color: #9fb6d4; }
+    .gp-info b { color: #4ecdc4; font-weight: 600; }
+    .gp-players { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 8px; max-height: 28vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .gp-player { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.04); font-size: 0.65rem; }
+    .gp-player .gp-pname { color: #eaf2ff; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gp-player .gp-prole { font-size: 0.5rem; padding: 1px 6px; border-radius: 10px; background: rgba(78,205,196,0.15); color: #4ecdc4; flex-shrink: 0; }
+    .gp-player .gp-prole.member { background: rgba(255,159,67,0.15); color: #ff9f43; }
+    .gp-player .gp-kick { width: 26px; height: 26px; border-radius: 8px; border: none; background: rgba(255,107,107,0.2); color: #ff6b6b; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; flex-shrink: 0; }
+    .gp-player .gp-kick:active { transform: scale(0.9); background: rgba(255,107,107,0.5); }
+    .gp-player .gp-kick svg { width: 13px; height: 13px; fill: currentColor; }
+    .gp-empty { color: #5d7291; font-size: 0.65rem; text-align: center; padding: 10px; }
+    .gp-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .gp-btn { padding: 10px 0; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.06); color: #b0c8e8; font-size: 0.7rem; font-weight: 600; font-family: inherit; cursor: pointer; transition: 0.1s; display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .gp-btn:active { transform: scale(0.96); }
+    .gp-btn svg { width: 14px; height: 14px; fill: currentColor; }
+    .gp-btn.danger { background: rgba(255,107,107,0.15); color: #ff6b6b; border-color: rgba(255,107,107,0.25); }
+    .gp-btn.danger:active { background: rgba(255,107,107,0.4); }
+    .gp-btn.warn { background: rgba(255,159,67,0.15); color: #ff9f43; border-color: rgba(255,159,67,0.25); }
+    .gp-btn.warn:active { background: rgba(255,159,67,0.4); }
+    .gp-btn.ok { background: rgba(78,205,196,0.15); color: #4ecdc4; border-color: rgba(78,205,196,0.25); }
+    .gp-btn.ok:active { background: rgba(78,205,196,0.4); }
+    .gp-banner { background: rgba(162,155,254,0.12); border: 1px solid rgba(162,155,254,0.25); border-radius: 12px; padding: 8px 10px; font-size: 0.6rem; color: #a29bfe; text-align: center; line-height: 1.5; }
+    .gp-row { display: flex; gap: 8px; }
+    .gp-row input { flex: 1; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.7rem; font-family: inherit; outline: none; min-width: 0; }
+    .gp-row input:focus { border-color: rgba(162,155,254,0.5); }
+
+    .ed-sec { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .ed-sec-title { color: #ffd93b; font-size: 0.62rem; font-weight: 600; letter-spacing: 0.5px; }
+    .ed-row { display: flex; gap: 8px; }
+    .ed-row > * { flex: 1; }
+    .ed-triple { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .ed-triple label { color: #8aa4c8; font-size: 0.55rem; display: flex; flex-direction: column; gap: 3px; }
+    .ed-triple input { width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.65rem; font-family: monospace; outline: none; min-width: 0; }
+    .ed-triple input:focus { border-color: rgba(255,217,59,0.5); }
+    .ed-info { color: #8aa4c8; font-size: 0.58rem; line-height: 1.5; padding: 4px 2px; word-break: break-all; }
+    .ed-num { color: #ffd93b; font-family: monospace; font-size: 0.6rem; min-width: 40px; text-align: right; }
+    .ed-dir { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .ed-dir label { color: #8aa4c8; font-size: 0.55rem; display: flex; flex-direction: column; gap: 3px; }
+    .ed-dir input { width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.65rem; font-family: monospace; outline: none; min-width: 0; }
+    .ed-note { color: #5d7291; font-size: 0.52rem; line-height: 1.4; }
+    .ed-force-row { display: flex; align-items: center; gap: 8px; }
+    .ed-force-row input[type="range"] { flex: 1; accent-color: #ffd93b; touch-action: none; }
+
+    #debug-panel { position: fixed; top: 80px; right: 10px; width: 210px; z-index: 9999; background: rgba(8, 16, 32, 0.95); border: 1px solid rgba(78, 205, 196, 0.2); color: #b0f0e0; padding: 12px 14px; border-radius: 16px; opacity: 0; pointer-events: none; transition: opacity 0.2s; font-family: monospace; font-size: 0.55rem; backdrop-filter: blur(14px); max-height: 78vh; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+    #debug-panel.visible { opacity: 1; pointer-events: auto; }
+    #debug-panel .dbg-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; cursor: grab; user-select: none; touch-action: none; }
+    #debug-panel .dbg-header span { color: #4ecdc4; font-size: 0.7rem; font-weight: 600; }
+    #debug-panel .dbg-close { background: none; border: none; color: rgba(255,255,255,0.4); font-size: 0.9rem; cursor: pointer; padding: 0 4px; font-family: inherit; }
+    #debug-panel .dbg-close:active { color: #ff6b6b; }
+    #debug-panel label { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; }
+    #debug-panel input[type="range"] { width: 70px; accent-color: #4ecdc4; }
+    #debug-panel input[type="checkbox"] { accent-color: #4ecdc4; }
+    #debug-panel input[type="color"] { width: 40px; height: 22px; border: none; background: transparent; padding: 0; cursor: pointer; }
+    #debug-panel .dbg-btn { width: 100%; padding: 5px; margin: 3px 0; background: rgba(0, 255, 200, 0.06); border: 1px solid rgba(0, 255, 200, 0.15); color: #b0f0e0; border-radius: 6px; cursor: pointer; font-size: 0.55rem; font-family: inherit; }
+    #debug-panel .dbg-btn:active { background: rgba(0, 255, 200, 0.2); }
+    #debug-panel .dbg-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; gap: 6px; }
+    #debug-panel .dbg-num { width: 60px; padding: 3px 6px; border-radius: 6px; background: rgba(0,255,200,0.06); border: 1px solid rgba(0,255,200,0.15); color: #b0f0e0; font-family: monospace; font-size: 0.55rem; outline: none; }
+
+    #start-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at center, rgba(8,12,26,0.98), rgba(0,0,0,0.99)); transition: opacity 0.4s ease, visibility 0.4s ease; visibility: visible; }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+    #start-box { background: rgba(18,26,48,0.95); border: 1.5px solid rgba(78,205,196,0.15); border-radius: 32px; padding: 28px 24px; text-align: center; color: #eaf2ff; max-width: 320px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.5); animation: breathe 2.4s ease-in-out infinite; cursor: pointer; }
+    @keyframes breathe { 0%, 100% { transform: scale(1); box-shadow: 0 20px 60px rgba(0,0,0,0.5); } 50% { transform: scale(1.02); box-shadow: 0 20px 80px rgba(78,205,196,0.15); } }
+    #start-box h1 { font-size: 1.8rem; margin-bottom: 2px; background: linear-gradient(135deg, #4ecdc4, #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    #start-box .sub { color: #4ecdc4; font-size: 0.9rem; margin-bottom: 6px; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+    #start-box p { font-size: 0.65rem; color: #8aa4c8; margin: 2px 0; }
+    #start-box .key { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 6px; font-size: 0.5rem; display: inline-block; color: #b0c8e8; }
+
+    #net-status { position: absolute; bottom: 20px; left: 20px; color: #4ecdc4; font-size: 0.7rem; z-index: 99; pointer-events: none; text-shadow: 0 2px 4px #000; }
+  </style>
+</head>
+<body>
+
+  <div id="start-overlay">
+    <div id="start-box">
+      <h1>沙盒 · 多人联机</h1>
+      <p class="sub" id="role-text">正在连接服务器...</p>
+      <p><span class="key">摇杆</span> 移动 · <span class="key">跳跃</span> 大按钮</p>
+      <p><span class="key">点击屏幕</span> 放置 · <span class="key">右滑</span> 视角</p>
+    </div>
+  </div>
+
+  <div id="scene-container">
+    <div id="net-status">未连接</div>
+
+    <div id="hud">
+      <span id="shape-indicator">
+        <span id="shape-dot" class="dot"></span>
+        <span id="shape-name" class="name">立方体</span>
+      </span>
+      <span class="right">
+        <span style="display:flex;align-items:center;gap:2px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span id="obj-count">0</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:2px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span id="fps-val">60</span>fps
+        </span>
+        <button class="hud-btn chat" id="btn-chat" title="聊天室">
+          <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>
+          <span class="badge hidden" id="chat-badge">0</span>
+        </button>
+        <button class="hud-btn" id="btn-console" title="服务器控制台">
+          <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6 10l2 2-2 2 1.4 1.4L10.8 12 7.4 8.6 6 10zm5 5h6v-2h-6v2z"/></svg>
+        </button>
+        <button class="hud-btn panel" id="btn-gpanel" title="图形化控制面板">
+          <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        </button>
+        <button class="hud-btn editor" id="btn-editor" title="物体编辑器">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+        </button>
+        <button class="hud-btn" id="btn-fullscreen" title="全屏">
+          <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        </button>
+      </span>
+    </div>
+
+    <div id="bottom-controls">
+      <div id="toolbar">
+        <div class="tool-group">
+          <button class="btn-icon action" id="btn-place"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+          <button class="btn-icon action" id="btn-remove"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg></button>
+          <button class="btn-icon" id="btn-next"><svg viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg></button>
+          <button class="btn-icon" id="btn-grab"><svg viewBox="0 0 24 24"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74A4.5 4.5 0 0 0 11.5 3 4.5 4.5 0 0 0 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6a1.5 1.5 0 0 0-3 0v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/></svg></button>
+          <button class="btn-icon" id="btn-push"><svg viewBox="0 0 24 24"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg></button>
+        </div>
+        <div class="tool-group">
+          <button class="btn-icon" id="btn-explode"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/></svg></button>
+          <button class="btn-icon" id="btn-vacuum"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg></button>
+          <button class="btn-icon" id="btn-color"><svg viewBox="0 0 24 24"><path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.2-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8 8 8.67 8 9.5 7.33 11 6.5 11zm3-4C8.67 7 8 6.33 8 5.5S8.67 4 9.5 4s1.5.67 1.5 1.5S10.33 7 9.5 7zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 4 14.5 4s1.5.67 1.5 1.5S15.33 7 14.5 7zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 8 17.5 8s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg></button>
+          <button class="btn-icon" id="btn-profile"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></button>
+        </div>
+      </div>
+
+      <div id="control-row">
+        <div id="joystick-area">
+          <div id="joystick-base"></div>
+          <div id="joystick-thumb"></div>
+        </div>
+        <button id="btn-jump"><svg viewBox="0 0 24 24"><path d="M12 4l-8 8h5v8h6v-8h5z"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="bubble-layer" style="position:fixed;inset:0;pointer-events:none;z-index:50;"></div>
+
+  <div id="color-overlay">
+    <div id="color-panel">
+      <div class="cp-header"><span>颜色调节</span><div class="cp-preview" id="cp-preview"></div></div>
+      <div class="cp-row"><label>色相 <span id="cp-hue-val">200</span>°</label><input type="range" class="cp-slider" id="cp-hue" min="0" max="360" value="200"></div>
+      <div class="cp-row"><label>饱和度 <span id="cp-sat-val">70</span>%</label><input type="range" class="cp-slider" id="cp-sat" min="0" max="100" value="70"></div>
+      <div class="cp-row"><label>亮度 <span id="cp-light-val">60</span>%</label><input type="range" class="cp-slider" id="cp-light" min="0" max="100" value="60"></div>
+      <div class="cp-row"><label>透明度 <span id="cp-alpha-val">100</span>%</label><input type="range" class="cp-slider" id="cp-alpha" min="0" max="100" value="100"></div>
+      <div class="cp-actions"><button class="cp-btn cancel" id="cp-cancel">取消</button><button class="cp-btn confirm" id="cp-confirm">确定</button></div>
+    </div>
+  </div>
+
+  <div id="profile-overlay">
+    <div id="profile-panel">
+      <div class="pf-header"><span>玩家设置</span><span class="pf-role" id="pf-role">房主</span></div>
+      <div class="pf-row"><label>称呼</label><input type="text" class="pf-input" id="pf-name" maxlength="12" placeholder="输入称呼..."></div>
+      <div class="pf-row"><label>球体颜色</label><div class="pf-color-row"><div class="pf-color-swatch" id="pf-color-swatch"></div><span class="pf-color-hint">点击打开调色板</span></div></div>
+      <div class="cp-actions"><button class="cp-btn cancel" id="pf-cancel">取消</button><button class="cp-btn confirm" id="pf-confirm">保存</button></div>
+    </div>
+  </div>
+
+  <div id="chat-overlay">
+    <div id="chat-panel">
+      <div class="ch-header">
+        <span>聊天室</span>
+        <span class="ch-status" id="chat-status">0 条消息</span>
+        <button class="ch-close" id="chat-close">✕</button>
+      </div>
+      <div id="chat-log"></div>
+      <div class="chat-input-row">
+        <input type="text" class="chat-input" id="chat-input" maxlength="200" placeholder="输入消息后回车..." autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="chat-send" id="chat-send">发送</button>
+      </div>
+      <div class="chat-hint">消息会显示在自己头顶，所有玩家都能在聊天室看到</div>
+    </div>
+  </div>
+
+  <div id="editor-overlay">
+    <div id="editor-panel">
+      <div class="ed-header">
+        <span>物体编辑器</span>
+        <span class="ed-status" id="ed-status">未选中</span>
+        <button class="ed-close" id="ed-close">✕</button>
+      </div>
+
+      <div class="ed-sec">
+        <div class="ed-sec-title">选中物体</div>
+        <div class="ed-row">
+          <button class="gp-btn ok" id="ed-select">准星选中</button>
+          <button class="gp-btn" id="ed-deselect">取消选中</button>
+        </div>
+        <div class="ed-info" id="ed-info">点击「准星选中」对准物体</div>
+      </div>
+
+      <div class="ed-sec">
+        <div class="ed-sec-title">位置</div>
+        <div class="ed-triple">
+          <label>X<input type="number" id="ed-px" step="0.1"></label>
+          <label>Y<input type="number" id="ed-py" step="0.1"></label>
+          <label>Z<input type="number" id="ed-pz" step="0.1"></label>
+        </div>
+        <button class="gp-btn" id="ed-apply-pos">应用位置</button>
+      </div>
+
+      <div class="ed-sec">
+        <div class="ed-sec-title">缩放（含碰撞箱）</div>
+        <div class="ed-triple">
+          <label>X<input type="number" id="ed-sx" step="0.1" min="0.1" value="1"></label>
+          <label>Y<input type="number" id="ed-sy" step="0.1" min="0.1" value="1"></label>
+          <label>Z<input type="number" id="ed-sz" step="0.1" min="0.1" value="1"></label>
+        </div>
+        <div class="ed-row">
+          <button class="gp-btn" id="ed-apply-scale">应用缩放</button>
+          <button class="gp-btn" id="ed-reset-scale">重置</button>
+        </div>
+      </div>
+
+      <div class="ed-sec">
+        <div class="ed-sec-title">施加力（大小 + 方向）</div>
+        <div class="ed-force-row">
+          <span style="color:#8aa4c8;font-size:0.55rem;">力度</span>
+          <input type="range" id="ed-force-mag" min="0" max="3000" value="800" step="50">
+          <span class="ed-num" id="ed-force-mag-val">800</span>
+        </div>
+        <div class="ed-dir">
+          <label>X<input type="number" id="ed-fx" step="0.1" value="0"></label>
+          <label>Y<input type="number" id="ed-fy" step="0.1" value="1"></label>
+          <label>Z<input type="number" id="ed-fz" step="0.1" value="0"></label>
+        </div>
+        <div class="ed-row">
+          <button class="gp-btn warn" id="ed-apply-force">施加冲量</button>
+          <button class="gp-btn" id="ed-normalize-dir">单位化方向</button>
+        </div>
+        <div class="ed-note">方向会自动归一化；冲量 = 力度 × 方向向量</div>
+      </div>
+
+      <div class="ed-sec">
+        <div class="ed-sec-title">焊接 / 拖拽</div>
+        <div class="ed-row">
+          <button class="gp-btn ok" id="ed-weld">焊接选中</button>
+          <button class="gp-btn" id="ed-unweld">解除焊接</button>
+        </div>
+        <div class="ed-row">
+          <button class="gp-btn warn" id="ed-drag-start">开始拖拽</button>
+          <button class="gp-btn" id="ed-drag-stop">结束拖拽</button>
+        </div>
+        <div class="ed-info" id="ed-weld-info">焊接后组内成员相对位置固定，拖拽不经过物理</div>
+      </div>
+
+      <div class="ed-note">提示：选中物体后可用「位置/缩放/力」精确调整；拖拽时用摇杆移动视角对准方向即可平移。</div>
+    </div>
+  </div>
+
+  <div id="console-overlay">
+    <div id="console-panel">
+      <div class="cs-header">
+        <span>服务器控制台</span>
+        <span class="cs-status" id="cs-status">未连接</span>
+        <button class="cs-close" id="cs-close">✕</button>
+      </div>
+      <div class="cs-log" id="cs-log"></div>
+      <div class="cs-input-row">
+        <input type="text" class="cs-input" id="cs-input" placeholder="输入命令后回车..." autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="cs-send" id="cs-send">发送</button>
+      </div>
+      <div class="cs-hint">help 帮助 · list 玩家 · kick 序号 · kickall · status · say 消息 · clear · http restart · stop</div>
+    </div>
+  </div>
+
+  <div id="gpanel-overlay">
+    <div id="gpanel-panel">
+      <div class="cs-header">
+        <span>图形控制面板</span>
+        <span class="cs-status" id="gp-status">未连接</span>
+        <button class="cs-close" id="gp-close">✕</button>
+      </div>
+      <div class="gp-banner" id="gp-banner">数据会在打开时自动刷新</div>
+      <div class="gp-info" id="gp-info">等待连接...</div>
+      <div class="gp-players" id="gp-players"><div class="gp-empty">暂无玩家</div></div>
+      <div class="gp-row">
+        <input type="text" id="gp-announce" maxlength="80" placeholder="输入公告内容...">
+        <button class="gp-btn warn" id="gp-say" style="padding:0 14px;">公告</button>
+      </div>
+      <div class="gp-btns">
+        <button class="gp-btn danger" id="gp-kickall">
+          <svg viewBox="0 0 24 24"><path d="M16 13c1.66 0 2.99-1.34 2.99-3S17.66 7 16 7c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 7 8 7C6.34 7 5 8.34 5 10s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-1.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-1.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          全体踢出
+        </button>
+        <button class="gp-btn ok" id="gp-restart-http">
+          <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+          重启 HTTP
+        </button>
+        <button class="gp-btn" id="gp-refresh">
+          <svg viewBox="0 0 24 24"><path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/></svg>
+          刷新状态
+        </button>
+        <button class="gp-btn danger" id="gp-stop">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+          停止服务器
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="debug-panel">
+    <div class="dbg-header" id="dbg-drag">
+      <span>调试面板</span>
+      <button class="dbg-close" id="dbg-close">✕</button>
+    </div>
+    <label>飞行 <input type="checkbox" id="dbg-fly"></label>
+    <label>上帝 <input type="checkbox" id="dbg-god" checked></label>
+    <label>无限距离 <input type="checkbox" id="dbg-range"></label>
+    <label>自动放置 <input type="checkbox" id="dbg-auto"></label>
+    <div class="dbg-row">天空颜色 <button class="dbg-btn" id="dbg-sky" style="width:auto;padding:2px 10px;margin:0;">打开调色板</button></div>
+    <div class="dbg-row">雾距离 <input type="range" id="dbg-fog" min="0" max="150" value="110" step="1"></div>
+    <div>重力 <input type="range" id="dbg-gravity" min="-20" max="20" value="-12" step="0.5"></div>
+    <div>速度 <input type="range" id="dbg-speed" min="2" max="30" value="6" step="0.5"></div>
+    <div>跳跃 <input type="range" id="dbg-jump" min="2" max="20" value="7" step="0.5"></div>
+    <div class="dbg-row">
+      <input type="number" class="dbg-num" id="dbg-spawn-count" value="30" min="1" max="200" step="1">
+      <button class="dbg-btn" id="dbg-spawn" style="flex:1;margin:0;width:auto;">批量生成</button>
+    </div>
+    <button class="dbg-btn" id="dbg-random">随机颜色</button>
+    <button class="dbg-btn" id="dbg-clear">清空所有</button>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    const CFG = { moveSpeed: 6, jumpForce: 7, gravity: -12, playerRadius: 0.4, blockSize: 0.95, physicsSize: 0.475, worldSize: 17 };
+
+    const SERVER_URL = 'ws://192.168.0.101:8765';
+    let ws = null;
+    let myId = null;
+    let lastSyncTime = 0;
+    let lastBlockSyncTime = 0;
+    let lastDragSync = 0;
+    let reconnectTimer = null;
+    let connected = false;
+    let wasKicked = false;
+
+    const container = document.getElementById('scene-container');
+    const dom = {
+      startOverlay: document.getElementById('start-overlay'),
+      roleText: document.getElementById('role-text'),
+      netStatus: document.getElementById('net-status'),
+      joystickArea: document.getElementById('joystick-area'),
+      joystickThumb: document.getElementById('joystick-thumb'),
+      btnJump: document.getElementById('btn-jump'),
+      btnPlace: document.getElementById('btn-place'),
+      btnRemove: document.getElementById('btn-remove'),
+      btnNext: document.getElementById('btn-next'),
+      btnGrab: document.getElementById('btn-grab'),
+      btnPush: document.getElementById('btn-push'),
+      btnExplode: document.getElementById('btn-explode'),
+      btnVacuum: document.getElementById('btn-vacuum'),
+      btnColor: document.getElementById('btn-color'),
+      btnProfile: document.getElementById('btn-profile'),
+      btnFullscreen: document.getElementById('btn-fullscreen'),
+      colorOverlay: document.getElementById('color-overlay'),
+      cpPreview: document.getElementById('cp-preview'),
+      cpHue: document.getElementById('cp-hue'),
+      cpSat: document.getElementById('cp-sat'),
+      cpLight: document.getElementById('cp-light'),
+      cpAlpha: document.getElementById('cp-alpha'),
+      cpHueVal: document.getElementById('cp-hue-val'),
+      cpSatVal: document.getElementById('cp-sat-val'),
+      cpLightVal: document.getElementById('cp-light-val'),
+      cpAlphaVal: document.getElementById('cp-alpha-val'),
+      cpCancel: document.getElementById('cp-cancel'),
+      cpConfirm: document.getElementById('cp-confirm'),
+      profileOverlay: document.getElementById('profile-overlay'),
+      pfRole: document.getElementById('pf-role'),
+      pfName: document.getElementById('pf-name'),
+      pfColorSwatch: document.getElementById('pf-color-swatch'),
+      pfCancel: document.getElementById('pf-cancel'),
+      pfConfirm: document.getElementById('pf-confirm'),
+      objCount: document.getElementById('obj-count'),
+      fpsVal: document.getElementById('fps-val'),
+      shapeDot: document.getElementById('shape-dot'),
+      shapeName: document.getElementById('shape-name'),
+      bubbleLayer: document.getElementById('bubble-layer'),
+    };
+
+    const csOverlay = document.getElementById('console-overlay');
+    const csLog = document.getElementById('cs-log');
+    const csInput = document.getElementById('cs-input');
+    const csSendBtn = document.getElementById('cs-send');
+    const csCloseBtn = document.getElementById('cs-close');
+    const csStatus = document.getElementById('cs-status');
+    const btnConsole = document.getElementById('btn-console');
+
+    const chatOverlay = document.getElementById('chat-overlay');
+    const chatLog = document.getElementById('chat-log');
+    const chatInput = document.getElementById('chat-input');
+    const chatSendBtn = document.getElementById('chat-send');
+    const chatCloseBtn = document.getElementById('chat-close');
+    const chatStatus = document.getElementById('chat-status');
+    const btnChat = document.getElementById('btn-chat');
+    const chatBadge = document.getElementById('chat-badge');
+
+    const gpanelOverlay = document.getElementById('gpanel-overlay');
+    const btnGpanel = document.getElementById('btn-gpanel');
+    const gpClose = document.getElementById('gp-close');
+    const gpStatus = document.getElementById('gp-status');
+    const gpInfo = document.getElementById('gp-info');
+    const gpPlayers = document.getElementById('gp-players');
+    const gpAnnounce = document.getElementById('gp-announce');
+    const gpSay = document.getElementById('gp-say');
+    const gpKickall = document.getElementById('gp-kickall');
+    const gpRestartHttp = document.getElementById('gp-restart-http');
+    const gpRefresh = document.getElementById('gp-refresh');
+    const gpStop = document.getElementById('gp-stop');
+    const gpBanner = document.getElementById('gp-banner');
+
+    const edOverlay = document.getElementById('editor-overlay');
+    const edClose = document.getElementById('ed-close');
+    const edStatus = document.getElementById('ed-status');
+    const edInfo = document.getElementById('ed-info');
+    const edSelectBtn = document.getElementById('ed-select');
+    const edDeselectBtn = document.getElementById('ed-deselect');
+    const edPx = document.getElementById('ed-px');
+    const edPy = document.getElementById('ed-py');
+    const edPz = document.getElementById('ed-pz');
+    const edApplyPos = document.getElementById('ed-apply-pos');
+    const edSx = document.getElementById('ed-sx');
+    const edSy = document.getElementById('ed-sy');
+    const edSz = document.getElementById('ed-sz');
+    const edApplyScale = document.getElementById('ed-apply-scale');
+    const edResetScale = document.getElementById('ed-reset-scale');
+    const edForceMag = document.getElementById('ed-force-mag');
+    const edForceMagVal = document.getElementById('ed-force-mag-val');
+    const edFx = document.getElementById('ed-fx');
+    const edFy = document.getElementById('ed-fy');
+    const edFz = document.getElementById('ed-fz');
+    const edApplyForce = document.getElementById('ed-apply-force');
+    const edNormalizeDir = document.getElementById('ed-normalize-dir');
+    const edWeld = document.getElementById('ed-weld');
+    const edUnweld = document.getElementById('ed-unweld');
+    const edDragStart = document.getElementById('ed-drag-start');
+    const edDragStop = document.getElementById('ed-drag-stop');
+    const edWeldInfo = document.getElementById('ed-weld-info');
+    const btnEditor = document.getElementById('btn-editor');
+
+    const dbgPanel = document.getElementById('debug-panel');
+    const dbgFly = document.getElementById('dbg-fly');
+    const dbgGod = document.getElementById('dbg-god');
+    const dbgRange = document.getElementById('dbg-range');
+    const dbgAuto = document.getElementById('dbg-auto');
+    const dbgSkyBtn = document.getElementById('dbg-sky');
+    const dbgFog = document.getElementById('dbg-fog');
+    const dbgGravity = document.getElementById('dbg-gravity');
+    const dbgSpeed = document.getElementById('dbg-speed');
+    const dbgJump = document.getElementById('dbg-jump');
+    const dbgClose = document.getElementById('dbg-close');
+    const dbgDrag = document.getElementById('dbg-drag');
+    const dbgSpawnCount = document.getElementById('dbg-spawn-count');
+
+    let cheatFly = false;
+    let cheatGod = true;
+    let cheatRange = false;
+    let cheatAuto = false;
+    let autoTimer = 0;
+    let flyUpPressed = false;
+
+    let isHost = false;
+    const playerProfile = { name: '玩家', color: randomColor() };
+
+    const DEFAULT_SKY = 0x87CEEB;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(DEFAULT_SKY);
+    scene.fog = new THREE.Fog(DEFAULT_SKY, 40, 110);
+
+    const camera = new THREE.PerspectiveCamera(68, container.clientWidth / container.clientHeight, 0.1, 200);
+    camera.position.set(0, 2.6, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    const ambient = new THREE.AmbientLight(0xbcd4f0, 0.6);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xfff8e7, 1.2);
+    dirLight.position.set(20, 30, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 512;
+    dirLight.shadow.mapSize.height = 512;
+    scene.add(dirLight);
+
+    const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(36, 36), new THREE.MeshStandardMaterial({ color: 0xd5c4a1, roughness: 0.8 }));
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.position.y = -0.2;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+    const allObjects = [groundMesh];
+
+    const grid = new THREE.GridHelper(36, 24, 0xc4b99a, 0xe0d5c0);
+    scene.add(grid);
+
+    const world = new CANNON.World();
+    world.gravity.set(0, CFG.gravity, 0);
+    world.broadphase = new CANNON.SAPBroadphase(world);
+    world.allowSleep = true;
+    world.defaultContactMaterial.restitution = 0.05;
+    world.defaultContactMaterial.friction = 0.6;
+    world.solver.iterations = 10;
+    world.solver.tolerance = 0.01;
+
+    const groundShape = new CANNON.Box(new CANNON.Vec3(18, 0.2, 18));
+    const groundBody = new CANNON.Body({ mass: 0 });
+    groundBody.addShape(groundShape);
+    groundBody.position.set(0, -0.3, 0);
+    world.addBody(groundBody);
+
+    const playerShape = new CANNON.Sphere(CFG.playerRadius);
+    const playerBody = new CANNON.Body({ mass: 1 });
+    playerBody.addShape(playerShape);
+    playerBody.position.set(0, 2, 8);
+    playerBody.linearDamping = 0.9;
+    playerBody.angularDamping = 0.9;
+    playerBody.allowSleep = true;
+    playerBody.sleepSpeedLimit = 0.15;
+    playerBody.sleepTimeLimit = 0.5;
+    world.addBody(playerBody);
+
+    const placed = [];
+    const blockMap = new Map();
+    let nextBlockId = 1;
+    let isOnGround = false;
+
+    const shapes = {
+      types: ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'pyramid'],
+      names: ['立方体', '球体', '圆柱', '圆锥', '圆环', '金字塔'],
+      index: 0,
+      colors: ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe', '#fd79a8', '#00d2d3', '#ff9f43', '#55efc4'],
+      colorIndex: 0,
+    };
+
+    function randomColor() {
+      const hue = Math.floor(Math.random() * 360);
+      const sat = 60 + Math.floor(Math.random() * 30);
+      const light = 45 + Math.floor(Math.random() * 25);
+      const a = sat * Math.min(light / 100, 1 - light / 100) / 100;
+      const f = n => {
+        const k = (n + hue / 30) % 12;
+        const color = light / 100 - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    const playerGroup = new THREE.Group();
+    scene.add(playerGroup);
+    const playerMesh = new THREE.Mesh(new THREE.SphereGeometry(CFG.playerRadius, 16, 16), new THREE.MeshStandardMaterial({ color: playerProfile.color, roughness: 0.3, metalness: 0.1 }));
+    playerMesh.castShadow = true;
+    playerGroup.add(playerMesh);
+
+    let localLabelSprite = null;
+    function makeLabelSprite(text, color, withCrown) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 384; canvas.height = 72;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 384, 72);
+      let textX = 60;
+      if (withCrown) {
+        const cx = 16, cy = 36;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.fillStyle = '#ffd93b';
+        ctx.beginPath();
+        ctx.moveTo(-14, 10); ctx.lineTo(-10, -8); ctx.lineTo(-4, 2); ctx.lineTo(0, -12);
+        ctx.lineTo(4, 2); ctx.lineTo(10, -8); ctx.lineTo(14, 10);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = '#ff6b6b';
+        ctx.beginPath(); ctx.arc(-10, -8, 2.2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, -12, 2.2, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(10, -8, 2.2, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
+        textX = 68;
+      }
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(38, 36, 20, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(38, 28, 6.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(38, 46, 8.5, 9.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.font = 'bold 30px "PingFang SC", "Segoe UI", sans-serif';
+      ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 6;
+      ctx.fillText(text, textX, 38);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(2.6, 0.5, 1);
+      return sprite;
+    }
+    function refreshLocalLabel() {
+      if (localLabelSprite) {
+        playerGroup.remove(localLabelSprite);
+        localLabelSprite.material.map.dispose();
+        localLabelSprite.material.dispose();
+      }
+      localLabelSprite = makeLabelSprite(playerProfile.name, playerProfile.color, isHost);
+      localLabelSprite.position.set(0, 0.9, 0);
+      playerGroup.add(localLabelSprite);
+    }
+    refreshLocalLabel();
+
+    const remotePlayers = new Map();
+    function createRemotePlayer(id, color, name, isRemoteHost) {
+      if (remotePlayers.has(id)) { updateRemoteProfile(id, color, name, isRemoteHost); return; }
+      const group = new THREE.Group();
+      group.frustumCulled = false;
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(CFG.playerRadius, 16, 16), new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.85 }));
+      mesh.castShadow = true;
+      mesh.frustumCulled = false;
+      group.add(mesh);
+      const label = makeLabelSprite(name, color, !!isRemoteHost);
+      label.position.set(0, 0.9, 0);
+      group.add(label);
+      group.position.set(0, 2, 0);
+      scene.add(group);
+
+      const remoteShape = new CANNON.Sphere(CFG.playerRadius);
+      const remoteBody = new CANNON.Body({ mass: 1 });
+      remoteBody.addShape(remoteShape);
+      remoteBody.position.set(0, 2, 0);
+      remoteBody.linearDamping = 0.9;
+      remoteBody.angularDamping = 0.9;
+      remoteBody.allowSleep = false;
+      world.addBody(remoteBody);
+
+      remotePlayers.set(id, { group, mesh, label, name, color, isRemoteHost: !!isRemoteHost, remoteBody, targetPos: new THREE.Vector3(0, 2, 0), hasTarget: false });
+    }
+    function updateRemoteProfile(id, color, name, isRemoteHost) {
+      const rp = remotePlayers.get(id);
+      if (!rp) return;
+      rp.color = color;
+      rp.name = name;
+      rp.isRemoteHost = !!isRemoteHost;
+      rp.mesh.material.color.set(color);
+      rp.group.remove(rp.label);
+      rp.label.material.map.dispose();
+      rp.label.material.dispose();
+      rp.label = makeLabelSprite(name, color, rp.isRemoteHost);
+      rp.label.position.set(0, 0.9, 0);
+      rp.group.add(rp.label);
+    }
+    function removeRemotePlayer(id) {
+      const rp = remotePlayers.get(id);
+      if (!rp) return;
+      scene.remove(rp.group);
+      rp.mesh.geometry.dispose();
+      rp.mesh.material.dispose();
+      rp.label.material.map.dispose();
+      rp.label.material.dispose();
+      if (rp.remoteBody) world.removeBody(rp.remoteBody);
+      remotePlayers.delete(id);
+    }
+
+    const bubbles = new Map();
+    function showBubble(key, text) {
+      let b = bubbles.get(key);
+      if (!b) {
+        const el = document.createElement('div');
+        el.className = 'chat-bubble hidden';
+        dom.bubbleLayer.appendChild(el);
+        b = { el, expireAt: 0 };
+        bubbles.set(key, b);
+      }
+      b.el.textContent = text;
+      b.el.classList.remove('hidden');
+      b.expireAt = performance.now() + 4000;
+    }
+    function updateBubbles() {
+      const now = performance.now();
+      bubbles.forEach((b, key) => {
+        if (now > b.expireAt) {
+          b.el.classList.add('hidden');
+        } else {
+          let worldPos = null;
+          if (key === 'local') {
+            worldPos = playerGroup.position.clone();
+            worldPos.y += 1.1;
+          } else {
+            const rp = remotePlayers.get(key);
+            if (!rp) { b.el.classList.add('hidden'); return; }
+            worldPos = rp.group.position.clone();
+            worldPos.y += 1.1;
+          }
+          const v = worldPos.clone().project(camera);
+          if (v.z > 1 || v.z < -1) { b.el.classList.add('hidden'); return; }
+          const x = (v.x * 0.5 + 0.5) * window.innerWidth;
+          const y = (-v.y * 0.5 + 0.5) * window.innerHeight;
+          b.el.style.left = x + 'px';
+          b.el.style.top = (y - 6) + 'px';
+          b.el.classList.remove('hidden');
+        }
+      });
+    }
+
+    const chatHistory = [];
+    let unreadChat = 0;
+
+    function nowTimeStr() {
+      const d = new Date();
+      const p = n => String(n).padStart(2, '0');
+      return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+
+    function updateChatBadge() {
+      if (chatOverlay.classList.contains('show')) unreadChat = 0;
+      if (unreadChat > 0) {
+        chatBadge.textContent = unreadChat > 99 ? '99+' : String(unreadChat);
+        chatBadge.classList.remove('hidden');
+      } else {
+        chatBadge.classList.add('hidden');
+      }
+      chatStatus.textContent = `${chatHistory.length} 条消息`;
+    }
+
+    function appendChatMessage(fromName, text, isSelf, isSystem, timeStr) {
+      const t = timeStr || nowTimeStr();
+      if (isSystem) {
+        const el = document.createElement('div');
+        el.className = 'chat-msg sys';
+        el.textContent = `[${t}] ${text}`;
+        chatLog.appendChild(el);
+        chatHistory.push({ from: '', text, system: true, time: t });
+      } else {
+        const el = document.createElement('div');
+        el.className = 'chat-msg ' + (isSelf ? 'me' : 'other');
+        const meta = document.createElement('div');
+        meta.className = 'chat-meta';
+        const from = document.createElement('span');
+        from.className = 'chat-from';
+        from.textContent = fromName;
+        const tm = document.createElement('span');
+        tm.className = 'chat-time';
+        tm.textContent = t;
+        meta.appendChild(from);
+        meta.appendChild(tm);
+        const body = document.createElement('div');
+        body.className = 'chat-text';
+        body.textContent = text;
+        el.appendChild(meta);
+        el.appendChild(body);
+        chatLog.appendChild(el);
+        chatHistory.push({ from: fromName, text, time: t });
+        if (!isSelf && !chatOverlay.classList.contains('show')) unreadChat++;
+      }
+      while (chatLog.childElementCount > 300) chatLog.removeChild(chatLog.firstElementChild);
+      if (chatHistory.length > 500) chatHistory.splice(0, chatHistory.length - 500);
+      chatLog.scrollTop = chatLog.scrollHeight;
+      updateChatBadge();
+    }
+
+    function openChatPanel() {
+      chatOverlay.classList.add('show');
+      unreadChat = 0;
+      updateChatBadge();
+      setTimeout(() => { try { chatInput.focus(); } catch (e) {} }, 120);
+    }
+    function closeChatPanel() {
+      chatOverlay.classList.remove('show');
+      try { chatInput.blur(); } catch (e) {}
+      updateChatBadge();
+    }
+
+    function sendChatMessage() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      chatInput.value = '';
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        appendChatMessage('', '未连接到服务器', false, true);
+        return;
+      }
+      appendChatMessage(playerProfile.name, text, true, false);
+      showBubble('local', text);
+      ws.send(JSON.stringify({ type: 'chat_message', text: text }));
+    }
+
+    btnChat.addEventListener('pointerdown', (e) => { e.stopPropagation(); openChatPanel(); });
+    chatCloseBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeChatPanel(); });
+    chatSendBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); sendChatMessage(); });
+    chatInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); sendChatMessage(); }
+    });
+    chatOverlay.addEventListener('pointerdown', (e) => { if (e.target === chatOverlay) closeChatPanel(); });
+
+    let cpState = { h: 200, s: 70, l: 60, a: 100 };
+    let cpTarget = 'block';
+    function hslToHex(h, s, l) {
+      s /= 100; l /= 100;
+      const a = s * Math.min(l, 1 - l);
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    }
+    function hexToHsl(hex) {
+      const rgb = parseInt(hex.slice(1), 16);
+      const r = (rgb >> 16) & 255, g = (rgb >> 8) & 255, b = rgb & 255;
+      const rn = r / 255, gn = g / 255, bn = b / 255;
+      const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+      let h = 0, s = 0, l = (max + min) / 2;
+      if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case rn: h = (gn - bn) / d + (gn < bn ? 6 : 0); break;
+          case gn: h = (bn - rn) / d + 2; break;
+          case bn: h = (rn - gn) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    }
+    function updatePreview() {
+      const hex = hslToHex(cpState.h, cpState.s, cpState.l);
+      dom.cpPreview.style.background = hex;
+      dom.cpPreview.style.opacity = cpState.a / 100;
+      dom.cpHueVal.textContent = cpState.h;
+      dom.cpSatVal.textContent = cpState.s;
+      dom.cpLightVal.textContent = cpState.l;
+      dom.cpAlphaVal.textContent = cpState.a;
+      dom.cpHue.value = cpState.h;
+      dom.cpSat.value = cpState.s;
+      dom.cpLight.value = cpState.l;
+      dom.cpAlpha.value = cpState.a;
+    }
+    function openColorPanel(target, initialHex) {
+      cpTarget = target;
+      const hsl = hexToHsl(initialHex);
+      cpState.h = hsl.h; cpState.s = hsl.s; cpState.l = hsl.l; cpState.a = 100;
+      updatePreview();
+      dom.colorOverlay.classList.add('show');
+    }
+    function closeColorPanel() { dom.colorOverlay.classList.remove('show'); }
+    dom.cpHue.addEventListener('input', () => { cpState.h = +dom.cpHue.value; updatePreview(); });
+    dom.cpSat.addEventListener('input', () => { cpState.s = +dom.cpSat.value; updatePreview(); });
+    dom.cpLight.addEventListener('input', () => { cpState.l = +dom.cpLight.value; updatePreview(); });
+    dom.cpAlpha.addEventListener('input', () => { cpState.a = +dom.cpAlpha.value; updatePreview(); });
+    dom.cpCancel.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeColorPanel(); });
+    dom.cpConfirm.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const hex = hslToHex(cpState.h, cpState.s, cpState.l);
+      if (cpTarget === 'block') {
+        shapes.colors[shapes.colorIndex] = hex;
+        updateUI();
+      } else if (cpTarget === 'player') {
+        playerProfile.color = hex;
+        playerMesh.material.color.set(hex);
+        refreshLocalLabel();
+        dom.pfColorSwatch.style.background = hex;
+        sendProfile();
+      } else if (cpTarget === 'sky') {
+        applySkyColor(hex);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'sky_color', color: hex }));
+        }
+      }
+      closeColorPanel();
+    });
+    dom.colorOverlay.addEventListener('pointerdown', (e) => { if (e.target === dom.colorOverlay) closeColorPanel(); });
+
+    function applySkyColor(hex) {
+      const col = new THREE.Color(hex);
+      scene.background = col;
+      if (scene.fog) scene.fog.color.copy(col);
+    }
+
+    function openProfile() {
+      dom.pfRole.textContent = isHost ? '房主' : '房员';
+      dom.pfRole.className = 'pf-role' + (isHost ? '' : ' member');
+      dom.pfName.value = playerProfile.name;
+      dom.pfColorSwatch.style.background = playerProfile.color;
+      dom.profileOverlay.classList.add('show');
+    }
+    function closeProfile() { dom.profileOverlay.classList.remove('show'); }
+    dom.pfColorSwatch.addEventListener('pointerdown', (e) => { e.stopPropagation(); openColorPanel('player', playerProfile.color); });
+    dom.pfCancel.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeProfile(); });
+    dom.pfConfirm.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const name = dom.pfName.value.trim() || (isHost ? '房主' : '房员');
+      playerProfile.name = name;
+      refreshLocalLabel();
+      sendProfile();
+      closeProfile();
+    });
+    dom.profileOverlay.addEventListener('pointerdown', (e) => { if (e.target === dom.profileOverlay) closeProfile(); });
+
+    function sendProfile() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'profile', name: playerProfile.name, color: playerProfile.color }));
+      }
+    }
+
+    const geoCache = {};
+    function getGeometry(type) {
+      if (!geoCache[type]) {
+        const s = CFG.blockSize, r = CFG.physicsSize;
+        switch (type) {
+          case 'cube': geoCache[type] = new THREE.BoxGeometry(s, s, s); break;
+          case 'sphere': geoCache[type] = new THREE.SphereGeometry(r, 16, 12); break;
+          case 'cylinder': geoCache[type] = new THREE.CylinderGeometry(r, r, s, 12); break;
+          case 'cone': geoCache[type] = new THREE.ConeGeometry(r, s, 12); break;
+          case 'torus': geoCache[type] = new THREE.TorusGeometry(r * 0.85, 0.18, 10, 16); break;
+          case 'pyramid': geoCache[type] = new THREE.ConeGeometry(r, s * 0.95, 4); break;
+          default: geoCache[type] = new THREE.BoxGeometry(s, s, s);
+        }
+      }
+      return geoCache[type];
+    }
+    const shapeCache = {};
+    function getCannonShape(type) {
+      if (!shapeCache[type]) {
+        const s = CFG.physicsSize;
+        switch (type) {
+          case 'cube': shapeCache[type] = new CANNON.Box(new CANNON.Vec3(s, s, s)); break;
+          case 'sphere': shapeCache[type] = new CANNON.Sphere(s); break;
+          case 'cylinder': shapeCache[type] = new CANNON.Cylinder(s, s, CFG.blockSize, 6); break;
+          case 'cone': shapeCache[type] = new CANNON.Cylinder(0, s, CFG.blockSize, 6); break;
+          case 'torus': shapeCache[type] = new CANNON.Sphere(s * 0.85); break;
+          case 'pyramid': shapeCache[type] = new CANNON.Cylinder(0, s, CFG.blockSize * 0.95, 4); break;
+          default: shapeCache[type] = new CANNON.Box(new CANNON.Vec3(s, s, s));
+        }
+      }
+      return shapeCache[type];
+    }
+
+    function createPlaced(type, color, position, isStatic = false, netId = null, noBroadcast = false) {
+      let id;
+      if (netId !== null) {
+        id = netId;
+        if (blockMap.has(id)) {
+          while (blockMap.has(nextBlockId)) nextBlockId++;
+          id = nextBlockId++;
+        } else if (netId >= nextBlockId) {
+          nextBlockId = netId + 1;
+        }
+      } else {
+        while (blockMap.has(nextBlockId)) nextBlockId++;
+        id = nextBlockId++;
+      }
+
+      const mesh = new THREE.Mesh(getGeometry(type), new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.05 }));
+      mesh.position.copy(position);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      allObjects.push(mesh);
+
+      const body = new CANNON.Body({ mass: isStatic ? 0 : 1 });
+      body.addShape(getCannonShape(type));
+      body.position.set(position.x, position.y, position.z);
+      body.linearDamping = 0.5;
+      body.angularDamping = 0.5;
+      world.addBody(body);
+
+      const entry = { id, mesh, body, type, color, isStatic, isDemo: false, targetPos: null, targetQuat: null, weldGroup: null, scale: new THREE.Vector3(1, 1, 1) };
+      placed.push(entry);
+      blockMap.set(id, entry);
+      return entry;
+    }
+
+    function removePlaced(entry) {
+      world.removeBody(entry.body);
+      scene.remove(entry.mesh);
+      const idx = placed.indexOf(entry);
+      if (idx !== -1) placed.splice(idx, 1);
+      const pIdx = allObjects.indexOf(entry.mesh);
+      if (pIdx !== -1) allObjects.splice(pIdx, 1);
+      blockMap.delete(entry.id);
+    }
+
+    function getPlacement() {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      raycaster.far = cheatRange ? 100 : 30;
+      const hits = raycaster.intersectObjects(allObjects, false);
+      if (hits.length > 0) {
+        const point = hits[0].point.clone();
+        const normal = hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+        const pos = point.add(normal.multiplyScalar(CFG.physicsSize));
+        pos.x = THREE.MathUtils.clamp(pos.x, -CFG.worldSize, CFG.worldSize);
+        pos.z = THREE.MathUtils.clamp(pos.z, -CFG.worldSize, CFG.worldSize);
+        pos.y = Math.max(pos.y, 0.2);
+        if (!cheatRange && pos.distanceTo(camera.position) < 0.9) return null;
+        return pos;
+      }
+      return null;
+    }
+
+    function applyForce(attract, origin) {
+      const p = origin || playerBody.position;
+      const str = 1500;
+      placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = p.x - entry.body.position.x;
+        const dy = p.y - entry.body.position.y;
+        const dz = p.z - entry.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 8 && dist > 0.3) {
+          const power = (1 - dist / 8) * str;
+          const factor = attract ? 1 : -1;
+          entry.body.wakeUp();
+          entry.body.applyForce(new CANNON.Vec3(dx / dist * power * factor, dy / dist * power * factor, dz / dist * power * factor), entry.body.position);
+        }
+      });
+    }
+    function explode(origin) {
+      const p = origin || playerBody.position;
+      const str = 1500 * 0.7;
+      placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = entry.body.position.x - p.x;
+        const dy = entry.body.position.y - p.y;
+        const dz = entry.body.position.z - p.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 10 && dist > 0.3) {
+          const factor = (1 - dist / 10) * str / dist;
+          entry.body.wakeUp();
+          entry.body.applyImpulse(new CANNON.Vec3(dx * factor, (dy + 0.5) * factor, dz * factor), entry.body.position);
+        }
+      });
+    }
+    function vacuum(origin) {
+      const p = origin || playerBody.position;
+      placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = p.x - entry.body.position.x;
+        const dy = p.y + 0.5 - entry.body.position.y;
+        const dz = p.z - entry.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist > 1 && dist < 15) {
+          entry.body.wakeUp();
+          entry.body.applyImpulse(new CANNON.Vec3(dx * 12, dy * 12, dz * 12), entry.body.position);
+        }
+      });
+    }
+
+    function updateUI() {
+      const color = shapes.colors[shapes.colorIndex];
+      const name = shapes.names[shapes.index];
+      dom.shapeDot.style.background = color;
+      dom.shapeName.textContent = name;
+      dom.objCount.textContent = placed.length;
+    }
+
+    // ===== 编辑器系统 =====
+    let selectedEntry = null;
+    let selectionBox = null;
+    const weldGroups = new Map();
+    let nextWeldId = 1;
+    let dragging = null;
+    const dragPlane = new THREE.Plane();
+    const dragOffset = new THREE.Vector3();
+    const dragIntersect = new THREE.Vector3();
+    const dragRaycaster = new THREE.Raycaster();
+
+    function ensureSelectionBox() {
+      if (!selectionBox) {
+        selectionBox = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+          new THREE.LineBasicMaterial({ color: 0xffd93b, depthTest: false })
+        );
+        selectionBox.renderOrder = 999;
+        scene.add(selectionBox);
+      }
+    }
+
+    function syncSelectionBox() {
+      if (!selectedEntry || !selectionBox) { if (selectionBox) selectionBox.visible = false; return; }
+      selectionBox.visible = true;
+      selectionBox.position.copy(selectedEntry.mesh.position);
+      selectionBox.quaternion.copy(selectedEntry.mesh.quaternion);
+      const s = selectedEntry.scale;
+      selectionBox.scale.set(CFG.blockSize * s.x, CFG.blockSize * s.y, CFG.blockSize * s.z);
+    }
+
+    function updateEditorInfo() {
+      if (!selectedEntry) {
+        edStatus.textContent = '未选中';
+        edStatus.style.color = '#ff9f43';
+        edInfo.textContent = '点击「准星选中」对准物体';
+        return;
+      }
+      edStatus.textContent = `已选中 #${selectedEntry.id}`;
+      edStatus.style.color = '#4ecdc4';
+      edInfo.textContent = `类型: ${selectedEntry.type} · 焊接组: ${selectedEntry.weldGroup ?? '无'}`;
+      edPx.value = selectedEntry.body.position.x.toFixed(2);
+      edPy.value = selectedEntry.body.position.y.toFixed(2);
+      edPz.value = selectedEntry.body.position.z.toFixed(2);
+      edSx.value = selectedEntry.scale.x.toFixed(2);
+      edSy.value = selectedEntry.scale.y.toFixed(2);
+      edSz.value = selectedEntry.scale.z.toFixed(2);
+    }
+
+    function selectEntry(entry) {
+      selectedEntry = entry;
+      ensureSelectionBox();
+      syncSelectionBox();
+      updateEditorInfo();
+    }
+
+    function deselectEntry() {
+      selectedEntry = null;
+      if (selectionBox) selectionBox.visible = false;
+      updateEditorInfo();
+    }
+
+    function openEditor() {
+      edOverlay.classList.add('show');
+      updateEditorInfo();
+    }
+    function closeEditor() {
+      edOverlay.classList.remove('show');
+      endDrag();
+    }
+
+    btnEditor.addEventListener('pointerdown', (e) => { e.stopPropagation(); openEditor(); });
+    edClose.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeEditor(); });
+    edOverlay.addEventListener('pointerdown', (e) => { if (e.target === edOverlay) closeEditor(); });
+
+    edSelectBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const hits = raycaster.intersectObjects(allObjects, false);
+      for (const hit of hits) {
+        const entry = placed.find(en => en.mesh === hit.object);
+        if (entry) { selectEntry(entry); return; }
+      }
+      edInfo.textContent = '准星未对准任何物体';
+    });
+    edDeselectBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); deselectEntry(); });
+
+    edApplyPos.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!selectedEntry) return;
+      const x = parseFloat(edPx.value), y = parseFloat(edPy.value), z = parseFloat(edPz.value);
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+      selectedEntry.body.position.set(x, y, z);
+      selectedEntry.body.aabbNeedsUpdate = true;
+      selectedEntry.body.wakeUp();
+      selectedEntry.mesh.position.set(x, y, z);
+      syncSelectionBox();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'block_transform', id: selectedEntry.id, p: [x, y, z] }));
+      }
+    });
+
+    function applyEntryScale(entry, sx, sy, sz) {
+      entry.scale.set(sx, sy, sz);
+      entry.mesh.scale.set(sx, sy, sz);
+
+      const oldShapes = entry.body.shapes.slice();
+      for (const sh of oldShapes) entry.body.removeShape(sh);
+      const base = getCannonShape(entry.type);
+      const baseHalfExtents = base.halfExtents ? base.halfExtents.clone() : null;
+      const baseRadius = base.radius !== undefined ? base.radius : null;
+      let newShape;
+      if (entry.type === 'cube') {
+        const s = CFG.physicsSize;
+        newShape = new CANNON.Box(new CANNON.Vec3(s * sx, s * sy, s * sz));
+      } else if (entry.type === 'sphere') {
+        const s = CFG.physicsSize;
+        newShape = new CANNON.Sphere(s * Math.max(sx, sy, sz));
+      } else if (entry.type === 'cylinder' || entry.type === 'cone' || entry.type === 'pyramid') {
+        const s = CFG.physicsSize;
+        newShape = new CANNON.Cylinder(
+          entry.type === 'cylinder' ? s * sx : 0,
+          s * sx,
+          CFG.blockSize * sy,
+          6
+        );
+      } else if (entry.type === 'torus') {
+        const s = CFG.physicsSize;
+        newShape = new CANNON.Sphere(s * 0.85 * Math.max(sx, sy, sz));
+      } else {
+        const s = CFG.physicsSize;
+        newShape = new CANNON.Box(new CANNON.Vec3(s * sx, s * sy, s * sz));
+      }
+      entry.body.addShape(newShape);
+      entry.body.updateMassProperties();
+      entry.body.aabbNeedsUpdate = true;
+      entry.body.wakeUp();
+      syncSelectionBox();
+    }
+
+    edApplyScale.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!selectedEntry) return;
+      const sx = Math.max(0.1, parseFloat(edSx.value) || 1);
+      const sy = Math.max(0.1, parseFloat(edSy.value) || 1);
+      const sz = Math.max(0.1, parseFloat(edSz.value) || 1);
+      applyEntryScale(selectedEntry, sx, sy, sz);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'block_transform', id: selectedEntry.id, s: [sx, sy, sz] }));
+      }
+    });
+    edResetScale.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!selectedEntry) return;
+      applyEntryScale(selectedEntry, 1, 1, 1);
+      updateEditorInfo();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'block_transform', id: selectedEntry.id, s: [1, 1, 1] }));
+      }
+    });
+
+    edForceMag.addEventListener('input', () => {
+      edForceMagVal.textContent = edForceMag.value;
+    });
+
+    edNormalizeDir.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      let x = parseFloat(edFx.value) || 0;
+      let y = parseFloat(edFy.value) || 0;
+      let z = parseFloat(edFz.value) || 0;
+      const len = Math.hypot(x, y, z);
+      if (len < 0.0001) return;
+      edFx.value = (x / len).toFixed(2);
+      edFy.value = (y / len).toFixed(2);
+      edFz.value = (z / len).toFixed(2);
+    });
+
+    edApplyForce.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!selectedEntry) return;
+      let x = parseFloat(edFx.value) || 0;
+      let y = parseFloat(edFy.value) || 0;
+      let z = parseFloat(edFz.value) || 0;
+      const len = Math.hypot(x, y, z);
+      if (len < 0.0001) { edInfo.textContent = '方向不能为零'; return; }
+      const mag = parseFloat(edForceMag.value) || 0;
+      const nx = x / len, ny = y / len, nz = z / len;
+      selectedEntry.body.wakeUp();
+      selectedEntry.body.applyImpulse(
+        new CANNON.Vec3(nx * mag, ny * mag, nz * mag),
+        selectedEntry.body.position
+      );
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'block_impulse', id: selectedEntry.id, imp: [nx * mag, ny * mag, nz * mag] }));
+      }
+      edInfo.textContent = `已施加冲量 ${mag.toFixed(0)} 方向 (${nx.toFixed(2)}, ${ny.toFixed(2)}, ${nz.toFixed(2)})`;
+    });
+
+    function weldSelected() {
+      if (!selectedEntry) return;
+      const gid = selectedEntry.weldGroup ?? nextWeldId++;
+      const group = weldGroups.get(gid) ?? { id: gid, memberIds: new Set(), isDragging: false };
+      group.memberIds.add(selectedEntry.id);
+      weldGroups.set(gid, group);
+      selectedEntry.weldGroup = gid;
+      group.memberIds.forEach(id => {
+        const en = blockMap.get(id);
+        if (en) {
+          en.weldGroup = gid;
+          en.body.type = CANNON.Body.KINEMATIC;
+          en.body.mass = 0;
+          en.body.updateMassProperties();
+          en.body.velocity.set(0, 0, 0);
+          en.body.angularVelocity.set(0, 0, 0);
+        }
+      });
+      updateEditorInfo();
+      edWeldInfo.textContent = `物体 #${selectedEntry.id} 已加入焊接组 ${gid}（成员 ${group.memberIds.size}）`;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'weld', groupId: gid, members: [...group.memberIds] }));
+      }
+    }
+
+    function unweldSelected() {
+      if (!selectedEntry || selectedEntry.weldGroup == null) {
+        edWeldInfo.textContent = '该物体未焊接';
+        return;
+      }
+      const gid = selectedEntry.weldGroup;
+      const group = weldGroups.get(gid);
+      if (group) {
+        group.memberIds.forEach(id => {
+          const en = blockMap.get(id);
+          if (en) {
+            en.weldGroup = null;
+            en.body.type = CANNON.Body.DYNAMIC;
+            en.body.mass = 1;
+            en.body.updateMassProperties();
+            en.body.wakeUp();
+          }
+        });
+        weldGroups.delete(gid);
+      }
+      updateEditorInfo();
+      edWeldInfo.textContent = `焊接组 ${gid} 已解除`;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'unweld', groupId: gid }));
+      }
+    }
+
+    edWeld.addEventListener('pointerdown', (e) => { e.stopPropagation(); weldSelected(); });
+    edUnweld.addEventListener('pointerdown', (e) => { e.stopPropagation(); unweldSelected(); });
+
+    function startDrag(entry) {
+      if (!entry) return;
+      const group = entry.weldGroup != null ? weldGroups.get(entry.weldGroup) : null;
+      const members = group
+        ? [...group.memberIds].map(id => blockMap.get(id)).filter(Boolean)
+        : [entry];
+
+      const anchor = entry.mesh.position.clone();
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      dragPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), anchor);
+
+      dragRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      dragRaycaster.ray.intersectPlane(dragPlane, dragIntersect);
+      dragOffset.copy(anchor).sub(dragIntersect);
+
+      dragging = {
+        groupId: entry.weldGroup,
+        anchorEntry: entry,
+        members,
+        startPositions: members.map(m => m.body.position.clone()),
+        anchorStart: anchor.clone(),
+      };
+      members.forEach(m => { m.body.wakeUp(); m.body.velocity.set(0, 0, 0); m.body.angularVelocity.set(0, 0, 0); });
+      if (group) group.isDragging = true;
+      edInfo.textContent = `拖拽中… 组内 ${members.length} 个物体`;
+    }
+
+    function updateDrag() {
+      if (!dragging) return;
+      dragRaycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      if (!dragRaycaster.ray.intersectPlane(dragPlane, dragIntersect)) return;
+      const newAnchor = dragIntersect.clone().add(dragOffset);
+      const delta = newAnchor.clone().sub(dragging.anchorStart);
+
+      dragging.members.forEach((m, i) => {
+        const p = dragging.startPositions[i].clone().add(delta);
+        m.body.position.set(p.x, p.y, p.z);
+        m.body.velocity.set(0, 0, 0);
+        m.body.angularVelocity.set(0, 0, 0);
+        m.body.aabbNeedsUpdate = true;
+        m.mesh.position.copy(m.body.position);
+      });
+      syncSelectionBox();
+    }
+
+    function endDrag() {
+      if (!dragging) return;
+      if (dragging.groupId != null) {
+        const g = weldGroups.get(dragging.groupId);
+        if (g) g.isDragging = false;
+      }
+      const membersToWake = dragging.members;
+      dragging = null;
+      membersToWake.forEach(m => {
+        if (m.weldGroup == null) m.body.wakeUp();
+      });
+      edInfo.textContent = '拖拽结束';
+      updateEditorInfo();
+    }
+
+    edDragStart.addEventListener('pointerdown', (e) => { e.stopPropagation(); if (selectedEntry) startDrag(selectedEntry); });
+    edDragStop.addEventListener('pointerdown', (e) => { e.stopPropagation(); endDrag(); });
+
+    function sendDragSync(now) {
+      if (!dragging || now - lastDragSync < 50) return;
+      lastDragSync = now;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const a = dragging.anchorEntry.body;
+      ws.send(JSON.stringify({
+        type: 'weld_drag',
+        groupId: dragging.groupId,
+        members: dragging.members.map(m => m.id),
+        anchor: [a.position.x, a.position.y, a.position.z],
+        delta: [a.position.x - dragging.anchorStart.x,
+                a.position.y - dragging.anchorStart.y,
+                a.position.z - dragging.anchorStart.z]
+      }));
+    }
+    // ===== 编辑器系统结束 =====
+
+    function sendBlockStates() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const updates = [];
+      for (const entry of placed) {
+        if (entry.isStatic || entry.isDemo) continue;
+        const b = entry.body;
+        if (b.sleepState === CANNON.Body.SLEEPING) continue;
+        const speed = Math.hypot(b.velocity.x, b.velocity.y, b.velocity.z);
+        const angSpeed = Math.hypot(b.angularVelocity.x, b.angularVelocity.y, b.angularVelocity.z);
+        if (speed > 0.1 || angSpeed > 0.1) {
+          updates.push({
+            id: entry.id,
+            p: [b.position.x, b.position.y, b.position.z],
+            q: [b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w],
+            v: [b.velocity.x, b.velocity.y, b.velocity.z],
+            av: [b.angularVelocity.x, b.angularVelocity.y, b.angularVelocity.z]
+          });
+        }
+      }
+      if (updates.length > 0) ws.send(JSON.stringify({ type: 'block_states', updates }));
+    }
+
+    function applyBlockStates(updates) {
+      for (const upd of updates) {
+        const entry = blockMap.get(upd.id);
+        if (!entry || entry.isDemo) continue;
+        const dist = Math.hypot(
+          entry.body.position.x - upd.p[0],
+          entry.body.position.y - upd.p[1],
+          entry.body.position.z - upd.p[2]
+        );
+        if (dist > 1.5) {
+          entry.body.position.set(upd.p[0], upd.p[1], upd.p[2]);
+          entry.body.quaternion.set(upd.q[0], upd.q[1], upd.q[2], upd.q[3]);
+          entry.body.velocity.set(upd.v[0], upd.v[1], upd.v[2]);
+          entry.body.angularVelocity.set(upd.av[0], upd.av[1], upd.av[2]);
+          entry.body.wakeUp();
+        } else {
+          entry.body.velocity.set(upd.v[0], upd.v[1], upd.v[2]);
+          entry.body.angularVelocity.set(upd.av[0], upd.av[1], upd.av[2]);
+          entry.body.wakeUp();
+        }
+        entry.targetPos = new THREE.Vector3(upd.p[0], upd.p[1], upd.p[2]);
+        entry.targetQuat = new THREE.Quaternion(upd.q[0], upd.q[1], upd.q[2], upd.q[3]);
+      }
+    }
+
+    function csAppend(text, level) {
+      const line = document.createElement('div');
+      line.className = 'cs-line ' + (level || 'info');
+      line.textContent = text;
+      csLog.appendChild(line);
+      while (csLog.childElementCount > 400) csLog.removeChild(csLog.firstElementChild);
+      csLog.scrollTop = csLog.scrollHeight;
+    }
+
+    function openConsolePanel() {
+      csOverlay.classList.add('show');
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        csLog.innerHTML = '';
+        csStatus.textContent = isHost ? '房主 · 已连接' : '房员 · 已连接';
+        csStatus.style.color = '#4ecdc4';
+        ws.send(JSON.stringify({ type: 'console_fetch' }));
+      } else {
+        csStatus.textContent = '未连接';
+        csStatus.style.color = '#ff6b6b';
+        csAppend('当前未连接到服务器', 'error');
+      }
+      setTimeout(() => { try { csInput.focus(); } catch (e) {} }, 120);
+    }
+    function closeConsolePanel() {
+      csOverlay.classList.remove('show');
+      try { csInput.blur(); } catch (e) {}
+    }
+
+    function csSubmit() {
+      const cmd = csInput.value.trim();
+      if (!cmd) return;
+      csInput.value = '';
+
+      if (cmd.toLowerCase() === 'chujian') {
+        csAppend('> ' + cmd, 'cmd');
+        csAppend('调试面板已开启', 'warn');
+        openDebugPanel();
+        return;
+      }
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        csAppend('未连接到服务器', 'error');
+        return;
+      }
+      csAppend('> ' + cmd, 'cmd');
+      ws.send(JSON.stringify({ type: 'console_cmd', cmd }));
+    }
+
+    btnConsole.addEventListener('pointerdown', (e) => { e.stopPropagation(); openConsolePanel(); });
+    csCloseBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeConsolePanel(); });
+    csSendBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); csSubmit(); });
+    csInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); csSubmit(); }
+    });
+    csOverlay.addEventListener('pointerdown', (e) => { if (e.target === csOverlay) closeConsolePanel(); });
+
+    function tryEnterFullscreen() {
+      const el = document.documentElement;
+      if (document.fullscreenElement || document.webkitFullscreenElement) return;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+      if (req) {
+        try {
+          const p = req.call(el);
+          if (p && p.catch) p.catch(() => {});
+        } catch (e) {}
+      }
+    }
+    function toggleFullscreen() {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+        if (exit) { try { exit.call(document); } catch (e) {} }
+      } else {
+        tryEnterFullscreen();
+      }
+    }
+    dom.btnFullscreen.addEventListener('pointerdown', (e) => { e.stopPropagation(); toggleFullscreen(); });
+
+    function openDebugPanel() {
+      dbgPanel.classList.add('visible');
+      dbgPanel.style.left = 'auto';
+      dbgPanel.style.top = '80px';
+      dbgPanel.style.right = '10px';
+    }
+    function closeDebugPanel() { dbgPanel.classList.remove('visible'); }
+
+    dbgClose.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeDebugPanel(); });
+    dbgFly.addEventListener('change', (e) => {
+      cheatFly = e.target.checked;
+      world.gravity.set(0, cheatFly ? 0 : CFG.gravity, 0);
+      if (cheatFly) playerBody.velocity.set(0, 0, 0);
+    });
+    dbgGod.addEventListener('change', (e) => { cheatGod = e.target.checked; });
+    dbgRange.addEventListener('change', (e) => { cheatRange = e.target.checked; });
+    dbgAuto.addEventListener('change', (e) => { cheatAuto = e.target.checked; });
+
+    dbgSkyBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const current = '#' + scene.background.getHexString();
+      openColorPanel('sky', current);
+    });
+
+    dbgFog.addEventListener('input', (e) => {
+      const far = parseFloat(e.target.value);
+      if (scene.fog) scene.fog.far = Math.max(1, far);
+    });
+
+    dbgGravity.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      CFG.gravity = v;
+      if (!cheatFly) world.gravity.set(0, v, 0);
+    });
+    dbgSpeed.addEventListener('input', (e) => { CFG.moveSpeed = parseFloat(e.target.value); });
+    dbgJump.addEventListener('input', (e) => { CFG.jumpForce = parseFloat(e.target.value); });
+
+    document.getElementById('dbg-spawn').addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const n = parseInt(dbgSpawnCount.value, 10);
+      spawnBatch(Number.isFinite(n) ? n : 30);
+    });
+    dbgSpawnCount.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        const n = parseInt(dbgSpawnCount.value, 10);
+        spawnBatch(Number.isFinite(n) ? n : 30);
+      }
+    });
+    document.getElementById('dbg-random').addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      shapes.colorIndex = Math.floor(Math.random() * shapes.colors.length);
+      updateUI();
+    });
+    document.getElementById('dbg-clear').addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      clearAllRemote();
+    });
+
+    let dbgDragData = null;
+    dbgDrag.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.dbg-close')) return;
+      const rect = dbgPanel.getBoundingClientRect();
+      dbgDragData = { id: e.pointerId, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
+      dbgDrag.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!dbgDragData || dbgDragData.id !== e.pointerId) return;
+      let x = e.clientX - dbgDragData.offsetX;
+      let y = e.clientY - dbgDragData.offsetY;
+      const r = dbgPanel.getBoundingClientRect();
+      x = Math.max(0, Math.min(window.innerWidth - r.width, x));
+      y = Math.max(0, Math.min(window.innerHeight - r.height, y));
+      dbgPanel.style.left = x + 'px';
+      dbgPanel.style.top = y + 'px';
+      dbgPanel.style.right = 'auto';
+    });
+    document.addEventListener('pointerup', (e) => {
+      if (dbgDragData && dbgDragData.id === e.pointerId) dbgDragData = null;
+    });
+    document.addEventListener('pointercancel', () => { dbgDragData = null; });
+
+    function spawnBatch(count) {
+      const num = Math.min(200, Math.max(1, Math.floor(count)));
+      const type = shapes.types[shapes.index];
+      const color = shapes.colors[shapes.colorIndex];
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      const base = camera.position.clone().add(dir.multiplyScalar(3));
+      const payload = [];
+      for (let i = 0; i < num; i++) {
+        const ang = (i / num) * Math.PI * 2 + Math.random() * 0.5;
+        const r = 1.5 + Math.random() * 3;
+        const x = base.x + Math.cos(ang) * r;
+        const z = base.z + Math.sin(ang) * r;
+        const y = base.y + Math.random() * 2;
+        const entry = createPlaced(type, color, new THREE.Vector3(x, y, z));
+        payload.push({ id: entry.id, shapeType: type, color, pos: [x, y, z] });
+      }
+      if (ws && ws.readyState === WebSocket.OPEN && payload.length > 0) {
+        ws.send(JSON.stringify({ type: 'add_blocks_batch', blocks: payload }));
+      }
+      updateUI();
+    }
+
+    function clearAllRemote() {
+      const toRemove = placed.filter(e => !e.isDemo);
+      for (const entry of toRemove) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'remove_block', id: entry.id }));
+        }
+        removePlaced(entry);
+      }
+      for (const entry of placed.slice()) {
+        if (entry.isDemo) removePlaced(entry);
+      }
+      deselectEntry();
+      updateUI();
+    }
+
+    function gpSetStatus(ok, text) {
+      gpStatus.textContent = text;
+      gpStatus.style.color = ok ? '#4ecdc4' : '#ff6b6b';
+      gpBanner.textContent = ok ? '数据会在打开时自动刷新' : '未连接到服务器';
+    }
+    function gpRenderInfo(stats) {
+      if (!stats) return;
+      gpInfo.innerHTML = '';
+      const lines = [
+        ['IP 地址', stats.ip || '未知'],
+        ['WebSocket', stats.wsPort || '--'],
+        ['HTTP', stats.httpPort || '--'],
+        ['在线玩家', stats.count ?? '--'],
+        ['HTML 目录', stats.dir || '--'],
+      ];
+      lines.forEach(([k, v]) => {
+        const div = document.createElement('div');
+        div.innerHTML = `${k}：<b>${v}</b>`;
+        gpInfo.appendChild(div);
+      });
+    }
+    function gpRenderPlayers(players) {
+      gpPlayers.innerHTML = '';
+      if (!players || players.length === 0) {
+        const d = document.createElement('div');
+        d.className = 'gp-empty';
+        d.textContent = '暂无玩家';
+        gpPlayers.appendChild(d);
+        return;
+      }
+      players.forEach((p, idx) => {
+        const row = document.createElement('div');
+        row.className = 'gp-player';
+        const name = document.createElement('div');
+        name.className = 'gp-pname';
+        name.textContent = `${idx + 1}. ${p.name}`;
+        const role = document.createElement('div');
+        role.className = 'gp-prole' + (p.role === 'host' ? '' : ' member');
+        role.textContent = p.role === 'host' ? '房主' : '房员';
+        const kick = document.createElement('button');
+        kick.className = 'gp-kick';
+        kick.title = '踢出';
+        kick.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
+        kick.addEventListener('pointerdown', (e) => {
+          e.stopPropagation();
+          if (!ws || ws.readyState !== WebSocket.OPEN) { gpBanner.textContent = '未连接'; return; }
+          ws.send(JSON.stringify({ type: 'console_cmd', cmd: 'kick ' + (idx + 1) }));
+          gpBanner.textContent = `已发送踢出：${p.name}`;
+          setTimeout(refreshGpanel, 300);
+        });
+        row.appendChild(name);
+        row.appendChild(role);
+        row.appendChild(kick);
+        gpPlayers.appendChild(row);
+      });
+    }
+    function refreshGpanel() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        gpSetStatus(false, '未连接');
+        gpInfo.textContent = '等待连接...';
+        gpPlayers.innerHTML = '<div class="gp-empty">暂无玩家</div>';
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'console_cmd', cmd: 'gp_fetch' }));
+    }
+    function openGpanel() {
+      gpanelOverlay.classList.add('show');
+      gpBanner.textContent = '正在加载状态...';
+      refreshGpanel();
+    }
+    function closeGpanel() { gpanelOverlay.classList.remove('show'); }
+
+    btnGpanel.addEventListener('pointerdown', (e) => { e.stopPropagation(); openGpanel(); });
+    gpClose.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeGpanel(); });
+    gpanelOverlay.addEventListener('pointerdown', (e) => { if (e.target === gpanelOverlay) closeGpanel(); });
+
+    gpRefresh.addEventListener('pointerdown', (e) => { e.stopPropagation(); refreshGpanel(); });
+    gpSay.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const text = gpAnnounce.value.trim();
+      if (!text) { gpBanner.textContent = '请输入公告内容'; return; }
+      if (!ws || ws.readyState !== WebSocket.OPEN) { gpBanner.textContent = '未连接'; return; }
+      ws.send(JSON.stringify({ type: 'console_cmd', cmd: 'say ' + text }));
+      gpAnnounce.value = '';
+      gpBanner.textContent = '公告已广播';
+    });
+    gpKickall.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!ws || ws.readyState !== WebSocket.OPEN) { gpBanner.textContent = '未连接'; return; }
+      ws.send(JSON.stringify({ type: 'console_cmd', cmd: 'kickall' }));
+      gpBanner.textContent = '已发送全体踢出';
+      setTimeout(refreshGpanel, 300);
+    });
+    gpRestartHttp.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!ws || ws.readyState !== WebSocket.OPEN) { gpBanner.textContent = '未连接'; return; }
+      ws.send(JSON.stringify({ type: 'console_cmd', cmd: 'http restart' }));
+      gpBanner.textContent = '已发送重启 HTTP';
+    });
+    gpStop.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      if (!ws || ws.readyState !== WebSocket.OPEN) { gpBanner.textContent = '未连接'; return; }
+      ws.send(JSON.stringify({ type: 'console_cmd', cmd: 'stop' }));
+      gpBanner.textContent = '已发送停止指令';
+    });
+
+    function connectNetwork() {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) { try { ws.close(); } catch(e) {} }
+      ws = new WebSocket(SERVER_URL);
+
+      ws.onopen = () => {
+        connected = true;
+        dom.netStatus.textContent = "已连接网络";
+        dom.netStatus.style.color = "#4ecdc4";
+        csStatus.textContent = '已连接';
+        csStatus.style.color = '#4ecdc4';
+        gpSetStatus(true, '已连接');
+      };
+
+      ws.onmessage = (event) => {
+        let msg;
+        try { msg = JSON.parse(event.data); } catch (e) { return; }
+
+        if (msg.type === 'server_log') {
+          csAppend(`[${msg.time || '--:--:--'}] ${msg.msg}`, msg.level);
+          return;
+        }
+        if (msg.type === 'console_clear') {
+          csLog.innerHTML = '';
+          return;
+        }
+        if (msg.type === 'server_notice') {
+          csAppend(`[公告] ${msg.msg}`, 'warn');
+          appendChatMessage('系统', msg.msg, false, true);
+          dom.netStatus.textContent = `公告: ${msg.msg}`;
+          dom.netStatus.style.color = "#ff9f43";
+          gpBanner.textContent = `公告: ${msg.msg}`;
+          setTimeout(() => {
+            if (connected) {
+              dom.netStatus.textContent = "已连接网络";
+              dom.netStatus.style.color = "#4ecdc4";
+            }
+          }, 4000);
+          return;
+        }
+        if (msg.type === 'gp_stats') {
+          gpSetStatus(true, '已连接');
+          gpRenderInfo(msg.stats || {});
+          gpRenderPlayers(msg.players || []);
+          return;
+        }
+        if (msg.type === 'chat_message') {
+          const from = msg._from;
+          const name = msg.fromName || '玩家';
+          const text = msg.text || '';
+          const t = msg.time || nowTimeStr();
+          if (!text) return;
+          if (from == null || from === myId) {
+            if (!chatHistory.some(h => !h.system && h.text === text && h.time === t)) {
+              appendChatMessage(name, text, true, false, t);
+            }
+            return;
+          }
+          appendChatMessage(name, text, false, false, t);
+          showBubble(from, text);
+          return;
+        }
+        if (msg.type === 'sky_color') {
+          if (msg.color) applySkyColor(msg.color);
+          return;
+        }
+        if (msg.type === 'role') {
+          myId = msg.id;
+          isHost = (msg.role === 'host');
+          if (playerProfile.name === '玩家') {
+            playerProfile.name = isHost ? '房主' : '房员';
+          }
+          refreshLocalLabel();
+          dom.roleText.textContent = (isHost ? '你是房主' : '你是房员') + '，开始建造！';
+          sendProfile();
+          if (!isHost) ws.send(JSON.stringify({ type: 'request_profile' }));
+          return;
+        }
+        if (msg.type === 'request_profile') { sendProfile(); return; }
+        if (msg.type === 'kicked') { wasKicked = true; ws.close(); return; }
+        if (msg.type === 'profile') {
+          const from = msg._from;
+          if (from == null || from === myId) return;
+          const remoteHost = (msg.role === 'host');
+          if (!remotePlayers.has(from)) createRemotePlayer(from, msg.color, msg.name, remoteHost);
+          else updateRemoteProfile(from, msg.color, msg.name, remoteHost);
+          return;
+        }
+        if (msg.type === 'player_leave') { removeRemotePlayer(msg.id); return; }
+        if (msg.type === 'player_move') {
+          const from = msg._from;
+          if (from == null || from === myId) return;
+          let rp = remotePlayers.get(from);
+          if (!rp) { createRemotePlayer(from, '#4ecdc4', '玩家', false); rp = remotePlayers.get(from); }
+          const nx = msg.pos[0], ny = msg.pos[1], nz = msg.pos[2];
+          const d = Math.hypot(nx - rp.targetPos.x, ny - rp.targetPos.y, nz - rp.targetPos.z);
+          if (d > 3 || ny < -5) {
+            if (rp.remoteBody) {
+              rp.remoteBody.position.set(nx, ny, nz);
+              rp.remoteBody.velocity.set(0, 0, 0);
+            }
+            rp.group.position.set(nx, ny, nz);
+          }
+          rp.targetPos.set(nx, ny, nz);
+          rp.hasTarget = true;
+          return;
+        }
+        if (msg.type === 'add_block') {
+          createPlaced(msg.shapeType, msg.color, new THREE.Vector3(msg.pos[0], msg.pos[1], msg.pos[2]), false, msg.id ?? null);
+          updateUI();
+          return;
+        }
+        if (msg.type === 'add_blocks_batch') {
+          const blocks = msg.blocks || [];
+          for (const b of blocks) {
+            if (!b || !b.pos) continue;
+            createPlaced(b.shapeType, b.color, new THREE.Vector3(b.pos[0], b.pos[1], b.pos[2]), false, b.id ?? null);
+          }
+          updateUI();
+          return;
+        }
+        if (msg.type === 'remove_block') {
+          const entry = blockMap.get(msg.id);
+          if (entry && !entry.isDemo) { removePlaced(entry); updateUI(); }
+          return;
+        }
+        if (msg.type === 'block_states') {
+          applyBlockStates(msg.updates);
+          return;
+        }
+        if (msg.type === 'block_transform') {
+          const entry = blockMap.get(msg.id);
+          if (!entry) return;
+          if (msg.p) { entry.body.position.set(msg.p[0], msg.p[1], msg.p[2]); entry.mesh.position.set(msg.p[0], msg.p[1], msg.p[2]); entry.body.aabbNeedsUpdate = true; entry.body.wakeUp(); }
+          if (msg.s) { applyEntryScale(entry, msg.s[0], msg.s[1], msg.s[2]); }
+          return;
+        }
+        if (msg.type === 'block_impulse') {
+          const entry = blockMap.get(msg.id);
+          if (!entry) return;
+          entry.body.wakeUp();
+          entry.body.applyImpulse(new CANNON.Vec3(msg.imp[0], msg.imp[1], msg.imp[2]), entry.body.position);
+          return;
+        }
+        if (msg.type === 'weld') {
+          const gid = msg.groupId;
+          const members = msg.members || [];
+          const group = weldGroups.get(gid) ?? { id: gid, memberIds: new Set(), isDragging: false };
+          members.forEach(id => {
+            group.memberIds.add(id);
+            const en = blockMap.get(id);
+            if (en) {
+              en.weldGroup = gid;
+              en.body.type = CANNON.Body.KINEMATIC;
+              en.body.mass = 0;
+              en.body.updateMassProperties();
+              en.body.velocity.set(0, 0, 0);
+            }
+          });
+          weldGroups.set(gid, group);
+          if (gid >= nextWeldId) nextWeldId = gid + 1;
+          return;
+        }
+        if (msg.type === 'unweld') {
+          const gid = msg.groupId;
+          const group = weldGroups.get(gid);
+          if (group) {
+            group.memberIds.forEach(id => {
+              const en = blockMap.get(id);
+              if (en) {
+                en.weldGroup = null;
+                en.body.type = CANNON.Body.DYNAMIC;
+                en.body.mass = 1;
+                en.body.updateMassProperties();
+                en.body.wakeUp();
+              }
+            });
+            weldGroups.delete(gid);
+          }
+          return;
+        }
+        if (msg.type === 'weld_drag') {
+          const gid = msg.groupId;
+          const group = weldGroups.get(gid);
+          if (group) {
+            group.memberIds.forEach(id => {
+              const en = blockMap.get(id);
+              if (en && msg.anchor) {
+                en.body.position.set(msg.anchor[0], msg.anchor[1], msg.anchor[2]);
+                en.body.aabbNeedsUpdate = true;
+              }
+            });
+          }
+          return;
+        }
+        if (msg.type === 'effect') {
+          const origin = msg.pos ? { x: msg.pos[0], y: msg.pos[1], z: msg.pos[2] } : null;
+          if (msg.action === 'explode') explode(origin);
+          else if (msg.action === 'vacuum') vacuum(origin);
+          else if (msg.action === 'force') applyForce(msg.attract, origin);
+          return;
+        }
+      };
+
+      ws.onclose = () => {
+        connected = false;
+        remotePlayers.forEach((rp, id) => removeRemotePlayer(id));
+        myId = null;
+        csStatus.textContent = '未连接';
+        csStatus.style.color = '#ff6b6b';
+        gpSetStatus(false, '未连接');
+        if (wasKicked) { dom.netStatus.textContent = "你已被踢出"; dom.netStatus.style.color = "#ff6b6b"; return; }
+        dom.netStatus.textContent = "连接断开，重连中...";
+        dom.netStatus.style.color = "#ff6b6b";
+        reconnectTimer = setTimeout(connectNetwork, 2000);
+      };
+
+      ws.onerror = () => { try { ws.close(); } catch(e) {} };
+    }
+
+    let joyPointerId = null;
+    const joyMaxDist = 30;
+    const joyValue = { x: 0, y: 0 };
+
+    function updateJoystick(clientX, clientY) {
+      const rect = dom.joystickArea.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let dx = clientX - cx;
+      let dy = clientY - cy;
+      const dist = Math.hypot(dx, dy);
+      const clamped = Math.min(dist, joyMaxDist);
+      if (dist > 0.001) { dx = dx / dist * clamped; dy = dy / dist * clamped; }
+      joyValue.x = dx / joyMaxDist;
+      joyValue.y = -dy / joyMaxDist;
+      dom.joystickThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+    function resetJoystick() {
+      joyValue.x = 0; joyValue.y = 0;
+      dom.joystickThumb.style.transform = 'translate(0px, 0px)';
+      joyPointerId = null;
+    }
+    dom.joystickArea.addEventListener('pointerdown', (e) => { e.preventDefault(); joyPointerId = e.pointerId; dom.joystickArea.setPointerCapture(e.pointerId); updateJoystick(e.clientX, e.clientY); });
+    dom.joystickArea.addEventListener('pointermove', (e) => { if (joyPointerId === null) return; updateJoystick(e.clientX, e.clientY); });
+    dom.joystickArea.addEventListener('pointerup', (e) => { if (joyPointerId === e.pointerId) resetJoystick(); });
+    dom.joystickArea.addEventListener('pointercancel', resetJoystick);
+
+    let viewDrag = { active: false, id: null, lastX: 0, lastY: 0 };
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    document.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button') || e.target.closest('#toolbar') || e.target.closest('#control-row') || e.target.closest('#start-overlay') || e.target.closest('#color-overlay') || e.target.closest('#profile-overlay') || e.target.closest('#console-overlay') || e.target.closest('#chat-overlay') || e.target.closest('#gpanel-overlay') || e.target.closest('#editor-overlay') || e.target.closest('#debug-panel') || e.target.closest('#hud')) return;
+      if (e.target.closest('#joystick-area')) return;
+      viewDrag.active = true; viewDrag.id = e.pointerId; viewDrag.lastX = e.clientX; viewDrag.lastY = e.clientY; e.preventDefault();
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!viewDrag.active || viewDrag.id !== e.pointerId) return;
+      const dx = e.clientX - viewDrag.lastX; const dy = e.clientY - viewDrag.lastY;
+      viewDrag.lastX = e.clientX; viewDrag.lastY = e.clientY;
+      euler.y -= dx * 0.008; euler.x -= dy * 0.008;
+      euler.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, euler.x));
+      camera.quaternion.setFromEuler(euler);
+    });
+    document.addEventListener('pointerup', (e) => { if (viewDrag.id === e.pointerId) { viewDrag.active = false; viewDrag.id = null; } });
+    document.addEventListener('pointercancel', () => { viewDrag.active = false; viewDrag.id = null; });
+
+    const keys = {};
+    document.addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      keys[e.code] = true;
+      if (e.code === 'Space') e.preventDefault();
+    });
+    document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    dom.btnJump.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      playerBody.wakeUp();
+      if (cheatFly) {
+        flyUpPressed = true;
+      } else {
+        if (isOnGround) { playerBody.velocity.y = CFG.jumpForce; isOnGround = false; }
+      }
+    });
+    dom.btnJump.addEventListener('pointerup', () => { if (cheatFly) flyUpPressed = false; });
+    dom.btnJump.addEventListener('pointercancel', () => { if (cheatFly) flyUpPressed = false; });
+    dom.btnJump.addEventListener('pointerleave', () => { if (cheatFly) flyUpPressed = false; });
+
+    dom.btnPlace.addEventListener('pointerdown', () => {
+      const p = getPlacement();
+      if (p) {
+        const entry = createPlaced(shapes.types[shapes.index], shapes.colors[shapes.colorIndex], p);
+        updateUI();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'add_block', id: entry.id, shapeType: shapes.types[shapes.index], color: shapes.colors[shapes.colorIndex], pos: [p.x, p.y, p.z] }));
+        }
+      }
+    });
+    dom.btnRemove.addEventListener('pointerdown', () => {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const hits = raycaster.intersectObjects(allObjects, false);
+      for (const hit of hits) {
+        const entry = placed.find(e => e.mesh === hit.object);
+        if (entry) {
+          if (selectedEntry === entry) deselectEntry();
+          removePlaced(entry);
+          updateUI();
+          if (!entry.isDemo && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'remove_block', id: entry.id }));
+          }
+          break;
+        }
+      }
+    });
+    dom.btnNext.addEventListener('pointerdown', () => { shapes.index = (shapes.index + 1) % shapes.types.length; updateUI(); });
+    dom.btnGrab.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      applyForce(true, { x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'force', attract: true, pos }));
+    });
+    dom.btnPush.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      applyForce(false, { x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'force', attract: false, pos }));
+    });
+    dom.btnExplode.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      explode({ x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'explode', pos }));
+    });
+    dom.btnVacuum.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      vacuum({ x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'vacuum', pos }));
+    });
+    dom.btnColor.addEventListener('pointerdown', (e) => { e.stopPropagation(); openColorPanel('block', shapes.colors[shapes.colorIndex]); });
+    dom.btnProfile.addEventListener('pointerdown', (e) => { e.stopPropagation(); openProfile(); });
+
+    dom.startOverlay.addEventListener('click', () => {
+      tryEnterFullscreen();
+      dom.startOverlay.classList.add('hidden');
+    }, { once: true });
+
+    const demos = [[0, 1, -2, 'cube', '#ff6b6b'], [3, 1, 1, 'sphere', '#4ecdc4'], [-3, 1, 2, 'cylinder', '#ffe66d'], [2, 1, 3, 'pyramid', '#a29bfe'], [-2, 1, -3, 'cone', '#00d2d3'], [0, 1, 4, 'torus', '#fd79a8']];
+    demos.forEach(([x, y, z, type, color]) => {
+      const entry = createPlaced(type, color, new THREE.Vector3(x, y, z));
+      entry.isDemo = true;
+      blockMap.delete(entry.id);
+    });
+    updateUI();
+
+    window.addEventListener('resize', () => {
+      const w = container.clientWidth; const h = container.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    });
+
+    const clock = new THREE.Clock();
+    let stats = { frames: 0, time: 0 };
+
+    function respawnPlayer() {
+      playerBody.position.set(0, 2, 8);
+      playerBody.velocity.set(0, 0, 0);
+      playerBody.angularVelocity.set(0, 0, 0);
+      playerBody.quaternion.set(0, 0, 0, 1);
+      playerBody.wakeUp();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.033);
+      const now = performance.now();
+
+      world.step(1 / 60, dt, 5);
+      isOnGround = playerBody.position.y <= 0.5 && Math.abs(playerBody.velocity.y) < 0.5;
+
+      const dead = 0.15;
+      let mx = 0, mz = 0;
+      if (Math.abs(joyValue.x) > dead) mx = joyValue.x;
+      if (Math.abs(joyValue.y) > dead) mz = joyValue.y;
+      if (keys['KeyW']) mz = 1; else if (keys['KeyS']) mz = -1;
+      if (keys['KeyA']) mx = -1; else if (keys['KeyD']) mx = 1;
+      const len = Math.hypot(mx, mz);
+      if (len > 1) { mx /= len; mz /= len; }
+
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0; if (forward.length() > 0.001) forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+      const dir = new THREE.Vector3().addScaledVector(forward, mz).addScaledVector(right, mx);
+
+      if (cheatFly) {
+        const speed = CFG.moveSpeed * 1.2;
+        if (dir.length() > 0.001) {
+          dir.normalize();
+          playerBody.velocity.x = dir.x * speed;
+          playerBody.velocity.z = dir.z * speed;
+        } else {
+          playerBody.velocity.x = 0;
+          playerBody.velocity.z = 0;
+        }
+        const up = flyUpPressed || keys['Space'];
+        const down = keys['ShiftLeft'] || keys['ShiftRight'];
+        if (up && !down) playerBody.velocity.y = speed * 0.8;
+        else if (down && !up) playerBody.velocity.y = -speed * 0.8;
+        else playerBody.velocity.y = 0;
+      } else {
+        if (dir.length() > 0.001) {
+          dir.normalize();
+          playerBody.wakeUp();
+          playerBody.velocity.x = dir.x * CFG.moveSpeed;
+          playerBody.velocity.z = dir.z * CFG.moveSpeed;
+        } else {
+          if (playerBody.sleepState !== CANNON.Body.SLEEPING) {
+            playerBody.velocity.x *= 0.92;
+            playerBody.velocity.z *= 0.92;
+          }
+        }
+        if (keys['Space'] && isOnGround) {
+          playerBody.wakeUp();
+          playerBody.velocity.y = CFG.jumpForce;
+          isOnGround = false;
+        }
+      }
+
+      const pos = playerBody.position;
+      const limit = CFG.worldSize + 0.5;
+      if (pos.x > limit || pos.x < -limit || pos.z > limit || pos.z < -limit || pos.y < -5) {
+        respawnPlayer();
+      } else if (!cheatGod && pos.y < -10) {
+        respawnPlayer();
+      }
+
+      playerGroup.position.copy(playerBody.position);
+      playerMesh.quaternion.copy(playerBody.quaternion);
+
+      for (const entry of placed) {
+        entry.mesh.position.copy(entry.body.position);
+        entry.mesh.quaternion.copy(entry.body.quaternion);
+      }
+
+      remotePlayers.forEach(rp => {
+        if (rp.hasTarget && rp.remoteBody) {
+          const dx = rp.targetPos.x - rp.remoteBody.position.x;
+          const dy = rp.targetPos.y - rp.remoteBody.position.y;
+          const dz = rp.targetPos.z - rp.remoteBody.position.z;
+          const dist = Math.hypot(dx, dy, dz);
+          if (dist > 3) {
+            rp.remoteBody.position.set(rp.targetPos.x, rp.targetPos.y, rp.targetPos.z);
+            rp.remoteBody.velocity.set(0, 0, 0);
+            rp.remoteBody.angularVelocity.set(0, 0, 0);
+          } else {
+            rp.remoteBody.velocity.set(dx * 10, dy * 10, dz * 10);
+          }
+          rp.group.position.copy(rp.remoteBody.position);
+        }
+      });
+
+      updateBubbles();
+      if (dragging) { updateDrag(); sendDragSync(now); }
+      if (selectedEntry) syncSelectionBox();
+
+      const camPos = new THREE.Vector3().copy(playerBody.position);
+      camPos.y += 0.6;
+      camera.position.copy(camPos);
+
+      if (cheatAuto && !cheatFly) {
+        autoTimer += dt;
+        if (autoTimer > 0.2) {
+          autoTimer = 0;
+          const pos = getPlacement();
+          if (pos) {
+            const entry = createPlaced(shapes.types[shapes.index], shapes.colors[shapes.colorIndex], pos);
+            updateUI();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'add_block', id: entry.id, shapeType: shapes.types[shapes.index], color: shapes.colors[shapes.colorIndex], pos: [pos.x, pos.y, pos.z] }));
+            }
+          }
+        }
+      }
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        if (now - lastSyncTime > 50) {
+          lastSyncTime = now;
+          ws.send(JSON.stringify({ type: 'player_move', pos: [playerBody.position.x, playerBody.position.y, playerBody.position.z] }));
+        }
+        if (now - lastBlockSyncTime > 33) {
+          lastBlockSyncTime = now;
+          sendBlockStates();
+        }
+      }
+
+      stats.frames++;
+      if (!stats.time) stats.time = now;
+      if (now - stats.time >= 500) {
+        dom.fpsVal.textContent = Math.round(stats.frames / ((now - stats.time) / 1000));
+        stats.frames = 0; stats.time = now;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    connectNetwork();
+    animate();
+  </script>
+</body>
+</html>

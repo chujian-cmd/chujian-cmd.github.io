@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>体素沙盒 · 多人联机版</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', 'PingFang SC', sans-serif; overflow: hidden; background: #0b0f1a; user-select: none; touch-action: none; position: fixed; width: 100%; height: 100%; }
+    #scene-container { width: 100vw; height: 100vh; background: #151e2e; overflow: hidden; position: relative; }
+    #scene-container canvas { display: block; width: 100% !important; height: 100% !important; }
+    
+    #hud { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 14px; padding: 6px 20px; background: rgba(8, 14, 30, 0.75); border-radius: 40px; border: 1px solid rgba(255,255,255,0.06); color: #b0c8e8; font-size: 0.6rem; pointer-events: none; white-space: nowrap; box-shadow: 0 4px 24px rgba(0,0,0,0.3); }
+    #hud .dot { width: 16px; height: 16px; border-radius: 4px; display: inline-block; border: 1.5px solid rgba(255,255,255,0.1); margin-right: 4px; }
+    #hud .name { color: #e0ecff; font-weight: 600; }
+    #hud .right { display: flex; gap: 12px; font-family: monospace; font-size: 0.5rem; color: #4ecdc4; }
+    
+    #bottom-controls { position: absolute; bottom: 16px; left: 0; right: 0; z-index: 30; display: flex; flex-direction: column; gap: 8px; padding: 0 12px; pointer-events: none; }
+    #bottom-controls > * { pointer-events: auto; }
+
+    #toolbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; position: relative; }
+    .tool-group { display: flex; gap: 6px; align-items: center; }
+    .btn-icon { width: 42px; height: 42px; border: none; border-radius: 12px; background: rgba(0, 0, 0, 0.55); color: #ffffff; display: flex; align-items: center; justify-content: center; cursor: pointer; touch-action: none; transition: 0.08s; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 2px 10px rgba(0,0,0,0.3); font-family: inherit; }
+    .btn-icon:active { transform: scale(0.85); background: rgba(78,205,196,0.35); }
+    .btn-icon.action:active { background: rgba(255,107,107,0.35); }
+    .btn-icon svg { width: 22px; height: 22px; fill: currentColor; display: block; }
+    
+    #shape-indicator { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.45); padding: 3px 12px 3px 6px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.05); }
+    #shape-dot { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid rgba(255,255,255,0.1); flex-shrink: 0; }
+    #shape-name { color: #e0ecff; font-size: 0.6rem; font-weight: 500; }
+
+    #control-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+    #joystick-area { position: relative; width: 100px; height: 100px; touch-action: none; flex-shrink: 0; }
+    #joystick-base { position: absolute; inset: 0; border-radius: 50%; background: transparent; border: 2px solid rgba(255,255,255,0.18); }
+    #joystick-thumb { position: absolute; width: 44%; height: 44%; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #8cf0e8, #1f8a82); border: 2.5px solid rgba(255,255,255,0.25); box-shadow: 0 0 20px rgba(78,205,196,0.25); top: 28%; left: 28%; pointer-events: none; transition: none; }
+    #btn-jump { width: 80px; height: 80px; border: none; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #ff6b6b, #d63031); box-shadow: 0 6px 24px rgba(255,107,107,0.25), inset 0 -4px 0 rgba(0,0,0,0.1); cursor: pointer; touch-action: none; transition: 0.06s; display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.08); }
+    #btn-jump:active { transform: scale(0.85); box-shadow: 0 3px 12px rgba(255,107,107,0.15); }
+    #btn-jump svg { width: 32px; height: 32px; fill: #fff; }
+
+    #color-overlay, #profile-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; opacity: 0; visibility: hidden; transition: opacity 0.25s ease, visibility 0.25s ease; }
+    #profile-overlay { z-index: 210; }
+    #color-overlay.show, #profile-overlay.show { opacity: 1; visibility: visible; }
+    #color-panel, #profile-panel { background: rgba(18, 26, 48, 0.98); border: 1.5px solid rgba(78,205,196,0.25); border-radius: 28px; padding: 22px 22px 18px; width: 300px; max-width: 88vw; box-shadow: 0 24px 80px rgba(0,0,0,0.7); transform: scale(0.88) translateY(12px); opacity: 0; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease; display: flex; flex-direction: column; gap: 14px; }
+    #color-overlay.show #color-panel, #profile-overlay.show #profile-panel { transform: scale(1) translateY(0); opacity: 1; }
+    
+    .cp-header, .pf-header { display: flex; align-items: center; justify-content: space-between; color: #e0ecff; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.5px; }
+    .cp-header .cp-preview { width: 32px; height: 32px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.12); background: #4ecdc4; transition: background 0.1s; }
+    .cp-row, .pf-row { display: flex; flex-direction: column; gap: 6px; }
+    .cp-row label, .pf-row label { color: #8aa4c8; font-size: 0.65rem; display: flex; justify-content: space-between; font-weight: 500; }
+    .cp-row label span { color: #4ecdc4; font-family: monospace; font-size: 0.6rem; }
+    .cp-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 6px; outline: none; cursor: pointer; touch-action: none; }
+    .cp-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 3px solid #4ecdc4; box-shadow: 0 2px 10px rgba(0,0,0,0.5); cursor: pointer; }
+    .cp-slider::-moz-range-thumb { width: 20px; height: 20px; border-radius: 50%; background: #fff; border: 3px solid #4ecdc4; box-shadow: 0 2px 10px rgba(0,0,0,0.5); cursor: pointer; }
+    #cp-hue { background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000); }
+    #cp-sat { background: linear-gradient(to right, #808080, #ff6b6b); }
+    #cp-light { background: linear-gradient(to right, #000000, #ff6b6b, #ffffff); }
+    #cp-alpha { background: linear-gradient(to right, rgba(255,255,255,0.05), #ff6b6b); }
+    
+    .cp-actions { display: flex; gap: 10px; margin-top: 4px; }
+    .cp-btn { flex: 1; padding: 10px 0; border-radius: 14px; border: 1px solid rgba(255,255,255,0.08); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: 0.1s; font-family: inherit; touch-action: manipulation; }
+    .cp-btn:active { transform: scale(0.96); }
+    .cp-btn.cancel { background: rgba(255,255,255,0.06); color: #b0c8e8; }
+    .cp-btn.confirm { background: linear-gradient(145deg, #4ecdc4, #1f8a82); color: #fff; border: none; box-shadow: 0 4px 16px rgba(78,205,196,0.3); }
+
+    .pf-role { font-size: 0.6rem; padding: 2px 10px; border-radius: 20px; background: rgba(78,205,196,0.15); color: #4ecdc4; font-weight: 500; }
+    .pf-role.member { background: rgba(255,159,67,0.15); color: #ff9f43; }
+    .pf-input { width: 100%; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); color: #eaf2ff; font-size: 0.8rem; font-family: inherit; outline: none; transition: border 0.15s; }
+    .pf-input:focus { border-color: rgba(78,205,196,0.5); }
+    .pf-color-row { display: flex; align-items: center; gap: 10px; }
+    .pf-color-swatch { width: 40px; height: 40px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.12); flex-shrink: 0; cursor: pointer; transition: 0.1s; }
+    .pf-color-swatch:active { transform: scale(0.9); }
+    .pf-color-hint { color: #8aa4c8; font-size: 0.55rem; }
+
+    #start-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at center, rgba(8,12,26,0.98), rgba(0,0,0,0.99)); transition: opacity 0.4s ease, visibility 0.4s ease; visibility: visible; }
+    #start-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
+    #start-box { background: rgba(18,26,48,0.95); border: 1.5px solid rgba(78,205,196,0.15); border-radius: 32px; padding: 28px 24px; text-align: center; color: #eaf2ff; max-width: 320px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.5); animation: breathe 2.4s ease-in-out infinite; cursor: pointer; }
+    @keyframes breathe { 0%, 100% { transform: scale(1); box-shadow: 0 20px 60px rgba(0,0,0,0.5); } 50% { transform: scale(1.02); box-shadow: 0 20px 80px rgba(78,205,196,0.15); } }
+    #start-box h1 { font-size: 1.8rem; margin-bottom: 2px; background: linear-gradient(135deg, #4ecdc4, #ff6b6b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    #start-box .sub { color: #4ecdc4; font-size: 0.9rem; margin-bottom: 6px; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
+    #start-box p { font-size: 0.65rem; color: #8aa4c8; margin: 2px 0; }
+    #start-box .key { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.05); border-radius: 4px; padding: 1px 6px; font-size: 0.5rem; display: inline-block; color: #b0c8e8; }
+    
+    #net-status { position: absolute; bottom: 20px; left: 20px; color: #4ecdc4; font-size: 0.7rem; z-index: 99; pointer-events: none; text-shadow: 0 2px 4px #000; }
+  </style>
+</head>
+<body>
+
+  <div id="start-overlay">
+    <div id="start-box">
+      <h1>沙盒 · 多人联机</h1>
+      <p class="sub" id="role-text">正在连接服务器...</p>
+      <p><span class="key">摇杆</span> 移动 · <span class="key">跳跃</span> 大按钮</p>
+      <p><span class="key">点击屏幕</span> 放置 · <span class="key">右滑</span> 视角</p>
+    </div>
+  </div>
+
+  <div id="scene-container">
+    <div id="net-status">未连接</div>
+    
+    <div id="hud">
+      <span id="shape-indicator">
+        <span id="shape-dot" class="dot"></span>
+        <span id="shape-name" class="name">立方体</span>
+      </span>
+      <span class="right">
+        <span style="display:flex;align-items:center;gap:2px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          <span id="obj-count">0</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:2px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span id="fps-val">60</span>fps
+        </span>
+      </span>
+    </div>
+
+    <div id="bottom-controls">
+      <div id="toolbar">
+        <div class="tool-group">
+          <button class="btn-icon action" id="btn-place"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></button>
+          <button class="btn-icon action" id="btn-remove"><svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14v2z"/></svg></button>
+          <button class="btn-icon" id="btn-next"><svg viewBox="0 0 24 24"><path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"/></svg></button>
+          <button class="btn-icon" id="btn-grab"><svg viewBox="0 0 24 24"><path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74A4.5 4.5 0 0 0 11.5 3 4.5 4.5 0 0 0 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6a1.5 1.5 0 0 0-3 0v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.91-1.38z"/></svg></button>
+          <button class="btn-icon" id="btn-push"><svg viewBox="0 0 24 24"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg></button>
+        </div>
+        <div class="tool-group">
+          <button class="btn-icon" id="btn-explode"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/></svg></button>
+          <button class="btn-icon" id="btn-vacuum"><svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg></button>
+          <button class="btn-icon" id="btn-color"><svg viewBox="0 0 24 24"><path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10c1.38 0 2.5-1.12 2.5-2.5 0-.61-.23-1.2-.64-1.67-.08-.1-.13-.21-.13-.33 0-.28.22-.5.5-.5H16c3.31 0 6-2.69 6-6 0-4.96-4.49-9-10-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 8 6.5 8 8 8.67 8 9.5 7.33 11 6.5 11zm3-4C8.67 7 8 6.33 8 5.5S8.67 4 9.5 4s1.5.67 1.5 1.5S10.33 7 9.5 7zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 4 14.5 4s1.5.67 1.5 1.5S15.33 7 14.5 7zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 8 17.5 8s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg></button>
+          <button class="btn-icon" id="btn-profile"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></button>
+        </div>
+      </div>
+
+      <div id="control-row">
+        <div id="joystick-area">
+          <div id="joystick-base"></div>
+          <div id="joystick-thumb"></div>
+        </div>
+        <button id="btn-jump"><svg viewBox="0 0 24 24"><path d="M12 4l-8 8h5v8h6v-8h5z"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="color-overlay">
+    <div id="color-panel">
+      <div class="cp-header"><span>颜色调节</span><div class="cp-preview" id="cp-preview"></div></div>
+      <div class="cp-row"><label>色相 <span id="cp-hue-val">200</span>°</label><input type="range" class="cp-slider" id="cp-hue" min="0" max="360" value="200"></div>
+      <div class="cp-row"><label>饱和度 <span id="cp-sat-val">70</span>%</label><input type="range" class="cp-slider" id="cp-sat" min="0" max="100" value="70"></div>
+      <div class="cp-row"><label>亮度 <span id="cp-light-val">60</span>%</label><input type="range" class="cp-slider" id="cp-light" min="0" max="100" value="60"></div>
+      <div class="cp-row"><label>透明度 <span id="cp-alpha-val">100</span>%</label><input type="range" class="cp-slider" id="cp-alpha" min="0" max="100" value="100"></div>
+      <div class="cp-actions"><button class="cp-btn cancel" id="cp-cancel">取消</button><button class="cp-btn confirm" id="cp-confirm">确定</button></div>
+    </div>
+  </div>
+
+  <div id="profile-overlay">
+    <div id="profile-panel">
+      <div class="pf-header"><span>玩家设置</span><span class="pf-role" id="pf-role">房主</span></div>
+      <div class="pf-row"><label>称呼</label><input type="text" class="pf-input" id="pf-name" maxlength="12" placeholder="输入称呼..."></div>
+      <div class="pf-row"><label>球体颜色</label><div class="pf-color-row"><div class="pf-color-swatch" id="pf-color-swatch"></div><span class="pf-color-hint">点击打开调色板</span></div></div>
+      <div class="cp-actions"><button class="cp-btn cancel" id="pf-cancel">取消</button><button class="cp-btn confirm" id="pf-confirm">保存</button></div>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "cannon-es": "https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
+
+    const CFG = { moveSpeed: 6, jumpForce: 7, gravity: -12, playerRadius: 0.4, blockSize: 0.95, physicsSize: 0.475, worldSize: 17 };
+    
+    const SERVER_URL = 'ws://192.168.0.100:8765';
+    let ws = null;
+    let myId = null;
+    let lastSyncTime = 0;
+    let lastBlockSyncTime = 0;
+    let reconnectTimer = null;
+    let connected = false;
+    let wasKicked = false;
+
+    const container = document.getElementById('scene-container');
+    const dom = {
+      startOverlay: document.getElementById('start-overlay'),
+      roleText: document.getElementById('role-text'),
+      netStatus: document.getElementById('net-status'),
+      joystickArea: document.getElementById('joystick-area'),
+      joystickThumb: document.getElementById('joystick-thumb'),
+      btnJump: document.getElementById('btn-jump'),
+      btnPlace: document.getElementById('btn-place'),
+      btnRemove: document.getElementById('btn-remove'),
+      btnNext: document.getElementById('btn-next'),
+      btnGrab: document.getElementById('btn-grab'),
+      btnPush: document.getElementById('btn-push'),
+      btnExplode: document.getElementById('btn-explode'),
+      btnVacuum: document.getElementById('btn-vacuum'),
+      btnColor: document.getElementById('btn-color'),
+      btnProfile: document.getElementById('btn-profile'),
+      colorOverlay: document.getElementById('color-overlay'),
+      cpPreview: document.getElementById('cp-preview'),
+      cpHue: document.getElementById('cp-hue'),
+      cpSat: document.getElementById('cp-sat'),
+      cpLight: document.getElementById('cp-light'),
+      cpAlpha: document.getElementById('cp-alpha'),
+      cpHueVal: document.getElementById('cp-hue-val'),
+      cpSatVal: document.getElementById('cp-sat-val'),
+      cpLightVal: document.getElementById('cp-light-val'),
+      cpAlphaVal: document.getElementById('cp-alpha-val'),
+      cpCancel: document.getElementById('cp-cancel'),
+      cpConfirm: document.getElementById('cp-confirm'),
+      profileOverlay: document.getElementById('profile-overlay'),
+      pfRole: document.getElementById('pf-role'),
+      pfName: document.getElementById('pf-name'),
+      pfColorSwatch: document.getElementById('pf-color-swatch'),
+      pfCancel: document.getElementById('pf-cancel'),
+      pfConfirm: document.getElementById('pf-confirm'),
+      objCount: document.getElementById('obj-count'),
+      fpsVal: document.getElementById('fps-val'),
+      shapeDot: document.getElementById('shape-dot'),
+      shapeName: document.getElementById('shape-name'),
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB);
+    scene.fog = new THREE.Fog(0x87CEEB, 40, 110);
+
+    const camera = new THREE.PerspectiveCamera(68, container.clientWidth / container.clientHeight, 0.1, 200);
+    camera.position.set(0, 2.6, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    const ambient = new THREE.AmbientLight(0xbcd4f0, 0.6);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xfff8e7, 1.2);
+    dirLight.position.set(20, 30, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 512;
+    dirLight.shadow.mapSize.height = 512;
+    scene.add(dirLight);
+
+    const groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(36, 36), new THREE.MeshStandardMaterial({ color: 0xd5c4a1, roughness: 0.8 }));
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.position.y = -0.2;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+    const allObjects = [groundMesh];
+
+    const grid = new THREE.GridHelper(36, 24, 0xc4b99a, 0xe0d5c0);
+    scene.add(grid);
+
+    const world = new CANNON.World();
+    world.gravity.set(0, CFG.gravity, 0);
+    world.broadphase = new CANNON.SAPBroadphase(world);
+    world.allowSleep = true;
+    world.defaultContactMaterial.restitution = 0.3;
+    world.solver.iterations = 10;
+    world.solver.tolerance = 0.01;
+
+    const groundShape = new CANNON.Box(new CANNON.Vec3(18, 0.2, 18));
+    const groundBody = new CANNON.Body({ mass: 0 });
+    groundBody.addShape(groundShape);
+    groundBody.position.set(0, -0.3, 0);
+    world.addBody(groundBody);
+
+    const playerShape = new CANNON.Sphere(CFG.playerRadius);
+    const playerBody = new CANNON.Body({ mass: 1 });
+    playerBody.addShape(playerShape);
+    playerBody.position.set(0, 2, 8);
+    playerBody.linearDamping = 0.9;
+    playerBody.angularDamping = 0.9;
+    playerBody.allowSleep = true;
+    playerBody.sleepSpeedLimit = 0.15;
+    playerBody.sleepTimeLimit = 0.5;
+    world.addBody(playerBody);
+
+    const placed = [];
+    const blockMap = new Map();
+    let nextBlockId = 1;
+    let isOnGround = false;
+
+    const shapes = {
+      types: ['cube', 'sphere', 'cylinder', 'cone', 'torus', 'pyramid'],
+      names: ['立方体', '球体', '圆柱', '圆锥', '圆环', '金字塔'],
+      index: 0,
+      colors: ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe', '#fd79a8', '#00d2d3', '#ff9f43', '#55efc4'],
+      colorIndex: 0,
+    };
+
+    // ===== 玩家身份 =====
+    let isHost = false;
+    const playerProfile = { name: '玩家', color: randomColor() };
+
+    function randomColor() {
+      const hue = Math.floor(Math.random() * 360);
+      const sat = 60 + Math.floor(Math.random() * 30);
+      const light = 45 + Math.floor(Math.random() * 25);
+      const a = sat * Math.min(light / 100, 1 - light / 100) / 100;
+      const f = n => {
+        const k = (n + hue / 30) % 12;
+        const color = light / 100 - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    }
+
+    // ===== 本地玩家 =====
+    const playerGroup = new THREE.Group();
+    scene.add(playerGroup);
+    const playerMesh = new THREE.Mesh(new THREE.SphereGeometry(CFG.playerRadius, 16, 16), new THREE.MeshStandardMaterial({ color: playerProfile.color, roughness: 0.3, metalness: 0.1 }));
+    playerMesh.castShadow = true;
+    playerGroup.add(playerMesh);
+
+    let localLabelSprite = null;
+    function makeLabelSprite(text, color) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 64;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 256, 64);
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(32, 32, 18, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(32, 25, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(32, 42, 8, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.font = 'bold 28px "PingFang SC", "Segoe UI", sans-serif';
+      ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 6;
+      ctx.fillText(text, 58, 34);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(1.6, 0.4, 1);
+      return sprite;
+    }
+    function refreshLocalLabel() {
+      if (localLabelSprite) {
+        playerGroup.remove(localLabelSprite);
+        localLabelSprite.material.map.dispose();
+        localLabelSprite.material.dispose();
+      }
+      localLabelSprite = makeLabelSprite(playerProfile.name, playerProfile.color);
+      localLabelSprite.position.set(0, 0.9, 0);
+      playerGroup.add(localLabelSprite);
+    }
+    refreshLocalLabel();
+
+    // ===== 远程玩家 =====
+    const remotePlayers = new Map();
+    function createRemotePlayer(id, color, name) {
+      if (remotePlayers.has(id)) { updateRemoteProfile(id, color, name); return; }
+      const group = new THREE.Group();
+      group.frustumCulled = false;
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(CFG.playerRadius, 16, 16), new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.85 }));
+      mesh.castShadow = true;
+      mesh.frustumCulled = false;
+      group.add(mesh);
+      const label = makeLabelSprite(name, color);
+      label.position.set(0, 0.9, 0);
+      group.add(label);
+      group.position.set(0, 2, 0);
+      scene.add(group);
+      
+      const remoteShape = new CANNON.Sphere(CFG.playerRadius);
+      const remoteBody = new CANNON.Body({ mass: 1 });
+      remoteBody.addShape(remoteShape);
+      remoteBody.position.set(0, 2, 0);
+      remoteBody.linearDamping = 0.9;
+      remoteBody.angularDamping = 0.9;
+      remoteBody.allowSleep = false;
+      world.addBody(remoteBody);
+      
+      remotePlayers.set(id, { group, mesh, label, name, color, remoteBody, targetPos: new THREE.Vector3(0, 2, 0), hasTarget: false });
+    }
+    function updateRemoteProfile(id, color, name) {
+      const rp = remotePlayers.get(id);
+      if (!rp) return;
+      rp.color = color;
+      rp.name = name;
+      rp.mesh.material.color.set(color);
+      rp.group.remove(rp.label);
+      rp.label.material.map.dispose();
+      rp.label.material.dispose();
+      rp.label = makeLabelSprite(name, color);
+      rp.label.position.set(0, 0.9, 0);
+      rp.group.add(rp.label);
+    }
+    function removeRemotePlayer(id) {
+      const rp = remotePlayers.get(id);
+      if (!rp) return;
+      scene.remove(rp.group);
+      rp.mesh.geometry.dispose();
+      rp.mesh.material.dispose();
+      rp.label.material.map.dispose();
+      rp.label.material.dispose();
+      if (rp.remoteBody) world.removeBody(rp.remoteBody);
+      remotePlayers.delete(id);
+    }
+
+    // ===== 颜色面板 =====
+    let cpState = { h: 200, s: 70, l: 60, a: 100 };
+    let cpTarget = 'block';
+    function hslToHex(h, s, l) {
+      s /= 100; l /= 100;
+      const a = s * Math.min(l, 1 - l);
+      const f = n => {
+        const k = (n + h / 30) % 12;
+        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+        return Math.round(255 * color).toString(16).padStart(2, '0');
+      };
+      return `#${f(0)}${f(8)}${f(4)}`;
+    }
+    function hexToHsl(hex) {
+      const rgb = parseInt(hex.slice(1), 16);
+      const r = (rgb >> 16) & 255, g = (rgb >> 8) & 255, b = rgb & 255;
+      const rn = r / 255, gn = g / 255, bn = b / 255;
+      const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+      let h = 0, s = 0, l = (max + min) / 2;
+      if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case rn: h = (gn - bn) / d + (gn < bn ? 6 : 0); break;
+          case gn: h = (bn - rn) / d + 2; break;
+          case bn: h = (rn - gn) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    }
+    function updatePreview() {
+      const hex = hslToHex(cpState.h, cpState.s, cpState.l);
+      dom.cpPreview.style.background = hex;
+      dom.cpPreview.style.opacity = cpState.a / 100;
+      dom.cpHueVal.textContent = cpState.h;
+      dom.cpSatVal.textContent = cpState.s;
+      dom.cpLightVal.textContent = cpState.l;
+      dom.cpAlphaVal.textContent = cpState.a;
+      dom.cpHue.value = cpState.h;
+      dom.cpSat.value = cpState.s;
+      dom.cpLight.value = cpState.l;
+      dom.cpAlpha.value = cpState.a;
+    }
+    function openColorPanel(target, initialHex) {
+      cpTarget = target;
+      const hsl = hexToHsl(initialHex);
+      cpState.h = hsl.h; cpState.s = hsl.s; cpState.l = hsl.l; cpState.a = 100;
+      updatePreview();
+      dom.colorOverlay.classList.add('show');
+    }
+    function closeColorPanel() { dom.colorOverlay.classList.remove('show'); }
+    dom.cpHue.addEventListener('input', () => { cpState.h = +dom.cpHue.value; updatePreview(); });
+    dom.cpSat.addEventListener('input', () => { cpState.s = +dom.cpSat.value; updatePreview(); });
+    dom.cpLight.addEventListener('input', () => { cpState.l = +dom.cpLight.value; updatePreview(); });
+    dom.cpAlpha.addEventListener('input', () => { cpState.a = +dom.cpAlpha.value; updatePreview(); });
+    dom.cpCancel.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeColorPanel(); });
+    dom.cpConfirm.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const hex = hslToHex(cpState.h, cpState.s, cpState.l);
+      if (cpTarget === 'block') {
+        shapes.colors[shapes.colorIndex] = hex;
+        updateUI();
+      } else if (cpTarget === 'player') {
+        playerProfile.color = hex;
+        playerMesh.material.color.set(hex);
+        refreshLocalLabel();
+        dom.pfColorSwatch.style.background = hex;
+        sendProfile();
+      }
+      closeColorPanel();
+    });
+    dom.colorOverlay.addEventListener('pointerdown', (e) => { if (e.target === dom.colorOverlay) closeColorPanel(); });
+
+    // ===== 玩家设置面板 =====
+    function openProfile() {
+      dom.pfRole.textContent = isHost ? '房主' : '房员';
+      dom.pfRole.className = 'pf-role' + (isHost ? '' : ' member');
+      dom.pfName.value = playerProfile.name;
+      dom.pfColorSwatch.style.background = playerProfile.color;
+      dom.profileOverlay.classList.add('show');
+    }
+    function closeProfile() { dom.profileOverlay.classList.remove('show'); }
+    dom.pfColorSwatch.addEventListener('pointerdown', (e) => { e.stopPropagation(); openColorPanel('player', playerProfile.color); });
+    dom.pfCancel.addEventListener('pointerdown', (e) => { e.stopPropagation(); closeProfile(); });
+    dom.pfConfirm.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      const name = dom.pfName.value.trim() || (isHost ? '房主' : '房员');
+      playerProfile.name = name;
+      refreshLocalLabel();
+      sendProfile();
+      closeProfile();
+    });
+    dom.profileOverlay.addEventListener('pointerdown', (e) => { if (e.target === dom.profileOverlay) closeProfile(); });
+
+    function sendProfile() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'profile', name: playerProfile.name, color: playerProfile.color }));
+      }
+    }
+
+    // ===== 几何与方块 =====
+    const geoCache = {};
+    function getGeometry(type) {
+      if (!geoCache[type]) {
+        const s = CFG.blockSize, r = CFG.physicsSize;
+        switch (type) {
+          case 'cube': geoCache[type] = new THREE.BoxGeometry(s, s, s); break;
+          case 'sphere': geoCache[type] = new THREE.SphereGeometry(r, 16, 12); break;
+          case 'cylinder': geoCache[type] = new THREE.CylinderGeometry(r, r, s, 12); break;
+          case 'cone': geoCache[type] = new THREE.ConeGeometry(r, s, 12); break;
+          case 'torus': geoCache[type] = new THREE.TorusGeometry(r * 0.85, 0.18, 10, 16); break;
+          case 'pyramid': geoCache[type] = new THREE.ConeGeometry(r, s * 0.95, 4); break;
+          default: geoCache[type] = new THREE.BoxGeometry(s, s, s);
+        }
+      }
+      return geoCache[type];
+    }
+    const shapeCache = {};
+    function getCannonShape(type) {
+      if (!shapeCache[type]) {
+        const s = CFG.physicsSize;
+        switch (type) {
+          case 'cube': shapeCache[type] = new CANNON.Box(new CANNON.Vec3(s, s, s)); break;
+          case 'sphere': shapeCache[type] = new CANNON.Sphere(s); break;
+          case 'cylinder': shapeCache[type] = new CANNON.Cylinder(s, s, CFG.blockSize, 6); break;
+          case 'cone': shapeCache[type] = new CANNON.Cylinder(0, s, CFG.blockSize, 6); break;
+          case 'torus': shapeCache[type] = new CANNON.Sphere(s * 0.85); break;
+          case 'pyramid': shapeCache[type] = new CANNON.Cylinder(0, s, CFG.blockSize * 0.95, 4); break;
+          default: shapeCache[type] = new CANNON.Box(new CANNON.Vec3(s, s, s));
+        }
+      }
+      return shapeCache[type];
+    }
+    function createPlaced(type, color, position, isStatic = false, netId = null) {
+      let id = netId !== null ? netId : nextBlockId++;
+      if (netId !== null && blockMap.has(id)) id = nextBlockId++;
+      else if (netId !== null && netId >= nextBlockId) nextBlockId = netId + 1;
+
+      const mesh = new THREE.Mesh(getGeometry(type), new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.05 }));
+      mesh.position.copy(position);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      allObjects.push(mesh);
+
+      const body = new CANNON.Body({ mass: isStatic ? 0 : 1 });
+      body.addShape(getCannonShape(type));
+      body.position.set(position.x, position.y, position.z);
+      body.linearDamping = 0.3;
+      body.angularDamping = 0.1;
+      world.addBody(body);
+
+      const entry = { id, mesh, body, type, color, isStatic, targetPos: null, targetQuat: null };
+      placed.push(entry);
+      blockMap.set(id, entry);
+      return entry;
+    }
+    function removePlaced(entry) {
+      world.removeBody(entry.body);
+      scene.remove(entry.mesh);
+      const idx = placed.indexOf(entry);
+      if (idx !== -1) placed.splice(idx, 1);
+      const pIdx = allObjects.indexOf(entry.mesh);
+      if (pIdx !== -1) allObjects.splice(pIdx, 1);
+      blockMap.delete(entry.id);
+    }
+    function getPlacement() {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      raycaster.far = 30;
+      const hits = raycaster.intersectObjects(allObjects, false);
+      if (hits.length > 0) {
+        const point = hits[0].point.clone();
+        const normal = hits[0].face.normal.clone().transformDirection(hits[0].object.matrixWorld);
+        const pos = point.add(normal.multiplyScalar(CFG.physicsSize));
+        pos.x = THREE.MathUtils.clamp(pos.x, -CFG.worldSize, CFG.worldSize);
+        pos.z = THREE.MathUtils.clamp(pos.z, -CFG.worldSize, CFG.worldSize);
+        pos.y = Math.max(pos.y, 0.2);
+        if (pos.distanceTo(camera.position) < 0.9) return null;
+        return pos;
+      }
+      return null;
+    }
+
+    // ===== 技能 =====
+    function applyForce(attract, origin) {
+      const p = origin || playerBody.position;
+      const str = 1500;
+      placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = p.x - entry.body.position.x;
+        const dy = p.y - entry.body.position.y;
+        const dz = p.z - entry.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 8 && dist > 0.3) {
+          const power = (1 - dist / 8) * str;
+          const factor = attract ? 1 : -1;
+          entry.body.wakeUp();
+          entry.body.applyForce(new CANNON.Vec3(dx / dist * power * factor, dy / dist * power * factor, dz / dist * power * factor), entry.body.position);
+        }
+      });
+    }
+    function explode(origin) {
+      const p = origin || playerBody.position;
+      const str = 1500 * 0.7;
+      placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = entry.body.position.x - p.x;
+        const dy = entry.body.position.y - p.y;
+        const dz = entry.body.position.z - p.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist < 10 && dist > 0.3) {
+          const factor = (1 - dist / 10) * str / dist;
+          entry.body.wakeUp();
+          entry.body.applyImpulse(new CANNON.Vec3(dx * factor, (dy + 0.5) * factor, dz * factor), entry.body.position);
+        }
+      });
+    }
+    function vacuum(origin) {
+      const p = origin || playerBody.position;
+      placed.forEach(entry => {
+        if (entry.isStatic) return;
+        const dx = p.x - entry.body.position.x;
+        const dy = p.y + 0.5 - entry.body.position.y;
+        const dz = p.z - entry.body.position.z;
+        const dist = Math.hypot(dx, dy, dz);
+        if (dist > 1 && dist < 15) {
+          entry.body.wakeUp();
+          entry.body.applyImpulse(new CANNON.Vec3(dx * 12, dy * 12, dz * 12), entry.body.position);
+        }
+      });
+    }
+
+    function updateUI() {
+      const color = shapes.colors[shapes.colorIndex];
+      const name = shapes.names[shapes.index];
+      dom.shapeDot.style.background = color;
+      dom.shapeName.textContent = name;
+      dom.objCount.textContent = placed.length;
+    }
+
+    // ===== 同步机制（核心：房主物理全开，房员只做视觉跟随） =====
+    function sendBlockStates() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const updates = [];
+      for (const entry of placed) {
+        if (entry.isStatic) continue;
+        const b = entry.body;
+        if (b.sleepState === CANNON.Body.SLEEPING) continue;
+        // 只要有运动，就发给房员
+        updates.push({
+          id: entry.id,
+          p: [b.position.x, b.position.y, b.position.z],
+          q: [b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w],
+        });
+      }
+      if (updates.length > 0) ws.send(JSON.stringify({ type: 'block_states', updates }));
+    }
+
+    function applyBlockStates(updates) {
+      for (const upd of updates) {
+        const entry = blockMap.get(upd.id);
+        if (!entry) continue;
+        
+        // 房员收到房主的坐标：直接同步物理体和视觉，这样方块之间的碰撞绝对正确
+        entry.body.position.set(upd.p[0], upd.p[1], upd.p[2]);
+        entry.body.quaternion.set(upd.q[0], upd.q[1], upd.q[2], upd.q[3]);
+        entry.body.velocity.set(0, 0, 0);
+        entry.body.angularVelocity.set(0, 0, 0);
+        entry.body.wakeUp();
+        
+        entry.targetPos = new THREE.Vector3(upd.p[0], upd.p[1], upd.p[2]);
+        entry.targetQuat = new THREE.Quaternion(upd.q[0], upd.q[1], upd.q[2], upd.q[3]);
+      }
+    }
+
+    // ===== 网络联机 =====
+    function connectNetwork() {
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) { try { ws.close(); } catch(e) {} }
+      ws = new WebSocket(SERVER_URL);
+
+      ws.onopen = () => {
+        connected = true;
+        dom.netStatus.textContent = "已连接网络";
+        dom.netStatus.style.color = "#4ecdc4";
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'role') {
+          myId = msg.id;
+          isHost = (msg.role === 'host');
+          if (playerProfile.name === '玩家') { playerProfile.name = isHost ? '房主' : '房员'; refreshLocalLabel(); }
+          dom.roleText.textContent = (isHost ? '你是房主' : '你是房员') + '，开始建造！';
+          sendProfile();
+          if (!isHost) ws.send(JSON.stringify({ type: 'request_profile' }));
+          return;
+        }
+        if (msg.type === 'request_profile') { sendProfile(); return; }
+        if (msg.type === 'kicked') { wasKicked = true; ws.close(); return; }
+        if (msg.type === 'profile') {
+          const from = msg._from;
+          if (from == null || from === myId) return;
+          if (!remotePlayers.has(from)) createRemotePlayer(from, msg.color, msg.name);
+          else updateRemoteProfile(from, msg.color, msg.name);
+          return;
+        }
+        if (msg.type === 'player_leave') { removeRemotePlayer(msg.id); return; }
+        if (msg.type === 'player_move') {
+          const from = msg._from;
+          if (from == null || from === myId) return;
+          let rp = remotePlayers.get(from);
+          if (!rp) { createRemotePlayer(from, '#4ecdc4', '玩家'); rp = remotePlayers.get(from); }
+          rp.targetPos.set(msg.pos[0], msg.pos[1], msg.pos[2]);
+          rp.hasTarget = true;
+          return;
+        }
+        if (msg.type === 'add_block') {
+          createPlaced(msg.shapeType, msg.color, new THREE.Vector3(msg.pos[0], msg.pos[1], msg.pos[2]), false, msg.id ?? null);
+          updateUI();
+          return;
+        }
+        if (msg.type === 'block_states') { 
+          // 只有房员才接收方块的物理坐标
+          if (!isHost) applyBlockStates(msg.updates); 
+          return; 
+        }
+        // 房员推方块
+        if (msg.type === 'push_force' && isHost) {
+          const entry = blockMap.get(msg.id);
+          if (entry) {
+            entry.body.wakeUp();
+            const strength = 30;
+            entry.body.applyImpulse(new CANNON.Vec3(msg.dir[0] * strength, msg.dir[1] * strength + 3, msg.dir[2] * strength), entry.body.position);
+          }
+          return;
+        }
+        if (msg.type === 'effect') {
+          // 如果房主收到房员的技能，房主施展；如果房员收到房主的技能，房员也施展（视觉上）
+          const origin = msg.pos ? { x: msg.pos[0], y: msg.pos[1], z: msg.pos[2] } : null;
+          if (msg.action === 'explode') explode(origin);
+          else if (msg.action === 'vacuum') vacuum(origin);
+          else if (msg.action === 'force') applyForce(msg.attract, origin);
+          return;
+        }
+      };
+
+      ws.onclose = () => {
+        connected = false;
+        remotePlayers.forEach((rp, id) => removeRemotePlayer(id));
+        myId = null;
+        if (wasKicked) { dom.netStatus.textContent = "你已被踢出"; dom.netStatus.style.color = "#ff6b6b"; return; }
+        dom.netStatus.textContent = "连接断开，重连中...";
+        dom.netStatus.style.color = "#ff6b6b";
+        reconnectTimer = setTimeout(connectNetwork, 2000);
+      };
+
+      ws.onerror = () => { try { ws.close(); } catch(e) {} };
+    }
+
+    // ===== 交互 =====
+    let joyPointerId = null;
+    const joyMaxDist = 30;
+    const joyValue = { x: 0, y: 0 };
+
+    function updateJoystick(clientX, clientY) {
+      const rect = dom.joystickArea.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      let dx = clientX - cx;
+      let dy = clientY - cy;
+      const dist = Math.hypot(dx, dy);
+      const clamped = Math.min(dist, joyMaxDist);
+      if (dist > 0.001) { dx = dx / dist * clamped; dy = dy / dist * clamped; }
+      joyValue.x = dx / joyMaxDist;
+      joyValue.y = -dy / joyMaxDist;
+      dom.joystickThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+    function resetJoystick() {
+      joyValue.x = 0; joyValue.y = 0;
+      dom.joystickThumb.style.transform = 'translate(0px, 0px)';
+      joyPointerId = null;
+    }
+    dom.joystickArea.addEventListener('pointerdown', (e) => { e.preventDefault(); joyPointerId = e.pointerId; dom.joystickArea.setPointerCapture(e.pointerId); updateJoystick(e.clientX, e.clientY); });
+    dom.joystickArea.addEventListener('pointermove', (e) => { if (joyPointerId === null) return; updateJoystick(e.clientX, e.clientY); });
+    dom.joystickArea.addEventListener('pointerup', (e) => { if (joyPointerId === e.pointerId) resetJoystick(); });
+    dom.joystickArea.addEventListener('pointercancel', resetJoystick);
+
+    let viewDrag = { active: false, id: null, lastX: 0, lastY: 0 };
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    document.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button') || e.target.closest('#toolbar') || e.target.closest('#control-row') || e.target.closest('#start-overlay') || e.target.closest('#color-overlay') || e.target.closest('#profile-overlay')) return;
+      if (e.target.closest('#joystick-area')) return;
+      viewDrag.active = true; viewDrag.id = e.pointerId; viewDrag.lastX = e.clientX; viewDrag.lastY = e.clientY; e.preventDefault();
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (!viewDrag.active || viewDrag.id !== e.pointerId) return;
+      const dx = e.clientX - viewDrag.lastX; const dy = e.clientY - viewDrag.lastY;
+      viewDrag.lastX = e.clientX; viewDrag.lastY = e.clientY;
+      euler.y -= dx * 0.008; euler.x -= dy * 0.008;
+      euler.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, euler.x));
+      camera.quaternion.setFromEuler(euler);
+    });
+    document.addEventListener('pointerup', (e) => { if (viewDrag.id === e.pointerId) { viewDrag.active = false; viewDrag.id = null; } });
+    document.addEventListener('pointercancel', () => { viewDrag.active = false; viewDrag.id = null; });
+
+    const keys = {};
+    document.addEventListener('keydown', (e) => { keys[e.code] = true; if (e.code === 'Space') e.preventDefault(); });
+    document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    dom.btnJump.addEventListener('pointerdown', () => {
+      playerBody.wakeUp();
+      if (isOnGround) { playerBody.velocity.y = CFG.jumpForce; isOnGround = false; }
+    });
+    dom.btnPlace.addEventListener('pointerdown', () => {
+      const p = getPlacement();
+      if (p) {
+        const entry = createPlaced(shapes.types[shapes.index], shapes.colors[shapes.colorIndex], p);
+        updateUI();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'add_block', id: entry.id, shapeType: shapes.types[shapes.index], color: shapes.colors[shapes.colorIndex], pos: [p.x, p.y, p.z] }));
+        }
+      }
+    });
+    dom.btnRemove.addEventListener('pointerdown', () => {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const hits = raycaster.intersectObjects(allObjects, false);
+      for (const hit of hits) {
+        const entry = placed.find(e => e.mesh === hit.object);
+        if (entry) { removePlaced(entry); updateUI(); break; }
+      }
+    });
+    dom.btnNext.addEventListener('pointerdown', () => { shapes.index = (shapes.index + 1) % shapes.types.length; updateUI(); });
+    dom.btnGrab.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      applyForce(true, { x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'force', attract: true, pos }));
+    });
+    dom.btnPush.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      applyForce(false, { x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'force', attract: false, pos }));
+    });
+    dom.btnExplode.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      explode({ x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'explode', pos }));
+    });
+    dom.btnVacuum.addEventListener('pointerdown', () => {
+      const pos = [playerBody.position.x, playerBody.position.y, playerBody.position.z];
+      vacuum({ x: pos[0], y: pos[1], z: pos[2] });
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'effect', action: 'vacuum', pos }));
+    });
+    dom.btnColor.addEventListener('pointerdown', (e) => { e.stopPropagation(); openColorPanel('block', shapes.colors[shapes.colorIndex]); });
+    dom.btnProfile.addEventListener('pointerdown', (e) => { e.stopPropagation(); openProfile(); });
+
+    dom.startOverlay.addEventListener('click', () => { dom.startOverlay.classList.add('hidden'); }, { once: true });
+
+    const demos = [[0, 1, -2, 'cube', '#ff6b6b'], [3, 1, 1, 'sphere', '#4ecdc4'], [-3, 1, 2, 'cylinder', '#ffe66d'], [2, 1, 3, 'pyramid', '#a29bfe'], [-2, 1, -3, 'cone', '#00d2d3'], [0, 1, 4, 'torus', '#fd79a8']];
+    demos.forEach(([x, y, z, type, color]) => { createPlaced(type, color, new THREE.Vector3(x, y, z)); });
+    updateUI();
+
+    window.addEventListener('resize', () => {
+      const w = container.clientWidth; const h = container.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+    });
+
+    const clock = new THREE.Clock();
+    let stats = { frames: 0, time: 0 };
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.033);
+      const now = performance.now();
+
+      world.step(1 / 60, dt, 5);
+      isOnGround = playerBody.position.y <= 0.5 && Math.abs(playerBody.velocity.y) < 0.5;
+      
+      // 房员推方块：计算推力发给房主
+      if (!isHost && ws && ws.readyState === WebSocket.OPEN) {
+        const pp = playerBody.position;
+        placed.forEach(entry => {
+          if (entry.isStatic) return;
+          const dx = pp.x - entry.body.position.x;
+          const dy = pp.y - entry.body.position.y;
+          const dz = pp.z - entry.body.position.z;
+          const dist = Math.hypot(dx, dy, dz);
+          if (dist < CFG.playerRadius + 0.6) {
+            ws.send(JSON.stringify({
+              type: 'push_force',
+              id: entry.id,
+              dir: [dx / dist, dy / dist, dz / dist]
+            }));
+            // 房员本地清零，等待房主计算完毕后同步
+            entry.body.velocity.set(0, 0, 0);
+          }
+        });
+      }
+
+      const dead = 0.15;
+      let mx = 0, mz = 0;
+      if (Math.abs(joyValue.x) > dead) mx = joyValue.x;
+      if (Math.abs(joyValue.y) > dead) mz = joyValue.y;
+      if (keys['KeyW']) mz = 1; else if (keys['KeyS']) mz = -1;
+      if (keys['KeyA']) mx = -1; else if (keys['KeyD']) mx = 1;
+      const len = Math.hypot(mx, mz);
+      if (len > 1) { mx /= len; mz /= len; }
+      
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0; if (forward.length() > 0.001) forward.normalize();
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+      const dir = new THREE.Vector3().addScaledVector(forward, mz).addScaledVector(right, mx);
+      
+      if (dir.length() > 0.001) {
+        dir.normalize();
+        playerBody.wakeUp();
+        playerBody.velocity.x = dir.x * CFG.moveSpeed;
+        playerBody.velocity.z = dir.z * CFG.moveSpeed;
+      } else {
+        if (playerBody.sleepState !== CANNON.Body.SLEEPING) {
+          playerBody.velocity.x *= 0.92;
+          playerBody.velocity.z *= 0.92;
+        }
+      }
+      if (keys['Space'] && isOnGround) {
+        playerBody.wakeUp();
+        playerBody.velocity.y = CFG.jumpForce;
+        isOnGround = false;
+      }
+      if (playerBody.position.y < -10) { playerBody.position.set(0, 2, 8); playerBody.velocity.set(0, 0, 0); }
+
+      playerGroup.position.copy(playerBody.position);
+      playerMesh.quaternion.copy(playerBody.quaternion);
+
+      // 如果本地是房主，视觉跟随物理；如果是房员，视觉插值追物理
+      for (const entry of placed) {
+        if (isHost) {
+          entry.mesh.position.copy(entry.body.position);
+          entry.mesh.quaternion.copy(entry.body.quaternion);
+        } else {
+          if (entry.targetPos) {
+            entry.mesh.position.lerp(entry.targetPos, 0.3);
+            if (entry.targetQuat) entry.mesh.quaternion.slerp(entry.targetQuat, 0.3);
+          } else {
+            entry.mesh.position.copy(entry.body.position);
+            entry.mesh.quaternion.copy(entry.body.quaternion);
+          }
+        }
+      }
+
+      // 远程玩家物理
+      remotePlayers.forEach(rp => {
+        if (rp.hasTarget && rp.remoteBody) {
+          rp.remoteBody.velocity.set(
+            (rp.targetPos.x - rp.remoteBody.position.x) * 10,
+            (rp.targetPos.y - rp.remoteBody.position.y) * 10,
+            (rp.targetPos.z - rp.remoteBody.position.z) * 10
+          );
+          rp.group.position.copy(rp.remoteBody.position);
+        }
+      });
+
+      const camPos = new THREE.Vector3().copy(playerBody.position);
+      camPos.y += 0.6;
+      camera.position.copy(camPos);
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        if (now - lastSyncTime > 50) {
+          lastSyncTime = now;
+          ws.send(JSON.stringify({ type: 'player_move', pos: [playerBody.position.x, playerBody.position.y, playerBody.position.z] }));
+        }
+        // 房主发送方块状态
+        if (isHost && now - lastBlockSyncTime > 33) {
+          lastBlockSyncTime = now;
+          sendBlockStates();
+        }
+      }
+
+      stats.frames++;
+      if (!stats.time) stats.time = now;
+      if (now - stats.time >= 500) {
+        dom.fpsVal.textContent = Math.round(stats.frames / ((now - stats.time) / 1000));
+        stats.frames = 0; stats.time = now;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    connectNetwork();
+    animate();
+  </script>
+</body>
+</html>

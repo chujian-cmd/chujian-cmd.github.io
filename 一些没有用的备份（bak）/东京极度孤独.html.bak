@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>手指追踪 · TFJS版</title>
+    <style>
+        * { margin: 0; padding: 0; }
+        body {
+            background: #000;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            background: #0a0a0f;
+        }
+        video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            background: #111;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+            pointer-events: none;
+        }
+        #status {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(10px);
+            color: #7ecfff;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-size: 14px;
+            border: 1px solid rgba(0, 200, 255, 0.2);
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+            min-width: 200px;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0,0,0,0.85);
+            padding: 20px 30px;
+            border-radius: 16px;
+            border: 1px solid #00e5ff;
+            z-index: 20;
+            text-align: center;
+            pointer-events: none;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 50%;
+            border-top-color: #00e5ff;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div id="status">⏳ 加载中...</div>
+    <div id="loading">
+        <div class="spinner"></div>
+        <div style="margin-top:10px;">加载手势识别模型</div>
+        <div style="font-size:12px;color:#8899bb;margin-top:4px;">约 8MB · 首次稍慢</div>
+    </div>
+</div>
+
+<!-- 使用 TensorFlow.js + Handpose (更稳定) -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
+
+<script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const status = document.getElementById('status');
+    const loading = document.getElementById('loading');
+
+    let model = null;
+    let indexTip = null;
+    let thumbTip = null;
+    let isDrawing = false;
+    let running = false;
+
+    // ---------- 画布适配 ----------
+    function resizeCanvas() {
+        const container = document.getElementById('container');
+        const rect = container.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        canvas.style.width = rect.width + 'px';
+        canvas.style.height = rect.height + 'px';
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // ---------- 摄像头 ----------
+    async function initCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: 'user',
+                    width: { ideal: 480 },
+                    height: { ideal: 360 }
+                }
+            });
+            video.srcObject = stream;
+            await video.play();
+            return true;
+        } catch (err) {
+            status.textContent = '❌ 摄像头错误';
+            return false;
+        }
+    }
+
+    // ---------- 加载模型 ----------
+    async function loadModel() {
+        try {
+            status.textContent = '📦 下载模型中...';
+            model = await handpose.load({
+                maxContinuousChecks: 5,
+                detectionConfidence: 0.8,
+                iouThreshold: 0.3,
+                scoreThreshold: 0.6
+            });
+            loading.style.display = 'none';
+            status.textContent = '✅ 就绪 · 伸出手掌';
+            return true;
+        } catch (err) {
+            status.textContent = '❌ 模型加载失败: ' + err.message;
+            loading.innerHTML = '❌ 加载失败<br><span style="font-size:12px;color:#8899bb;">' + err.message + '</span>';
+            return false;
+        }
+    }
+
+    // ---------- 主循环 ----------
+    async function detectLoop() {
+        if (!running) return;
+        
+        try {
+            const w = canvas.width;
+            const h = canvas.height;
+
+            // 清空画布
+            ctx.clearRect(0, 0, w, h);
+
+            // 检测手部
+            if (model && video.readyState >= 2) {
+                const predictions = await model.estimateHands(video);
+                
+                if (predictions.length > 0) {
+                    const hand = predictions[0];
+                    const landmarks = hand.landmarks;
+                    
+                    // 食指指尖 = landmarks[8], 拇指指尖 = landmarks[4]
+                    const index = landmarks[8];
+                    const thumb = landmarks[4];
+                    
+                    if (index && thumb) {
+                        // 坐标映射到画布
+                        const vidW = video.videoWidth || 640;
+                        const vidH = video.videoHeight || 480;
+                        const scaleX = w / vidW;
+                        const scaleY = h / vidH;
+                        
+                        indexTip = { x: index[0] * scaleX, y: index[1] * scaleY };
+                        thumbTip = { x: thumb[0] * scaleX, y: thumb[1] * scaleY };
+                        
+                        const dx = indexTip.x - thumbTip.x;
+                        const dy = indexTip.y - thumbTip.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        isDrawing = dist > 40;
+                        
+                        // ---- 画指尖 ----
+                        const radius = Math.max(12, Math.min(w, h) * 0.02);
+                        
+                        // 食指引申
+                        ctx.shadowBlur = 0;
+                        ctx.beginPath();
+                        ctx.arc(indexTip.x, indexTip.y, radius, 0, 2 * Math.PI);
+                        ctx.fillStyle = 'rgba(255, 80, 150, 0.9)';
+                        ctx.fill();
+                        ctx.strokeStyle = 'white';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        
+                        ctx.beginPath();
+                        ctx.arc(thumbTip.x, thumbTip.y, radius, 0, 2 * Math.PI);
+                        ctx.fillStyle = 'rgba(255, 180, 50, 0.9)';
+                        ctx.fill();
+                        ctx.strokeStyle = 'white';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        
+                        // 标签
+                        const fs = Math.max(12, Math.min(w, h) * 0.018);
+                        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                        ctx.font = `${fs}px monospace`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText('食指', indexTip.x, indexTip.y - radius - 8);
+                        ctx.fillText('拇指', thumbTip.x, thumbTip.y - radius - 8);
+                        
+                        // ---- 画框 ----
+                        if (isDrawing) {
+                            const x1 = Math.min(indexTip.x, thumbTip.x);
+                            const y1 = Math.min(indexTip.y, thumbTip.y);
+                            const x2 = Math.max(indexTip.x, thumbTip.x);
+                            const y2 = Math.max(indexTip.y, thumbTip.y);
+                            const rw = x2 - x1;
+                            const rh = y2 - y1;
+                            
+                            ctx.fillStyle = 'rgba(0, 200, 255, 0.08)';
+                            ctx.fillRect(x1, y1, rw, rh);
+                            
+                            ctx.shadowColor = '#00e5ff';
+                            ctx.shadowBlur = 30;
+                            ctx.strokeStyle = '#00e5ff';
+                            ctx.lineWidth = Math.max(2.5, Math.min(w, h) * 0.004);
+                            ctx.strokeRect(x1, y1, rw, rh);
+                            
+                            ctx.shadowBlur = 0;
+                            const label = `${Math.round(rw)}×${Math.round(rh)}`;
+                            const fs2 = Math.max(20, Math.min(w, h) * 0.035);
+                            ctx.font = `bold ${fs2}px monospace`;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            const metrics = ctx.measureText(label);
+                            const tw = metrics.width + 24;
+                            const th = fs2 + 20;
+                            const tx = (x1 + x2) / 2 - tw / 2;
+                            const ty = (y1 + y2) / 2 - th / 2;
+                            
+                            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                            ctx.fillRect(tx, ty, tw, th);
+                            ctx.fillStyle = '#00e5ff';
+                            ctx.fillText(label, (x1 + x2) / 2, (y1 + y2) / 2);
+                            
+                            status.textContent = `🔲 ${Math.round(rw)}×${Math.round(rh)}`;
+                        } else {
+                            status.textContent = '✊ 捏合中';
+                        }
+                    }
+                } else {
+                    // 没检测到手
+                    const fs = Math.max(16, Math.min(w, h) * 0.025);
+                    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+                    ctx.font = `${fs}px monospace`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('🖐️ 伸出手掌', w / 2, h / 2);
+                    status.textContent = '🖐️ 等待手势';
+                }
+            }
+        } catch (err) {
+            // 静默处理
+        }
+        
+        requestAnimationFrame(detectLoop);
+    }
+
+    // ---------- 启动 ----------
+    async function main() {
+        resizeCanvas();
+        const ok = await initCamera();
+        if (!ok) return;
+        
+        const modelOk = await loadModel();
+        if (!modelOk) return;
+        
+        running = true;
+        detectLoop();
+    }
+
+    main();
+</script>
+</body>
+</html>

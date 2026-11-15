@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>滑块翻页</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: sans-serif;
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#pages-viewport {
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+#pages-track {
+  display: flex;
+  height: 100%;
+  width: 300vw;
+  transform: translate3d(0, 0, 0);
+  will-change: transform;
+  touch-action: none;
+}
+
+.page {
+  width: 100vw; height: 100%;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 40px;
+  font-weight: bold;
+  touch-action: none;
+}
+.page:nth-child(1) { background: linear-gradient(135deg, #ff4757, #ff6b81); }
+.page:nth-child(2) { background: linear-gradient(135deg, #2ed573, #7bed9f); }
+.page:nth-child(3) { background: linear-gradient(135deg, #1e90ff, #70a1ff); }
+
+#control-bar {
+  position: fixed;
+  bottom: 0; left: 0;
+  width: 100%; height: 100px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+#dots-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 28px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 40px;
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.35);
+  flex-shrink: 0;
+}
+
+#slider {
+  position: absolute;
+  top: 50%;
+  width: 22px; height: 22px;
+  margin-top: -11px;
+  margin-left: -11px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 16px rgba(255,255,255,0.6), 0 2px 8px rgba(0,0,0,0.3);
+  pointer-events: none;
+  left: 0;
+}
+
+.longpress-alert {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-50%) scale(0.5);
+  background: rgba(0,0,0,0.8);
+  padding: 20px 40px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.2);
+  font-size: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  z-index: 100;
+}
+.longpress-alert.show {
+  opacity: 1;
+  transform: translate(-50%,-50%) scale(1);
+}
+</style>
+</head>
+<body>
+
+<div id="pages-viewport">
+  <div id="pages-track">
+    <div class="page">Page 1</div>
+    <div class="page">Page 2</div>
+    <div class="page">Page 3</div>
+  </div>
+</div>
+
+<div class="longpress-alert" id="alertBox">触发长按！</div>
+
+<div id="control-bar">
+  <div id="dots-track">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div id="slider"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  var track = document.getElementById('pages-track');
+  var dotsTrack = document.getElementById('dots-track');
+  var dots = dotsTrack.querySelectorAll('.dot');
+  var slider = document.getElementById('slider');
+  var alertBox = document.getElementById('alertBox');
+  var PAGE_COUNT = dots.length;
+  var pageWidth = window.innerWidth;
+
+  var progress = 0;              // 0 ~ PAGE_COUNT-1 的浮点进度
+  var dragging = false;
+  var dragSource = null;         // 'page' | 'slider'
+  var startX = 0, startY = 0;
+  var startProgress = 0;
+  var isPressing = false;
+  var longPressTimer = null;
+  var pressedDotIndex = -1;
+  var activeTouchId = null;
+  var lastTouchTime = 0;
+  var dotCenters = [];
+  var dotSpacing = 1;
+
+  track.style.width = (PAGE_COUNT * 100) + 'vw';
+
+  /* ---------- 测量每个圆点中心（相对 dots-track） ---------- */
+  function measure() {
+    pageWidth = window.innerWidth;
+    var trackRect = dotsTrack.getBoundingClientRect();
+    dotCenters = [];
+    dots.forEach(function(d) {
+      var r = d.getBoundingClientRect();
+      dotCenters.push(r.left - trackRect.left + r.width / 2);
+    });
+    dotSpacing = dotCenters.length > 1
+      ? (dotCenters[dotCenters.length - 1] - dotCenters[0]) / (dotCenters.length - 1)
+      : 1;
+  }
+
+  /* 浮点 progress 对应的滑块中心 x */
+  function sliderCenterAt(p) {
+    var i = Math.floor(p);
+    var j = Math.min(i + 1, PAGE_COUNT - 1);
+    var t = p - i;
+    return dotCenters[i] + (dotCenters[j] - dotCenters[i]) * t;
+  }
+
+  /* ---------- 渲染：页面 + 滑块同步 ---------- */
+  function render(animate) {
+    var eased = animate
+      ? 'transform 0.35s cubic-bezier(0.25,0.8,0.25,1)'
+      : 'none';
+    track.style.transition = eased;
+    track.style.transform = 'translate3d(' + (-progress * pageWidth) + 'px, 0, 0)';
+
+    var cx = sliderCenterAt(progress);
+    slider.style.transition = animate
+      ? 'left 0.35s cubic-bezier(0.25,0.8,0.25,1)'
+      : 'none';
+    slider.style.left = cx + 'px';
+  }
+
+  function setProgress(p, animate) {
+    progress = Math.max(0, Math.min(p, PAGE_COUNT - 1));
+    render(animate);
+  }
+
+  function clearLP() {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  }
+
+  function nearestDotIndex(localX) {
+    var best = 0, bestDist = Infinity;
+    for (var i = 0; i < dotCenters.length; i++) {
+      var d = Math.abs(dotCenters[i] - localX);
+      if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+  }
+
+  /* ---------- 手势开始 ---------- */
+  function begin(x, y, source, dotIdx) {
+    startX = x;
+    startY = y;
+    startProgress = progress;
+    dragSource = source;
+    dragging = false;
+    isPressing = true;
+    pressedDotIndex = dotIdx != null ? dotIdx : -1;
+
+    clearLP();
+    longPressTimer = setTimeout(function() {
+      if (isPressing && !dragging) {
+        alertBox.classList.add('show');
+        pressedDotIndex = -1;   // 长按后松手不跳页
+        if (navigator.vibrate) navigator.vibrate(50);
+      }
+    }, 500);
+  }
+
+  /* ---------- 手势移动 ---------- */
+  function move(x, y, e) {
+    if (!isPressing) return;
+    var dx = x - startX;
+    var dy = y - startY;
+
+    if (!dragging) {
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLP();
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        dragging = true;
+        pressedDotIndex = -1;
+        alertBox.classList.remove('show');
+      }
+    }
+
+    if (!dragging) return;
+    if (e && e.cancelable) e.preventDefault();
+
+    var deltaPages;
+    if (dragSource === 'page') {
+      deltaPages = dx / pageWidth;
+    } else {
+      deltaPages = dx / dotSpacing;   // 拖滑块：点间距映射一页
+    }
+
+    var p = startProgress - deltaPages;
+    progress = Math.max(0, Math.min(p, PAGE_COUNT - 1));
+    render(false);
+  }
+
+  /* ---------- 手势结束：吸附到最近点 ---------- */
+  function end(x) {
+    clearLP();
+    if (!isPressing) return;
+
+    var target;
+    if (dragging) {
+      target = Math.round(progress);           // 拖到哪附近吸哪
+    } else if (pressedDotIndex >= 0) {
+      target = pressedDotIndex;                // 轻点圆点直接跳
+    } else {
+      target = Math.round(progress);
+    }
+
+    dragging = false;
+    isPressing = false;
+    pressedDotIndex = -1;
+    setProgress(target, true);
+
+    setTimeout(function() { alertBox.classList.remove('show'); }, 1000);
+  }
+
+  function cancel() {
+    clearLP();
+    if (!isPressing) return;
+    dragging = false;
+    isPressing = false;
+    pressedDotIndex = -1;
+    alertBox.classList.remove('show');
+    setProgress(Math.round(progress), true);
+  }
+
+  /* ---------- 触摸 ---------- */
+  document.addEventListener('touchstart', function(e) {
+    if (activeTouchId !== null || e.touches.length !== 1) return;
+    var t = e.touches[0];
+    activeTouchId = t.identifier;
+    lastTouchTime = Date.now();
+
+    if (e.target.closest('#dots-track')) {
+      var rect = dotsTrack.getBoundingClientRect();
+      var idx = nearestDotIndex(t.clientX - rect.left);
+      begin(t.clientX, t.clientY, 'slider', idx);
+    } else {
+      begin(t.clientX, t.clientY, 'page', -1);
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function(e) {
+    if (activeTouchId === null) return;
+    for (var i = 0; i < e.touches.length; i++) {
+      if (e.touches[i].identifier === activeTouchId) {
+        move(e.touches[i].clientX, e.touches[i].clientY, e);
+        break;
+      }
+    }
+  }, { passive: false });
+
+  document.addEventListener('touchend', function(e) {
+    if (activeTouchId === null) return;
+    for (var i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === activeTouchId) {
+        end(e.changedTouches[i].clientX);
+        activeTouchId = null;
+        lastTouchTime = Date.now();
+        break;
+      }
+    }
+  });
+
+  document.addEventListener('touchcancel', function() {
+    activeTouchId = null;
+    cancel();
+  });
+
+  /* ---------- 鼠标 ---------- */
+  document.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    if (Date.now() - lastTouchTime < 500) return;
+
+    if (e.target.closest('#dots-track')) {
+      var rect = dotsTrack.getBoundingClientRect();
+      var idx = nearestDotIndex(e.clientX - rect.left);
+      begin(e.clientX, e.clientY, 'slider', idx);
+    } else {
+      begin(e.clientX, e.clientY, 'page', -1);
+    }
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!isPressing) return;
+    move(e.clientX, e.clientY, e);
+  });
+
+  document.addEventListener('mouseup', function(e) {
+    if (!isPressing) return;
+    end(e.clientX);
+  });
+
+  /* ---------- resize ---------- */
+  window.addEventListener('resize', function() {
+    measure();
+    setProgress(Math.round(progress), false);
+  });
+
+  /* ---------- 初始化 ---------- */
+  function init() {
+    measure();
+    setProgress(0, false);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+  window.addEventListener('load', function() {
+    measure();
+    render(false);
+  });
+})();
+</script>
+</body>
+</html>

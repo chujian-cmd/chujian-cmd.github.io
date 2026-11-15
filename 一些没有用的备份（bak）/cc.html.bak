@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>55万行分页浏览器 - ff.txt</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        button, select { margin: 5px; padding: 8px 16px; cursor: pointer; }
+        pre { background: #f0f0f0; padding: 10px; overflow-x: auto; white-space: pre-wrap; max-height: 600px; overflow-y: auto; font-size: 12px; }
+        .controls { margin: 15px 0; }
+        .page-info { display: inline-block; margin: 0 10px; font-weight: bold; }
+        input { width: 60px; text-align: center; }
+        .status { color: green; margin: 10px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>📄 ff.txt 分页浏览器（55万行专用）</h2>
+    <input type="file" id="fileInput" accept=".txt" />
+    <div id="fileInfo" class="status"></div>
+    
+    <div id="browser" style="display:none;">
+        <div class="controls">
+            <button id="firstBtn">⏮ 首页</button>
+            <button id="prevBtn">◀ 上一页</button>
+            <span class="page-info">
+                第 <input type="number" id="pageNum" min="1" /> 页 / 共 <span id="totalPages">?</span> 页
+            </span>
+            <button id="nextBtn">下一页 ▶</button>
+            <button id="lastBtn">尾页 ⏭</button>
+            <select id="pageSize">
+                <option value="100">100行/页</option>
+                <option value="500">500行/页</option>
+                <option value="1000" selected>1000行/页</option>
+                <option value="5000">5000行/页</option>
+            </select>
+            <button id="goBtn">跳转</button>
+        </div>
+        <div id="loading" style="color:blue;">加载中...</div>
+        <pre id="content">等待加载</pre>
+    </div>
+</div>
+
+<script>
+    let currentFile = null;
+    let totalLines = 0;
+    let totalPages = 0;
+    let currentPage = 1;
+    let pageSize = 1000;
+    let lineOffsets = []; // 存储每行的起始位置
+    
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        currentFile = e.target.files[0];
+        if (!currentFile) return;
+        document.getElementById('fileInfo').textContent = `⏳ 正在扫描 ${currentFile.name}，请稍候（${(currentFile.size/1024/1024).toFixed(2)} MB）...`;
+        document.getElementById('browser').style.display = 'none';
+        buildLineIndex(currentFile);
+    });
+    
+    // 建立行索引（只存每行开头的位置，不读全部内容）
+    function buildLineIndex(file) {
+        const chunkSize = 1024 * 1024; // 1MB块
+        let offset = 0;
+        let remainder = '';
+        lineOffsets = [0]; // 第0行从文件开头开始
+        
+        function readChunk() {
+            const end = Math.min(offset + chunkSize, file.size);
+            const blob = file.slice(offset, end);
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = remainder + e.target.result;
+                let newlinePos = -1;
+                let searchStart = 0;
+                
+                while ((newlinePos = text.indexOf('\n', searchStart)) !== -1) {
+                    searchStart = newlinePos + 1;
+                    const absolutePos = offset + newlinePos + 1;
+                    lineOffsets.push(absolutePos);
+                }
+                
+                remainder = text.substring(searchStart);
+                offset = end;
+                
+                if (offset < file.size) {
+                    readChunk();
+                } else {
+                    // 最后一行如果没有换行符也要算
+                    totalLines = lineOffsets.length;
+                    if (remainder.length > 0) totalLines++;
+                    totalPages = Math.ceil(totalLines / pageSize);
+                    document.getElementById('fileInfo').innerHTML = `✅ 扫描完成！共 ${totalLines.toLocaleString()} 行，${totalPages} 页（每页${pageSize}行）`;
+                    document.getElementById('browser').style.display = 'block';
+                    document.getElementById('totalPages').textContent = totalPages;
+                    document.getElementById('pageNum').max = totalPages;
+                    loadPage(1);
+                }
+            };
+            reader.onerror = () => { document.getElementById('fileInfo').textContent = '读取失败'; };
+            reader.readAsText(blob, 'UTF-8');
+        }
+        
+        readChunk();
+    }
+    
+    function loadPage(page) {
+        if (!currentFile) return;
+        if (page < 1) page = 1;
+        if (page > totalPages) page = totalPages;
+        currentPage = page;
+        document.getElementById('pageNum').value = page;
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('content').textContent = '加载中...';
+        
+        const startLine = (page - 1) * pageSize;      // 0-based
+        const endLine = Math.min(startLine + pageSize, totalLines);
+        const startOffset = lineOffsets[startLine];
+        
+        let endOffset;
+        if (endLine < lineOffsets.length) {
+            endOffset = lineOffsets[endLine];
+        } else {
+            endOffset = currentFile.size;
+        }
+        
+        const blob = currentFile.slice(startOffset, endOffset);
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('loading').style.display = 'none';
+            let text = e.target.result;
+            // 显示行号
+            let lines = text.split('\n');
+            let numbered = '';
+            for (let i = 0; i < lines.length; i++) {
+                numbered += (startLine + i + 1) + ': ' + lines[i] + '\n';
+            }
+            document.getElementById('content').textContent = numbered;
+        };
+        reader.readAsText(blob, 'UTF-8');
+    }
+    
+    document.getElementById('firstBtn').onclick = () => loadPage(1);
+    document.getElementById('prevBtn').onclick = () => loadPage(currentPage - 1);
+    document.getElementById('nextBtn').onclick = () => loadPage(currentPage + 1);
+    document.getElementById('lastBtn').onclick = () => loadPage(totalPages);
+    document.getElementById('goBtn').onclick = () => loadPage(parseInt(document.getElementById('pageNum').value));
+    document.getElementById('pageSize').onchange = (e) => {
+        pageSize = parseInt(e.target.value);
+        totalPages = Math.ceil(totalLines / pageSize);
+        document.getElementById('totalPages').textContent = totalPages;
+        document.getElementById('pageNum').max = totalPages;
+        loadPage(1);
+    };
+</script>
+</body>
+</html>

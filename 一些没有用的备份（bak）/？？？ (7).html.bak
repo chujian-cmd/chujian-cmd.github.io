@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>System</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; touch-action: none; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x000000, 0.03);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(5, 3, 7);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.target.set(0, 0, 0);
+controls.maxDistance = 20;
+controls.minDistance = 2;
+
+scene.add(new THREE.AmbientLight(0x111122, 2));
+
+const lightA = new THREE.PointLight(0xff2266, 80, 20);
+lightA.position.set(2, 2, 3);
+scene.add(lightA);
+
+const lightB = new THREE.PointLight(0x2266ff, 80, 20);
+lightB.position.set(-2, -2, 3);
+scene.add(lightB);
+
+const pGeo = new THREE.BufferGeometry();
+const pCount = 2000;
+const pPos = new Float32Array(pCount * 3);
+for (let i = 0; i < pCount; i++) {
+  pPos[i*3] = (Math.random() - 0.5) * 15;
+  pPos[i*3+1] = (Math.random() - 0.5) * 15;
+  pPos[i*3+2] = (Math.random() - 0.5) * 15;
+}
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const pMat = new THREE.PointsMaterial({
+  size: 0.04,
+  color: 0xffaacc,
+  transparent: true,
+  opacity: 0.3,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false
+});
+const particles = new THREE.Points(pGeo, pMat);
+scene.add(particles);
+
+function createBody(color, emissive) {
+  const group = new THREE.Group();
+
+  const torso = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.4, 1.2, 16, 16),
+    new THREE.MeshStandardMaterial({
+      color: color,
+      emissive: emissive,
+      emissiveIntensity: 0.5,
+      roughness: 0.4,
+      metalness: 0.2
+    })
+  );
+  torso.position.y = 0.6;
+  group.add(torso);
+
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.25, 16, 16),
+    new THREE.MeshStandardMaterial({ color: color, emissive: emissive, emissiveIntensity: 0.3 })
+  );
+  head.position.y = 1.55;
+  group.add(head);
+
+  const hips = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.35, 0.6, 16, 16),
+    new THREE.MeshStandardMaterial({ color: color, emissive: emissive, emissiveIntensity: 0.3 })
+  );
+  hips.position.y = -0.4;
+  hips.rotation.z = Math.PI * 0.5;
+  group.add(hips);
+
+  const legGeo = new THREE.CapsuleGeometry(0.15, 0.8, 8, 8);
+  const legMat = new THREE.MeshStandardMaterial({ color: color, emissive: emissive, emissiveIntensity: 0.2 });
+  
+  const legL = new THREE.Mesh(legGeo, legMat);
+  legL.position.set(0.2, -1.3, 0);
+  group.add(legL);
+  
+  const legR = new THREE.Mesh(legGeo, legMat);
+  legR.position.set(-0.2, -1.3, 0);
+  group.add(legR);
+
+  return group;
+}
+
+const bodyA = createBody(0xff2266, 0x440011);
+bodyA.position.set(0, 0.5, 0);
+bodyA.rotation.x = 0.1;
+scene.add(bodyA);
+
+const bodyB = createBody(0x2266ff, 0x001144);
+bodyB.position.set(0, 0.5, 0);
+bodyB.rotation.x = -0.1;
+bodyB.position.y = 1.2;
+bodyB.position.z = -0.2;
+scene.add(bodyB);
+
+let state = 'idle';
+let cycleTime = 0;
+let speed = 0;
+
+window.addEventListener('pointerdown', (e) => {
+  if (state === 'idle') {
+    state = 'run';
+    cycleTime = 0;
+  }
+});
+
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+  const t = clock.getElapsedTime();
+
+  particles.rotation.y = t * 0.02;
+  particles.rotation.z = Math.sin(t * 0.1) * 0.1;
+
+  if (state === 'run') {
+    cycleTime += dt;
+    
+    let phase = cycleTime % 3.5;
+    let isThrusting = phase > 1.2 && phase < 2.8;
+    let depth = 0;
+
+    if (isThrusting) {
+      depth = Math.pow(Math.sin((phase - 1.2) / 1.6 * Math.PI), 1.5);
+      speed = 3.5;
+    } else if (phase >= 2.8) {
+      depth = 0.2 * Math.sin(phase * 10) * Math.exp(-(phase - 2.8) * 5);
+      speed = 0.5;
+    } else {
+      depth = 0.1 + 0.1 * Math.sin(phase * 5);
+      speed = 1.2;
+    }
+
+    const push = Math.sin(t * speed) * 0.3 * depth;
+    
+    bodyA.position.z = 0.2 + push;
+    bodyA.position.y = 0.5 + Math.sin(t * speed * 2) * 0.05 * depth;
+    bodyA.rotation.x = 0.1 + depth * 0.3;
+
+    bodyB.position.z = -0.2 - push;
+    bodyB.position.y = 1.2 + Math.sin(t * speed * 2 + Math.PI) * 0.05 * depth;
+    bodyB.rotation.x = -0.1 - depth * 0.3;
+    
+    bodyB.position.y += Math.sin(phase * 3) * 0.1;
+
+    lightA.intensity = 50 + depth * 100;
+    lightB.intensity = 50 + depth * 100;
+    
+    lightA.position.x = 1.5 + Math.sin(t * speed) * 0.5;
+    lightB.position.x = -1.5 + Math.cos(t * speed) * 0.5;
+    lightA.position.y = 2 - depth;
+    lightB.position.y = -2 + depth;
+
+    pMat.opacity = 0.2 + depth * 0.3;
+
+  } else {
+    bodyA.position.set(0, 0.5, 0);
+    bodyB.position.set(0, 1.2, -0.2);
+    lightA.intensity = 50;
+    lightB.intensity = 50;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

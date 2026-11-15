@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>极简3D投影解谜 · 等轴测视角</title>
+    <style>
+        :root {
+            --bg: #ffffff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: manipulation;
+            padding: 8px;
+        }
+
+        .game-wrapper {
+            position: relative;
+            width: min(92vw, 48vh);
+            height: min(164vw, 85vh);
+            max-width: 400px;
+            max-height: 720px;
+            aspect-ratio: 9 / 16;
+            border-radius: 22px;
+            overflow: hidden;
+            box-shadow: 0 30px 50px rgba(0,0,0,0.06), 0 8px 20px rgba(0,0,0,0.04);
+            background: #ffffff;
+        }
+
+        .game-wrapper canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border-radius: 22px;
+        }
+
+        .title-hint {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            letter-spacing: 0.28em;
+            color: #c4c4c4;
+            pointer-events: none;
+            font-weight: 400;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 420px) {
+            .game-wrapper {
+                width: 94vw;
+                height: calc(94vw * 16 / 9);
+                border-radius: 18px;
+            }
+            .game-wrapper canvas {
+                border-radius: 18px;
+            }
+            .title-hint {
+                font-size: 10px;
+                bottom: 18px;
+                letter-spacing: 0.22em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-wrapper" id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div class="title-hint">投 影 解 谜</div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // ---------- 工具：绘制圆角矩形（兼容所有浏览器） ----------
+        function drawRoundRect(ctx, x, y, w, h, r) {
+            if (w < 2 * r) r = w / 2;
+            if (h < 2 * r) r = h / 2;
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.arcTo(x + w, y, x + w, y + r, r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+            ctx.lineTo(x + r, y + h);
+            ctx.arcTo(x, y + h, x, y + h - r, r);
+            ctx.lineTo(x, y + r);
+            ctx.arcTo(x, y, x + r, y, r);
+            ctx.closePath();
+        }
+
+        // ---------- 场景初始化 ----------
+        const container = document.getElementById('gameContainer');
+        const canvas = document.getElementById('gameCanvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setClearColor(0xffffff, 1.0);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.BasicShadowMap;
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.1;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#ffffff');
+
+        // 等轴测正交相机
+        const frustumSizeVertical = 10.2;
+        const aspect = 9 / 16;
+        const frustumSizeHorizontal = frustumSizeVertical * aspect;
+        const camera = new THREE.OrthographicCamera(
+            -frustumSizeHorizontal / 2,
+            frustumSizeHorizontal / 2,
+            frustumSizeVertical / 2,
+            -frustumSizeVertical / 2,
+            0.5,
+            60
+        );
+
+        const isoDistance = 14;
+        const isoHeight = isoDistance * Math.tan(THREE.MathUtils.degToRad(35.264));
+        const isoX = isoDistance * Math.cos(THREE.MathUtils.degToRad(45));
+        const isoZ = isoDistance * Math.sin(THREE.MathUtils.degToRad(45));
+        camera.position.set(isoX, isoHeight, isoZ);
+        camera.lookAt(0, 0.35, 0);
+        camera.updateProjectionMatrix();
+
+        // 光照
+        const ambient = new THREE.AmbientLight('#f8f6f4', 1.9);
+        scene.add(ambient);
+        const hemi = new THREE.HemisphereLight('#ffffff', '#e8e5e0', 0.8);
+        scene.add(hemi);
+
+        const lightRight = new THREE.DirectionalLight('#ffffff', 4.5);
+        lightRight.position.set(0, 6.5, -18);
+        lightRight.target.position.set(0, 0.3, 1.5);
+        scene.add(lightRight.target);
+        lightRight.castShadow = true;
+        lightRight.shadow.mapSize.set(4096, 4096);
+        lightRight.shadow.camera.near = 0.5;
+        lightRight.shadow.camera.far = 55;
+        lightRight.shadow.camera.left = -10;
+        lightRight.shadow.camera.right = 10;
+        lightRight.shadow.camera.top = 10;
+        lightRight.shadow.camera.bottom = -10;
+        lightRight.shadow.bias = -0.00015;
+        lightRight.shadow.normalBias = 0.01;
+        scene.add(lightRight);
+
+        const lightLeft = new THREE.DirectionalLight('#ffffff', 3.8);
+        lightLeft.position.set(0, 6.5, 18);
+        lightLeft.target.position.set(0, 0.3, -1.5);
+        scene.add(lightLeft.target);
+        lightLeft.castShadow = true;
+        lightLeft.shadow.mapSize.set(4096, 4096);
+        lightLeft.shadow.camera.near = 0.5;
+        lightLeft.shadow.camera.far = 55;
+        lightLeft.shadow.camera.left = -10;
+        lightLeft.shadow.camera.right = 10;
+        lightLeft.shadow.camera.top = 10;
+        lightLeft.shadow.camera.bottom = -10;
+        lightLeft.shadow.bias = -0.00015;
+        lightLeft.shadow.normalBias = 0.01;
+        scene.add(lightLeft);
+
+        const lightTop = new THREE.DirectionalLight('#ffffff', 1.4);
+        lightTop.position.set(0, 12, 0);
+        lightTop.target.position.set(0, 0, 0);
+        scene.add(lightTop.target);
+        scene.add(lightTop);
+
+        // 材质
+        const matPlatform = new THREE.MeshStandardMaterial({ color: '#fafaf9', roughness: 0.55, metalness: 0.02 });
+        const matWall = new THREE.MeshStandardMaterial({ color: '#f7f6f4', roughness: 0.6, metalness: 0.01, side: THREE.DoubleSide });
+        const matBlock = new THREE.MeshStandardMaterial({ color: '#d5d3cf', roughness: 0.35, metalness: 0.04 });
+        const matBlockCorrect = matBlock.clone();
+        const matBlockWrong = matBlock.clone();
+        const matShadowOnWall = new THREE.MeshBasicMaterial({ color: '#b5b3ae', transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+
+        const mainGroup = new THREE.Group();
+        scene.add(mainGroup);
+
+        // 平台
+        const platformSize = 5;
+        const platformThickness = 0.08;
+        const platformY = -platformThickness / 2;
+        const platformGeo = new THREE.BoxGeometry(platformSize, platformThickness, platformSize);
+        const platform = new THREE.Mesh(platformGeo, matPlatform);
+        platform.position.set(0, platformY, 0);
+        platform.receiveShadow = true;
+        mainGroup.add(platform);
+
+        // 网格线
+        const gridGroup = new THREE.Group();
+        gridGroup.position.set(0, platformY + platformThickness / 2 + 0.002, 0);
+        mainGroup.add(gridGroup);
+        const gridMat = new THREE.MeshBasicMaterial({ color: '#e2e0db', transparent: true, opacity: 0.6, depthTest: true, depthWrite: false });
+        const lineW = 0.025, lineH = 0.003;
+        for (let i = -2; i <= 2; i++) {
+            const lineZ = new THREE.Mesh(new THREE.BoxGeometry(platformSize, lineH, lineW), gridMat);
+            lineZ.position.set(0, 0, i);
+            lineZ.receiveShadow = true;
+            gridGroup.add(lineZ);
+            const lineX = new THREE.Mesh(new THREE.BoxGeometry(lineW, lineH, platformSize), gridMat);
+            lineX.position.set(i, 0, 0);
+            lineX.receiveShadow = true;
+            gridGroup.add(lineX);
+        }
+
+        // 墙壁
+        const wallHeight = 5.5;
+        const wallThickness = 0.1;
+        const wallGeo = new THREE.BoxGeometry(platformSize, wallHeight, wallThickness);
+        const leftWall = new THREE.Mesh(wallGeo, matWall);
+        leftWall.position.set(0, wallHeight/2, -platformSize/2 - wallThickness/2);
+        leftWall.receiveShadow = true;
+        mainGroup.add(leftWall);
+        const rightWall = new THREE.Mesh(wallGeo.clone(), matWall);
+        rightWall.position.set(0, wallHeight/2, platformSize/2 + wallThickness/2);
+        rightWall.receiveShadow = true;
+        mainGroup.add(rightWall);
+
+        // 方块
+        const blockSize = 1;
+        const blockY = platformY + platformThickness/2 + blockSize/2;
+        const createBlock = (x, z, material) => {
+            const geo = new THREE.BoxGeometry(blockSize, blockSize, blockSize, 2, 2, 2);
+            const mesh = new THREE.Mesh(geo, material);
+            mesh.position.set(x, blockY, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mainGroup.add(mesh);
+            return mesh;
+        };
+
+        const blockA = createBlock(1, 0, matBlockCorrect);
+        const blockB = createBlock(-1, -0.5, matBlockCorrect);
+        const blockC = createBlock(0.5, -1.5, matBlockWrong);
+        const blockD = createBlock(-0.5, 1.5, matBlockCorrect);
+        const blocks = [blockA, blockB, blockC, blockD];
+
+        // 纹理生成（兼容无 roundRect）
+        function createTargetTexture(size, dashColor) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+            const margin = size * 0.12;
+            const rectW = size - margin * 2;
+            const rectH = size - margin * 2;
+            const radius = size * 0.06;
+            const dashLen = size * 0.16;
+            const gapLen = size * 0.1;
+            ctx.strokeStyle = dashColor;
+            ctx.lineWidth = size * 0.035;
+            ctx.lineCap = 'round';
+            ctx.setLineDash([dashLen, gapLen]);
+            ctx.lineDashOffset = size * 0.05;
+            drawRoundRect(ctx, margin, margin, rectW, rectH, radius);
+            ctx.stroke();
+            // 内部十字参考
+            ctx.setLineDash([size*0.03, size*0.22]);
+            ctx.lineDashOffset = 0;
+            ctx.strokeStyle = dashColor;
+            ctx.globalAlpha = 0.4;
+            ctx.lineWidth = size * 0.012;
+            const cx = size/2, cy = size/2, innerR = size*0.2;
+            ctx.beginPath();
+            ctx.moveTo(cx - innerR, cy); ctx.lineTo(cx + innerR, cy);
+            ctx.moveTo(cx, cy - innerR); ctx.lineTo(cx, cy + innerR);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createRedXTexture(size) {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, size, size);
+            const margin = size * 0.22;
+            const lw = size * 0.09;
+            ctx.strokeStyle = 'rgba(200,80,60,0.3)';
+            ctx.lineWidth = lw + size*0.04;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(margin+size*0.02, margin+size*0.02);
+            ctx.lineTo(size-margin+size*0.02, size-margin+size*0.02);
+            ctx.moveTo(size-margin+size*0.02, margin+size*0.02);
+            ctx.lineTo(margin+size*0.02, size-margin+size*0.02);
+            ctx.stroke();
+            ctx.strokeStyle = '#e85d50';
+            ctx.lineWidth = lw;
+            ctx.beginPath();
+            ctx.moveTo(margin, margin);
+            ctx.lineTo(size-margin, size-margin);
+            ctx.moveTo(size-margin, margin);
+            ctx.lineTo(margin, size-margin);
+            ctx.stroke();
+            ctx.strokeStyle = '#f08070';
+            ctx.lineWidth = lw*0.5;
+            ctx.beginPath();
+            ctx.moveTo(margin-lw*0.2, margin-lw*0.2);
+            ctx.lineTo(size-margin-lw*0.2, size-margin-lw*0.2);
+            ctx.moveTo(size-margin+lw*0.2, margin-lw*0.2);
+            ctx.lineTo(margin+lw*0.2, size-margin-lw*0.2);
+            ctx.stroke();
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const targetTexRight = createTargetTexture(512, '#c8c5bf');
+        targetTexRight.colorSpace = THREE.SRGBColorSpace;
+        const targetTexLeft = createTargetTexture(512, '#c8c5bf');
+        targetTexLeft.colorSpace = THREE.SRGBColorSpace;
+        const redXTex = createRedXTexture(256);
+        redXTex.colorSpace = THREE.SRGBColorSpace;
+
+        const targetPlaneGeo = new THREE.PlaneGeometry(1.15, 1.15);
+        const targetMatRight = new THREE.MeshBasicMaterial({ map: targetTexRight, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false });
+        const targetMatLeft = new THREE.MeshBasicMaterial({ map: targetTexLeft, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false });
+
+        const targetGroup = new THREE.Group();
+        mainGroup.add(targetGroup);
+        const zRight = platformSize/2 + wallThickness/2 + 0.004;
+        const zLeft = -platformSize/2 - wallThickness/2 - 0.004;
+
+        targetGroup.add(new THREE.Mesh(targetPlaneGeo, targetMatRight)).position.set(0.98, 0.85, zRight);
+        targetGroup.children[targetGroup.children.length-1].name = 'targetR1';
+        targetGroup.add(new THREE.Mesh(targetPlaneGeo, targetMatRight)).position.set(-0.52, 1.55, zRight);
+        targetGroup.children[targetGroup.children.length-1].name = 'targetR2';
+        targetGroup.add(new THREE.Mesh(targetPlaneGeo, targetMatLeft)).position.set(-0.98, 0.72, zLeft);
+        targetGroup.children[targetGroup.children.length-1].rotation.set(0, Math.PI, 0);
+        targetGroup.children[targetGroup.children.length-1].name = 'targetL1';
+        targetGroup.add(new THREE.Mesh(targetPlaneGeo, targetMatLeft)).position.set(0.48, 0.38, zLeft);
+        targetGroup.children[targetGroup.children.length-1].rotation.set(0, Math.PI, 0);
+        targetGroup.children[targetGroup.children.length-1].name = 'targetL2_unmatched';
+
+        // 红色X标记
+        const redXGroup = new THREE.Group();
+        mainGroup.add(redXGroup);
+        const redXPlane = new THREE.PlaneGeometry(0.55, 0.55);
+        const redXMat = new THREE.MeshBasicMaterial({ map: redXTex, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
+        const rx1 = new THREE.Mesh(redXPlane, redXMat);
+        rx1.position.set(0.48, 0.38, zLeft - 0.003);
+        rx1.rotation.set(0, Math.PI, 0);
+        redXGroup.add(rx1);
+        const rx2 = new THREE.Mesh(redXPlane.clone(), redXMat);
+        rx2.position.set(0.5, 0.18, zLeft - 0.003);
+        rx2.rotation.set(0, Math.PI, 0);
+        rx2.scale.set(0.7, 0.7, 1);
+        redXGroup.add(rx2);
+
+        // 增强阴影平面
+        const shadowGroup = new THREE.Group();
+        shadowGroup.renderOrder = 1;
+        mainGroup.add(shadowGroup);
+        const addShadow = (x, y, z, rotY, w=1.05, h=1.05) => {
+            const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), matShadowOnWall.clone());
+            plane.position.set(x, y, z);
+            plane.rotation.set(0, rotY, 0);
+            plane.renderOrder = 1;
+            shadowGroup.add(plane);
+        };
+        addShadow(0.98, 0.85, zRight - 0.001, 0);
+        addShadow(-0.52, 1.55, zRight - 0.001, 0);
+        addShadow(-0.98, 0.72, zLeft + 0.001, Math.PI);
+        addShadow(0.5, 0.18, zLeft + 0.001, Math.PI);
+
+        // 响应式
+        function resize() {
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            let rw, rh;
+            if (w / h > 9/16) {
+                rh = h;
+                rw = rh * 9/16;
+            } else {
+                rw = w;
+                rh = rw * 16/9;
+            }
+            renderer.setSize(rw, rh, false);
+            const vf = frustumSizeVertical;
+            const hf = vf * 9/16;
+            camera.left = -hf/2;
+            camera.right = hf/2;
+            camera.top = vf/2;
+            camera.bottom = -vf/2;
+            camera.updateProjectionMatrix();
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 动画
+        function animate(time) {
+            requestAnimationFrame(animate);
+            const breathe = 1 + Math.sin(time * 0.0004) * 0.03;
+            lightRight.intensity = 4.5 * breathe;
+            lightLeft.intensity = 3.8 * breathe;
+            renderer.render(scene, camera);
+        }
+        requestAnimationFrame(animate);
+
+        // 交互
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const origScales = blocks.map(b => b.scale.clone());
+        let hovered = null;
+        canvas.addEventListener('pointermove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(blocks);
+            if (intersects.length) {
+                const obj = intersects[0].object;
+                if (hovered !== obj) {
+                    if (hovered) {
+                        const idx = blocks.indexOf(hovered);
+                        if (idx >= 0) hovered.scale.copy(origScales[idx]);
+                    }
+                    hovered = obj;
+                    const idx = blocks.indexOf(hovered);
+                    if (idx >= 0) hovered.scale.set(1.06, 1.06, 1.06);
+                }
+            } else if (hovered) {
+                const idx = blocks.indexOf(hovered);
+                if (idx >= 0) hovered.scale.copy(origScales[idx]);
+                hovered = null;
+            }
+        });
+        canvas.addEventListener('pointerleave', () => {
+            if (hovered) {
+                const idx = blocks.indexOf(hovered);
+                if (idx >= 0) hovered.scale.copy(origScales[idx]);
+                hovered = null;
+            }
+        });
+        canvas.addEventListener('pointerdown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(blocks);
+            if (intersects.length) {
+                const obj = intersects[0].object;
+                const idx = blocks.indexOf(obj);
+                if (idx >= 0) {
+                    const s = origScales[idx].clone();
+                    obj.scale.set(s.x*1.1, s.y*1.1, s.z*1.1);
+                    setTimeout(() => obj.scale.copy(s), 180);
+                }
+            }
+        });
+
+        console.log('✅ 场景已启动 – 兼容所有浏览器，纹理绘制无 roundRect 依赖');
+    </script>
+</body>
+</html>

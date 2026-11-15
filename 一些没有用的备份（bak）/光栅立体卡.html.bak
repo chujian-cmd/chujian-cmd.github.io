@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>光栅立体卡</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #06070c;
+    -webkit-tap-highlight-color: transparent; overscroll-behavior: none;
+  }
+  canvas { display: block; width: 100% !important; height: 100% !important; touch-action: none; }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 12px 12px;
+    display: flex; gap: 8px; align-items: center;
+    background: linear-gradient(180deg, rgba(6,7,12,0.8), rgba(6,7,12,0));
+    z-index: 10; pointer-events: none;
+    font: 13px -apple-system, "PingFang SC", sans-serif;
+    color: #c3c9d4;
+  }
+  #bar > * { pointer-events: auto; }
+  #bar .mode { flex: 1; color: #8a8f98; }
+  #bar .mode b { color: #f7f8f8; font-weight: 600; }
+
+  .btn {
+    height: 38px; padding: 0 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.06);
+    color: #f7f8f8; font: 500 13px -apple-system, "PingFang SC", sans-serif;
+    cursor: pointer; -webkit-user-select: none; user-select: none;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  }
+  .btn:active { background: rgba(255,255,255,0.14); }
+  .btn.pri { background: rgba(94,106,210,0.32); border-color: rgba(94,106,210,0.6); }
+
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    text-align: center; color: #6a6f7a;
+    font: 12px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+  }
+
+  #empty {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px;
+    color: #5c616a; font: 15px -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; user-select: none;
+  }
+  #empty b { color: #c3c9d4; font-size: 22px; font-weight: 600; }
+  #empty.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+<div id="empty">
+  <b>拖入图片 / 雪碧图 / GIF</b>
+  或点击屏幕选择文件
+  <div style="font-size:12px;color:#3f4450;margin-top:8px">可上传：单图 · 多格雪碧图 · GIF 动图</div>
+</div>
+
+<div id="bar">
+  <div class="mode">光栅卡 <b id="m">1 帧</b></div>
+  <button class="btn" id="btn-upload">上传</button>
+  <button class="btn pri" id="btn-change">换样式</button>
+</div>
+
+<div id="hint">拖动卡片 = 旋转看变画 · 松开自动摆动</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const emptyHint = document.getElementById('empty');
+
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+                || (navigator.maxTouchPoints > 1);
+
+  // ========== 参数 ==========
+  const CFG = {
+    rotateRange: 55,        // 最大旋转角度（度）
+    crossfade: 0.12,        // 交叉淡化
+    cols: 3,                // 雪碧图列数
+    rows: 1,                // 雪碧图行数
+    frameCount: 12,         // GIF / 视频抽帧数
+    autoWobble: 0.7,        // 自动摆动幅度
+    wobbleSpeed: 0.6,       // 自动摆动速度
+    radius: 0.12,           // 圆角
+    cardBg: '#12141c',      // 卡面底色
+    background: '#06070c',
+    sheen: 0.35,            // 扫光强度
+    sheenStyle: 'holo'      // holo | mono | metal | glow | none
+  };
+
+  // ========== 尺寸 ==========
+  let W = 0, H = 0, dpr = 1;
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ========== 卡片状态 ==========
+  const card = {
+    frames: [],          // Image 或 canvas
+    aspect: 1.5,
+    kind: 'empty',
+    rotY: 0,             // 当前旋转（弧度）
+    targetRotY: 0,       // 目标旋转
+    dragging: false,
+    lastX: 0,
+    lastInteract: -10
+  };
+
+  // ========== 文件上传 ==========
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*,video/*';
+  fileInput.style.display = 'none';
+  document.body.appendChild(fileInput);
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files && fileInput.files[0];
+    if (f) loadFile(f);
+  });
+
+  document.getElementById('btn-upload').addEventListener('click', () => fileInput.click());
+  cv.addEventListener('click', () => fileInput.click());
+
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+
+  function loadFile(file) {
+    const type = file.type;
+    const isGif = type === 'image/gif' || /\.gif$/i.test(file.name);
+    if (type.startsWith('video/')) loadVideo(file);
+    else if (isGif) loadGif(file);
+    else loadSprite(file);
+  }
+
+  function loadSprite(file) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const cols = Math.max(1, Math.min(8, CFG.cols | 0));
+      const rows = Math.max(1, Math.min(8, CFG.rows | 0));
+      const n = Math.min(16, cols * rows);
+      const srcW = img.width / cols;
+      const srcH = img.height / rows;
+      const scale = Math.min(1, 512 / Math.max(srcW, srcH));
+      const w = Math.max(2, Math.round(srcW * scale));
+      const h = Math.max(2, Math.round(srcH * scale));
+
+      const frames = [];
+      for (let i = 0; i < n; i++) {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        const g = c.getContext('2d');
+        const sx = (i % cols) * srcW;
+        const sy = Math.floor(i / cols) * srcH;
+        g.drawImage(img, sx, sy, srcW, srcH, 0, 0, w, h);
+        frames.push(c);
+      }
+      setFrames(frames, srcW / srcH, 'sprite');
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => URL.revokeObjectURL(url);
+    img.src = url;
+  }
+
+  async function loadGif(file) {
+    const ImageDecoder = window.ImageDecoder;
+    if (!ImageDecoder) { loadSprite(file); return; }
+    try {
+      const buf = await file.arrayBuffer();
+      const dec = new ImageDecoder({ data: buf, type: 'image/gif' });
+      await dec.tracks.ready;
+      const total = dec.tracks.selectedTrack?.frameCount ?? 1;
+      const n = Math.min(CFG.frameCount, Math.max(2, total));
+      const frames = [];
+      let aspect = 1.5;
+      for (let i = 0; i < n; i++) {
+        const idx = Math.min(total - 1, Math.floor(i * total / n));
+        const { image } = await dec.decode({ frameIndex: idx });
+        const sw = image.displayWidth;
+        const sh = image.displayHeight;
+        aspect = sw / sh;
+        const scale = Math.min(1, 512 / Math.max(sw, sh));
+        const w = Math.max(2, Math.round(sw * scale));
+        const h = Math.max(2, Math.round(sh * scale));
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d').drawImage(image, 0, 0, w, h);
+        image.close();
+        frames.push(c);
+      }
+      dec.close();
+      if (frames.length) setFrames(frames, aspect, 'gif');
+    } catch {
+      loadSprite(file);
+    }
+  }
+
+  function loadVideo(file) {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+    video.addEventListener('loadeddata', () => {
+      extractVideoFrames(video, url);
+    });
+    video.addEventListener('error', () => URL.revokeObjectURL(url));
+  }
+
+  function extractVideoFrames(video, url) {
+    const n = CFG.frameCount;
+    const duration = isFinite(video.duration) && video.duration > 0
+      ? Math.min(video.duration, 2) : 2;
+    const sw = video.videoWidth || 512;
+    const sh = video.videoHeight || 512;
+    const scale = Math.min(1, 640 / Math.max(sw, sh));
+    const w = Math.max(2, Math.round(sw * scale));
+    const h = Math.max(2, Math.round(sh * scale));
+    const times = [];
+    for (let i = 0; i < n; i++) times.push((i + 0.5) / n * duration);
+
+    const frames = [];
+    let i = 0;
+    let timeout = 0;
+    const done = () => {
+      video.onseeked = null;
+      clearTimeout(timeout);
+      URL.revokeObjectURL(url);
+      if (frames.length) setFrames(frames, w / h, 'video');
+    };
+    const next = () => {
+      if (i >= n) { done(); return; }
+      video.currentTime = times[i];
+    };
+    video.onseeked = () => {
+      clearTimeout(timeout);
+      try {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d').drawImage(video, 0, 0, w, h);
+        frames.push(c);
+      } catch {}
+      i++;
+      next();
+    };
+    // 每个 seek 最多等 700ms
+    const guard = () => {
+      timeout = window.setTimeout(() => { i++; next(); }, 700);
+    };
+    video.addEventListener('seeked', guard);
+    next();
+  }
+
+  function setFrames(frames, aspect, kind) {
+    card.frames = frames;
+    card.aspect = aspect;
+    card.kind = kind;
+    card.rotY = 0;
+    card.targetRotY = 0;
+    emptyHint.classList.add('hidden');
+    document.getElementById('m').textContent = `${frames.length} 帧`;
+  }
+
+  // ========== 指针交互 ==========
+  const rect = () => cv.getBoundingClientRect();
+  const pointer = { x: 0, y: 0, down: false, inside: false, zoom: 1 };
+
+  cv.addEventListener('mousedown', e => {
+    const r = rect();
+    card.dragging = true;
+    card.lastX = e.clientX - r.left;
+    pointer.x = card.lastX;
+    pointer.y = e.clientY - r.top;
+    pointer.inside = true;
+  });
+  cv.addEventListener('mousemove', e => {
+    const r = rect();
+    pointer.x = e.clientX - r.left;
+    pointer.y = e.clientY - r.top;
+    pointer.inside = true;
+    if (card.dragging) {
+      const dx = (e.clientX - r.left) - card.lastX;
+      card.lastX = e.clientX - r.left;
+      const range = CFG.rotateRange * Math.PI / 180;
+      card.targetRotY = Math.max(-range, Math.min(range, card.targetRotY + dx * 0.006));
+      card.lastInteract = performance.now() / 1000;
+    }
+  });
+  window.addEventListener('mouseup', () => { card.dragging = false; });
+
+  cv.addEventListener('touchstart', e => {
+    if (e.touches.length > 1) return;
+    const t = e.touches[0];
+    const r = rect();
+    card.dragging = true;
+    card.lastX = t.clientX - r.left;
+    pointer.x = card.lastX;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchmove', e => {
+    if (e.touches.length > 1) return;
+    const t = e.touches[0];
+    const r = rect();
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    if (card.dragging) {
+      const dx = pointer.x - card.lastX;
+      card.lastX = pointer.x;
+      const range = CFG.rotateRange * Math.PI / 180;
+      card.targetRotY = Math.max(-range, Math.min(range, card.targetRotY + dx * 0.008));
+      card.lastInteract = performance.now() / 1000;
+    }
+    e.preventDefault();
+  }, { passive: false });
+  cv.addEventListener('touchend', () => { card.dragging = false; });
+
+  // 滚轮缩放
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    pointer.zoom = Math.max(0.4, Math.min(3, pointer.zoom * Math.exp(-e.deltaY * 0.001)));
+  }, { passive: false });
+
+  // ========== 圆角矩形路径 ==========
+  function roundRect(x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
+    ctx.closePath();
+  }
+
+  // ========== 主循环 ==========
+  let startTime = performance.now();
+  let lastTime = startTime;
+
+  function frame(now) {
+    const t = (now - startTime) / 1000;
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    const [br, bg, bb] = hex2rgb(CFG.background);
+    ctx.fillStyle = `rgb(${br},${bg},${bb})`;
+    ctx.fillRect(0, 0, W, H);
+
+    if (!card.frames.length) {
+      requestAnimationFrame(frame);
+      return;
+    }
+
+    // 自动摆动（松手后 1.2 秒）
+    if (!card.dragging && t - card.lastInteract > 1.2) {
+      const range = CFG.rotateRange * Math.PI / 180;
+      card.targetRotY = Math.sin(t * CFG.wobbleSpeed) * range * CFG.autoWobble;
+    }
+
+    // 平滑跟随
+    card.rotY += (card.targetRotY - card.rotY) * 0.12;
+
+    // 卡片尺寸
+    const z = pointer.zoom;
+    const maxW = Math.min(W * 0.75, H * 0.85 * card.aspect) * z;
+    const maxH = maxW / card.aspect;
+    const cw = Math.min(maxW, W * 0.9);
+    const ch = cw / card.aspect;
+    const cx = W / 2;
+    const cy = H / 2;
+
+    // 当前帧（按 rotY 映射）
+    const range = CFG.rotateRange * Math.PI / 180;
+    const frameCount = card.frames.length;
+    const normalized = frameCount > 1 ? (card.rotY + range) / (2 * range) : 0;
+    const exact = normalized * (frameCount - 1);
+    const i0 = Math.max(0, Math.min(frameCount - 1, Math.floor(exact)));
+    const i1 = Math.min(frameCount - 1, i0 + 1);
+    const mix = exact - i0;
+
+    // 交叉淡化：若 crossfade > 0，用 mix 平滑过渡；否则硬切
+    let dispIdx, alpha;
+    if (CFG.crossfade <= 0.001) {
+      dispIdx = exact < 0.5 ? 0 : Math.round(exact);
+      dispIdx = Math.max(0, Math.min(frameCount - 1, dispIdx));
+      alpha = 1;
+    } else {
+      // 混合两个相邻帧
+      dispIdx = mix < 0.5 ? i0 : i1;
+      // 用"半透明叠加"模拟交叉淡化
+      alpha = 1;
+    }
+
+    // 按 rotY 缩放宽度（透视感）
+    const perspW = Math.cos(card.rotY) * 0.7 + 0.3;
+    const dispW = cw * perspW;
+
+    ctx.save();
+
+    // 卡片阴影
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = 40;
+    ctx.shadowOffsetY = 20;
+
+    // 卡面底色 + 圆角
+    ctx.fillStyle = CFG.cardBg;
+    roundRect(cx - dispW / 2, cy - ch / 2, dispW, ch, CFG.radius * Math.min(dispW, ch));
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // 裁剪到卡片
+    ctx.save();
+    roundRect(cx - dispW / 2, cy - ch / 2, dispW, ch, CFG.radius * Math.min(dispW, ch));
+    ctx.clip();
+
+    // 绘制帧
+    if (CFG.crossfade <= 0.001 || frameCount === 1) {
+      const f = card.frames[dispIdx];
+      ctx.drawImage(f, cx - dispW / 2, cy - ch / 2, dispW, ch);
+    } else {
+      // 淡化：两帧叠加
+      ctx.globalAlpha = 1 - mix;
+      ctx.drawImage(card.frames[i0], cx - dispW / 2, cy - ch / 2, dispW, ch);
+      ctx.globalAlpha = mix;
+      ctx.drawImage(card.frames[i1], cx - dispW / 2, cy - ch / 2, dispW, ch);
+      ctx.globalAlpha = 1;
+    }
+
+    // 扫光
+    if (CFG.sheen > 0.001 && CFG.sheenStyle !== 'none') {
+      drawSheen(cx - dispW / 2, cy - ch / 2, dispW, ch, card.rotY);
+    }
+
+    // 卡面纹理（横纹）
+    if (CFG.sheenStyle === 'lens' || CFG.sheenStyle === 'holo') {
+      ctx.globalAlpha = 0.06;
+      ctx.fillStyle = '#000';
+      for (let y = cy - ch / 2; y < cy + ch / 2; y += 3) {
+        ctx.fillRect(cx - dispW / 2, y, dispW, 1);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.restore();  // 取消裁剪
+
+    // 圆角边框
+    ctx.strokeStyle = `rgba(255,255,255,0.12)`;
+    ctx.lineWidth = 1;
+    roundRect(cx - dispW / 2, cy - ch / 2, dispW, ch, CFG.radius * Math.min(dispW, ch));
+    ctx.stroke();
+
+    ctx.restore();
+
+    requestAnimationFrame(frame);
+  }
+
+  function drawSheen(x, y, w, h, rot) {
+    const angle = rot * 3 + performance.now() / 2000;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    if (CFG.sheenStyle === 'holo') {
+      const g = ctx.createLinearGradient(x, y, x + w, y + h);
+      const hue = (Math.sin(angle) * 0.5 + 0.5) * 360;
+      g.addColorStop(0, `hsla(${hue}, 90%, 70%, ${CFG.sheen * 0.35})`);
+      g.addColorStop(0.5, `hsla(${(hue + 120) % 360}, 90%, 70%, ${CFG.sheen * 0.5})`);
+      g.addColorStop(1, `hsla(${(hue + 240) % 360}, 90%, 70%, ${CFG.sheen * 0.35})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    } else if (CFG.sheenStyle === 'mono') {
+      const band = (Math.sin(angle * 0.8) * 0.5 + 0.5);
+      const px = x + (w * 1.4) * band - w * 0.2;
+      const g = ctx.createLinearGradient(px - w * 0.15, 0, px + w * 0.15, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, `rgba(255,255,255,${CFG.sheen * 0.35})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    } else if (CFG.sheenStyle === 'metal') {
+      const m = ((rot * 0.8 + 0.5) % 1 + 1) % 1;
+      const g = ctx.createLinearGradient(x, y + h * (m - 0.1), x, y + h * (m + 0.1));
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, `rgba(200,220,255,${CFG.sheen * 0.5})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    } else if (CFG.sheenStyle === 'glow') {
+      const gx = x + w * (0.5 + 0.3 * Math.sin(angle * 0.7));
+      const gy = y + h * (0.5 + 0.25 * Math.cos(angle * 0.9));
+      const r = Math.min(w, h) * 0.6;
+      const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+      const hue = (angle * 60) % 360;
+      g.addColorStop(0, `hsla(${hue}, 80%, 70%, ${CFG.sheen * 0.4})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    }
+    ctx.restore();
+  }
+
+  // ========== 按钮 ==========
+  const mEl = document.getElementById('m');
+
+  const STYLES = [
+    { name: '真实光栅', crossfade: 0.0, sheen: 0.4, sheenStyle: 'holo',
+      radius: 0.12, cardBg: '#12141c', background: '#06070c' },
+    { name: '全息炫彩', crossfade: 0.14, sheen: 0.9, sheenStyle: 'holo',
+      radius: 0.14, cardBg: '#0c0a18', background: '#04030a' },
+    { name: '金属拉丝', crossfade: 0.08, sheen: 0.6, sheenStyle: 'metal',
+      radius: 0.10, cardBg: '#14161a', background: '#0a0b10' },
+    { name: '磨砂柔光', crossfade: 0.2, sheen: 0.5, sheenStyle: 'glow',
+      radius: 0.18, cardBg: '#1a1a22', background: '#0a0a10' },
+    { name: '无扫光', crossfade: 0.05, sheen: 0, sheenStyle: 'none',
+      radius: 0.08, cardBg: '#000000', background: '#000000' }
+  ];
+  let styleIdx = 0;
+
+  function applyStyle(s) {
+    Object.assign(CFG, s);
+    mEl.textContent = s.name;
+  }
+
+  document.getElementById('btn-change').addEventListener('click', () => {
+    styleIdx = (styleIdx + 1) % STYLES.length;
+    applyStyle(STYLES[styleIdx]);
+    if (card.frames.length) mEl.textContent = `${card.frames.length} 帧 · ${STYLES[styleIdx].name}`;
+  });
+
+  // ========== 启动 ==========
+  resize();
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  applyStyle(STYLES[0]);
+  mEl.textContent = STYLES[0].name;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

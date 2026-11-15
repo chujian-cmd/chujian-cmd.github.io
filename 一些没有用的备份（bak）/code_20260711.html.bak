@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>无限渐显圆周率 π · 性能优化版</title>
+    <style>
+        /* ---------- 全局样式 ---------- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0b1020;
+            color: #7cf0ff;
+            font-family: "Courier New", monospace;
+            font-size: 18px;
+            padding: 25px;
+            min-height: 100vh;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+        }
+
+        #piBox {
+            max-width: 1000px;
+            width: 100%;
+            line-height: 1.7;
+            word-break: break-all;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding-right: 8px;
+            /* 优化滚动性能 */
+            will-change: scroll-position;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* 标题 "3." 固定样式 */
+        .head3 {
+            color: #4cf888;
+            font-size: 26px;
+            font-weight: bold;
+            display: inline;
+            user-select: none;
+        }
+
+        /* ---------- 每个数字的渐显动画 ---------- */
+        .fade-digit {
+            display: inline;
+            opacity: 0;
+            /* 使用 transition 代替 animation，GPU 加速更友好 */
+            transition: opacity 0.22s ease;
+            /* 提示浏览器优化该元素的合成层 */
+            will-change: opacity;
+            /* 防止文字选中干扰 */
+            user-select: none;
+        }
+
+        /* 可见状态 —— 由 JS 动态添加 */
+        .fade-digit.visible {
+            opacity: 1;
+        }
+
+        /* ---------- 自定义滚动条 ---------- */
+        #piBox::-webkit-scrollbar {
+            width: 4px;
+        }
+        #piBox::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        #piBox::-webkit-scrollbar-thumb {
+            background: rgba(124, 240, 255, 0.2);
+            border-radius: 2px;
+        }
+        #piBox::-webkit-scrollbar-thumb:hover {
+            background: rgba(124, 240, 255, 0.4);
+        }
+
+        /* ---------- 状态指示（轻量，不干扰视觉） ---------- */
+        .status-bar {
+            position: fixed;
+            bottom: 12px;
+            right: 20px;
+            font-size: 12px;
+            color: rgba(124, 240, 255, 0.25);
+            font-family: monospace;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            user-select: none;
+            z-index: 10;
+            transition: opacity 0.6s;
+        }
+        .status-bar:hover {
+            opacity: 1;
+        }
+        .status-bar span {
+            display: inline-block;
+            margin-left: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="piBox">
+        <span class="head3">3.</span>
+        <span id="digitContainer"></span>
+    </div>
+
+    <!-- 轻量状态条（不干扰视觉） -->
+    <div class="status-bar" id="statusBar">
+        <span id="statusSpeed">●</span>
+        <span id="statusCount">0</span>
+    </div>
+
+    <script>
+        (function() {
+            'use strict';
+
+            // ============================================================
+            //  配置（可调）
+            // ============================================================
+            const CONFIG = {
+                // ---- 数据获取 ----
+                BATCH_FETCH: 600, // 每次 API 请求获取的位数
+                API_URL: 'https://api.pi.delivery/v1/pi',
+                RETRY_DELAY: 1200,
+                MAX_RETRIES: 4,
+
+                // ---- 渲染控制 ----
+                DIGITS_PER_FRAME: 6, // 每帧（约 16.6ms）添加的数字个数
+                FADE_DURATION: 220, // 每个数字渐显持续时间 (ms)
+                STAGGER_MS: 32, // 同一批中每个数字渐显起始间隔 (ms)
+
+                // ---- DOM 内存管理 ----
+                MAX_DIGITS: 3500, // DOM 中最多保留的数字个数（不含 "3."）
+                REMOVE_CHUNK: 900, // 超出上限时一次性移除的数量
+
+                // ---- 滚动行为 ----
+                AUTO_SCROLL_DELAY: 3000, // 用户滚动后自动恢复的延迟 (ms)
+            };
+
+            // 派生常量：每批总渐显耗时
+            const BATCH_TOTAL_MS =
+                CONFIG.DIGITS_PER_FRAME * CONFIG.STAGGER_MS + CONFIG.FADE_DURATION;
+
+            // ============================================================
+            //  DOM 引用
+            // ============================================================
+            const container = document.getElementById('digitContainer');
+            const piBox = document.getElementById('piBox');
+            const statusSpeed = document.getElementById('statusSpeed');
+            const statusCount = document.getElementById('statusCount');
+
+            // ============================================================
+            //  状态
+            // ============================================================
+            let digitBuffer = ''; // 从 API 获取的原始数字字符串
+            let bufferPos = 0; // 当前消费位置
+            let totalShown = 0; // 总共已显示的数字个数（用于 API 偏移）
+            let digitElements = []; // 所有数字 span 的引用（按顺序）
+            let elementCount = 0; // 当前 DOM 中数字个数
+
+            // 渲染控制
+            let rafId = null; // requestAnimationFrame ID
+            let isRunning = true;
+            let isDestroyed = false;
+            let isPaused = false; // 暂停显示（但不停止获取）
+
+            // 滚动自动跟随
+            let autoScroll = true;
+            let scrollTimeout = null;
+
+            // 性能统计（用于状态显示）
+            let frameCount = 0;
+            let lastFpsUpdate = performance.now();
+            let currentFps = 0;
+
+            // ============================================================
+            //  API 获取（带指数退避重试）
+            // ============================================================
+            async function fetchPiDigits(start, length, retries = 0) {
+                const url = `${CONFIG.API_URL}?start=${start}&numberOfDigits=${length}`;
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const json = await res.json();
+                    if (typeof json.content !== 'string') throw new Error('Invalid response');
+                    return json.content;
+                } catch (err) {
+                    if (retries < CONFIG.MAX_RETRIES) {
+                        const delay = CONFIG.RETRY_DELAY * (retries + 1);
+                        await new Promise(r => setTimeout(r, delay));
+                        return fetchPiDigits(start, length, retries + 1);
+                    }
+                    throw new Error(`获取失败: ${err.message}`);
+                }
+            }
+
+            // ============================================================
+            //  缓存管理（补充数据）
+            // ============================================================
+            async function refillBuffer() {
+                if (isDestroyed) return;
+                const remaining = digitBuffer.length - bufferPos;
+                // 缓存剩余 ≥ 200 就够用
+                if (remaining >= 200) return;
+
+                const nextStart = totalShown + remaining;
+                try {
+                    const newDigits = await fetchPiDigits(nextStart, CONFIG.BATCH_FETCH);
+                    // 保留未消费部分 + 新数据
+                    const tail = digitBuffer.slice(bufferPos);
+                    digitBuffer = tail + newDigits;
+                    bufferPos = 0;
+                } catch (err) {
+                    console.warn('[π] 补充缓存失败:', err);
+                    if (!isDestroyed && isRunning) {
+                        setTimeout(refillBuffer, CONFIG.RETRY_DELAY);
+                    }
+                }
+            }
+
+            // ============================================================
+            //  核心：批量添加数字（每帧调用一次）
+            // ============================================================
+            function appendBatch() {
+                if (isDestroyed || isPaused) return false;
+
+                // 确保缓存足够
+                if (bufferPos >= digitBuffer.length) {
+                    // 异步补充，本次跳过
+                    refillBuffer().catch(() => {});
+                    return false;
+                }
+
+                const count = Math.min(
+                    CONFIG.DIGITS_PER_FRAME,
+                    digitBuffer.length - bufferPos
+                );
+                if (count === 0) return false;
+
+                // ---- 1. 创建一批 span ----
+                const fragment = document.createDocumentFragment();
+                const spans = [];
+
+                for (let i = 0; i < count; i++) {
+                    const ch = digitBuffer[bufferPos++];
+                    const span = document.createElement('span');
+                    span.className = 'fade-digit';
+                    span.textContent = ch;
+                    // 每个数字的渐显延迟：错开起始时间
+                    const delay = i * CONFIG.STAGGER_MS;
+                    span.style.transitionDelay = delay + 'ms';
+                    spans.push(span);
+                    fragment.appendChild(span);
+                }
+
+                // ---- 2. 一次性插入 DOM ----
+                container.appendChild(fragment);
+
+                // ---- 3. 更新状态 ----
+                digitElements.push(...spans);
+                elementCount += count;
+                totalShown += count;
+
+                // ---- 4. 触发渐显（批量设置 visible） ----
+                // 使用 requestAnimationFrame 确保浏览器已完成样式计算
+                // 然后分两步：先让所有元素开始 transition，再逐个变为可见
+                requestAnimationFrame(() => {
+                    // 再等一帧确保样式已应用
+                    requestAnimationFrame(() => {
+                        for (const span of spans) {
+                            span.classList.add('visible');
+                        }
+                    });
+                });
+
+                // ---- 5. DOM 数量管理：移除旧元素 ----
+                if (elementCount > CONFIG.MAX_DIGITS) {
+                    const removeCount = Math.min(
+                        CONFIG.REMOVE_CHUNK,
+                        elementCount - CONFIG.MAX_DIGITS
+                    );
+                    if (removeCount > 0) {
+                        const toRemove = digitElements.splice(0, removeCount);
+                        for (const el of toRemove) {
+                            if (el.parentNode) el.parentNode.removeChild(el);
+                        }
+                        elementCount -= removeCount;
+                    }
+                }
+
+                // ---- 6. 滚动到底部 ----
+                if (autoScroll && !isDestroyed) {
+                    requestAnimationFrame(() => {
+                        if (autoScroll && !isDestroyed) {
+                            piBox.scrollTop = piBox.scrollHeight;
+                        }
+                    });
+                }
+
+                // ---- 7. 更新状态栏 ----
+                updateStatus();
+
+                return true;
+            }
+
+            // ============================================================
+            //  渲染循环（requestAnimationFrame 驱动）
+            // ============================================================
+            function renderLoop(timestamp) {
+                if (isDestroyed) return;
+
+                // 执行批量添加
+                if (isRunning && !isPaused) {
+                    appendBatch();
+                }
+
+                // FPS 统计（轻量）
+                frameCount++;
+                if (timestamp - lastFpsUpdate > 800) {
+                    currentFps = Math.round(frameCount / ((timestamp - lastFpsUpdate) / 1000));
+                    frameCount = 0;
+                    lastFpsUpdate = timestamp;
+                    // 更新状态栏速度指示
+                    statusSpeed.textContent = currentFps > 50 ? '●' : '○';
+                    statusSpeed.style.color = currentFps > 50 ? 'rgba(76, 248, 136, 0.5)' : 'rgba(255, 200, 80, 0.5)';
+                }
+
+                // 继续下一帧
+                rafId = requestAnimationFrame(renderLoop);
+            }
+
+            // ============================================================
+            //  状态栏更新
+            // ============================================================
+            function updateStatus() {
+                statusCount.textContent = totalShown.toLocaleString();
+            }
+
+            // ============================================================
+            //  滚动事件：智能暂停自动滚动
+            // ============================================================
+            function onUserScroll() {
+                if (!autoScroll) return;
+                const maxScroll = piBox.scrollHeight - piBox.clientHeight;
+                const isAtBottom = piBox.scrollTop >= maxScroll - 4;
+                if (!isAtBottom) {
+                    autoScroll = false;
+                    clearTimeout(scrollTimeout);
+                    scrollTimeout = setTimeout(() => {
+                        autoScroll = true;
+                        // 如果用户停留在底部附近，恢复自动
+                        const nowMax = piBox.scrollHeight - piBox.clientHeight;
+                        if (piBox.scrollTop >= nowMax - 8) {
+                            autoScroll = true;
+                        }
+                    }, CONFIG.AUTO_SCROLL_DELAY);
+                } else {
+                    autoScroll = true;
+                    clearTimeout(scrollTimeout);
+                }
+            }
+
+            // ============================================================
+            //  启动
+            // ============================================================
+            async function start() {
+                // ---- 初始加载 ----
+                try {
+                    digitBuffer = await fetchPiDigits(0, CONFIG.BATCH_FETCH);
+                    bufferPos = 0;
+                } catch (err) {
+                    console.error('[π] 初始加载失败:', err);
+                    // Fallback：前 100 位
+                    digitBuffer =
+                        '1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679';
+                    bufferPos = 0;
+                }
+
+                // ---- 绑定滚动事件 ----
+                piBox.addEventListener('scroll', onUserScroll, { passive: true });
+
+                // ---- 启动渲染循环 ----
+                isRunning = true;
+                isPaused = false;
+                rafId = requestAnimationFrame(renderLoop);
+
+                // ---- 初始状态 ----
+                updateStatus();
+                statusSpeed.textContent = '●';
+                statusSpeed.style.color = 'rgba(76, 248, 136, 0.5)';
+
+                // ---- 窗口卸载清理 ----
+                window.addEventListener('beforeunload', () => {
+                    isDestroyed = true;
+                    if (rafId) cancelAnimationFrame(rafId);
+                    clearTimeout(scrollTimeout);
+                });
+
+                // ---- 键盘快捷键：空格暂停/继续 ----
+                window.addEventListener('keydown', (e) => {
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                    if (e.code === 'Space') {
+                        e.preventDefault();
+                        isPaused = !isPaused;
+                        statusSpeed.textContent = isPaused ? '⏸' : '●';
+                        statusSpeed.style.color = isPaused ?
+                            'rgba(255, 200, 80, 0.6)' :
+                            'rgba(76, 248, 136, 0.5)';
+                    }
+                });
+
+                console.log('[π] 优化版已启动 · 空格键暂停/继续');
+            }
+
+            // ============================================================
+            //  启动！
+            // ============================================================
+            start();
+
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>流场描线 Edge Flow</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0d12;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+  canvas{display:block;width:100%!important;height:100%!important;touch-action:none}
+  #bar{position:fixed;top:0;left:0;right:0;padding:max(12px,env(safe-area-inset-top)) 12px 12px;
+    display:flex;gap:8px;align-items:center;background:linear-gradient(180deg,rgba(11,13,18,.85),rgba(11,13,18,0));
+    z-index:10;pointer-events:none;font:13px -apple-system,"PingFang SC",sans-serif;color:#c3c9d4}
+  #bar>*{pointer-events:auto}
+  #bar .mode{flex:1;color:#8a8f98}
+  #bar .mode b{color:#f7f8f8;font-weight:600}
+  .btn{height:38px;padding:0 14px;border-radius:10px;border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.06);color:#f7f8f8;font:500 13px -apple-system,"PingFang SC",sans-serif;
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .btn:active{background:rgba(255,255,255,.14)}
+  .btn.pri{background:rgba(63,169,255,.28);border-color:rgba(63,169,255,.6);color:#eaf5ff}
+  #hint{position:fixed;left:0;right:0;bottom:max(20px,env(safe-area-inset-bottom));text-align:center;
+    color:#6a6f7a;font:12px -apple-system,"PingFang SC",sans-serif;pointer-events:none;z-index:10}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="bar">
+  <div class="mode">流场描线 <b id="m">暗部驱动</b></div>
+  <button class="btn" id="btn-driver">换驱动</button>
+  <button class="btn pri" id="btn-upload">上传图片</button>
+</div>
+
+<div id="hint">拖入图片 · 顺轮廓钢笔流线 · 暗处密亮处疏</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1);
+
+  var CFG = {
+    driver: 'dark',        // dark | edge | uniform
+    spacing: 2.6,
+    align: 'contour',      // contour | gradient
+    colorMode: 'mono',     // mono | source | duo
+    lineLen: 22,
+    stepLen: 3,
+    lineWidth: 0.8,
+    alpha: 0.55,
+    threshold: 0.12,
+    jitter: 0.14,
+    colorA: '#e8ecff',
+    colorB: '#5b6cff',
+    background: '#0b0d12',
+    underlay: 'none',
+    underlayAlpha: 0.5
+  };
+
+  var DRIVERS = [
+    { key: 'dark',    label: '暗部驱动' },
+    { key: 'edge',    label: '边缘驱动' },
+    { key: 'uniform', label: '均匀铺满' }
+  ];
+
+  var W = 0, H = 0, dpr = 1;
+  function resize() {
+    var w = window.innerWidth, h = window.innerHeight;
+    if (!w || !h) return false;
+    W = w; H = h;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.floor(W * dpr);
+    cv.height = Math.floor(H * dpr);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buf.width = cv.width; buf.height = cv.height;
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dirty = true; sig = '';
+    return true;
+  }
+
+  var buf = document.createElement('canvas');
+  var bctx = buf.getContext('2d');
+  var dirty = true;
+  var sig = '';
+
+  // ---------- 素材 ----------
+  var media = null;
+  var mediaIsVideo = false;
+  var mediaAspect = 16 / 9;
+
+  function loadFile(file) {
+    var url = URL.createObjectURL(file);
+    if (file.type.startsWith('video/')) {
+      var v = document.createElement('video');
+      v.src = url; v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = true;
+      v.addEventListener('loadeddata', function () {
+        media = v; mediaIsVideo = true;
+        mediaAspect = v.videoWidth / v.videoHeight;
+        dirty = true; sig = '';
+        v.play().catch(function () {});
+      });
+    } else {
+      var im = new Image();
+      im.onload = function () {
+        media = im; mediaIsVideo = false;
+        mediaAspect = im.naturalWidth / im.naturalHeight;
+        dirty = true; sig = '';
+      };
+      im.src = url;
+    }
+  }
+
+  function pick() {
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*,video/*';
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (f) loadFile(f);
+    });
+    inp.click();
+  }
+
+  window.addEventListener('dragover', function (e) { e.preventDefault(); });
+  window.addEventListener('drop', function (e) {
+    e.preventDefault();
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) loadFile(f);
+  });
+
+  function drawPlaceholder(c, x, y, w, h) {
+    var g = c.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, '#3a4a7a');
+    g.addColorStop(0.5, '#6ea8ff');
+    g.addColorStop(1, '#0a1020');
+    c.fillStyle = g;
+    c.fillRect(x, y, w, h);
+    c.strokeStyle = 'rgba(180,210,255,0.25)';
+    c.lineWidth = 1;
+    for (var xx = x; xx < x + w; xx += 30) {
+      c.beginPath(); c.moveTo(xx, y); c.lineTo(xx, y + h); c.stroke();
+    }
+    for (var yy = y; yy < y + h; yy += 30) {
+      c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke();
+    }
+    c.fillStyle = 'rgba(220,235,255,0.9)';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    var fs = Math.round(Math.min(w, h) * 0.12);
+    c.font = '700 ' + fs + 'px -apple-system, "PingFang SC", sans-serif';
+    c.fillText('流场描线', x + w / 2, y + h / 2 - fs * 0.2);
+    c.font = '500 ' + Math.round(fs * 0.5) + 'px ui-monospace, monospace';
+    c.fillStyle = 'rgba(180,200,240,0.7)';
+    c.fillText('EDGE FLOW', x + w / 2, y + h / 2 + fs * 0.5);
+  }
+
+  function drawMedia(c, x, y, w, h) {
+    if (!media) { drawPlaceholder(c, x, y, w, h); return; }
+    var sa = mediaAspect;
+    var dw, dh;
+    if (sa > w / h) { dh = h; dw = dh * sa; }
+    else { dw = w; dh = dw / sa; }
+    var dx = x + (w - dw) / 2;
+    var dy = y + (h - dh) / 2;
+    try { c.drawImage(media, dx, dy, dw, dh); } catch (e) {}
+  }
+
+  // ---------- 采样：降采样到分析用尺寸，提取 lum / gx / gy / mag / rgb ----------
+  var SAMPLE_MAX = 260;
+  var sampled = false;
+
+  function sample(c) {
+    var aspect = media ? mediaAspect : (16 / 9);
+    var m = 0.92;
+    var vw = W * m, vh = H * m;
+    if (aspect > W / H) { vh = vw / aspect; } else { vw = vh * aspect; }
+    var dx = (W - vw) / 2;
+    var dy = (H - vh) / 2;
+
+    // 降采样
+    var gw, gh;
+    if (aspect >= 1) { gw = SAMPLE_MAX; gh = Math.max(2, Math.round(SAMPLE_MAX / aspect)); }
+    else { gh = SAMPLE_MAX; gw = Math.max(2, Math.round(SAMPLE_MAX * aspect)); }
+
+    var tmp = document.createElement('canvas');
+    tmp.width = gw; tmp.height = gh;
+    var tc = tmp.getContext('2d', { willReadFrequently: true });
+    if (media) {
+      var sa = mediaAspect;
+      var dw, dh;
+      if (sa > gw / gh) { dh = gh; dw = dh * sa; } else { dw = gw; dh = dw / sa; }
+      try { tc.drawImage(media, (gw - dw) / 2, (gh - dh) / 2, dw, dh); }
+      catch (e) { drawPlaceholder(tc, 0, 0, gw, gh); }
+    } else {
+      drawPlaceholder(tc, 0, 0, gw, gh);
+    }
+    var img = tc.getImageData(0, 0, gw, gh).data;
+
+    var n = gw * gh;
+    var lum = new Float32Array(n);
+    var gx = new Float32Array(n);
+    var gy = new Float32Array(n);
+    var mag = new Float32Array(n);
+    var rgb = new Uint8ClampedArray(n * 3);
+    for (var i = 0; i < n; i++) {
+      var o = i * 4;
+      var r = img[o], g = img[o + 1], b = img[o + 2];
+      lum[i] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      rgb[i * 3] = r; rgb[i * 3 + 1] = g; rgb[i * 3 + 2] = b;
+    }
+    var maxMag = 1e-6;
+    for (var y = 0; y < gh; y++) {
+      for (var x = 0; x < gw; x++) {
+        var i2 = y * gw + x;
+        var xl = x > 0 ? lum[i2 - 1] : lum[i2];
+        var xr = x < gw - 1 ? lum[i2 + 1] : lum[i2];
+        var yu = y > 0 ? lum[i2 - gw] : lum[i2];
+        var yd = y < gh - 1 ? lum[i2 + gw] : lum[i2];
+        var Gx = xr - xl;
+        var Gy = yd - yu;
+        gx[i2] = Gx; gy[i2] = Gy;
+        var gg = Math.hypot(Gx, Gy);
+        mag[i2] = gg;
+        if (gg > maxMag) maxMag = gg;
+      }
+    }
+    for (var k = 0; k < n; k++) mag[k] /= maxMag;
+
+    return {
+      gw: gw, gh: gh,
+      dispX: dx, dispY: dy,
+      dispW: vw, dispH: vh,
+      cellW: vw / gw, cellH: vh / gh,
+      lum: lum, gx: gx, gy: gy, mag: mag, rgb: rgb
+    };
+  }
+
+  // ---------- 渲染 ----------
+  var time = 0, lastT = performance.now();
+
+  function render(now) {
+    var dt = Math.min((now - lastT) / 1000, 0.05);
+    lastT = now;
+    time += dt;
+
+    if (!W || !H) { requestAnimationFrame(render); return; }
+
+    var isVideo = mediaIsVideo && media && media.readyState >= 2;
+    var key = W + 'x' + H + '@' + dpr + '|' + CFG.driver + '|' + CFG.spacing + '|' + CFG.lineLen + '|' +
+              CFG.stepLen + '|' + CFG.align + '|' + CFG.lineWidth + '|' + CFG.alpha + '|' +
+              CFG.threshold + '|' + CFG.jitter + '|' + CFG.colorMode + '|' + CFG.colorA + '|' +
+              CFG.colorB + '|' + CFG.background + '|' + CFG.underlay + '|' + CFG.underlayAlpha;
+
+    var needRender = dirty || key !== sig;
+    if (isVideo) needRender = needRender || (frameCount % 2 === 0);
+
+    if (needRender) {
+      drawFrame(CFG, time);
+      sig = key;
+      dirty = false;
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(buf, 0, 0, W, H);
+
+    frameCount++;
+    requestAnimationFrame(render);
+  }
+  var frameCount = 0;
+
+  function drawFrame(cfg, t) {
+    // 先画底图（原图 or 背景色）
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var bg = cfg.background;
+    bctx.fillStyle = bg;
+    bctx.fillRect(0, 0, W, H);
+
+    var s = sample();
+
+    // 底图叠加
+    var aspect = media ? mediaAspect : 16 / 9;
+    var dx = s.dispX, dy = s.dispY, vw = s.dispW, vh = s.dispH;
+
+    if (cfg.underlay !== 'none') {
+      bctx.save();
+      if (cfg.underlay === 'gray') bctx.filter = 'grayscale(1)';
+      bctx.globalAlpha = cfg.underlayAlpha;
+      drawMedia(bctx, dx, dy, vw, vh);
+      bctx.restore();
+      bctx.globalAlpha = 1;
+    }
+
+    var gw = s.gw, gh = s.gh;
+    var lum = s.lum, gx = s.gx, gy = s.gy, mag = s.mag, rgb = s.rgb;
+    var cellW = s.cellW, cellH = s.cellH;
+    var cellAvg = (cellW + cellH) / 2;
+
+    // 采样函数（双线性）
+    function sampleGrad(u, v) {
+      var x = u * gw - 0.5;
+      var y = v * gh - 0.5;
+      var x0 = Math.max(0, Math.min(gw - 1, Math.floor(x)));
+      var y0 = Math.max(0, Math.min(gh - 1, Math.floor(y)));
+      var x1 = Math.min(gw - 1, x0 + 1);
+      var y1 = Math.min(gh - 1, y0 + 1);
+      var fx = x - x0;
+      var fy = y - y0;
+      var i00 = y0 * gw + x0;
+      var i10 = y0 * gw + x1;
+      var i01 = y1 * gw + x0;
+      var i11 = y1 * gw + x1;
+      var Gx = (gx[i00] * (1 - fx) + gx[i10] * fx) * (1 - fy) +
+               (gx[i01] * (1 - fx) + gx[i11] * fx) * fy;
+      var Gy = (gy[i00] * (1 - fx) + gy[i10] * fx) * (1 - fy) +
+               (gy[i01] * (1 - fx) + gy[i11] * fx) * fy;
+      return [Gx, Gy];
+    }
+
+    var align = cfg.align === 'contour';
+    var jitter = cfg.jitter * 0.9;
+    var spacing = cfg.spacing;
+    var lineLen = cfg.lineLen;
+    var stepLen = cfg.stepLen / cellAvg;
+    var colorMode = cfg.colorMode;
+    var colA = hex2rgb(cfg.colorA);
+    var colB = hex2rgb(cfg.colorB);
+
+    bctx.lineCap = 'round';
+    bctx.lineJoin = 'round';
+    bctx.lineWidth = cfg.lineWidth;
+
+    var rows = gh;
+    var cols = gw;
+
+    // 依据稀疏采样决定起点
+    for (var j = 1; j < rows - 1; j += spacing) {
+      for (var i = 1; i < cols - 1; i += spacing) {
+        var ii = (j | 0) * cols + (i | 0);
+        var act = cfg.driver === 'edge' ? mag[ii] :
+                  cfg.driver === 'uniform' ? 0.7 :
+                  (1 - lum[ii]);
+        if (act < cfg.threshold) continue;
+
+        // 起点带抖动
+        var sx = i + (Math.random() - 0.5) * spacing * 0.6;
+        var sy = j + (Math.random() - 0.5) * spacing * 0.6;
+
+        // 迭代积分
+        var path = [];
+        var u = sx, v = sy;
+        var lastGx = 0, lastGy = 0;
+        var steps = Math.round(lineLen * (0.4 + act * 0.6));
+        for (var st = 0; st < steps; st++) {
+          var g2 = sampleGrad(u / cols, v / rows);
+          var tx, ty;
+          if (align) {
+            // 沿等值线方向：旋转梯度 90°
+            tx = -g2[1];
+            ty = g2[0];
+          } else {
+            // 沿梯度方向
+            tx = g2[0];
+            ty = g2[1];
+          }
+          var m2 = Math.hypot(tx, ty);
+          if (m2 < 1e-5) break;
+          tx /= m2; ty /= m2;
+          // 反方向与上一段一致
+          if (st > 0 && tx * lastGx + ty * lastGy < 0) { tx = -tx; ty = -ty; }
+          lastGx = tx; lastGy = ty;
+          u += tx * stepLen + (Math.random() - 0.5) * jitter * 0.04;
+          v += ty * stepLen + (Math.random() - 0.5) * jitter * 0.04;
+          if (u < 0 || u >= cols || v < 0 || v >= rows) break;
+          path.push([u, v]);
+        }
+        if (path.length < 2) continue;
+
+        // 着色
+        if (colorMode === 'source') {
+          var idxSrc = ii * 3;
+          bctx.strokeStyle = 'rgb(' + rgb[idxSrc] + ',' + rgb[idxSrc + 1] + ',' + rgb[idxSrc + 2] + ')';
+        } else if (colorMode === 'duo') {
+          var tr = lum[ii];
+          bctx.strokeStyle = 'rgb(' +
+            Math.round(colA[0] + (colB[0] - colA[0]) * tr) + ',' +
+            Math.round(colA[1] + (colB[1] - colA[1]) * tr) + ',' +
+            Math.round(colA[2] + (colB[2] - colA[2]) * tr) + ')';
+        } else {
+          bctx.strokeStyle = 'rgb(' + colA[0] + ',' + colA[1] + ',' + colA[2] + ')';
+        }
+        bctx.globalAlpha = Math.max(0.12, Math.min(1, act * 1.2)) * cfg.alpha;
+
+        bctx.beginPath();
+        var px0 = s.dispX + (path[0][0] + 0.5) * cellW;
+        var py0 = s.dispY + (path[0][1] + 0.5) * cellH;
+        bctx.moveTo(px0, py0);
+        for (var pi = 1; pi < path.length; pi++) {
+          bctx.lineTo(s.dispX + (path[pi][0] + 0.5) * cellW,
+                     s.dispY + (path[pi][1] + 0.5) * cellH);
+        }
+        bctx.stroke();
+      }
+    }
+    bctx.globalAlpha = 1;
+  }
+
+  function hex2rgb(h) {
+    var s = h.replace('#', '');
+    var n = parseInt(s.length === 3 ? s.split('').map(function (c) { return c + c; }).join('') : s, 16);
+    return [n >> 16 & 255, n >> 8 & 255, n & 255];
+  }
+
+  // ---------- 按钮 ----------
+  var driverIdx = 0;
+  var mLabel = document.getElementById('m');
+  document.getElementById('btn-driver').addEventListener('click', function () {
+    driverIdx = (driverIdx + 1) % DRIVERS.length;
+    CFG.driver = DRIVERS[driverIdx].key;
+    mLabel.textContent = DRIVERS[driverIdx].label;
+    dirty = true;
+  });
+  document.getElementById('btn-upload').addEventListener('click', pick);
+
+  // ---------- 启动 ----------
+  function boot() {
+    if (!resize()) { requestAnimationFrame(boot); return; }
+    requestAnimationFrame(render);
+  }
+  boot();
+  window.addEventListener('resize', function () { setTimeout(resize, 100); });
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 250); });
+})();
+</script>
+</body>
+</html>

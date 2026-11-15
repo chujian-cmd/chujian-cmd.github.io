@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>iOS 风格多组件日历 · 满帧丝滑</title>
+<style>
+    * { 
+        margin: 0; padding: 0; box-sizing: border-box; 
+        -webkit-tap-highlight-color: transparent;
+        user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    }
+    
+    html, body {
+        width: 100%; height: 100%;
+        overflow: hidden; background: #000; color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", STHeiti, "Microsoft Yahei", Tahoma, Simsun, sans-serif;
+        touch-action: none; overscroll-behavior: none;
+    }
+
+    #pages-viewport {
+        width: 100vw; height: 100vh;
+        overflow: hidden; position: relative;
+        touch-action: none;
+    }
+
+    #pages-track {
+        display: flex; height: 100%;
+        transform: translate3d(0, 0, 0);
+        will-change: transform;
+        touch-action: none;
+    }
+
+    .page {
+        width: 100vw; height: 100%;
+        flex-shrink: 0;
+        display: flex; flex-wrap: wrap;
+        justify-content: center; align-content: center;
+        gap: clamp(16px, 4vw, 30px);
+        padding: 40px;
+        box-sizing: border-box;
+        touch-action: none;
+    }
+
+    /* --- iOS 风格日历卡片 --- */
+    .calendar-card {
+        position: relative; 
+        width: 100%;
+        max-width: 460px; 
+        flex: 1 1 300px; 
+        max-height: 45vh; 
+        border-radius: 28px;          /* 更圆润，接近iOS */
+        padding: clamp(20px, 4vw, 32px) clamp(20px, 5vw, 40px);
+        overflow: hidden;
+        background: 
+            linear-gradient(to bottom, #000000 0%, rgba(0, 0, 0, 0.8) 30%, transparent 60%),
+            radial-gradient(circle at 0% 100%, rgba(0, 80, 50, 0.9) 0%, rgba(0, 40, 25, 0.4) 40%, transparent 70%),
+            radial-gradient(circle at 100% 80%, rgba(60, 20, 100, 0.6) 0%, transparent 60%),
+            #040408;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+        
+        transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
+        transform-origin: center center;
+        will-change: transform, opacity;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden; 
+        touch-action: none;
+    }
+
+    /* 新增：从无到有的出现动画（使用更柔和的iOS风格曲线） */
+    @keyframes cardAppear {
+        0% { opacity: 0; transform: scale(0.92) translate3d(0, 12px, 0); }
+        100% { opacity: 1; transform: scale(1) translate3d(0, 0, 0); }
+    }
+    .animate-appear {
+        animation: cardAppear 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.1) forwards;
+    }
+
+    .animate-pop-in {
+        animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+    }
+
+    @keyframes popIn {
+        0% { opacity: 0; transform: scale(0.8) translateY(20px); }
+        100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .calendar-card.is-minimized {
+        transform: scale(0.9) translate3d(0, 0, 0);
+        opacity: 0.85;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.6);
+    }
+
+    .calendar-card.is-hidden {
+        transform: scale(0.5) translate3d(0, 50px, 0);
+        opacity: 0;
+        pointer-events: none; 
+        transition: transform 0.3s ease-in, opacity 0.3s ease-in;
+    }
+
+    .close-btn {
+        position: absolute; top: 16px; right: 16px;
+        width: 32px; height: 32px; border-radius: 50%;
+        background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex; justify-content: center; align-items: center;
+        
+        opacity: 0; visibility: hidden; transform: scale(0.5);
+        transition: transform 0.3s ease, opacity 0.3s ease, visibility 0.3s;
+        will-change: transform, opacity;
+        pointer-events: none; z-index: 20;
+    }
+    
+    .calendar-card.is-minimized .close-btn {
+        opacity: 1; visibility: visible; transform: scale(1);
+        transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+        pointer-events: auto;
+    }
+    
+    .close-btn::before { content: ''; width: 12px; height: 2px; background-color: #fff; border-radius: 1px; }
+
+    .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: clamp(16px, 3vw, 24px); }
+    .title { color: #fff; font-size: clamp(34px, 6vw, 54px); font-weight: 400; line-height: 1; letter-spacing: 1px; }
+    .subtitle { color: rgba(255, 255, 255, 0.45); font-size: clamp(10px, 2vw, 12px); font-weight: 300; letter-spacing: 2px; margin-bottom: 6px; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: clamp(10px, 2vw, 16px); text-align: center; }
+    .weekday { color: rgba(255, 255, 255, 0.35); font-size: clamp(12px, 2vw, 14px); font-weight: 300; }
+    .day { color: #fff; font-size: clamp(14px, 2.5vw, 18px); font-weight: 300; width: 100%; max-width: 40px; aspect-ratio: 1; display: flex; justify-content: center; align-items: center; margin: 0 auto; }
+    .day.active { border: 1px solid rgba(160, 130, 255, 0.5); border-radius: 50%; background: rgba(120, 90, 255, 0.08); font-weight: 400; }
+    
+    .calendar-card::after {
+        content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 3px;
+        background: linear-gradient(90deg, #00ff88 0%, #00ccff 30%, #6b21a8 100%);
+        box-shadow: 0 -2px 10px rgba(0, 255, 136, 0.5); border-bottom-left-radius: 28px; border-bottom-right-radius: 28px;
+    }
+
+    /* --- 底部控制条（更iOS风格）--- */
+    #control-bar {
+        position: fixed; bottom: 0; left: 0; width: 100%; height: 100px;
+        display: flex; justify-content: center; align-items: center; z-index: 10; pointer-events: none;
+    }
+    #dots-track {
+        position: relative; display: flex; align-items: center; gap: 24px; padding: 18px 28px;
+        background: rgba(255,255,255,0.12); border-radius: 40px; backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        pointer-events: auto; touch-action: none;
+        transition: opacity 0.3s ease;
+        border: 0.5px solid rgba(255,255,255,0.1);
+    }
+    
+    .dot { 
+        width: 12px; height: 12px; border-radius: 50%; background: rgba(255,255,255,0.35); flex-shrink: 0; 
+        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s;
+    }
+    .dot.is-shrink { transform: scale(0); opacity: 0; }
+
+    #slider {
+        position: absolute; top: 50%; width: 22px; height: 22px; margin-top: -11px; margin-left: -11px;
+        border-radius: 50%; background: #fff; box-shadow: 0 0 16px rgba(255,255,255,0.6), 0 2px 8px rgba(0,0,0,0.3);
+        pointer-events: none; left: 0; transform: scale(1); will-change: left, transform;
+        transition: transform 0.22s ease;
+    }
+    #slider.dragging { transform: scale(1.3); }
+
+    /* --- 浮动添加按钮（更iOS风格）--- */
+    .global-add-btn {
+        position: fixed; bottom: 40px; right: 40px; width: 60px; height: 60px; border-radius: 50%;
+        background: linear-gradient(135deg, #00ff88 0%, #00ccff 100%); box-shadow: 0 10px 30px rgba(0, 255, 136, 0.4);
+        display: flex; justify-content: center; align-items: center;
+        
+        opacity: 0; visibility: hidden; transform: scale(0.5) translateY(20px);
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) 0.1s, opacity 0.3s ease 0.1s, visibility 0.3s ease 0.1s;
+        will-change: transform, opacity;
+        z-index: 100; cursor: pointer; touch-action: none;
+        border: 0.5px solid rgba(255,255,255,0.3);
+    }
+    
+    .global-add-btn.show { 
+        opacity: 1; visibility: visible; transform: scale(1) translateY(0); 
+        transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0s, opacity 0.4s ease 0s, visibility 0.4s ease 0s;
+    }
+    
+    .global-add-btn::before, .global-add-btn::after { content: ''; position: absolute; background-color: #000; border-radius: 2px; }
+    .global-add-btn::before { width: 20px; height: 3px; }
+    .global-add-btn::after { width: 3px; height: 20px; }
+
+    /* iOS风格字体微调 */
+    .title, .subtitle, .weekday, .day {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+</style>
+</head>
+<body>
+
+    <div id="pages-viewport">
+        <div id="pages-track"></div>
+    </div>
+
+    <div class="global-add-btn" id="addBtn"></div>
+
+    <div id="control-bar">
+        <div id="dots-track">
+            <div id="slider"></div>
+        </div>
+    </div>
+
+<script>
+(function() {
+    'use strict';
+
+    const pagesTrack = document.getElementById('pages-track');
+    const dotsTrack = document.getElementById('dots-track');
+    const slider = document.getElementById('slider');
+    const addBtn = document.getElementById('addBtn');
+    
+    let pagesData = []; 
+    let PAGE_COUNT = 0;
+    let pageWidth = window.innerWidth;
+    let isEditingMode = false;
+    let wasLongPressed = false; 
+
+    let progress = 0, targetProgress = 0, currentPage = 0;
+    let rafId = null, dragging = false, dragSource = null;
+    let startX = 0, startY = 0, startProgress = 0, startTime = 0;
+    let isPressing = false, longPressTimer = null, pressedDotIndex = -1;
+    let activeTouchId = null, lastTouchTime = 0;
+    let dotCenters = [], dotSpacing = 1;
+    let lastNearestIdx = -1; 
+
+    function getCalendarData() {
+        const today = new Date();
+        const weekdaysChinese = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay());
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(startOfWeek);
+            d.setDate(startOfWeek.getDate() + i);
+            days.push({
+                num: d.getDate(),
+                isToday: d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear()
+            });
+        }
+        return { weekdayTitle: weekdaysChinese[today.getDay()], days };
+    }
+
+    // 改进：使用两种动画，新添加的卡片使用iOS风格渐显
+    function createCardElement(animateType = 'appear') {
+        const { weekdayTitle, days } = getCalendarData();
+        const card = document.createElement('div');
+        card.className = 'calendar-card';
+        
+        // 根据类型添加动画类
+        if (animateType === 'appear') {
+            card.classList.add('animate-appear');
+        } else if (animateType === 'pop') {
+            card.classList.add('animate-pop-in');
+        }
+        
+        card.innerHTML = `
+            <div class="close-btn"></div>
+            <div class="header">
+                <div class="title">${weekdayTitle}</div>
+                <div class="subtitle">CALENDAR</div>
+            </div>
+            <div class="calendar-grid">
+                <div class="weekday">日</div><div class="weekday">一</div>
+                <div class="weekday">二</div><div class="weekday">三</div>
+                <div class="weekday">四</div><div class="weekday">五</div><div class="weekday">六</div>
+            </div>
+        `;
+        const grid = card.querySelector('.calendar-grid');
+        days.forEach(day => {
+            const dayDiv = document.createElement('div');
+            dayDiv.className = `day ${day.isToday ? 'active' : ''}`;
+            dayDiv.textContent = day.num;
+            grid.appendChild(dayDiv);
+        });
+        card.querySelector('.close-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteCard(card);
+        });
+        return card;
+    }
+
+    function measure() {
+        pageWidth = window.innerWidth;
+        const trackRect = dotsTrack.getBoundingClientRect();
+        const dots = dotsTrack.querySelectorAll('.dot');
+        dotCenters = [];
+        
+        dots.forEach(d => {
+            const r = d.getBoundingClientRect();
+            dotCenters.push(r.left - trackRect.left + r.width / 2);
+        });
+        
+        dotSpacing = dotCenters.length > 1
+            ? (dotCenters[dotCenters.length - 1] - dotCenters[0]) / (dotCenters.length - 1)
+            : 1;
+            
+        if (PAGE_COUNT <= 1) {
+            dotsTrack.style.opacity = '0';
+            dotsTrack.style.pointerEvents = 'none';
+        } else {
+            dotsTrack.style.opacity = '1';
+            dotsTrack.style.pointerEvents = 'auto';
+        }
+    }
+
+    function getCardRects() {
+        const map = new Map();
+        document.querySelectorAll('.calendar-card').forEach(c => {
+            map.set(c, c.getBoundingClientRect());
+        });
+        return map;
+    }
+
+    function applyFlip(oldRects, excludeCard) {
+        document.querySelectorAll('.calendar-card').forEach(c => {
+            if (c === excludeCard) return; 
+            const oldRect = oldRects.get(c);
+            if (!oldRect) return;
+
+            const newRect = c.getBoundingClientRect();
+            const dx = oldRect.left - newRect.left;
+            const dy = oldRect.top - newRect.top;
+            
+            if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+                const isMin = c.classList.contains('is-minimized');
+                
+                c.style.transition = 'none';
+                c.style.transform = `translate3d(${dx}px, ${dy}px, 0) ${isMin ? 'scale(0.9)' : ''}`;
+                
+                void c.offsetWidth;
+                
+                c.style.transition = 'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                c.style.transform = isMin ? 'scale(0.9) translate3d(0, 0, 0)' : 'translate3d(0, 0, 0)';
+                
+                setTimeout(() => { 
+                    c.style.transition = ''; 
+                    c.style.transform = '';
+                }, 400);
+            }
+        });
+    }
+
+    // 修改添加卡片：使用更明显的渐变动画（从无到有）
+    function addNewCard() {
+        if (pagesData.length === 0) pagesData.push([]);
+        let lastPageIdx = pagesData.length - 1;
+        
+        const wasNewPage = pagesData[lastPageIdx].length >= 3;
+        
+        if (wasNewPage) {
+            lastPageIdx++;
+            pagesData.push([]);
+            const newPageDOM = document.createElement('div');
+            newPageDOM.className = 'page';
+            pagesTrack.appendChild(newPageDOM);
+            
+            const newDot = document.createElement('div');
+            newDot.className = 'dot';
+            dotsTrack.insertBefore(newDot, slider);
+            
+            PAGE_COUNT++;
+            pagesTrack.style.width = (PAGE_COUNT * 100) + 'vw';
+        }
+
+        const oldRects = getCardRects();
+        
+        // 使用新的出现动画（iOS风格渐显）
+        const newCard = createCardElement('appear');
+        pagesData[lastPageIdx].push(newCard);
+        pagesTrack.children[lastPageIdx].appendChild(newCard);
+
+        if (isEditingMode) newCard.classList.add('is-minimized');
+        
+        measure();
+        
+        if (!wasNewPage) {
+            pagesTrack.style.transition = 'none';
+            pagesTrack.style.transform = `translate3d(${-currentPage * pageWidth}px, 0, 0)`;
+            progress = currentPage; targetProgress = currentPage;
+            
+            applyFlip(oldRects, newCard);
+            renderSlider();
+        } else {
+            settleTo(lastPageIdx);
+        }
+    }
+
+    function deleteCard(card) {
+        card.classList.add('is-hidden');
+        
+        setTimeout(() => {
+            let pageIdx = -1, cardIdx = -1;
+            for (let i = 0; i < pagesData.length; i++) {
+                const idx = pagesData[i].indexOf(card);
+                if (idx > -1) { pageIdx = i; cardIdx = idx; break; }
+            }
+
+            if (pageIdx > -1) {
+                const oldRects = getCardRects();
+                
+                card.remove();
+                pagesData[pageIdx].splice(cardIdx, 1);
+                
+                let pageRemoved = false;
+                if (pagesData[pageIdx].length === 0 && pagesData.length > 1) {
+                    pagesTrack.children[pageIdx].remove();
+                    pagesData.splice(pageIdx, 1);
+                    
+                    const dots = dotsTrack.querySelectorAll('.dot');
+                    if (dots[pageIdx]) dots[pageIdx].remove();
+                    
+                    PAGE_COUNT--;
+                    pagesTrack.style.width = (PAGE_COUNT * 100) + 'vw';
+                    pageRemoved = true;
+                    
+                    if (currentPage >= PAGE_COUNT) {
+                        currentPage = PAGE_COUNT - 1;
+                    }
+                }
+                
+                if (pagesData.length === 0) {
+                    pagesData.push([]);
+                    const newPageDOM = document.createElement('div');
+                    newPageDOM.className = 'page';
+                    pagesTrack.appendChild(newPageDOM);
+                    PAGE_COUNT = 1;
+                    pagesTrack.style.width = '100vw';
+                    
+                    const newDot = document.createElement('div');
+                    newDot.className = 'dot';
+                    dotsTrack.insertBefore(newDot, slider);
+                    currentPage = 0;
+                }
+                
+                measure();
+                
+                if (pageRemoved) {
+                    settleTo(currentPage);
+                } else {
+                    pagesTrack.style.transition = 'none';
+                    pagesTrack.style.transform = `translate3d(${-currentPage * pageWidth}px, 0, 0)`;
+                    progress = currentPage; targetProgress = currentPage;
+                    
+                    applyFlip(oldRects);
+                    renderSlider();
+                }
+            }
+        }, 300); 
+    }
+
+    function renderPage() {
+        pagesTrack.style.transform = 'translate3d(' + (-progress * pageWidth) + 'px, 0, 0)';
+    }
+
+    function renderSlider() {
+        if (PAGE_COUNT <= 1) return;
+        
+        let p = progress;
+        if (p < 0) p = 0;
+        if (p > PAGE_COUNT - 1) p = PAGE_COUNT - 1;
+        
+        const i1 = Math.floor(p);
+        const i2 = Math.min(i1 + 1, PAGE_COUNT - 1);
+        const t = p - i1;
+        const cx = dotCenters[i1] + (dotCenters[i2] - dotCenters[i1]) * t;
+        
+        slider.style.left = cx + 'px';
+        
+        const nearestIdx = Math.round(p);
+        if (nearestIdx !== lastNearestIdx) {
+            lastNearestIdx = nearestIdx;
+            const dots = dotsTrack.querySelectorAll('.dot');
+            dots.forEach((dot, idx) => {
+                if (idx === nearestIdx) dot.classList.add('is-shrink');
+                else dot.classList.remove('is-shrink');
+            });
+        }
+    }
+
+    function lerpLoop() {
+        const diff = targetProgress - progress;
+        if (Math.abs(diff) < 0.0008) {
+            progress = targetProgress;
+            renderPage();
+            renderSlider();
+            rafId = null;
+            return;
+        }
+        progress += diff * 0.18;
+        renderPage();
+        renderSlider();
+        rafId = requestAnimationFrame(lerpLoop);
+    }
+
+    function startLerp() { if (!rafId) rafId = requestAnimationFrame(lerpLoop); }
+    function stopLerp() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } }
+
+    function settleTo(idx) {
+        idx = Math.max(0, Math.min(idx, PAGE_COUNT - 1));
+        currentPage = idx;
+        targetProgress = idx;
+        startLerp();
+    }
+
+    function nearestDotIndex(localX) {
+        let best = 0, bestDist = Infinity;
+        for (let i = 0; i < dotCenters.length; i++) {
+            const d = Math.abs(dotCenters[i] - localX);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        return best;
+    }
+
+    function clearLP() {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    }
+
+    function enterEditMode() {
+        if (isEditingMode) return;
+        isEditingMode = true;
+        wasLongPressed = true;
+        
+        requestAnimationFrame(() => {
+            addBtn.classList.add('show');
+            document.querySelectorAll('.calendar-card').forEach(c => c.classList.add('is-minimized'));
+        });
+        
+        if (navigator.vibrate) navigator.vibrate(10);
+    }
+
+    function exitEditMode() {
+        if (!isEditingMode) return;
+        isEditingMode = false;
+        addBtn.classList.remove('show');
+        document.querySelectorAll('.calendar-card').forEach(c => c.classList.remove('is-minimized'));
+    }
+
+    function begin(x, y, source, dotIdx) {
+        stopLerp();
+        startX = x; startY = y;
+        startTime = Date.now();
+        startProgress = progress; 
+        targetProgress = progress;
+        dragSource = source; dragging = false; isPressing = true;
+        pressedDotIndex = dotIdx != null ? dotIdx : -1;
+        wasLongPressed = false;
+
+        clearLP();
+        longPressTimer = setTimeout(() => {
+            if (isPressing && !dragging) {
+                enterEditMode();
+                pressedDotIndex = -1;
+            }
+        }, 500);
+    }
+
+    function move(x, y, e) {
+        if (!isPressing) return;
+        const dx = x - startX;
+        const dy = y - startY;
+
+        if (!dragging) {
+            if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearLP();
+            if (Math.abs(dx) > 5 && Math.abs(dx) > Math.abs(dy)) {
+                dragging = true;
+                pressedDotIndex = -1;
+                slider.classList.add('dragging');
+            }
+        }
+
+        if (!dragging) return;
+        if (e && e.cancelable) e.preventDefault();
+
+        let p;
+        if (dragSource === 'page') {
+            p = startProgress - dx / pageWidth;
+        } else {
+            p = startProgress + dx / dotSpacing;
+        }
+
+        targetProgress = Math.max(0, Math.min(p, PAGE_COUNT - 1));
+        startLerp();
+    }
+
+    function end(x, y) {
+        clearLP();
+        if (!isPressing) return;
+
+        if (wasLongPressed) {
+            isPressing = false;
+            dragging = false;
+            return;
+        }
+
+        if (dragging) {
+            const dx = x - startX;
+            const time = Date.now() - startTime;
+            const velocity = dx / time; 
+
+            let target = Math.round(targetProgress);
+
+            if (Math.abs(velocity) > 0.5) {
+                if (velocity > 0 && currentPage > 0) target = currentPage - 1;
+                if (velocity < 0 && currentPage < PAGE_COUNT - 1) target = currentPage + 1;
+            }
+
+            settleTo(target);
+        } else if (pressedDotIndex >= 0) {
+            settleTo(pressedDotIndex);
+        } else {
+            const el = document.elementFromPoint(x, y);
+            const isClickingCard = el && (el.closest('.calendar-card') || el.closest('.global-add-btn'));
+            if (isEditingMode && !isClickingCard) {
+                exitEditMode();
+            }
+        }
+
+        dragging = false;
+        isPressing = false;
+        pressedDotIndex = -1;
+        slider.classList.remove('dragging');
+    }
+
+    function cancel() {
+        clearLP();
+        if (!isPressing) return;
+        dragging = false; isPressing = false; pressedDotIndex = -1;
+        slider.classList.remove('dragging');
+        stopLerp();
+        settleTo(currentPage);
+    }
+
+    document.addEventListener('touchstart', function(e) {
+        if (activeTouchId !== null || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        activeTouchId = t.identifier;
+        lastTouchTime = Date.now();
+
+        if (e.target.closest('#dots-track') && PAGE_COUNT > 1) {
+            const rect = dotsTrack.getBoundingClientRect();
+            const idx = nearestDotIndex(t.clientX - rect.left);
+            begin(t.clientX, t.clientY, 'slider', idx);
+        } else {
+            begin(t.clientX, t.clientY, 'page', -1);
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+        if (activeTouchId === null) return;
+        for (let i = 0; i < e.touches.length; i++) {
+            if (e.touches[i].identifier === activeTouchId) {
+                move(e.touches[i].clientX, e.touches[i].clientY, e);
+                break;
+            }
+        }
+    }, { passive: false });
+
+    document.addEventListener('touchend', function(e) {
+        if (activeTouchId === null) return;
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            if (e.changedTouches[i].identifier === activeTouchId) {
+                end(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+                activeTouchId = null;
+                lastTouchTime = Date.now();
+                break;
+            }
+        }
+    });
+
+    document.addEventListener('touchcancel', function() {
+        activeTouchId = null;
+        cancel();
+    });
+
+    document.addEventListener('mousedown', function(e) {
+        if (e.button !== 0 || Date.now() - lastTouchTime < 500) return;
+        if (e.target.closest('#dots-track') && PAGE_COUNT > 1) {
+            const rect = dotsTrack.getBoundingClientRect();
+            const idx = nearestDotIndex(e.clientX - rect.left);
+            begin(e.clientX, e.clientY, 'slider', idx);
+        } else {
+            begin(e.clientX, e.clientY, 'page', -1);
+        }
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!isPressing) return;
+        move(e.clientX, e.clientY, e);
+    });
+
+    document.addEventListener('mouseup', function(e) {
+        if (!isPressing) return;
+        end(e.clientX, e.clientY);
+    });
+
+    addBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        addNewCard();
+    });
+
+    window.addEventListener('resize', function() {
+        measure();
+        progress = currentPage; targetProgress = currentPage; lastNearestIdx = -1;
+        renderPage(); renderSlider();
+    });
+
+    function init() {
+        pagesTrack.innerHTML = '';
+        dotsTrack.querySelectorAll('.dot').forEach(d => d.remove());
+        pagesData = []; PAGE_COUNT = 0; currentPage = 0;
+        lastNearestIdx = -1;
+
+        const firstPage = document.createElement('div');
+        firstPage.className = 'page';
+        pagesTrack.appendChild(firstPage);
+        pagesData.push([]);
+        
+        const firstDot = document.createElement('div');
+        firstDot.className = 'dot';
+        dotsTrack.insertBefore(firstDot, slider);
+        PAGE_COUNT = 1;
+        pagesTrack.style.width = '100vw';
+
+        // 初始添加4张卡片，全部使用iOS渐显动画
+        for (let i = 0; i < 4; i++) {
+            addNewCard();
+        }
+        
+        settleTo(0);
+    }
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 房间测试 8</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    font-family: "Courier New", monospace, sans-serif;
+  }
+  #app { position: relative; width: 100%; height: 100%; background: #000; }
+
+  /* 字铺满的网格容器 */
+  #grid-container {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    /* 36px 格子 */
+    grid-template-columns: repeat(auto-fill, 36px);
+    grid-template-rows: repeat(auto-fill, 36px);
+    justify-content: center;
+    align-content: center;
+  }
+
+  .cell {
+    width: 36px; height: 36px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 22px;
+    font-weight: 900;
+    line-height: 1;
+    /* 强制像素感 */
+    image-rendering: pixelated;
+    -webkit-font-smoothing: none;
+    font-smooth: never;
+  }
+
+  /* 像素风动态摇杆 */
+  #joystick {
+    position: absolute;
+    width: 120px; height: 120px;
+    pointer-events: none;
+    display: none;
+    z-index: 999;
+    opacity: 0.75;
+  }
+  #joystick.active { display: block; }
+  #joystick .base {
+    position: absolute; inset: 0;
+    border: 3px solid #fff; background: #000;
+  }
+  #joystick .knob {
+    position: absolute; width: 44px; height: 44px;
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: #fff; border: 3px solid #000;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="grid-container"></div>
+  <div id="joystick">
+    <div class="base"></div>
+    <div class="knob" id="knob"></div>
+  </div>
+</div>
+
+<script>
+// ===== 3D 数学与数据 =====
+const V = {
+  add: (a, b) => [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
+  scale: (a, s) => [a[0]*s, a[1]*s, a[2]*s],
+  dot: (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2],
+  cross: (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]],
+  norm: (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0]/l, a[1]/l, a[2]/l]; }
+};
+
+const camera = { pos: [0, 1.6, 4.5], yaw: 0, pitch: -0.05, fov: Math.PI / 3 };
+const ROOM = { w: 8, h: 3.2, d: 10 };
+const hx = ROOM.w/2, hz = ROOM.d/2, top = ROOM.h;
+
+// 家具
+const furniture = [
+  { name: '桌', min: [-0.8, 0, -0.45], max: [0.8, 0.75, 0.45] },
+  { name: '椅', min: [-0.25, 0, 0.85], max: [0.25, 0.9, 1.35] },
+  { name: '椅', min: [-0.25, 0, -1.35], max: [0.25, 0.9, -0.85] },
+  { name: '椅', min: [-1.55, 0, -0.25], max: [-1.05, 0.9, 0.25] },
+  { name: '椅', min: [1.05, 0, -0.25], max: [1.55, 0.9, 0.25] }
+];
+
+// 求交
+function rayAABB(o, dir, min, max) {
+  let tmin = -Infinity, tmax = Infinity;
+  for (let i=0; i<3; i++) {
+    if (Math.abs(dir[i]) < 1e-8) {
+      if (o[i] < min[i] || o[i] > max[i]) return null;
+    } else {
+      let t1 = (min[i]-o[i])/dir[i], t2 = (max[i]-o[i])/dir[i];
+      if (t1 > t2) { let tmp=t1; t1=t2; t2=tmp; }
+      tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return null;
+    }
+  }
+  let t = tmin > 1e-4 ? tmin : tmax;
+  if (t < 1e-4) return null;
+  let hit = [o[0]+dir[0]*t, o[1]+dir[1]*t, o[2]+dir[2]*t];
+  let eps = 1e-3, normal = [0,0,0];
+  if (Math.abs(hit[0]-min[0])<eps) normal=[-1,0,0]; else if (Math.abs(hit[0]-max[0])<eps) normal=[1,0,0];
+  else if (Math.abs(hit[1]-min[1])<eps) normal=[0,-1,0]; else if (Math.abs(hit[1]-max[1])<eps) normal=[0,1,0];
+  else if (Math.abs(hit[2]-min[2])<eps) normal=[0,0,-1]; else if (Math.abs(hit[2]-max[2])<eps) normal=[0,0,1];
+  return { t, normal };
+}
+
+function raycast(o, dir) {
+  let bestT = Infinity, name = null, normal = null;
+  function test(t, n, norm, ok) { if (t>1e-4 && t<bestT && ok) { bestT=t; name=n; normal=norm; } }
+  
+  if (dir[2] !== 0) {
+    let t = (-hz-o[2])/dir[2], x=o[0]+dir[0]*t, y=o[1]+dir[1]*t;
+    test(t, '墙', [0,0,1], x>=-hx && x<=hx && y>=0 && y<=top);
+    t = (hz-o[2])/dir[2]; x=o[0]+dir[0]*t; y=o[1]+dir[1]*t;
+    test(t, '墙', [0,0,-1], x>=-hx && x<=hx && y>=0 && y<=top);
+  }
+  if (dir[0] !== 0) {
+    let t = (-hx-o[0])/dir[0], y=o[1]+dir[1]*t, z=o[2]+dir[2]*t;
+    test(t, '墙', [1,0,0], z>=-hz && z<=hz && y>=0 && y<=top);
+    t = (hx-o[0])/dir[0]; y=o[1]+dir[1]*t; z=o[2]+dir[2]*t;
+    test(t, '墙', [-1,0,0], z>=-hz && z<=hz && y>=0 && y<=top);
+  }
+  if (dir[1] !== 0) {
+    let t = (0-o[1])/dir[1], x=o[0]+dir[0]*t, z=o[2]+dir[2]*t;
+    test(t, '地', [0,1,0], x>=-hx && x<=hx && z>=-hz && z<=hz);
+  }
+  for (let f of furniture) {
+    let hit = rayAABB(o, dir, f.min, f.max);
+    if (hit && hit.t < bestT) { bestT = hit.t; name = f.name; normal = hit.normal; }
+  }
+  return name ? { name, normal, t: bestT } : null;
+}
+
+// ===== 屏幕网格生成（DOM） =====
+const container = document.getElementById('grid-container');
+let cells = [];
+
+function buildGrid() {
+  container.innerHTML = '';
+  cells = [];
+  const rect = container.getBoundingClientRect();
+  const cw = 36; // CSS 中设置的格子大小
+  const cols = Math.ceil(rect.width / cw) + 1;
+  const rows = Math.ceil(rect.height / cw) + 1;
+  
+  // 中心偏移
+  const offsetX = (rect.width - cols * cw) / 2 + cw / 2;
+  const offsetY = (rect.height - rows * cw) / 2 + cw / 2;
+  const f = (rect.height / 2) / Math.tan(camera.fov / 2);
+
+  const frag = document.createDocumentFragment();
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let el = document.createElement('div');
+      el.className = 'cell';
+      el.textContent = '·'; // 占位符
+      el.style.color = '#444';
+      
+      let sx = offsetX + c * cw;
+      let sy = offsetY + r * cw;
+      
+      cells.push({
+        el,
+        camX: (sx - rect.width / 2) / f,
+        camY: -(sy - rect.height / 2) / f
+      });
+      frag.appendChild(el);
+    }
+  }
+  container.appendChild(frag);
+  updateView();
+}
+
+// ===== 渲染逻辑 =====
+const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+// 实时计算基向量
+function updateView() {
+  const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  const fwd = V.norm([sy*cp, sp, -cy*cp]);
+  let right = V.cross(fwd, [0,1,0]);
+  if (Math.hypot(...right) < 1e-6) right = [1,0,0];
+  right = V.norm(right);
+  const up = V.norm(V.cross(right, fwd));
+
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    const dir = V.norm([
+      right[0]*cell.camX + up[0]*cell.camY + fwd[0],
+      right[1]*cell.camX + up[1]*cell.camY + fwd[1],
+      right[2]*cell.camX + up[2]*cell.camY + fwd[2]
+    ]);
+
+    const hit = raycast(camera.pos, dir);
+    if (!hit) {
+      cell.el.textContent = '·';
+      cell.el.style.color = '#333';
+      continue;
+    }
+
+    // 颜色计算
+    const facing = Math.max(0, -V.dot(hit.normal, dir));
+    const fog = 1 / (1 + hit.t * 0.06);
+    const lum = Math.pow(facing, 0.7) * fog;
+    const g = Math.max(0, Math.min(255, Math.round(35 + lum * 220)));
+
+    cell.el.textContent = hit.name;
+    cell.el.style.color = `rgb(${g},${g},${g})`;
+  }
+}
+
+// ===== 交互控制 =====
+window.addEventListener('resize', buildGrid);
+
+const joystickEl = document.getElementById('joystick');
+const knobEl = document.getElementById('knob');
+const JOY_RADIUS = 60, KNOB_MAX = 36;
+let joyActive = false, joyTouchId = null, joyCenterX = 0, joyCenterY = 0, joyDX = 0, joyDY = 0;
+let touchId = null, touchLastX = 0, touchLastY = 0;
+
+const appEl = document.getElementById('app');
+
+appEl.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  const t = e.touches[0];
+  touchId = t.identifier; touchLastX = t.clientX; touchLastY = t.clientY;
+
+  if (t.clientX < window.innerWidth / 2) {
+    joyTouchId = t.identifier; joyCenterX = t.clientX; joyCenterY = t.clientY;
+    joyActive = true; joyDX = 0; joyDY = 0;
+    joystickEl.style.left = (joyCenterX - JOY_RADIUS) + 'px';
+    joystickEl.style.top = (joyCenterY - JOY_RADIUS) + 'px';
+    joystickEl.classList.add('active');
+    knobEl.style.transform = 'translate(-50%, -50%)';
+  }
+  e.preventDefault();
+}, { passive: false });
+
+appEl.addEventListener('touchmove', e => {
+  let needsUpdate = false;
+  if (joyActive && joyTouchId !== null) {
+    let t = null;
+    for (const touch of e.touches) if (touch.identifier === joyTouchId) { t = touch; break; }
+    if (t) {
+      let dx = t.clientX - joyCenterX, dy = t.clientY - joyCenterY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > KNOB_MAX) { dx = dx / dist * KNOB_MAX; dy = dy / dist * KNOB_MAX; }
+      joyDX = dx / KNOB_MAX; joyDY = dy / KNOB_MAX;
+      knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+      
+      // 移动相机
+      const speed = 0.05;
+      const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw);
+      const flatF = [sy, 0, -cy], flatR = [cy, 0, sy];
+      
+      camera.pos[0] += (flatR[0]*joyDX + flatF[0]*(-joyDY)) * speed;
+      camera.pos[2] += (flatR[2]*joyDX + flatF[2]*(-joyDY)) * speed;
+      
+      // 边界
+      camera.pos[0] = Math.max(-hx + 0.3, Math.min(hx - 0.3, camera.pos[0]));
+      camera.pos[2] = Math.max(-hz + 0.3, Math.min(hz - 0.3, camera.pos[2]));
+      needsUpdate = true;
+    }
+  }
+  if (touchId !== null) {
+    let t = null;
+    for (const touch of e.touches) if (touch.identifier === touchId) { t = touch; break; }
+    if (t) {
+      const dx = t.clientX - touchLastX, dy = t.clientY - touchLastY;
+      touchLastX = t.clientX; touchLastY = t.clientY;
+      if (touchId !== joyTouchId && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
+        camera.yaw += dx * 0.005;
+        camera.pitch -= dy * 0.005;
+        camera.pitch = Math.max(-1.2, Math.min(1.2, camera.pitch));
+        needsUpdate = true;
+      }
+    }
+  }
+  if (needsUpdate) updateView();
+  e.preventDefault();
+}, { passive: false });
+
+function endTouch(e) {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joyTouchId) {
+      joyActive = false; joyTouchId = null; joyDX = 0; joyDY = 0;
+      joystickEl.classList.remove('active');
+    }
+    if (touch.identifier === touchId) touchId = null;
+  }
+}
+appEl.addEventListener('touchend', endTouch, { passive: false });
+appEl.addEventListener('touchcancel', endTouch, { passive: false });
+
+// 初始化
+buildGrid();
+</script>
+</body>
+</html>

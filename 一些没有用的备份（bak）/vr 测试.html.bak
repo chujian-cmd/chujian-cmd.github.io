@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>摇一摇</title>
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%;
+    background: #000; overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 50%; bottom: 40px;
+    transform: translateX(-50%);
+    color: rgba(120,255,255,.75);
+    font: 13px/1.6 -apple-system, "PingFang SC", sans-serif;
+    pointer-events: none; z-index: 10;
+    text-shadow: 0 0 10px rgba(0,255,255,.8);
+    letter-spacing: .1em;
+    white-space: nowrap;
+  }
+  #perm {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.85);
+    z-index: 100; color: #0ff;
+    font: 16px/1.5 -apple-system, sans-serif;
+    letter-spacing: .15em;
+    text-shadow: 0 0 14px #0ff;
+  }
+  #perm .btn {
+    padding: 22px 40px;
+    border: 1px solid #0ff; border-radius: 12px;
+    background: rgba(0, 30, 40, .7);
+    box-shadow: 0 0 24px rgba(0,255,255,.35);
+  }
+  #perm.hide { display: none; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+<div id="hint">晃手机 → 光点跟着动</div>
+<div id="perm"><div class="btn">点击启用传感器</div></div>
+
+<script src="./three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const hintEl = document.getElementById('hint');
+  const permEl = document.getElementById('perm');
+
+  if (!window.THREE) {
+    hintEl.textContent = 'three.min.js 未加载';
+    return;
+  }
+
+  /* ============ Three.js 场景 ============ */
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setClearColor(0x000000, 1);
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 100);
+  camera.position.set(0, 0, 8);
+
+  // 一个发光的小球
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.6, 32, 32),
+    new THREE.MeshBasicMaterial({ color: 0x66ffff })
+  );
+  scene.add(ball);
+
+  // 光晕
+  const glowCv = document.createElement('canvas');
+  glowCv.width = glowCv.height = 128;
+  {
+    const ctx = glowCv.getContext('2d');
+    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0, 'rgba(120,255,255,.9)');
+    g.addColorStop(0.4, 'rgba(80,200,255,.3)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+  }
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(glowCv),
+    blending: THREE.AdditiveBlending,
+    transparent: true, depthWrite: false
+  }));
+  glow.scale.set(3, 3, 1);
+  scene.add(glow);
+
+  // 参考格子
+  const grid = new THREE.GridHelper(20, 20, 0x1a3a4a, 0x0f2230);
+  grid.rotation.x = Math.PI / 2;
+  grid.position.z = -3;
+  scene.add(grid);
+
+  function onResize() {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  }
+  addEventListener('resize', onResize);
+
+  /* ============ 只用加速度，直接映射 ============ */
+  // 目标位置（从加速度来的）
+  let targetX = 0, targetY = 0;
+  // 当前位置（平滑用）
+  let posX = 0, posY = 0;
+
+  // 重力低通估计（只用来去重力，参数固定，不调）
+  let gx = 0, gy = 0, gz = 0, gReady = false;
+  let lastT = 0;
+
+  function onMotion(e) {
+    const ag = e.accelerationIncludingGravity;
+    if (!ag || ag.x == null) return;
+
+    const now = performance.now();
+    let dt = lastT ? (now - lastT) / 1000 : 1/60;
+    lastT = now;
+    if (dt <= 0 || dt > 0.05) dt = 0.05;
+
+    if (!gReady) {
+      gx = ag.x; gy = ag.y; gz = ag.z;
+      gReady = true;
+      return;
+    }
+
+    // 平滑估计重力（时间常数 0.5 秒，慢，只反映长期姿态）
+    const k = 1 - Math.exp(-dt / 0.5);
+    gx += (ag.x - gx) * k;
+    gy += (ag.y - gy) * k;
+    gz += (ag.z - gz) * k;
+
+    // 去重力后的线性加速度
+    let lx = ag.x - gx;
+    let ly = ag.y - gy;
+
+    // ★ 关键：直接映射到屏幕坐标
+    //   手机向右晃（+lx）→ 光点向右
+    //   手机向上晃（+ly）→ 光点向上
+    //   增益故意调大，效果明显
+    const GAIN = 0.35;
+    targetX =  lx * GAIN;
+    targetY =  ly * GAIN;
+
+    // 限制范围
+    const LIMIT = 3.0;
+    targetX = Math.max(-LIMIT, Math.min(LIMIT, targetX));
+    targetY = Math.max(-LIMIT, Math.min(LIMIT, targetY));
+  }
+
+  /* ============ 权限 ============ */
+  function needsPerm() {
+    return typeof DeviceMotionEvent !== 'undefined' &&
+           typeof DeviceMotionEvent.requestPermission === 'function';
+  }
+
+  function bind() {
+    window.addEventListener('devicemotion', onMotion, { passive: true });
+    permEl.classList.add('hide');
+    hintEl.textContent = '晃手机 → 光点跟着动';
+  }
+
+  if (!needsPerm()) {
+    bind();
+  } else {
+    permEl.addEventListener('click', function () {
+      DeviceMotionEvent.requestPermission().then(bind).catch(function () {
+        permEl.querySelector('.btn').textContent = '授权失败 · 刷新重试';
+      });
+    });
+  }
+
+  /* ============ 主循环 ============ */
+  function loop() {
+    requestAnimationFrame(loop);
+
+    // 平滑跟随（手停下后，慢慢回到中心）
+    posX += (targetX - posX) * 0.08;
+    posY += (targetY - posY) * 0.08;
+
+    // 手停下后，目标逐渐归零（回中心）
+    targetX *= 0.98;
+    targetY *= 0.98;
+
+    ball.position.set(posX, posY, 0);
+    glow.position.set(posX, posY, 0);
+
+    renderer.render(scene, camera);
+  }
+  loop();
+
+})();
+</script>
+</body>
+</html>
