@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无限圆周率 · 渐显追加</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+
+        /* 背景画布：动态计算过程 */
+        #bg-canvas {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 1; overflow: hidden;
+        }
+
+        /* 背景行：上浮淡出动画 */
+        .bg-line {
+            position: absolute;
+            color: #00cc00;
+            font-size: 0.9rem;
+            white-space: pre;
+            opacity: 0.4;
+            text-shadow: 0 0 4px #006600;
+            animation: floatUp 10s linear infinite;
+            will-change: transform, opacity;
+        }
+
+        @keyframes floatUp {
+            0% { transform: translateY(0); opacity: 0.4; }
+            70% { opacity: 0.2; }
+            100% { transform: translateY(-100px); opacity: 0; }
+        }
+
+        /* 前景结果区 */
+        .content {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center;
+            z-index: 10; pointer-events: none;
+        }
+
+        .result-card {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(3px);
+            border: 1px solid #00aa00;
+            border-radius: 16px;
+            padding: 2rem 2.5rem;
+            box-shadow: 0 0 40px rgba(0, 255, 0, 0.25);
+            max-width: 90vw;
+            pointer-events: auto;
+        }
+
+        .result-label {
+            font-size: 1.1rem; color: #00ee00; text-shadow: 0 0 8px #00aa00;
+            letter-spacing: 2px; margin-bottom: 1rem;
+            border-bottom: 1px solid #00aa00; padding-bottom: 0.6rem;
+            display: inline-block; font-weight: 500;
+        }
+
+        .result-digits {
+            font-size: 2.4rem; font-weight: bold; color: #00ff00;
+            text-shadow: 0 0 15px #00bb00; letter-spacing: 3px;
+            word-break: break-all; line-height: 1.4;
+            display: flex; flex-wrap: wrap; align-items: baseline;
+            justify-content: center; gap: 0.1rem;
+            max-width: 800px; min-height: 4rem;
+        }
+
+        /* 新增数字渐显动画 */
+        .digit {
+            display: inline-block;
+            opacity: 0;
+            animation: digitFadeIn 0.7s ease forwards;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00, 0 0 20px #008800;
+            transform-origin: center;
+            font-weight: 700;
+        }
+
+        @keyframes digitFadeIn {
+            0% { opacity: 0; transform: scale(0.6) translateY(8px); filter: blur(5px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+        }
+
+        /* 闪烁光标 */
+        .cursor {
+            display: inline-block; width: 4px; height: 2.2rem;
+            background: #00ff00; margin-left: 8px;
+            box-shadow: 0 0 20px #00ff00;
+            animation: blink 1s step-end infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+        .status {
+            margin-top: 1.5rem; font-size: 0.9rem; color: #00aa00;
+            letter-spacing: 3px; text-align: center;
+            opacity: 0.8; text-shadow: 0 0 4px #006600;
+        }
+
+        @media (max-width: 600px) {
+            .result-card { padding: 1.5rem 1.2rem; }
+            .result-digits { font-size: 1.6rem; letter-spacing: 1.5px; }
+            .cursor { height: 1.6rem; }
+        }
+    </style>
+</head>
+<body>
+    <div id="bg-canvas"></div>
+
+    <div class="content">
+        <div class="result-card">
+            <div class="result-label">π · 无限计算中</div>
+            <div id="resultDigits" class="result-digits"></div>
+            <div class="status">实时计算 · 过程即背景</div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ========== 状态与元素 ==========
+            const bgCanvas = document.getElementById('bg-canvas');
+            const resultDigitsContainer = document.getElementById('resultDigits');
+
+            // 莱布尼茨级数状态
+            let piApprox = 0.0;
+            let sign = 1.0;
+            let denominator = 1.0;
+            let iteration = 0;
+
+            // 背景行管理
+            const MAX_BG_LINES = 70;
+            const bgLines = [];
+
+            // 当前显示结果
+            let currentResultString = '';
+            let currentDigitElements = [];
+            let displayedPrecision = 3;       // 当前保留的小数位数
+
+            // 定时器
+            let calculationTimer = null;
+
+            // ========== 背景行生成 ==========
+            function addBackgroundLine(text) {
+                const line = document.createElement('div');
+                line.className = 'bg-line';
+                line.textContent = text;
+
+                line.style.left = (Math.random() * 88 + 2) + '%';
+                line.style.bottom = (Math.random() * 25 + 5) + '%';
+                line.style.fontSize = (0.8 + Math.random() * 0.6) + 'rem';
+                line.style.animationDuration = (8 + Math.random() * 8) + 's';
+                line.style.animationDelay = (Math.random() * 3) + 's';
+
+                bgCanvas.appendChild(line);
+                bgLines.push(line);
+
+                if (bgLines.length > MAX_BG_LINES) {
+                    const oldest = bgLines.shift();
+                    if (oldest && oldest.parentNode) oldest.remove();
+                }
+            }
+
+            // ========== 更新结果（只追加新数字，不重建已有数字） ==========
+            function updateResultDisplay(piValue) {
+                // 根据迭代次数决定显示精度：每5000次增加一位小数，最多15位
+                let extraDigits = Math.min(15, Math.floor(iteration / 5000));
+                extraDigits = Math.max(2, extraDigits);  // 至少2位小数
+
+                if (extraDigits === displayedPrecision && currentResultString !== '') return;
+                displayedPrecision = extraDigits;
+
+                const newPiStr = piValue.toFixed(extraDigits);
+
+                // 如果新字符串与当前相同，直接返回
+                if (newPiStr === currentResultString) return;
+
+                // 检查新字符串是否以当前字符串为前缀（即只是尾部追加了数字）
+                if (currentResultString !== '' && newPiStr.startsWith(currentResultString)) {
+                    // 只追加新字符
+                    const addedStr = newPiStr.slice(currentResultString.length);
+                    for (let i = 0; i < addedStr.length; i++) {
+                        const char = addedStr[i];
+                        const span = document.createElement('span');
+                        span.className = 'digit';
+                        span.textContent = char;
+                        // 延迟基于追加顺序，让新数字依次出现
+                        span.style.animationDelay = (i * 0.1) + 's';
+                        resultDigitsContainer.appendChild(span);
+                        currentDigitElements.push(span);
+                    }
+                } else {
+                    // 不满足前缀关系（如初始或精度跳变较大），重建所有数字
+                    // 但重建时使用错峰动画，让所有数字渐显而不是瞬间出现
+                    resultDigitsContainer.innerHTML = '';
+                    currentDigitElements = [];
+
+                    for (let i = 0; i < newPiStr.length; i++) {
+                        const char = newPiStr[i];
+                        const span = document.createElement('span');
+                        span.className = 'digit';
+                        span.textContent = char;
+                        span.style.animationDelay = (i * 0.05) + 's'; // 错峰
+                        resultDigitsContainer.appendChild(span);
+                        currentDigitElements.push(span);
+                    }
+                }
+
+                currentResultString = newPiStr;
+            }
+
+            // ========== 核心计算循环 ==========
+            function startCalculation() {
+                // 重置状态
+                piApprox = 0.0; sign = 1.0; denominator = 1.0; iteration = 0;
+                displayedPrecision = 3;
+                bgCanvas.innerHTML = ''; bgLines.length = 0;
+                resultDigitsContainer.innerHTML = '';
+                currentResultString = '';
+                currentDigitElements = [];
+
+                // 初始显示 3.14（基于第一项计算结果，但为了美观，先设置一个初始值）
+                // 为了不突兀，我们直接让第一次更新发生
+
+                function step() {
+                    const STEPS = 150;  // 每帧迭代次数
+
+                    for (let i = 0; i < STEPS; i++) {
+                        piApprox += sign * (1.0 / denominator);
+                        sign *= -1.0;
+                        denominator += 2.0;
+                        iteration++;
+
+                        // 每30次迭代生成一条背景行，同时保证不超过最大行数
+                        if (iteration % 30 === 0 && bgLines.length < MAX_BG_LINES) {
+                            const currentPi = piApprox * 4.0;
+                            const piStr = currentPi.toFixed(10);
+                            addBackgroundLine(`π≈${piStr}  ·  ${iteration}项`);
+                        }
+                    }
+
+                    // 更新结果显示
+                    const currentPi = piApprox * 4.0;
+                    updateResultDisplay(currentPi);
+
+                    // 继续下一帧
+                    calculationTimer = setTimeout(step, 35);  // 约28帧/秒
+                }
+
+                step();
+            }
+
+            // 启动
+            startCalculation();
+
+            // 清理定时器
+            window.addEventListener('beforeunload', () => {
+                if (calculationTimer) clearTimeout(calculationTimer);
+            });
+        })();
+    </script>
+</body>
+</html>

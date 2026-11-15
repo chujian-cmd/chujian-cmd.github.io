@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无限计算圆周率 · 过程即背景</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000000;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        /* 背景画布：承载所有计算过程文字，形成动态背景 */
+        #bg-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;      /* 允许点击穿透到下层（如果需要交互） */
+            z-index: 1;
+            overflow: hidden;
+        }
+
+        /* 背景中每一行计算过程的样式 */
+        .bg-line {
+            position: absolute;
+            color: #00cc00;
+            font-size: 1rem;
+            line-height: 1.5;
+            white-space: pre;
+            opacity: 0.45;
+            text-shadow: 0 0 3px #006600;
+            font-weight: 400;
+            letter-spacing: 0.5px;
+            will-change: transform, opacity;
+            animation: floatUp 8s linear infinite;
+            /* 动画时长、延迟、方向由 JS 动态设置 */
+        }
+
+        /* 让背景文字缓慢上浮并淡出，制造流动感 */
+        @keyframes floatUp {
+            0% {
+                transform: translateY(0) scale(1);
+                opacity: 0.5;
+            }
+            70% {
+                opacity: 0.3;
+            }
+            100% {
+                transform: translateY(-80px) scale(0.95);
+                opacity: 0;
+            }
+        }
+
+        /* 主内容区：置于背景之上 */
+        .content {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;      /* 让背景穿透，但内部结果区域可保留指针事件（如果需要），此处不需要 */
+        }
+
+        /* 结果卡片，悬浮于背景之上，半透明背景保证可读性 */
+        .result-card {
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(2px);
+            border: 1px solid #00aa00;
+            border-radius: 16px;
+            padding: 2rem 2.5rem;
+            box-shadow: 0 0 40px rgba(0, 255, 0, 0.25);
+            max-width: 90vw;
+            width: fit-content;
+            transition: border-color 0.3s;
+            pointer-events: auto;      /* 如果要选中文字可以恢复，但为了背景穿透可以去掉 */
+        }
+
+        .result-label {
+            font-size: 1.2rem;
+            color: #00ee00;
+            text-shadow: 0 0 8px #00aa00;
+            letter-spacing: 2px;
+            margin-bottom: 1.2rem;
+            border-bottom: 1px solid #00aa00;
+            padding-bottom: 0.7rem;
+            display: inline-block;
+            font-weight: 500;
+        }
+
+        .result-digits {
+            font-size: 2.4rem;
+            font-weight: bold;
+            color: #00ff00;
+            text-shadow: 0 0 15px #00bb00;
+            letter-spacing: 3px;
+            word-break: break-all;
+            line-height: 1.4;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            justify-content: center;
+            gap: 0.1rem;
+            max-width: 800px;
+        }
+
+        /* 每个数字独立渐显 */
+        .digit {
+            display: inline-block;
+            opacity: 0;
+            animation: digitFadeIn 0.6s ease forwards;
+            color: #00ff00;
+            text-shadow: 0 0 10px #00ff00, 0 0 20px #008800;
+            transform-origin: center;
+            font-family: 'Courier New', Courier, monospace;
+            font-weight: 700;
+        }
+
+        @keyframes digitFadeIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.7) translateY(5px);
+                filter: blur(4px);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+                filter: blur(0);
+            }
+        }
+
+        /* 后缀光标，增加科技感 */
+        .cursor {
+            display: inline-block;
+            width: 4px;
+            height: 2.2rem;
+            background-color: #00ff00;
+            margin-left: 6px;
+            box-shadow: 0 0 18px #00ff00;
+            animation: blink 1s step-end infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        /* 底部小字：无限计算中 */
+        .status {
+            margin-top: 1.8rem;
+            font-size: 0.9rem;
+            color: #00aa00;
+            letter-spacing: 3px;
+            text-align: center;
+            opacity: 0.8;
+            text-shadow: 0 0 4px #006600;
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 600px) {
+            .result-card {
+                padding: 1.5rem 1.2rem;
+            }
+            .result-digits {
+                font-size: 1.6rem;
+                letter-spacing: 1.5px;
+            }
+            .cursor {
+                height: 1.6rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 背景画布：动态计算过程会不断生成于此 -->
+    <div id="bg-canvas"></div>
+
+    <!-- 前景内容：圆周率计算结果 -->
+    <div class="content">
+        <div class="result-card">
+            <div class="result-label">π · 无限计算中</div>
+            <div id="resultDigits" class="result-digits">
+                <!-- 数字将通过 JS 逐个插入 -->
+            </div>
+            <div class="status">实时计算 · 过程即背景</div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // ---------- 核心设置 ----------
+            const bgCanvas = document.getElementById('bg-canvas');
+            const resultDigitsContainer = document.getElementById('resultDigits');
+
+            // 圆周率计算 —— 使用莱布尼茨级数（无限进行，永不停止）
+            // π/4 = 1 - 1/3 + 1/5 - 1/7 + ...
+            // 每算一次累加一项，计算过程会不断输出到背景
+
+            let piApprox = 0.0;          // 累积和
+            let sign = 1.0;              // 符号
+            let denominator = 1.0;       // 分母
+            let iteration = 0;           // 迭代次数
+
+            // 背景行管理：为了避免内存溢出，限制同时存在的行数
+            const MAX_BG_LINES = 80;      // 同时最多显示80行背景
+            const bgLines = [];           // 存储 DOM 元素引用，用于清理
+
+            // 控制背景文字生成速度：每 5 次迭代生成一条背景过程
+            const BG_LINE_INTERVAL = 5;
+
+            // 用于计算结果显示的字符串（取计算值的前缀）
+            // 每次更新结果时，只显示最高精度的前 N 位（动态增加）
+            let displayedPrecision = 3;   // 初始显示整数位和小数点后2位，逐渐增加
+
+            // 结果数字容器：我们维护一个字符串和对应的DOM元素，以便平滑增加数字
+            let currentResultString = '';  // 当前已显示的结果字符串
+            let currentDigitElements = []; // 对应的span元素
+
+            // ---------- 工具函数：生成背景行并添加到画布 ----------
+            function addBackgroundLine(text) {
+                // 创建 DOM 元素
+                const line = document.createElement('div');
+                line.className = 'bg-line';
+                line.textContent = text;
+
+                // 随机位置（水平方向随机，垂直方向在底部开始，然后向上浮动）
+                const left = Math.random() * 90; // 百分比，避免太靠边
+                const bottom = Math.random() * 30; // 从底部附近随机位置开始
+                line.style.left = left + '%';
+                line.style.bottom = bottom + '%';
+
+                // 随机动画时长和延迟，让运动错落有致
+                const duration = 6 + Math.random() * 8; // 6~14秒
+                const delay = Math.random() * 2;         // 0~2秒延迟
+                line.style.animationDuration = duration + 's';
+                line.style.animationDelay = delay + 's';
+
+                // 稍微随机字体大小增加层次感
+                const fontSize = 0.8 + Math.random() * 0.6; // 0.8rem ~ 1.4rem
+                line.style.fontSize = fontSize + 'rem';
+
+                // 添加到背景
+                bgCanvas.appendChild(line);
+                bgLines.push(line);
+
+                // 限制背景行数量，移除最旧的行
+                if (bgLines.length > MAX_BG_LINES) {
+                    const oldLine = bgLines.shift();
+                    if (oldLine && oldLine.parentNode) {
+                        oldLine.remove();
+                    }
+                }
+
+                // 每个背景行动画结束后自动移除（因为动画是infinite，但我们通过设置animation-iteration-count: infinite让它们一直循环？
+                // 修改：我们希望它们播放一次后消失，但为了保持背景持续流动，可以让动画无限循环，但会一直占据DOM。
+                // 更优雅：使用animationend事件移除，但那样会不断创建销毁，性能尚可，但背景会越来越少？
+                // 为了背景持续丰富，我们使用无限动画，同时通过上面的数量限制来维持总数恒定。
+                // 但每个行都会无限循环上浮，看起来像永动机。但视觉上会重复利用同一元素，不会增加DOM。
+                // 所以我们设置动画为infinite，并在数量超过限制时移除最早的。
+                // 注意：由于我们设置了floatUp动画为infinite，每次循环结束后会重置位置继续。
+                // 但不同的行有各自的delay和duration，看起来会更自然。
+                // 调整CSS中的动画为infinite？但之前的CSS是infinite吗？检查：animation: floatUp 8s linear infinite; 是的，已经无限。
+                // 但为了在视觉上不出现太突兀的重置，我们让动画结束时透明度为0然后马上重置，看起来就像新的行。
+                // 但使用infinite会一直循环，可能某个行会永远存在直到被shift移除。
+                // 这没问题，因为我们限制了最大数量。
+
+                // 额外：如果想在动画结束后移除，可以监听animationend，但由于我们想要持续的流动效果，用最大数量限制更简单。
+                // 但注意如果动画无限，元素永远不会触发animationend，所以必须用数量限制。
+
+                // 由于我们使用infinite，每个元素都会持续动画，但我们用队列限制数量，当达到上限时移除最早的，即使它还在动画中。
+                // 这种方式简单有效。
+            }
+
+            // ---------- 更新计算结果（动态增加小数位数） ----------
+            function updateResultDisplay(piValue) {
+                // 将当前pi值转为字符串，保留一定位数（根据迭代增加位数）
+                // 莱布尼茨级数收敛慢，所以我们让显示位数随迭代增加而增加，但也不能无限增长，
+                // 最多显示到小数点后15位左右，避免太长。
+                // 根据迭代次数决定显示多少位：每约5000次迭代增加一位小数，最多15位
+                let extraDigits = Math.min(15, Math.floor(iteration / 5000));
+                // 但至少显示2位小数
+                extraDigits = Math.max(2, extraDigits);
+
+                // 使用toFixed(extraDigits)来得到固定小数位数的字符串
+                // 注意：由于莱布尼茨级数精度有限，数值可能不准确，但这是真实计算结果，展示过程没问题。
+                let piStr = piValue.toFixed(extraDigits);
+
+                // 如果字符串与当前显示的不同，则更新
+                if (piStr === currentResultString) return;
+
+                // 如果新的字符串是旧字符串的扩展（即前面部分相同），我们只追加新数字，保持已有数字的动画状态
+                // 简单起见，我们直接重新构建，但如果已有数字则保留它们，只是添加新的。
+                // 为了效果平滑，我们检查字符串的变化。
+                // 更简单：每次重新构建，但会导致所有数字重新动画，不太好。
+                // 所以实现一个逐步追加的版本。
+
+                // 找出公共前缀长度（从旧字符串到新字符串）
+                let commonLength = 0;
+                const oldStr = currentResultString;
+                const newStr = piStr;
+                const minLength = Math.min(oldStr.length, newStr.length);
+
+                // 如果新字符串以旧字符串开头，或者旧字符串以新字符串开头，处理不同情况
+                if (newStr.startsWith(oldStr)) {
+                    // 新字符串扩展了旧字符串，保留已有的DOM，只追加新字符
+                    commonLength = oldStr.length;
+                } else if (oldStr.startsWith(newStr)) {
+                    // 新字符串比旧字符串短（不太可能，但可能因为toFixed位数变少？我们确保extraDigits不减）
+                    // 如果发生，我们就全部重建
+                    commonLength = 0;
+                } else {
+                    // 不匹配，重建
+                    commonLength = 0;
+                }
+
+                // 如果旧字符串为空，或者commonLength为0，则全部重建
+                if (oldStr === '' || commonLength === 0) {
+                    // 清空容器
+                    resultDigitsContainer.innerHTML = '';
+                    currentDigitElements = [];
+                    // 为每个字符创建span
+                    for (let i = 0; i < newStr.length; i++) {
+                        const char = newStr[i];
+                        const span = document.createElement('span');
+                        span.className = 'digit';
+                        span.textContent = char;
+                        // 延迟动画：根据索引增加延迟
+                        span.style.animationDelay = (i * 0.08) + 's';
+                        resultDigitsContainer.appendChild(span);
+                        currentDigitElements.push(span);
+                    }
+                    currentResultString = newStr;
+                    // 添加光标（可选，这里不加，因为容器中会显得杂乱，我们可以最后统一加一个光标在末尾）
+                    // 但为了效果，可以添加一个静态光标在后面
+                    // 这里我们在最后添加一个光标元素？但更新时会冲掉，还是不加了。
+                } else {
+                    // 保留前commonLength个字符的DOM，追加新的字符
+                    // 移除commonLength之后的所有旧元素
+                    while (currentDigitElements.length > commonLength) {
+                        const last = currentDigitElements.pop();
+                        if (last && last.parentNode) {
+                            last.remove();
+                        }
+                    }
+                    // 追加新的字符（从commonLength到newStr.length-1）
+                    for (let i = commonLength; i < newStr.length; i++) {
+                        const char = newStr[i];
+                        const span = document.createElement('span');
+                        span.className = 'digit';
+                        span.textContent = char;
+                        // 延迟动画：基于追加的位置给一个小延迟
+                        const delay = (i - commonLength) * 0.1;
+                        span.style.animationDelay = delay + 's';
+                        resultDigitsContainer.appendChild(span);
+                        currentDigitElements.push(span);
+                    }
+                    currentResultString = newStr;
+                }
+            }
+
+            // ---------- 无限计算循环（使用requestAnimationFrame结合定时器以控制速度） ----------
+            // 为了不阻塞UI，我们采用分片计算。但莱布尼茨级数每项计算很快，我们可以一次性计算很多次，
+            // 然后通过setTimeout控制节奏，让背景文字不断生成。
+
+            const CALC_CHUNK = 100;      // 每次批量计算的迭代次数，提高效率
+            const BG_LINE_CHANCE = 0.6;  // 每批计算后生成背景行的概率/数量因子
+
+            function calculationLoop() {
+                // 执行一批计算
+                for (let i = 0; i < CALC_CHUNK; i++) {
+                    // 累加当前项
+                    piApprox += sign * (1.0 / denominator);
+
+                    // 准备下一项
+                    sign *= -1.0;
+                    denominator += 2.0;
+                    iteration++;
+
+                    // 定期生成背景行（每5次迭代生成一条）
+                    if (iteration % BG_LINE_INTERVAL === 0) {
+                        // 生成一条背景文本，显示当前计算的中间值
+                        const currentPi = piApprox * 4.0;
+                        // 保留足够多的小数位，让背景文字看起来丰富
+                        const piStr = currentPi.toFixed(12);
+                        // 构造一行背景文字，可以包含迭代次数和值
+                        const bgText = `π≈${piStr}  ·  ${iteration} 项`;
+                        addBackgroundLine(bgText);
+                    }
+                }
+
+                // 每批计算后，更新前景显示的结果（根据迭代增加精度）
+                const currentPiValue = piApprox * 4.0;
+                updateResultDisplay(currentPiValue);
+
+                // 使用 setTimeout 继续下一批，控制计算速度，让背景行有节奏地产生
+                // 速度调节：每 30ms 计算一批，背景行生成速度约为 (100/5)*(1000/30) ≈ 666行/秒，太多了！
+                // 需要调整 BG_LINE_INTERVAL 和 CALC_CHUNK 以及延迟，使得背景行生成速度合适。
+                // 调整参数：CALC_CHUNK 减小，BG_LINE_INTERVAL 加大，或者使用概率控制。
+                // 重新调整策略：每批计算后，可能生成0或1条背景行，避免刷屏。
+                // 在循环中已做，但频率太高。我们修改 BG_LINE_INTERVAL 为 50，并每批只生成一条，且概率控制。
+                // 为了简单，我在外部控制生成频率：每计算5批生成一条背景行？但为了代码清晰，我重构一下。
+
+                // 为了更好控制，我们使用下面调整后的逻辑（覆盖上面的生成背景行方式）。
+                // 但由于代码已写，我们直接在循环里修改。
+                // 这里做个小调整：禁用原来的生成方式，在下一个版本更新。但为了时间，我们使用修改后的方案。
+
+                // 使用 setTimeout 继续
+                // 根据性能调整延迟：50ms 一批，如果每批CALC_CHUNK=50，那么每50ms迭代50次，每秒1000次迭代，
+                // 背景行约每 (BG_LINE_INTERVAL=10) 次迭代生成一条，即每秒100条，还是太多。
+                // 我们需要更稀疏的背景行生成。
+
+                // 更好的方法：在每次循环中，以一定概率生成背景行，且限制最大行数。
+                // 修改为：每次循环（50ms）最多生成1-2条背景行，这样每秒20-40条，配合MAX_BG_LINES=80，滚动效果不错。
+
+                // 我们调整 CALC_CHUNK 和生成逻辑。
+                // 但为了不重写大量代码，在循环内部修改。
+                // 但上面的生成逻辑已经写在for循环内部了，需要重新整理。为了保持代码整洁，我将在下面重新组织计算循环。
+
+                // 重新整理：下面的代码是最终版本，覆盖之前思路。
+                // 因此上面的 for 循环内的背景生成代码将被注释掉，用新的逻辑替代。
+                // 但由于代码已经执行到此处，我们直接在下面写新的循环，并忽略之前的生成逻辑。
+                // 实际上，因为函数已经定义，我们可以重新定义计算循环。
+
+                // 我们直接重新定义 calculationLoop 函数，但为了不影响，我在下面重写。
+            }
+
+            // 重新定义计算循环（干净版本）
+            // 清除之前的定时器，重新开始
+            let calculationTimer = null;
+
+            function startInfiniteCalculation() {
+                // 重置所有状态
+                piApprox = 0.0;
+                sign = 1.0;
+                denominator = 1.0;
+                iteration = 0;
+                // 不清空背景行，保留已有背景，或者清空？为了全新开始，清空背景
+                // 但用户可能看到残留，我们清空背景画布
+                bgCanvas.innerHTML = '';
+                bgLines.length = 0;
+
+                // 重置结果区域
+                resultDigitsContainer.innerHTML = '';
+                currentResultString = '';
+                currentDigitElements = [];
+
+                // 初始化显示一个基本值
+                updateResultDisplay(0.0);
+
+                // 定义循环函数
+                function calculationStep() {
+                    // 每次执行一定数量的迭代
+                    const STEPS_PER_FRAME = 120;  // 每帧迭代次数，提高计算量让数字增长明显
+
+                    for (let i = 0; i < STEPS_PER_FRAME; i++) {
+                        // 莱布尼茨累加
+                        piApprox += sign * (1.0 / denominator);
+                        sign *= -1.0;
+                        denominator += 2.0;
+                        iteration++;
+
+                        // 随机生成背景行（每次迭代有较低概率生成，避免过多）
+                        // 生成条件：每大约20次迭代生成一条，且随机
+                        if (iteration % 25 === 0 && bgLines.length < MAX_BG_LINES) {
+                            const currentPi = piApprox * 4.0;
+                            const piStr = currentPi.toFixed(10);
+                            const bgText = `π≈${piStr}  ·  ${iteration}项`;
+                            addBackgroundLine(bgText);
+                        }
+                    }
+
+                    // 更新前景显示结果
+                    const currentPi = piApprox * 4.0;
+                    updateResultDisplay(currentPi);
+
+                    // 继续下一帧
+                    calculationTimer = setTimeout(calculationStep, 40); // 40ms 一帧，约25帧/秒
+                }
+
+                // 启动循环
+                calculationStep();
+            }
+
+            // 启动无限计算
+            startInfiniteCalculation();
+
+            // 页面卸载时清除定时器
+            window.addEventListener('beforeunload', function() {
+                if (calculationTimer) {
+                    clearTimeout(calculationTimer);
+                }
+            });
+
+            // 补充：由于背景行生成速率可能还是偏高，我们在 addBackgroundLine 中已经限制了最大数量，
+            // 并且每个背景行动画无限循环，所以视觉上会持续有行上浮。
+            // 另外，背景行的动画延迟和持续时间不同，使得它们不会同时消失。
+            // 为了更自然，可以动态调整背景行的样式。
+        })();
+    </script>
+</body>
+</html>

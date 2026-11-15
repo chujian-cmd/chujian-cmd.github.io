@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>π · 无限计算</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000; font-family: 'Courier New', monospace;
+}
+
+/* 背景：计算过程作为动态背景 */
+#bg-canvas {
+    position: fixed; inset: 0; z-index: 1; overflow: hidden;
+    pointer-events: none;
+}
+.bg-line {
+    position: absolute;
+    color: #00cc00;
+    font-size: 0.9rem;
+    white-space: pre;
+    opacity: 0.35;
+    text-shadow: 0 0 4px #006600;
+    animation: floatUp linear infinite;
+    will-change: transform, opacity;
+}
+@keyframes floatUp {
+    0%   { transform: translateY(0); opacity: 0.35; }
+    70%  { opacity: 0.15; }
+    100% { transform: translateY(-120px); opacity: 0; }
+}
+
+/* 前景结果 */
+.content {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; justify-content: center; align-items: center;
+    pointer-events: none;
+}
+.result-card {
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(3px);
+    border: 1px solid #00aa00;
+    border-radius: 16px;
+    padding: 2rem 2.5rem;
+    box-shadow: 0 0 40px rgba(0, 255, 0, 0.25);
+    max-width: 90vw;
+    pointer-events: auto;
+}
+.result-label {
+    font-size: 1.1rem; color: #00ee00; text-shadow: 0 0 8px #00aa00;
+    letter-spacing: 2px; margin-bottom: 1rem;
+    border-bottom: 1px solid #00aa00; padding-bottom: 0.6rem;
+    display: inline-block; font-weight: 500;
+}
+.result-digits {
+    font-size: 2rem; font-weight: bold; color: #00ff00;
+    text-shadow: 0 0 15px #00bb00; letter-spacing: 1.5px;
+    word-break: break-all; line-height: 1.6;
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    justify-content: center; gap: 0.1rem;
+    max-width: 800px; min-height: 4rem;
+}
+
+/* 每个数字独立，仅新数字有动画 */
+.digit {
+    display: inline-block;
+    color: #00ff00;
+    text-shadow: 0 0 8px #00aa00;
+    font-weight: 700;
+}
+.digit.new {
+    opacity: 0;
+    animation: digitFadeIn 0.9s ease forwards;
+}
+@keyframes digitFadeIn {
+    0%   { opacity: 0; transform: scale(0.5) translateY(10px); filter: blur(6px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+}
+
+/* 小数点稍微弱一点 */
+.digit.dot { color: #00ff00; }
+
+.cursor {
+    display: inline-block; width: 4px; height: 1.8rem;
+    background: #00ff00; margin-left: 6px;
+    box-shadow: 0 0 18px #00ff00;
+    animation: blink 1s step-end infinite;
+    vertical-align: middle;
+}
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+.status {
+    margin-top: 1.4rem; font-size: 0.85rem; color: #00aa00;
+    letter-spacing: 3px; text-align: center;
+    opacity: 0.8; text-shadow: 0 0 4px #006600;
+}
+@media (max-width: 600px) {
+    .result-card { padding: 1.5rem 1rem; }
+    .result-digits { font-size: 1.3rem; letter-spacing: 0.5px; }
+    .cursor { height: 1.2rem; }
+}
+</style>
+</head>
+<body>
+<div id="bg-canvas"></div>
+
+<div class="content">
+    <div class="result-card">
+        <div class="result-label">π · 无限计算中</div>
+        <div id="resultDigits" class="result-digits"></div>
+        <div class="status">Chudnovsky 算法 · 每项增加约14位精度</div>
+    </div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    const bgCanvas = document.getElementById('bg-canvas');
+    const resultDigits = document.getElementById('resultDigits');
+
+    // ============ 背景行管理 ============
+    const MAX_BG_LINES = 60;
+    const bgLines = [];
+
+    function addBackgroundLine(text) {
+        const el = document.createElement('div');
+        el.className = 'bg-line';
+        el.textContent = text;
+        el.style.left = (Math.random() * 88 + 2) + '%';
+        el.style.bottom = (Math.random() * 25 + 5) + '%';
+        el.style.fontSize = (0.75 + Math.random() * 0.6) + 'rem';
+        el.style.animationDuration = (9 + Math.random() * 9) + 's';
+        el.style.animationDelay = (Math.random() * 3) + 's';
+        bgCanvas.appendChild(el);
+        bgLines.push(el);
+
+        if (bgLines.length > MAX_BG_LINES) {
+            const old = bgLines.shift();
+            if (old && old.parentNode) old.remove();
+        }
+    }
+
+    // ============ 结果追加（核心：只追加新数字，绝不重建） ============
+    // 已显示的数字字符数组 + 对应 DOM 数组，一一对应
+    let shownChars = [];          // 当前已显示的字符数组
+    let digitElements = [];       // 对应的 DOM 元素
+
+    /**
+     * 把完整的 π 字符串 newStr 中，比 shownChars 多出来的部分追加到界面
+     * 注意：newStr 一定以 shownChars 为前缀（由调用方保证），否则退化为只显示公共前缀
+     */
+    function appendResult(newStr) {
+        // 计算公共前缀长度
+        let common = 0;
+        const minLen = Math.min(shownChars.length, newStr.length);
+        while (common < minLen && shownChars[common] === newStr[common]) {
+            common++;
+        }
+
+        // 如果公共前缀小于已显示长度（理论上不该发生），移除多余部分
+        if (common < shownChars.length) {
+            for (let i = common; i < digitElements.length; i++) {
+                if (digitElements[i] && digitElements[i].parentNode) {
+                    digitElements[i].remove();
+                }
+            }
+            shownChars.length = common;
+            digitElements.length = common;
+        }
+
+        // 追加新字符
+        for (let i = common; i < newStr.length; i++) {
+            const ch = newStr[i];
+            const span = document.createElement('span');
+            span.className = 'digit new';
+            if (ch === '.') span.classList.add('dot');
+            span.textContent = ch;
+            // 错峰延迟：追加的第一个立即开始，后续每个延迟 0.08s
+            span.style.animationDelay = ((i - common) * 0.08) + 's';
+            resultDigits.appendChild(span);
+            shownChars.push(ch);
+            digitElements.push(span);
+        }
+    }
+
+    // ============ 高精度 π 计算（Chudnovsky 算法） ============
+    // 说明：使用 BigInt 精确计算整数部分，再用高精度浮点式除法得到小数
+    // 为了简化同时保证高精度，这里采用迭代式 BigInteger 分数累加，
+    // 最终一次性转换为小数串，过程值也用于背景展示。
+
+    // 阶乘缓存
+    const factCache = [1n];
+    function factorial(n) {
+        for (let i = factCache.length; i <= n; i++) {
+            factCache[i] = factCache[i - 1] * BigInt(i);
+        }
+        return factCache[n];
+    }
+
+    /**
+     * Chudnovsky 公式：
+     *   1/π = 12 * Σ_{k=0}^{∞} (-1)^k (6k)! (13591409 + 545140134k)
+     *                        / ((3k)! (k!)^3 (640320)^(3k+3/2))
+     *
+     * 我们计算 S = Σ ... ，然后 π = 1 / (12 * S)
+     * 用 BigInt 精确计算每一项的分子分母，通分求和。
+     * 由于 640320^(3k+3/2) = 640320^(3k) * sqrt(640320)，
+     * 而 π 本身就是无理数，无法用纯有理数表示。
+     * 因此这里采用一个近似技巧：用足够精确的 sqrt(640320) 常数，
+     * 所有项都乘以一个大的缩放因子（SCALE），把结果化为整数运算。
+     *
+     * 为了既精确又简单，我们采用标准的 Chudnovsky 整数版实现：
+     * 用固定精度的定点数，SCALE = 10^PRECISION_BITS。
+     * 下面实现一个简单高效的版本，每项约增加 14 位十进制精度。
+     */
+
+    // 我们追求的高精度总位数（含整数位），逐步增加到 MAX_DIGITS
+    const MAX_DIGITS = 300;           // 最多显示 300 位有效数字
+    const BITS_PER_DIGIT = 3.33;      // 每十进制位约 3.33 二进制位
+    const PRECISION_BITS = Math.ceil(MAX_DIGITS * BITS_PER_DIGIT) + 32;
+
+    // 定点数缩放因子：2^PRECISION_BITS
+    const SCALE = 1n << BigInt(PRECISION_BITS);
+
+    // 计算 640320^(3/2) 的定点近似： sqrt(640320) * SCALE
+    // 用牛顿法求 sqrt(640320 * SCALE^2) 再除以 SCALE 即可
+    function sqrtBigInt(n) {
+        if (n < 0n) throw new Error('负数不能开方');
+        if (n === 0n) return 0n;
+        let x = n;
+        let y = (x + 1n) / 2n;
+        while (y < x) {
+            x = y;
+            y = (x + n / x) / 2n;
+        }
+        return x;
+    }
+
+    // sqrt(640320) 的定点值 = sqrt(640320 * SCALE^2) / SCALE 不行，
+    // 直接算 sqrt(640320 * SCALE^2) 得到 sqrt(640320)*SCALE
+    const SQRT_640320_FIXED = sqrtBigInt(640320n * SCALE * SCALE);
+
+    // Chudnovsky 每一项计算：
+    // term = (-1)^k * (6k)! * (13591409 + 545140134k) / ((3k)! * (k!)^3 * 640320^(3k))
+    // 然后整个 S 的和再乘以 1/sqrt(640320)
+    // 最终 π = 1 / (12 * S * (1/sqrt(640320)))  = sqrt(640320) / (12 * S)
+    // 于是我们计算 S 的定点值，再求 π_fixed = SQRT_640320_FIXED / (12 * S)
+    // 为了处理 S 的定点值，每一项都乘以 SCALE。
+
+    // 我们把 S 也表示为定点数：S_fixed = S * SCALE
+    // 第 k 项: numerator / denominator，都放大 SCALE 倍
+    // term_fixed = (-1)^k * (6k)! * (13591409 + 545140134k) * SCALE
+    //              / ((3k)! * (k!)^3 * 640320^(3k))
+
+    // 我们按迭代方式维护分子分母，但阶乘和幂增长极快，所以每步需约分。
+    // 实际上 Chudnovsky 每项计算用 BigInt 直接算(6k)!等会超级大，在 k=20 时就巨大。
+    // 因此需要采用“整数分拆”或“二进制分裂”法。为了代码简洁，我们使用一个已被广泛使用的
+    // 整数版 Chudnovsky 实现技巧：把每项写成 (A + B*k) * (6k)! / ((3k)! (k!)^3 * 640320^(3k))
+    // 并用大整数运算，但每次迭代时通分并约分。为了演示和性能平衡，这里采用
+    // 预计算并维护分子分母的方式，在 k 较小时可行（k 到 30 左右即可达到 400 位精度）。
+    // 对于 300 位，k ≈ 22 就够。所以直接用大整数迭代求和完全没问题。
+
+    // 以下直接计算 S = Σ_{k=0}^{K} term_k，每个 term_k 用 BigInt 精确分数表示。
+    // 求和时通分：S = Σ (num_k / den_k) ，共同分母 D = lcm(den_0, den_1, ...)
+    // 为了避免最小公倍数过大，我们直接求所有 den_k 的乘积作为共同分母（会很大，但 k 小可接受）。
+    // 更优：迭代式求和，每步将当前和与新的项通分。这样分母大小可控。
+
+    /**
+     * 计算 Chudnovsky 级数第 k 项的分子和分母（都是 BigInt）
+     * term_k = (-1)^k * (6k)! * (13591409 + 545140134k) / ((3k)! * (k!)^3 * 640320^(3k))
+     */
+    function chudnovskyTerm(k) {
+        const kBig = BigInt(k);
+        const sixK = 6 * k;
+        const threeK = 3 * k;
+
+        // 分子：(-1)^k * (6k)! * (13591409 + 545140134k)
+        const sign = (k % 2 === 0) ? 1n : -1n;
+        const fact6k = factorial(sixK);
+        const linear = 13591409n + 545140134n * kBig;
+        const numerator = sign * fact6k * linear;
+
+        // 分母：(3k)! * (k!)^3 * 640320^(3k)
+        const fact3k = factorial(threeK);
+        const factK = factorial(k);
+        const factK3 = factK * factK * factK;
+        // 640320^(3k) 用快速幂
+        const power = powBigInt(640320n, 3 * k);
+        const denominator = fact3k * factK3 * power;
+
+        return { num: numerator, den: denominator };
+    }
+
+    // 快速幂
+    function powBigInt(base, exp) {
+        let result = 1n;
+        let b = base;
+        let e = exp;
+        while (e > 0) {
+            if (e & 1) result *= b;
+            b *= b;
+            e >>= 1;
+        }
+        return result;
+    }
+
+    /**
+     * 计算 Chudnovsky 级数前 K+1 项的和 S（分数形式）
+     * 返回 { num, den } 表示 S = num / den
+     * 迭代通分求和： S_new = S_old + term_k = (num_old * den_k + num_k * den_old) / (den_old * den_k)
+     */
+    function chudnovskySum(K) {
+        let sumNum = 0n;
+        let sumDen = 1n;
+
+        for (let k = 0; k <= K; k++) {
+            const { num, den } = chudnovskyTerm(k);
+            // S_new = (sumNum * den + num * sumDen) / (sumDen * den)
+            const newNum = sumNum * den + num * sumDen;
+            const newDen = sumDen * den;
+            // 约分（用 gcd）
+            const g = gcdBigInt(newNum, newDen);
+            sumNum = newNum / g;
+            sumDen = newDen / g;
+        }
+        return { num: sumNum, den: sumDen };
+    }
+
+    function gcdBigInt(a, b) {
+        a = a < 0n ? -a : a;
+        b = b < 0n ? -b : b;
+        while (b) {
+            [a, b] = [b, a % b];
+        }
+        return a;
+    }
+
+    /**
+     * 根据已计算的 S 得到 π 的定点值
+     * π = sqrt(640320) / (12 * S)
+     * 我们返回 π 的 BigInt 定点值：π * SCALE
+     * 计算方式： sqrt(640320)_fixed / (12 * S) ，其中 S = sumNum/sumDen
+     *   = SQRT_640320_FIXED / (12 * sumNum / sumDen)
+     *   = SQRT_640320_FIXED * sumDen / (12 * sumNum)
+     * 结果再取整（向下取整）即可。
+     */
+    function computePiFixed(sumNum, sumDen) {
+        // 确保 sumNum 为正（Chudnovsky 前几项和为正）
+        if (sumNum < 0n) {
+            sumNum = -sumNum;
+            sumDen = -sumDen;
+        }
+        const numerator = SQRT_640320_FIXED * sumDen;
+        const denominator = 12n * sumNum;
+        // 四舍五入取整
+        return (numerator + denominator / 2n) / denominator;
+    }
+
+    // 将定点值转为十进制字符串，保留指定小数位数
+    function fixedToDecimalString(fixed, decimalPlaces) {
+        const isNegative = fixed < 0n;
+        let absFixed = isNegative ? -fixed : fixed;
+
+        // 整数部分 = absFixed / SCALE
+        const intPart = absFixed / SCALE;
+        // 小数部分 = absFixed % SCALE
+        let fracPart = absFixed % SCALE;
+
+        // 补足小数位数：fracPart 目前是 SCALE 为分母，转为 10^decimalPlaces 为分母
+        const targetScale = 10n ** BigInt(decimalPlaces);
+        // 乘以 targetScale 再除以 SCALE
+        let scaledFrac = (fracPart * targetScale) / SCALE;
+
+        // 四舍五入（可选，但此处直接截断，避免进位影响前面的数字）
+        // 为了精度，可以在最后一位做四舍五入，但这里简单截断。
+
+        // 补齐前导零
+        let fracStr = scaledFrac.toString().padStart(decimalPlaces, '0');
+        // 去除末尾多余的零？但通常保留所有位数，不裁剪。
+
+        // 组合结果
+        let result = intPart.toString();
+        if (decimalPlaces > 0) {
+            result += '.' + fracStr;
+        }
+        return (isNegative ? '-' : '') + result;
+    }
+
+    // ============ 主流程：逐步增加计算项数，追加显示数字 ============
+
+    // 当前已计算到第几项（k从0开始）
+    let currentK = 0;
+    // 当前显示的π字符串（已追加到界面的）
+    let shownPiString = '';
+    // 当前已显示的精确位数（总字符数，含小数点）
+    let shownLength = 0;
+
+    // 要显示的目标位数（逐步增长）
+    let targetDigits = 2;   // 初始先显示整数位+2位小数
+
+    // 当前已计算的 S 缓存（增量更新）
+    let sumNum = 0n;
+    let sumDen = 1n;
+
+    // 背景行生成节流
+    let lastBgTime = 0;
+
+    /**
+     * 根据当前 k 计算 π 字符串，并只追加新增的数字
+     */
+    function updatePiDisplay() {
+        // 计算当前 S（增量：如果上次计算到 k-1，本次只需加第 k 项）
+        // 但我们使用缓存的 sumNum/sumDen，更新当前 k 的项。
+        if (currentK > 0) {
+            // 已经计算过前 currentK 项，需要添加第 currentK 项（索引从0开始，所以添加 k = currentK）
+            const k = currentK;
+            const { num, den } = chudnovskyTerm(k);
+            const newNum = sumNum * den + num * sumDen;
+            const newDen = sumDen * den;
+            const g = gcdBigInt(newNum, newDen);
+            sumNum = newNum / g;
+            sumDen = newDen / g;
+        } else {
+            // 第一项 k=0
+            const { num, den } = chudnovskyTerm(0);
+            sumNum = num;
+            sumDen = den;
+        }
+
+        // 计算 π 定点值
+        const piFixed = computePiFixed(sumNum, sumDen);
+
+        // 决定当前要显示多少位小数：随着项数增加，逐渐增加显示位数
+        // 每增加一项大约多14位精度，但我们不想一次显示太多，慢慢来
+        // 根据 currentK 设置目标位数：k=0 显示 3 位小数（因为只有几项不准，但显示3位）
+        // k=1 可显示 15 位，k=2 显示 28 位... 我们控制增长速度，每次最多增加 20 位，避免屏幕爆炸。
+        const maxPrecisionAvailable = Math.min(MAX_DIGITS, Math.floor(currentK * 14.2) + 2);
+        // 当前目标显示位数（总有效数字位数，包括整数位）
+        // 我们逐步增加，每帧增加一点，让渐显效果持续
+        targetDigits = Math.min(targetDigits + 3, maxPrecisionAvailable);
+        // 但至少显示 2 位小数
+        if (targetDigits < 3) targetDigits = 3;
+
+        // 小数位数 = targetDigits - 1（整数部分1位）- 1（小数点）？ 实际上总位数 = 1 + 1 + 小数位数
+        // 我们让 targetDigits 表示小数位数更直接。重新定义：targetDigits = 要显示的小数位数。
+        // 调整：在外部调用时，targetDigits 表示小数位数。
+        // 为了清晰，修改：变量 decimalPlaces 表示当前要显示的小数位数。
+        // 我重新整理：
+
+        // 简化：使用小数位数控制。
+        // 根据 currentK 计算可支持的最大小数位数
+        const maxDecimal = Math.min(MAX_DIGITS - 1, Math.floor(currentK * 14.2));
+        // 当前目标小数位数（每帧增长，但不超过最大值）
+        // 使用全局变量 decimalTarget 控制
+        if (typeof decimalTarget === 'undefined') decimalTarget = 2;
+        decimalTarget = Math.min(decimalTarget + 2, maxDecimal);
+        if (decimalTarget < 2) decimalTarget = 2;
+
+        // 生成 π 字符串
+        const piStr = fixedToDecimalString(piFixed, decimalTarget);
+
+        // 只追加新数字
+        // 确保 piStr 以 shownPiString 为前缀（由于精度增加，高位应该稳定，但低精度计算时高位可能不准，
+        // 我们这里做的策略是：如果新字符串不以已显示字符串为前缀，说明高位发生了变化，这是不理想的。
+        // 在 Chudnovsky 中，随着项数增加，前面的数字是稳定的，所以不会发生高位变化。
+        // 但为了安全，如果出现不匹配，我们就回退到只更新新增部分从公共前缀开始。
+        // 实际上 Chudnovsky 每加一项，高位的精度只会更稳定，不会改变已经正确的数字。
+        // 所以可以放心使用前缀检查。
+        if (piStr.startsWith(shownPiString)) {
+            // 追加新增部分
+            const newPart = piStr.slice(shownPiString.length);
+            if (newPart.length > 0) {
+                appendResult(piStr);  // appendResult 内部使用 shownChars 比对，更安全
+                shownPiString = piStr;
+            }
+        } else {
+            // 理论上不会走到这里，但如果发生，说明高位变了，这时我们只追加到公共前缀
+            // 找到公共前缀长度
+            let common = 0;
+            const minLen = Math.min(shownPiString.length, piStr.length);
+            while (common < minLen && shownPiString[common] === piStr[common]) common++;
+            // 如果公共前缀比已显示长度短，说明之前显示有误，但 Chudnovsky 不会。
+            // 我们直接使用 piStr 的前 common + 新增部分
+            if (common < shownPiString.length) {
+                // 移除多余部分（很少发生）
+                for (let i = common; i < digitElements.length; i++) {
+                    if (digitElements[i] && digitElements[i].parentNode) digitElements[i].remove();
+                }
+                shownChars.length = common;
+                digitElements.length = common;
+                shownPiString = shownPiString.slice(0, common);
+            }
+            // 然后追加从 common 开始的部分
+            appendResult(piStr);
+            shownPiString = piStr;
+        }
+
+        // 更新背景行
+        const now = Date.now();
+        if (now - lastBgTime > 200 && bgLines.length < MAX_BG_LINES) {
+            lastBgTime = now;
+            addBackgroundLine(`k=${currentK}  π≈${piStr.slice(0, 30)}...`);
+        }
+
+        // 准备下一项
+        currentK++;
+    }
+
+    // 主循环：每次计算一项，并更新显示
+    let timer = null;
+
+    function step() {
+        // 如果已经达到最大项数或者显示到最大位数，停止计算（但这里可以无限进行，只是位数限制）
+        if (currentK > 50 || targetDigits > MAX_DIGITS) {
+            // 停止，但为了演示，可以继续增加项数但不增加显示位数
+            // 或者直接停止
+            // 我们设置为达到 50 项后停止计算（50项已约 700 位，足够）
+            // 但为了“无限计算”的感觉，可以让它慢慢进行。这里停止在 40 项。
+            if (currentK > 40) {
+                return;
+            }
+        }
+
+        // 每次执行多步，加快速度
+        const STEPS_PER_FRAME = 2;  // 每帧计算2项，Chudnovsky 每项很快
+        for (let i = 0; i < STEPS_PER_FRAME; i++) {
+            updatePiDisplay();
+        }
+
+        // 如果显示位数还没达到最大，继续下一帧
+        if (targetDigits < MAX_DIGITS && currentK < 50) {
+            timer = setTimeout(step, 150);  // 150ms 一项，让渐显更明显
+        } else {
+            // 完成
+            // 但可以继续展示光标
+        }
+    }
+
+    // 初始化全局变量
+    let decimalTarget = 2;  // 小数位数目标
+    // 将 decimalTarget 暴露到外部作用域以便 updatePiDisplay 访问
+    window.decimalTarget = decimalTarget;
+
+    // 启动
+    setTimeout(step, 200);
+
+    // 清理
+    window.addEventListener('beforeunload', () => {
+        if (timer) clearTimeout(timer);
+    });
+})();
+</script>
+</body>
+</html>

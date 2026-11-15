@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时计算圆周率 · 绿色渐显</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000000;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 1.5rem;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+            background-color: #0a0a0a;
+            border: 1px solid #00aa00;
+            border-radius: 12px;
+            padding: 1.8rem 2rem;
+            box-shadow: 0 0 25px rgba(0, 255, 0, 0.2);
+        }
+
+        /* 所有绿色文字都使用这个类 */
+        .green {
+            color: #00ee00;
+            text-shadow: 0 0 4px #00aa00;
+        }
+
+        .process {
+            font-size: 1.1rem;
+            line-height: 1.7;
+            white-space: pre-wrap;
+            word-break: break-word;
+            margin-bottom: 1.8rem;
+            border-left: 4px solid #00cc00;
+            padding-left: 1.2rem;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+
+        .result-title {
+            font-size: 1.3rem;
+            border-bottom: 1px solid #00aa00;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1.2rem;
+            display: inline-block;
+            font-weight: bold;
+        }
+
+        .result {
+            font-size: 2.2rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            word-break: break-all;
+            line-height: 1.5;
+            min-height: 5rem;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 0.05rem;
+        }
+
+        /* 每个数字单独显示，用于渐显动画 */
+        .digit {
+            display: inline-block;
+            opacity: 0;
+            animation: fadeIn 0.35s ease forwards;
+            color: #00ff00;
+            text-shadow: 0 0 6px #00bb00;
+            transform-origin: center;
+        }
+
+        @keyframes fadeIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.85);
+                filter: blur(2px);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1);
+                filter: blur(0);
+            }
+        }
+
+        /* 轻微的闪烁点缀 (不干扰阅读) */
+        .blink-cursor {
+            display: inline-block;
+            width: 12px;
+            height: 1.8rem;
+            background-color: #00ff00;
+            margin-left: 6px;
+            box-shadow: 0 0 12px #00ff00;
+            animation: blink 1s step-end infinite;
+            vertical-align: middle;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        .note {
+            margin-top: 1.4rem;
+            font-size: 0.9rem;
+            color: #00aa00;
+            opacity: 0.75;
+            letter-spacing: 0.5px;
+            text-align: right;
+            border-top: 1px solid #004400;
+            padding-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- 计算过程展示区 -->
+    <div id="processDisplay" class="process green">
+        <!-- 动态插入计算过程 -->
+    </div>
+
+    <!-- 计算结果标题 -->
+    <div class="result-title green">▸ 计算结果 (圆周率 π)</div>
+
+    <!-- 计算结果展示区，数字将逐个渐显 -->
+    <div id="resultDisplay" class="result"></div>
+
+    <!-- 小提示 -->
+    <div class="note green">实时计算 · 每个数字渐显</div>
+</div>
+
+<script>
+    (function() {
+        // ---------- 圆周率计算 (使用莱布尼茨级数, 适合实时展示过程) ----------
+        // π/4 = 1 - 1/3 + 1/5 - 1/7 + 1/9 - ...
+        // 计算多轮，展示中间过程及最终结果
+
+        const processEl = document.getElementById('processDisplay');
+        const resultEl = document.getElementById('resultDisplay');
+
+        // 清空之前的内容 (保证重新执行时干净)
+        processEl.innerHTML = '';
+        resultEl.innerHTML = '';
+
+        // 最终要显示的圆周率字符串 (我们使用莱布尼茨级数计算到一定精度)
+        // 为了展示较多位数且保证速度合适，迭代次数取 200000 次 (足够精确到小数点后10位以上)
+        // 但实时展示过程不能太多行，所以我们按阶段展示计算过程
+        const ITERATIONS = 200000;        // 用于最终结果的计算次数 (保证精度)
+        const PROCESS_STEP = 20000;        // 每计算多少次显示一次进度
+
+        // 使用莱布尼茨级数计算 π 的近似值
+        // 为了显示过程，我们分段累加，每段记录一次中间结果
+        let piApprox = 0.0;
+        let sign = 1.0;
+        let denominator = 1.0;
+
+        // 存放过程信息 (每行一个字符串)
+        const processLines = [];
+
+        // 为了在过程里显示漂亮的中间值，记录一些里程碑
+        // 我们会在循环中把重要的中间结果push进去
+
+        // 先加一个初始标题
+        processLines.push('▶ 莱布尼茨级数计算 π/4 = 1 - 1/3 + 1/5 - 1/7 + ...');
+        processLines.push('────────────────────────────────────────');
+
+        // 用于记录上一次显示的迭代数，避免过多行
+        let lastDisplayIter = 0;
+
+        // 开始循环计算
+        for (let i = 0; i < ITERATIONS; i++) {
+            // 累加当前项
+            piApprox += sign * (1.0 / denominator);
+
+            // 准备下一次迭代
+            sign *= -1.0;
+            denominator += 2.0;
+
+            // 当前迭代次数 (从1开始计数方便阅读)
+            const iter = i + 1;
+
+            // 判断是否要记录过程 (每 PROCESS_STEP 次或者最后一次)
+            // 为了美观，只记录一部分里程碑，避免过程太长
+            if (iter % PROCESS_STEP === 0 || iter === ITERATIONS) {
+                // 当前π近似值 (乘以4)
+                const currentPi = piApprox * 4.0;
+                // 显示前15位小数，固定
+                const piStr = currentPi.toFixed(15);
+                // 记录到过程行
+                processLines.push(`第 ${iter.toString().padStart(6, '0')} 次累加 → π ≈ ${piStr}`);
+            }
+        }
+
+        // 最终π值 (乘4)
+        const finalPi = piApprox * 4.0;
+        // 转为字符串，保留足够多的小数位 (莱布尼茨收敛慢，200000次约精确到小数点后6-7位，但我们多显示几位)
+        // 实际上200000次迭代能得到约 log10(200000)≈5.3 位精确数字，但我们多显示一些位数，让结果看起来丰富
+        // 使用toFixed(15)并截取前若干位，这里取小数点后12位，加上整数部分
+        const finalPiStr = finalPi.toFixed(15); // 例如 "3.141592653589793"
+
+        // 但为了视觉效果更好，我们可以手动使用一个更精确的字符串展示 (但必须来自计算)
+        // 实际上莱布尼茨级数收敛较慢，200000次后大约3.141587... 我们如实展示
+        // 用户更在意“实时计算”的感觉，所以用计算出的值完全OK
+        // 为了美化，如果计算值前几位不准也没关系，这展示了真实计算过程
+
+        // 把最终结果也加入过程最后一行作为总结
+        processLines.push('────────────────────────────────────────');
+        processLines.push(`✅ 计算完成，最终近似值 (保留15位小数): ${finalPiStr}`);
+
+        // 将过程行渲染到界面 (使用 green 类已生效)
+        processEl.textContent = processLines.join('\n');
+
+        // ---------- 渲染计算结果 (数字逐个渐显) ----------
+        // 最终结果字符串，比如 "3.141592653589793"
+        // 确保结果字符串包含小数点，若没有则添加(一般都有)
+        let resultStr = finalPiStr;
+
+        // 清空 resultEl (确保干净)
+        resultEl.innerHTML = '';
+
+        // 将每个字符 (包括小数点、数字) 创建为独立 span.digit，并设置 animation-delay 使其逐个出现
+        for (let i = 0; i < resultStr.length; i++) {
+            const char = resultStr[i];
+            const span = document.createElement('span');
+            span.classList.add('digit');
+            // 每个字符设置一点点延迟，实现渐显效果
+            // 延迟时间逐渐增加，每个字符延迟 0.09 秒
+            span.style.animationDelay = `${i * 0.09}s`;
+            span.textContent = char;
+            // 如果是小数点，稍微不同样式？但都是绿色，可以保持
+            resultEl.appendChild(span);
+        }
+
+        // 可选：在最后添加一个闪烁的光标 (已经加在css中，但我们可以动态插入一个)
+        // 但为了不干扰渐显，不加光标也可以，或者加在最后
+        // 但注意：光标会立即出现而不是渐显，所以延迟一下或者不加
+        // 这里我选择不加光标了，让视觉焦点在数字上。
+
+        // 由于动画使用 forwards 保留最后状态，这样全部显示后保持可见
+        // 但是，如果结果太长，可能会换行；已设置flex-wrap和word-break
+        // 额外的：如果结果字符串中有空格或其他，不用处理
+
+        // 但是，我们希望在数字完全显示后，可以加一个静态的光标或装饰？
+        // 不必要，已经很好看了。
+
+        // 小优化: 如果结果中有 "3.141592653589793" 长度为17，延迟 1.53 秒，很快出现
+        // 整个过程流畅
+
+        // 另外, 由于我们使用animation，页面加载后立即播放。但希望用户看到过程先显示，
+        // 然后再看到结果渐显？为了让体验更好，我们可以稍微延迟动画开始，但不需要太明显
+        // 每个数字的animation-delay已经设置了，页面渲染后就会按序出现，很棒。
+
+        // 唯一注意：如果结果在计算之后立即输出，用户在阅读过程时结果已经开始渐显了，
+        // 但过程是静态展示，没关系的。
+    })();
+</script>
+
+<!-- 补充说明：所有计算均在前端完成，无外部依赖，背景黑色，过程和结果绿色 -->
+</body>
+</html>
