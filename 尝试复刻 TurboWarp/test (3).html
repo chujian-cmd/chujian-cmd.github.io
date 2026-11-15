@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Mini TurboWarp</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; font-family: -apple-system, sans-serif; overflow:hidden; }
+  body { display:flex; }
+  #toolbox { width:150px; background:#f0f0f0; border-right:1px solid #ccc; padding:6px; overflow-y:auto; flex-shrink:0; }
+  #toolbox h4 { margin:8px 0 3px; font-size:10px; color:#666; letter-spacing:.5px; }
+  .block-btn { display:block; width:100%; margin:2px 0; padding:5px 8px; border:none; border-radius:8px;
+               color:#fff; font-size:12px; text-align:left; cursor:pointer; }
+  #workspace { flex:1; background:#fafafa; position:relative; overflow:hidden; touch-action:none; }
+  #stage-wrap { width:300px; flex-shrink:0; border-left:2px solid #ccc; display:flex; flex-direction:column;
+                align-items:center; padding:10px; background:#fff; }
+  #stage { width:240px; height:180px; background:#fff; border:2px solid #333; position:relative; }
+  #stage canvas { display:block; width:100%; height:100%; }
+  #toolbar { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
+  button.act { padding:5px 10px; border:none; border-radius:6px; cursor:pointer; font-size:12px; }
+  #flag { background:#4CAF50; color:#fff; }
+  #stop { background:#e74c3c; color:#fff; }
+  #export { background:#4C97FF; color:#fff; }
+  .script { position:absolute; display:flex; flex-direction:column; align-items:flex-start; cursor:grab; }
+  .script .delete { position:absolute; left:-22px; top:4px; width:18px; height:18px; border-radius:50%;
+                    background:#e74c3c; color:#fff; border:none; cursor:pointer; font-size:12px;
+                    line-height:16px; padding:0; }
+  .block { display:inline-flex; align-items:center; padding:6px 12px; border-radius:7px;
+           color:#fff; font-size:13px; cursor:grab; user-select:none; white-space:nowrap;
+           box-shadow:0 2px 0 rgba(0,0,0,.18); }
+  .block.hat { border-radius:14px 14px 7px 7px; }
+  .block .param { background:rgba(255,255,255,.95); color:#333; border-radius:12px;
+                  padding:1px 6px; margin:0 3px; font-size:12px; min-width:18px;
+                  text-align:center; outline:none; user-select:text; }
+  .block .param:focus { box-shadow:0 0 0 2px #fff inset; }
+  .script.running .block { outline:2px solid #FFEB3B; outline-offset:1px; }
+  .cat-motion{background:#4C97FF}.cat-looks{background:#9966FF}
+  .cat-events{background:#FFD500;color:#333!important}.cat-control{background:#FFAB19}
+  .cat-operators{background:#40BF4A}.cat-data{background:#FF8C1A}.cat-sensing{background:#4CBFE6}
+  #status { margin-top:6px; font-size:11px; color:#666; }
+</style>
+</head>
+<body>
+<div id="toolbox"></div>
+<div id="workspace"></div>
+<div id="stage-wrap">
+  <div id="stage"></div>
+  <div id="toolbar">
+    <button class="act" id="flag">▶ 绿旗</button>
+    <button class="act" id="stop">■ 停止</button>
+    <button class="act" id="export">导出 .sb3</button>
+  </div>
+  <div id="status">就绪</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
+<script>
+/* ============ 1. 积木定义 ============ */
+const DEFS = {
+  event_whenflagclicked: { label:"当绿旗被点击", cat:"events", hat:true },
+  motion_movesteps:  { label:"移动 {STEPS} 步", cat:"motion", params:["STEPS"], defs:{STEPS:10} },
+  motion_turnright:  { label:"右转 {DEGREES} 度", cat:"motion", params:["DEGREES"], defs:{DEGREES:15} },
+  motion_turnleft:   { label:"左转 {DEGREES} 度", cat:"motion", params:["DEGREES"], defs:{DEGREES:15} },
+  motion_gotoxy:     { label:"移到 x:{X} y:{Y}", cat:"motion", params:["X","Y"], defs:{X:0,Y:0} },
+  motion_changexby:  { label:"将 x 增加 {DX}", cat:"motion", params:["DX"], defs:{DX:10} },
+  motion_changeyby:  { label:"将 y 增加 {DY}", cat:"motion", params:["DY"], defs:{DY:10} },
+  looks_say:       { label:"说 {MESSAGE}", cat:"looks", params:["MESSAGE"], defs:{MESSAGE:"你好!"} },
+  looks_sayforsecs:{ label:"说 {MESSAGE} {SECS} 秒", cat:"looks", params:["MESSAGE","SECS"], defs:{MESSAGE:"你好!",SECS:2} },
+  looks_changesize:{ label:"将大小增加 {CHANGE}", cat:"looks", params:["CHANGE"], defs:{CHANGE:10} },
+  looks_setsize:   { label:"将大小设为 {SIZE} %", cat:"looks", params:["SIZE"], defs:{SIZE:100} },
+  control_wait:    { label:"等待 {DURATION} 秒", cat:"control", params:["DURATION"], defs:{DURATION:1} },
+  operator_add:    { label:"{A} + {B}", cat:"operators", params:["A","B"], defs:{A:1,B:1} },
+  data_setvariableto:    { label:"将 {VAR} 设为 {VALUE}", cat:"data", params:["VAR","VALUE"], defs:{VAR:"我的变量",VALUE:0} },
+  data_changevariableby: { label:"将 {VAR} 增加 {VALUE}", cat:"data", params:["VAR","VALUE"], defs:{VAR:"我的变量",VALUE:1} },
+};
+const CATS = [["事件","events"],["运动","motion"],["外观","looks"],["控制","control"],["运算","operators"],["变量","data"]];
+
+/* ============ 2. 数据模型 ============ */
+let scripts = [];
+let seq = 1;
+const uid = () => "b" + (seq++);
+
+/* ============ 3. 工具箱 ============ */
+const toolbox = document.getElementById("toolbox");
+CATS.forEach(([name, cat]) => {
+  const h = document.createElement("h4"); h.textContent = name; toolbox.appendChild(h);
+  Object.entries(DEFS).filter(([,d]) => d.cat === cat).forEach(([op, d]) => {
+    const btn = document.createElement("button");
+    btn.className = "block-btn cat-" + cat;
+    btn.textContent = d.label.replace(/\{(\w+)\}/g, (_,p) => d.defs?.[p] ?? p);
+    btn.onclick = () => addScript(op);
+    toolbox.appendChild(btn);
+  });
+});
+
+/* ============ 4. 工作区 ============ */
+const workspace = document.getElementById("workspace");
+const BLOCK_H = 34;
+
+function addScript(opcode) {
+  const d = DEFS[opcode];
+  const params = {};
+  (d.params || []).forEach(p => params[p] = d.defs?.[p] ?? "");
+  const n = scripts.length;
+  scripts.push({
+    id: uid(),
+    x: 30 + (n % 4) * 20,
+    y: 30 + (n * 50) % 260,
+    blocks: [{ opcode, params }],
+    height: BLOCK_H,
+  });
+  renderWorkspace();
+}
+
+function renderWorkspace() {
+  workspace.innerHTML = "";
+  scripts.forEach(s => {
+    const wrap = document.createElement("div");
+    wrap.className = "script";
+    wrap.dataset.id = s.id;
+    wrap.style.left = s.x + "px";
+    wrap.style.top = s.y + "px";
+
+    const del = document.createElement("button");
+    del.className = "delete"; del.textContent = "×";
+    del.onpointerdown = e => e.stopPropagation();
+    del.onclick = () => { scripts = scripts.filter(x => x.id !== s.id); renderWorkspace(); };
+    wrap.appendChild(del);
+
+    s.blocks.forEach(b => wrap.appendChild(renderBlockEl(b)));
+
+    // 拖动
+    wrap.addEventListener("pointerdown", e => startDrag(e, s, wrap));
+    workspace.appendChild(wrap);
+
+    // 记录高度用于合并判定
+    s.height = s.blocks.length * BLOCK_H;
+  });
+}
+
+function renderBlockEl(b) {
+  const d = DEFS[b.opcode];
+  const el = document.createElement("div");
+  el.className = "block cat-" + d.cat + (d.hat ? " hat" : "");
+  const parts = d.label.split(/(\{\w+\})/);
+  parts.forEach(p => {
+    const m = p.match(/^\{(\w+)\}$/);
+    if (m) {
+      const span = document.createElement("span");
+      span.className = "param";
+      span.contentEditable = "true";
+      span.textContent = b.params[m[1]] ?? "";
+      span.onpointerdown = e => e.stopPropagation();
+      span.onblur = () => { b.params[m[1]] = span.textContent.trim(); };
+      span.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); span.blur(); } };
+      el.appendChild(span);
+    } else if (p) el.appendChild(document.createTextNode(p));
+  });
+  return el;
+}
+
+/* ============ 5. 拖动 + 合并 ============ */
+let drag = null;
+
+function startDrag(e, script, el) {
+  if (e.target.classList.contains("param") || e.target.classList.contains("delete")) return;
+  e.preventDefault();
+  const rect = workspace.getBoundingClientRect();
+  drag = {
+    script,
+    offsetX: e.clientX - rect.left - script.x,
+    offsetY: e.clientY - rect.top - script.y,
+  };
+  el.style.zIndex = 100;
+  el.setPointerCapture?.(e.pointerId);
+  window.addEventListener("pointermove", onDragMove);
+  window.addEventListener("pointerup", onDragEnd, { once: true });
+}
+
+function onDragMove(e) {
+  if (!drag) return;
+  const rect = workspace.getBoundingClientRect();
+  drag.script.x = e.clientX - rect.left - drag.offsetX;
+  drag.script.y = e.clientY - rect.top - drag.offsetY;
+  const el = workspace.querySelector(`[data-id="${drag.script.id}"]`);
+  if (el) {
+    el.style.left = drag.script.x + "px";
+    el.style.top = drag.script.y + "px";
+  }
+}
+
+function onDragEnd() {
+  window.removeEventListener("pointermove", onDragMove);
+  if (!drag) return;
+  const moved = drag.script;
+  const mRect = { top: moved.y, bottom: moved.y + moved.height };
+
+  for (const other of scripts) {
+    if (other.id === moved.id) continue;
+    const oRect = { top: other.y, bottom: other.y + other.height };
+    // 吸附到目标底部
+    if (Math.abs(mRect.top - oRect.bottom) < 36) {
+      other.blocks.push(...moved.blocks);
+      scripts = scripts.filter(s => s.id !== moved.id);
+      renderWorkspace();
+      drag = null;
+      return;
+    }
+    // 吸附到目标顶部
+    if (Math.abs(mRect.bottom - oRect.top) < 36) {
+      other.blocks.unshift(...moved.blocks);
+      scripts = scripts.filter(s => s.id !== moved.id);
+      renderWorkspace();
+      drag = null;
+      return;
+    }
+  }
+  drag = null;
+  renderWorkspace();
+}
+
+/* ============ 6. 运行时 ============ */
+const rt = {
+  x: 0, y: 0, dir: 90, size: 100, say: "", sayUntil: 0,
+  variables: { "我的变量": 0 },
+  threads: [], running: false,
+};
+
+const stage = document.getElementById("stage");
+const canvas = document.createElement("canvas");
+canvas.width = 480; canvas.height = 360;
+stage.appendChild(canvas);
+const ctx = canvas.getContext("2d");
+
+const SX = x => 240 + x * 1.2;
+const SY = y => 180 - y * 1.2;
+
+function drawCat(r) {
+  // 外耳
+  ctx.fillStyle = "#FF8C1A";
+  ctx.beginPath();
+  ctx.moveTo(-r*0.85, -r*0.55); ctx.lineTo(-r*0.55, -r*1.35); ctx.lineTo(-r*0.1, -r*0.75); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(r*0.85, -r*0.55); ctx.lineTo(r*0.55, -r*1.35); ctx.lineTo(r*0.1, -r*0.75); ctx.closePath(); ctx.fill();
+  // 内耳
+  ctx.fillStyle = "#FFC48C";
+  ctx.beginPath();
+  ctx.moveTo(-r*0.6, -r*0.65); ctx.lineTo(-r*0.45, -r*1.05); ctx.lineTo(-r*0.25, -r*0.75); ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(r*0.6, -r*0.65); ctx.lineTo(r*0.45, -r*1.05); ctx.lineTo(r*0.25, -r*0.75); ctx.closePath(); ctx.fill();
+  // 头
+  const grad = ctx.createRadialGradient(-r*0.2, -r*0.3, r*0.2, 0, 0, r*1.05);
+  grad.addColorStop(0, "#FFC96B"); grad.addColorStop(1, "#FF8C1A");
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.ellipse(0, 0, r, r*0.95, 0, 0, Math.PI*2); ctx.fill();
+  // 眼白
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.ellipse(-r*0.32, -r*0.15, r*0.2, r*0.26, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r*0.32, -r*0.15, r*0.2, r*0.26, 0, 0, Math.PI*2); ctx.fill();
+  // 瞳孔
+  ctx.fillStyle = "#222";
+  ctx.beginPath(); ctx.arc(-r*0.3, -r*0.1, r*0.1, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.34, -r*0.1, r*0.1, 0, Math.PI*2); ctx.fill();
+  // 鼻子
+  ctx.fillStyle = "#E05252";
+  ctx.beginPath();
+  ctx.moveTo(-r*0.1, r*0.22); ctx.lineTo(r*0.1, r*0.22); ctx.lineTo(0, r*0.38); ctx.closePath(); ctx.fill();
+  // 嘴
+  ctx.strokeStyle = "#7A4A1E"; ctx.lineWidth = Math.max(1.5, r*0.05);
+  ctx.beginPath();
+  ctx.arc(-r*0.12, r*0.42, r*0.12, 0, Math.PI);
+  ctx.arc(r*0.12, r*0.42, r*0.12, 0, Math.PI);
+  ctx.stroke();
+  // 胡须
+  ctx.strokeStyle = "#5A3A1E"; ctx.lineWidth = Math.max(1, r*0.03);
+  ctx.beginPath();
+  ctx.moveTo(-r*0.5, r*0.25); ctx.lineTo(-r*1.1, r*0.15);
+  ctx.moveTo(-r*0.5, r*0.35); ctx.lineTo(-r*1.1, r*0.4);
+  ctx.moveTo(r*0.5, r*0.25); ctx.lineTo(r*1.1, r*0.15);
+  ctx.moveTo(r*0.5, r*0.35); ctx.lineTo(r*1.1, r*0.4);
+  ctx.stroke();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const px = SX(rt.x), py = SY(rt.y), r = 34 * rt.size / 100;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate((rt.dir - 90) * Math.PI / 180);
+  drawCat(r);
+  ctx.restore();
+  // 说话气泡
+  if (rt.say && performance.now() < rt.sayUntil) {
+    ctx.save();
+    ctx.font = "14px sans-serif";
+    const w = ctx.measureText(rt.say).width + 20;
+    const bx = px + r + 8, by = py - r - 32;
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#333"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, w, 26, 8);
+    else ctx.rect(bx, by, w, 26);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#333";
+    ctx.fillText(rt.say, bx + 10, by + 18);
+    ctx.restore();
+  }
+}
+
+/* ============ 7. 编译器 ============ */
+function compileBlock(b) {
+  const p = b.params;
+  const num = k => `Number(${JSON.stringify(p[k] ?? 0)})`;
+  switch (b.opcode) {
+    case "event_whenflagclicked": return "";
+    case "motion_movesteps":
+      return `rt.x += ${num("STEPS")} * Math.sin(rt.dir*Math.PI/180); rt.y += ${num("STEPS")} * Math.cos(rt.dir*Math.PI/180); draw();`;
+    case "motion_turnright": return `rt.dir += ${num("DEGREES")}; draw();`;
+    case "motion_turnleft":  return `rt.dir -= ${num("DEGREES")}; draw();`;
+    case "motion_gotoxy":    return `rt.x = ${num("X")}; rt.y = ${num("Y")}; draw();`;
+    case "motion_changexby": return `rt.x += ${num("DX")}; draw();`;
+    case "motion_changeyby": return `rt.y += ${num("DY")}; draw();`;
+    case "looks_say":        return `rt.say = ${JSON.stringify(String(p.MESSAGE ?? ""))}; rt.sayUntil = performance.now() + 2000; draw();`;
+    case "looks_sayforsecs": return `rt.say = ${JSON.stringify(String(p.MESSAGE ?? ""))}; rt.sayUntil = performance.now() + ${num("SECS")}*1000; draw(); yield {until: performance.now() + ${num("SECS")}*1000}; rt.say = ""; draw();`;
+    case "looks_changesize": return `rt.size += ${num("CHANGE")}; draw();`;
+    case "looks_setsize":    return `rt.size = ${num("SIZE")}; draw();`;
+    case "control_wait":     return `yield {until: performance.now() + ${num("DURATION")}*1000};`;
+    case "data_setvariableto":    return `rt.variables[${JSON.stringify(p.VAR)}] = ${JSON.stringify(p.VALUE)};`;
+    case "data_changevariableby": return `rt.variables[${JSON.stringify(p.VAR)}] = (Number(rt.variables[${JSON.stringify(p.VAR)}]) || 0) + ${num("VALUE")};`;
+    default: return `/* 未实现: ${b.opcode} */`;
+  }
+}
+
+function compileScript(script) {
+  const body = script.blocks.map(compileBlock).join("\n");
+  try {
+    return new Function("rt", "draw", `return (function*(){ ${body} })();`);
+  } catch (e) {
+    console.error("编译失败:", e, body);
+    return null;
+  }
+}
+
+/* ============ 8. 执行引擎（基于时间戳，不依赖 Promise） ============ */
+const statusEl = document.getElementById("status");
+let rafId = null;
+
+function start() {
+  stop();
+  rt.running = true;
+  rt.threads = [];
+  let started = 0;
+  scripts.forEach(s => {
+    if (s.blocks[0]?.opcode === "event_whenflagclicked") {
+      const gen = compileScript(s);
+      if (!gen) return;
+      rt.threads.push({ gen, waitUntil: 0, done: false, scriptId: s.id });
+      // 标记运行中
+      const el = workspace.querySelector(`[data-id="${s.id}"]`);
+      if (el) el.classList.add("running");
+      started++;
+    }
+  });
+  if (!started) { statusEl.textContent = "没有绿旗脚本"; rt.running = false; return; }
+  statusEl.textContent = "运行中…";
+  tick();
+}
+
+function tick() {
+  if (!rt.running) return;
+  const now = performance.now();
+  let alive = 0;
+  for (const t of rt.threads) {
+    if (t.done) continue;
+    if (t.waitUntil && now < t.waitUntil) { alive++; continue; }
+    t.waitUntil = 0;
+    try {
+      const r = t.gen.next();
+      if (r.done) {
+        t.done = true;
+        const el = workspace.querySelector(`[data-id="${t.scriptId}"]`);
+        if (el) el.classList.remove("running");
+        continue;
+      }
+      if (r.value && typeof r.value.until === "number") t.waitUntil = r.value.until;
+      alive++;
+    } catch (e) {
+      console.error("运行错误:", e);
+      t.done = true;
+      const el = workspace.querySelector(`[data-id="${t.scriptId}"]`);
+      if (el) el.classList.remove("running");
+    }
+  }
+  draw();
+  if (alive > 0 && rt.running) {
+    rafId = requestAnimationFrame(tick);
+  } else {
+    rt.running = false;
+    statusEl.textContent = "已完成";
+  }
+}
+
+function stop() {
+  rt.running = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  rt.threads.forEach(t => {
+    const el = workspace.querySelector(`[data-id="${t.scriptId}"]`);
+    if (el) el.classList.remove("running");
+  });
+  rt.threads = [];
+}
+
+document.getElementById("flag").onclick = start;
+document.getElementById("stop").onclick = () => { stop(); statusEl.textContent = "已停止"; };
+
+/* ============ 9. SB3 导出 ============ */
+document.getElementById("export").onclick = async () => {
+  const zip = new JSZip();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><circle cx="40" cy="40" r="35" fill="#FFAB19"/></svg>`;
+  const blob = new Blob([svg], { type: "image/svg+xml" });
+  const buf = await blob.arrayBuffer();
+  const md5 = SparkMD5.ArrayBuffer.hash(buf);
+  const costumeFile = md5 + ".svg";
+
+  // 把所有脚本合并成一块 target 的 blocks
+  const blocks = {};
+  let counter = 0;
+  scripts.forEach(s => {
+    s.blocks.forEach((b, i) => {
+      const id = "blk" + (counter++);
+      const inputs = {};
+      Object.entries(b.params).forEach(([k, v]) => {
+        const isNum = !isNaN(Number(v)) && v !== "";
+        inputs[k] = isNum ? [1, [4, String(v)]] : [1, [10, String(v)]];
+      });
+      const nextId = i < s.blocks.length - 1 ? "blk" + counter : null;
+      const parentId = i > 0 ? "blk" + (counter - 2) : null;
+      blocks[id] = {
+        opcode: b.opcode, next: nextId, parent: parentId,
+        inputs, fields: {}, shadow: false,
+        topLevel: i === 0, x: s.x, y: s.y + i * 48,
+      };
+    });
+  });
+
+  const project = {
+    targets: [
+      { isStage:true, name:"Stage", variables:{}, lists:{}, broadcasts:{}, blocks:{}, comments:{},
+        currentCostume:0,
+        costumes:[{ name:"backdrop1", dataFormat:"svg", assetId:md5, md5ext:costumeFile,
+                    rotationCenterX:40, rotationCenterY:40 }],
+        sounds:[], volume:100, layerOrder:0, tempo:60, videoTransparency:50,
+        videoState:"off", textToSpeechLanguage:null },
+      { isStage:false, name:"Sprite1", variables:{}, lists:{}, broadcasts:{},
+        blocks, comments:{}, currentCostume:0,
+        costumes:[{ name:"costume1", dataFormat:"svg", assetId:md5, md5ext:costumeFile,
+                    rotationCenterX:40, rotationCenterY:40 }],
+        sounds:[], volume:100, layerOrder:1, visible:true,
+        x:rt.x, y:rt.y, size:rt.size, direction:rt.dir, draggable:false,
+        rotationStyle:"all around" }
+    ],
+    monitors: [], extensions: [],
+    meta: { semver:"3.0.0", vm:"0.2.0", agent:"MiniTurboWarp" }
+  };
+
+  zip.file("project.json", JSON.stringify(project));
+  zip.file(costumeFile, blob);
+  const out = await zip.generateAsync({ type:"blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(out);
+  a.download = "project.sb3";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  statusEl.textContent = "已导出 project.sb3";
+};
+
+draw();
+</script>
+</body>
+</html>

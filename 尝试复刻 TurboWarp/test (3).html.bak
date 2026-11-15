@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Mini TurboWarp</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; display:flex; font-family: -apple-system, sans-serif; height:100vh; overflow:hidden; }
+  #toolbox { width:190px; background:#f0f0f0; border-right:1px solid #ccc; padding:8px; overflow-y:auto; flex-shrink:0; }
+  #toolbox h4 { margin:10px 0 4px; font-size:11px; color:#666; text-transform:uppercase; letter-spacing:.5px; }
+  .block-btn { display:block; width:100%; margin:2px 0; padding:6px 10px; border:none; border-radius:8px;
+               color:#fff; font-size:13px; text-align:left; cursor:grab; }
+  .block-btn:active { cursor:grabbing; }
+  #workspace { flex:1; background:#fafafa; position:relative; overflow:auto; padding:24px; }
+  #stage-wrap { width:480px; flex-shrink:0; border-left:2px solid #ccc; display:flex; flex-direction:column;
+                align-items:center; padding:16px; background:#fff; }
+  #stage { width:400px; height:300px; background:#fff; border:2px solid #333; position:relative; }
+  #stage canvas { display:block; }
+  #toolbar { margin-top:10px; display:flex; gap:8px; }
+  button.act { padding:6px 14px; border:none; border-radius:6px; cursor:pointer; font-size:13px; }
+  #flag { background:#4CAF50; color:#fff; }
+  #stop { background:#e74c3c; color:#fff; }
+  #export { background:#4C97FF; color:#fff; }
+  .block { position:relative; display:inline-flex; align-items:center; padding:8px 14px; border-radius:8px;
+           color:#fff; font-size:14px; margin:0; cursor:grab; user-select:none;
+           box-shadow:0 2px 0 rgba(0,0,0,.18); white-space:nowrap; }
+  .block.hat { border-radius:16px 16px 8px 8px; }
+  .block .param { background:rgba(255,255,255,.95); color:#333; border-radius:12px;
+                  padding:2px 8px; margin:0 4px; font-size:13px; min-width:24px;
+                  text-align:center; outline:none; }
+  .block .param:focus { box-shadow:0 0 0 2px #fff inset; }
+  .script { display:flex; flex-direction:column; align-items:flex-start; margin-bottom:16px;
+            position:relative; }
+  .script .delete { position:absolute; left:-26px; top:2px; width:18px; height:18px; border-radius:50%;
+                    background:#e74c3c; color:#fff; border:none; cursor:pointer; font-size:12px;
+                    line-height:16px; padding:0; display:none; }
+  .script:hover .delete { display:block; }
+  .cat-motion { background:#4C97FF; } .cat-looks { background:#9966FF; }
+  .cat-events { background:#FFD500; color:#333 !important; } .cat-control { background:#FFAB19; }
+  .cat-operators { background:#40BF4A; } .cat-data { background:#FF8C1A; }
+  .cat-sensing { background:#4CBFE6; }
+  .cat-events .param { color:#333; }
+  #status { margin-top:8px; font-size:12px; color:#666; }
+</style>
+</head>
+<body>
+<div id="toolbox"></div>
+<div id="workspace"></div>
+<div id="stage-wrap">
+  <div id="stage"></div>
+  <div id="toolbar">
+    <button class="act" id="flag">▶ 绿旗</button>
+    <button class="act" id="stop">■ 停止</button>
+    <button class="act" id="export">导出 .sb3</button>
+  </div>
+  <div id="status">就绪</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
+<script>
+/* ============================================================
+   1. 积木定义
+============================================================ */
+const DEFS = {
+  // 事件
+  event_whenflagclicked: { label:"当绿旗被点击", cat:"events", hat:true },
+  event_whenkeypressed:  { label:"当按下 {KEY} 键", cat:"events", hat:true, params:["KEY"], defs:{KEY:"空格"} },
+  // 运动
+  motion_movesteps:  { label:"移动 {STEPS} 步", cat:"motion", params:["STEPS"], defs:{STEPS:10} },
+  motion_turnright:  { label:"右转 {DEGREES} 度", cat:"motion", params:["DEGREES"], defs:{DEGREES:15} },
+  motion_turnleft:   { label:"左转 {DEGREES} 度", cat:"motion", params:["DEGREES"], defs:{DEGREES:15} },
+  motion_gotoxy:     { label:"移到 x:{X} y:{Y}", cat:"motion", params:["X","Y"], defs:{X:0,Y:0} },
+  motion_changexby:  { label:"将 x 增加 {DX}", cat:"motion", params:["DX"], defs:{DX:10} },
+  motion_changeyby:  { label:"将 y 增加 {DY}", cat:"motion", params:["DY"], defs:{DY:10} },
+  // 外观
+  looks_say:       { label:"说 {MESSAGE}", cat:"looks", params:["MESSAGE"], defs:{MESSAGE:"你好!"} },
+  looks_sayforsecs:{ label:"说 {MESSAGE} {SECS} 秒", cat:"looks", params:["MESSAGE","SECS"], defs:{MESSAGE:"你好!",SECS:2} },
+  looks_changesize:{ label:"将大小增加 {CHANGE}", cat:"looks", params:["CHANGE"], defs:{CHANGE:10} },
+  looks_setsize:   { label:"将大小设为 {SIZE} %", cat:"looks", params:["SIZE"], defs:{SIZE:100} },
+  // 控制
+  control_wait:      { label:"等待 {DURATION} 秒", cat:"control", params:["DURATION"], defs:{DURATION:1} },
+  control_repeat:    { label:"重复 {TIMES} 次", cat:"control", params:["TIMES"], defs:{TIMES:10}, wrap:true },
+  control_forever:   { label:"重复执行", cat:"control", wrap:true },
+  control_if:        { label:"如果 {COND} 那么", cat:"control", wrap:true, bool:true },
+  // 运算
+  operator_add:   { label:"{NUM1} + {NUM2}", cat:"operators", params:["NUM1","NUM2"], defs:{NUM1:1,NUM2:1}, reporter:true },
+  operator_random:{ label:"在 {FROM} 和 {TO} 之间取随机数", cat:"operators", params:["FROM","TO"], defs:{FROM:1,TO:10}, reporter:true },
+  operator_gt:    { label:"{A} > {B}", cat:"operators", params:["A","B"], defs:{A:1,B:1}, reporter:true },
+  // 变量
+  data_setvariableto: { label:"将 {VAR} 设为 {VALUE}", cat:"data", params:["VAR","VALUE"], defs:{VAR:"我的变量",VALUE:0} },
+  data_changevariableby: { label:"将 {VAR} 增加 {VALUE}", cat:"data", params:["VAR","VALUE"], defs:{VAR:"我的变量",VALUE:1} },
+  // 侦测
+  sensing_keypressed: { label:"按下 {KEY} 键?", cat:"sensing", params:["KEY"], defs:{KEY:"空格"}, reporter:true, bool:true },
+};
+
+/* ============================================================
+   2. 数据模型：scripts = [{id, blocks:[{opcode, params:{}}]}]
+============================================================ */
+let scripts = [];
+let scriptSeq = 1;
+const uid = () => "b" + (scriptSeq++);
+
+/* ============================================================
+   3. 工具箱渲染
+============================================================ */
+const CATS = [
+  ["事件","events"],["运动","motion"],["外观","looks"],
+  ["控制","control"],["运算","operators"],["变量","data"],["侦测","sensing"]
+];
+const toolbox = document.getElementById("toolbox");
+CATS.forEach(([name, cat]) => {
+  const h = document.createElement("h4"); h.textContent = name; toolbox.appendChild(h);
+  Object.entries(DEFS).filter(([,d]) => d.cat === cat && !d.reporter && !d.wrap).forEach(([op, d]) => {
+    const btn = document.createElement("button");
+    btn.className = "block-btn cat-" + cat;
+    btn.textContent = d.label.replace(/\{(\w+)\}/g, (_,p) => d.defs?.[p] ?? p);
+    btn.onclick = () => addScript(op);
+    toolbox.appendChild(btn);
+  });
+});
+
+/* ============================================================
+   4. 工作区渲染
+============================================================ */
+const workspace = document.getElementById("workspace");
+
+function addScript(opcode) {
+  const d = DEFS[opcode];
+  const params = {};
+  (d.params || []).forEach(p => params[p] = d.defs?.[p] ?? "");
+  scripts.push({ id: uid(), blocks: [{ opcode, params }] });
+  renderWorkspace();
+}
+
+function renderWorkspace() {
+  workspace.innerHTML = "";
+  scripts.forEach(script => {
+    const wrap = document.createElement("div");
+    wrap.className = "script";
+    const del = document.createElement("button");
+    del.className = "delete"; del.textContent = "×";
+    del.onclick = () => { scripts = scripts.filter(s => s.id !== script.id); renderWorkspace(); };
+    wrap.appendChild(del);
+
+    script.blocks.forEach((b, i) => {
+      const el = renderBlockEl(b, i, script);
+      wrap.appendChild(el);
+    });
+    workspace.appendChild(wrap);
+  });
+}
+
+function renderBlockEl(b, index, script) {
+  const d = DEFS[b.opcode];
+  const el = document.createElement("div");
+  el.className = "block cat-" + d.cat + (d.hat ? " hat" : "");
+  const parts = d.label.split(/(\{\w+\})/);
+  parts.forEach(p => {
+    const m = p.match(/^\{(\w+)\}$/);
+    if (m) {
+      const span = document.createElement("span");
+      span.className = "param";
+      span.contentEditable = "true";
+      span.textContent = b.params[m[1]] ?? "";
+      span.onblur = () => { b.params[m[1]] = span.textContent.trim(); };
+      span.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); span.blur(); } };
+      el.appendChild(span);
+    } else if (p) {
+      el.appendChild(document.createTextNode(p));
+    }
+  });
+  return el;
+}
+
+/* ============================================================
+   5. 运行时状态
+============================================================ */
+const rt = {
+  x: 0, y: 0, dir: 90, size: 100, say: "", sayUntil: 0,
+  variables: { "我的变量": 0 },
+  keys: {},
+  threads: [],
+  running: false,
+};
+
+const stage = document.getElementById("stage");
+const canvas = document.createElement("canvas");
+canvas.width = 400; canvas.height = 300;
+stage.appendChild(canvas);
+const ctx = canvas.getContext("2d");
+
+// Scratch 坐标 (中心 0,0, x右 y上) → canvas 坐标
+const sx = x => 200 + x;
+const sy = y => 150 - y;
+
+function draw() {
+  ctx.clearRect(0, 0, 400, 300);
+  // 画一个简单的猫（圆 + 耳朵）
+  const px = sx(rt.x), py = sy(rt.y), r = 20 * rt.size / 100;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate((rt.dir - 90) * Math.PI / 180);
+  ctx.fillStyle = "#FFAB19";
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-r*0.7, -r*0.7); ctx.lineTo(-r*0.3, -r*1.2); ctx.lineTo(0, -r*0.7); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(r*0.7, -r*0.7); ctx.lineTo(r*0.3, -r*1.2); ctx.lineTo(0, -r*0.7); ctx.fill();
+  ctx.fillStyle = "#333";
+  ctx.beginPath(); ctx.arc(-r*0.3, -r*0.15, r*0.12, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(r*0.3, -r*0.15, r*0.12, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+  // 说话气泡
+  if (rt.say && performance.now() < rt.sayUntil) {
+    ctx.save();
+    ctx.font = "13px sans-serif";
+    const w = ctx.measureText(rt.say).width + 16;
+    const bx = px + r + 6, by = py - r - 24;
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#333";
+    ctx.beginPath(); ctx.roundRect(bx, by, w, 22, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#333"; ctx.fillText(rt.say, bx + 8, by + 15);
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+   6. 编译器：scripts → 生成器函数
+============================================================ */
+function compileBlock(b) {
+  const p = b.params;
+  const num = k => `Number(${JSON.stringify(p[k] ?? 0)})`;
+  switch (b.opcode) {
+    case "motion_movesteps":
+      return `rt.x += ${num("STEPS")} * Math.sin(rt.dir * Math.PI/180);
+              rt.y += ${num("STEPS")} * Math.cos(rt.dir * Math.PI/180); draw();`;
+    case "motion_turnright": return `rt.dir += ${num("DEGREES")}; draw();`;
+    case "motion_turnleft":  return `rt.dir -= ${num("DEGREES")}; draw();`;
+    case "motion_gotoxy":    return `rt.x = ${num("X")}; rt.y = ${num("Y")}; draw();`;
+    case "motion_changexby": return `rt.x += ${num("DX")}; draw();`;
+    case "motion_changeyby": return `rt.y += ${num("DY")}; draw();`;
+    case "looks_say":        return `rt.say = ${JSON.stringify(String(p.MESSAGE ?? ""))}; rt.sayUntil = performance.now() + 2000; draw();`;
+    case "looks_sayforsecs": return `rt.say = ${JSON.stringify(String(p.MESSAGE ?? ""))}; rt.sayUntil = performance.now() + ${num("SECS")}*1000; draw();
+                                     yield wait(${num("SECS")}*1000); rt.say = ""; draw();`;
+    case "looks_changesize": return `rt.size += ${num("CHANGE")}; draw();`;
+    case "looks_setsize":    return `rt.size = ${num("SIZE")}; draw();`;
+    case "control_wait":     return `yield wait(${num("DURATION")}*1000);`;
+    case "data_setvariableto": return `rt.variables[${JSON.stringify(p.VAR)}] = ${JSON.stringify(p.VALUE)};`;
+    case "data_changevariableby": return `rt.variables[${JSON.stringify(p.VAR)}] = (Number(rt.variables[${JSON.stringify(p.VAR)}]) || 0) + ${num("VALUE")};`;
+    default: return `/* 未实现 ${b.opcode} */`;
+  }
+}
+
+function compileScript(script) {
+  const body = script.blocks.map(compileBlock).join("\n");
+  return new Function("rt", "draw", "wait", `return (function*(){ ${body} })();`);
+}
+
+const wait = ms => new Promise(r => setTimeout(r, ms));
+
+/* ============================================================
+   7. 执行引擎
+============================================================ */
+const status = document.getElementById("status");
+let rafId = null;
+
+function start() {
+  if (rt.running) return;
+  rt.running = true;
+  rt.threads = [];
+  scripts.forEach(s => {
+    if (s.blocks[0]?.opcode === "event_whenflagclicked") {
+      const gen = compileScript(s)(rt, draw, wait);
+      rt.threads.push({ gen, next: 0, done: false });
+    }
+  });
+  if (!rt.threads.length) { status.textContent = "没有绿旗脚本"; rt.running = false; return; }
+  status.textContent = "运行中…";
+  tick();
+}
+
+function tick() {
+  let alive = 0;
+  const now = performance.now();
+  rt.threads.forEach(t => {
+    if (t.done) return;
+    // 每帧推进，直到遇到 yield（返回 Promise）或结束
+    if (t.pending) {
+      if (now < t.pending) { alive++; return; }
+      t.pending = 0;
+    }
+    try {
+      const r = t.gen.next();
+      if (r.done) { t.done = true; return; }
+      if (r.value instanceof Promise) {
+        // 简化：把 Promise 转成时间戳（因为 wait 只用 ms）
+        // 真实实现要 await，这里用 hack
+        r.value.then(() => {});
+      }
+      alive++;
+    } catch (e) { console.error(e); t.done = true; }
+  });
+  draw();
+  if (alive > 0 && rt.running) rafId = requestAnimationFrame(tick);
+  else { rt.running = false; status.textContent = "已完成"; }
+}
+
+function stop() {
+  rt.running = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  status.textContent = "已停止";
+}
+
+document.getElementById("flag").onclick = start;
+document.getElementById("stop").onclick = stop;
+
+/* ============================================================
+   8. SB3 导出
+============================================================ */
+document.getElementById("export").onclick = async () => {
+  const zip = new JSZip();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><circle cx="40" cy="40" r="35" fill="#FFAB19"/></svg>`;
+  const blob = new Blob([svg], { type: "image/svg+xml" });
+  const buf = await blob.arrayBuffer();
+  const md5 = SparkMD5.ArrayBuffer.hash(buf);
+  const costumeFile = md5 + ".svg";
+
+  // 把 scripts 转成 SB3 blocks 格式
+  const blocks = {};
+  const blockArr = scripts[0]?.blocks || [];
+  blockArr.forEach((b, i) => {
+    const id = "blk" + i;
+    const inputs = {};
+    Object.entries(b.params).forEach(([k, v]) => {
+      const isNum = !isNaN(Number(v)) && v !== "";
+      inputs[k] = isNum ? [1, [4, String(v)]] : [1, [10, String(v)]];
+    });
+    blocks[id] = {
+      opcode: b.opcode,
+      next: i < blockArr.length - 1 ? "blk" + (i + 1) : null,
+      parent: i > 0 ? "blk" + (i - 1) : null,
+      inputs, fields: {}, shadow: false,
+      topLevel: i === 0, x: 60, y: 60 + i * 48,
+    };
+  });
+
+  const project = {
+    targets: [
+      { isStage:true, name:"Stage", variables:{}, lists:{}, broadcasts:{}, blocks:{}, comments:{},
+        currentCostume:0,
+        costumes:[{ name:"backdrop1", dataFormat:"svg", assetId:md5, md5ext:costumeFile,
+                    rotationCenterX:50, rotationCenterY:50 }],
+        sounds:[], volume:100, layerOrder:0, tempo:60, videoTransparency:50,
+        videoState:"off", textToSpeechLanguage:null },
+      { isStage:false, name:"Sprite1", variables:{}, lists:{}, broadcasts:{},
+        blocks, comments:{}, currentCostume:0,
+        costumes:[{ name:"costume1", dataFormat:"svg", assetId:md5, md5ext:costumeFile,
+                    rotationCenterX:50, rotationCenterY:50 }],
+        sounds:[], volume:100, layerOrder:1, visible:true,
+        x:rt.x, y:rt.y, size:rt.size, direction:rt.dir, draggable:false,
+        rotationStyle:"all around" }
+    ],
+    monitors: [], extensions: [],
+    meta: { semver:"3.0.0", vm:"0.2.0", agent:"MiniTurboWarp" }
+  };
+
+  zip.file("project.json", JSON.stringify(project));
+  zip.file(costumeFile, blob);
+  const out = await zip.generateAsync({ type:"blob" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(out);
+  a.download = "project.sb3";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  status.textContent = "已导出 project.sb3";
+};
+
+/* 键盘事件 */
+window.addEventListener("keydown", e => rt.keys[e.key] = true);
+window.addEventListener("keyup", e => rt.keys[e.key] = false);
+
+draw();
+</script>
+</body>
+</html>

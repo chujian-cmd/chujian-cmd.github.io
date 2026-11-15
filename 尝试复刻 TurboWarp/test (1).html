@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Mini TurboWarp</title>
+<style>
+body { margin:0; display:flex; font-family: monospace; }
+#stage { width:400px; height:300px; border:2px solid #333; position:relative; }
+#editor { flex:1; padding:10px; }
+textarea { width:100%; height:200px; }
+</style></head>
+<body>
+<div id="stage"></div>
+<div id="editor">
+  <h3>积木脚本 (JSON)</h3>
+  <textarea id="script">[
+  {"op":"move","steps":10},
+  {"op":"wait","secs":1},
+  {"op":"say","msg":"Hello TurboWarp"}
+]</textarea>
+  <button onclick="run()">▶ 绿旗</button>
+  <button onclick="reset()">↺ 重置</button>
+  <pre id="output"></pre>
+</div>
+<script>
+// ========== 1. 运行时状态 ==========
+const runtime = {
+  sprites: [{ x: 200, y: 150, dir: 90, say: "" }],
+  draw() {
+    const s = this.sprites[0];
+    stage.innerHTML = `<div style="position:absolute;left:${s.x}px;top:${s.y}px;
+      transform:translate(-50%,-50%);font-size:40px">🐱</div>
+      ${s.say ? `<div style="position:absolute;left:${s.x+30}px;top:${s.y-30}px;
+      background:#fff;border:1px solid #333;padding:4px;border-radius:8px">${s.say}</div>` : ""}`;
+  }
+};
+const stage = document.getElementById("stage");
+
+// ========== 2. 编译器：积木 JSON → JS 函数 ==========
+function compile(blocks) {
+  // 把积木序列转成生成器函数体
+  const lines = blocks.map(b => {
+    switch(b.op) {
+      case "move": return `s.x += ${b.steps} * Math.sin(s.dir * Math.PI / 180);
+                             s.y -= ${b.steps} * Math.cos(s.dir * Math.PI / 180);
+                             runtime.draw(); yield;`;
+      case "wait": return `yield new Promise(r => setTimeout(r, ${b.secs * 1000}));`;
+      case "say": return `s.say = "${b.msg}"; runtime.draw(); yield;`;
+      default: return "";
+    }
+  }).join("\n");
+  // 用 new Function 生成可执行函数
+  return new Function("runtime", "s", `return (function*(){ ${lines} })()`)(runtime, runtime.sprites[0]);
+}
+
+// ========== 3. 执行引擎 ==========
+let running = false;
+async function run() {
+  if (running) return;
+  running = true;
+  const blocks = JSON.parse(document.getElementById("script").value);
+  const gen = compile(blocks);
+  let result = gen.next();
+  while (!result.done) {
+    result = gen.next();  // 推进生成器
+    await new Promise(r => requestAnimationFrame(r)); // 每帧一步
+  }
+  running = false;
+  document.getElementById("output").textContent = "执行完成";
+}
+function reset() {
+  runtime.sprites[0] = { x: 200, y: 150, dir: 90, say: "" };
+  runtime.draw();
+}
+runtime.draw();
+</script>
+</body>
+</html>
