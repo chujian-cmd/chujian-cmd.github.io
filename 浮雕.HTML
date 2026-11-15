@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>浮雕文字生成器</title>
+<style>
+  :root{
+    --bg:#1b1e24;
+    --panel:#22262e;
+    --line:#313742;
+    --txt:#e7ebf2;
+    --muted:#9aa4b4;
+    --accent:#5b8cff;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    display:flex;
+    background:var(--bg);
+    color:var(--txt);
+    font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:13px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- 左侧控制面板 ---------- */
+  .panel{
+    width:340px;
+    flex:none;
+    padding:20px 20px 40px;
+    overflow-y:auto;
+    background:var(--bg);
+    border-right:1px solid var(--line);
+  }
+  .panel::-webkit-scrollbar{width:8px;}
+  .panel::-webkit-scrollbar-thumb{background:#3a414d;border-radius:4px;}
+
+  h1{
+    font-size:15px;
+    font-weight:600;
+    margin:0 0 4px;
+    letter-spacing:.3px;
+  }
+  h1 em{color:var(--accent);font-style:normal;}
+  .sub{
+    font-size:11px;color:var(--muted);margin:0 0 20px;line-height:1.6;
+  }
+
+  .row{margin-bottom:14px;}
+  .head{
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:12px;color:var(--muted);margin-bottom:6px;
+  }
+  .head .val{color:var(--txt);font-variant-numeric:tabular-nums;font-size:12px;}
+
+  textarea,select{
+    width:100%;
+    background:var(--panel);
+    color:var(--txt);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:8px 10px;
+    font-size:13px;
+    font-family:inherit;
+    outline:none;
+    transition:border-color .15s;
+  }
+  textarea{resize:vertical;min-height:56px;line-height:1.5;}
+  textarea:focus,select:focus{border-color:var(--accent);}
+  select{cursor:pointer;appearance:none;background-image:linear-gradient(45deg,transparent 50%,#8b94a5 50%),linear-gradient(135deg,#8b94a5 50%,transparent 50%);background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:30px;}
+
+  /* 滑块 */
+  input[type=range]{
+    width:100%;height:4px;border-radius:2px;background:var(--line);
+    outline:none;-webkit-appearance:none;appearance:none;cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--accent);border:2px solid #fff2;cursor:pointer;
+    transition:transform .12s;
+  }
+  input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15);}
+  input[type=range]::-moz-range-thumb{
+    width:13px;height:13px;border-radius:50%;background:var(--accent);
+    border:2px solid #fff2;cursor:pointer;
+  }
+
+  /* 分段控件 */
+  .seg{
+    display:flex;background:var(--panel);border:1px solid var(--line);
+    border-radius:9px;padding:3px;gap:3px;
+  }
+  .seg button{
+    flex:1;background:none;border:none;color:var(--muted);
+    padding:7px 0;border-radius:7px;font-size:12px;
+    cursor:pointer;font-family:inherit;transition:.15s;
+  }
+  .seg button.active{background:var(--accent);color:#fff;box-shadow:0 2px 8px #5b8cff44;}
+  .seg button:not(.active):hover{color:var(--txt);}
+
+  /* 颜色 */
+  .colors{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .colorItem{
+    display:flex;align-items:center;gap:8px;
+    font-size:12px;color:var(--muted);
+    background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:6px 8px;cursor:pointer;
+    transition:border-color .15s,opacity .15s;
+  }
+  .colorItem:hover{border-color:#444c5c;}
+  input[type=color]{
+    -webkit-appearance:none;appearance:none;
+    width:26px;height:26px;flex:none;border:none;padding:0;
+    background:none;cursor:pointer;border-radius:6px;overflow:hidden;
+  }
+  input[type=color]::-webkit-color-swatch-wrapper{padding:0;}
+  input[type=color]::-webkit-color-swatch{border:1px solid #ffffff26;border-radius:6px;}
+  input[type=color]::-moz-color-swatch{border:1px solid #ffffff26;border-radius:6px;}
+
+  .check{
+    display:flex;align-items:center;gap:8px;
+    font-size:12px;color:var(--muted);cursor:pointer;margin:12px 0 16px;
+  }
+  .check input{accent-color:var(--accent);width:15px;height:15px;cursor:pointer;}
+
+  .hr{height:1px;background:var(--line);margin:18px 0;}
+
+  .btn{
+    width:100%;padding:11px;border-radius:9px;
+    border:1px solid var(--line);background:var(--panel);
+    color:var(--txt);cursor:pointer;font-family:inherit;font-size:13px;
+    transition:.15s;
+  }
+  .btn:hover{filter:brightness(1.15);}
+  .btn:active{transform:translateY(1px);}
+  .btn.primary{
+    background:var(--accent);border-color:var(--accent);color:#fff;
+    box-shadow:0 4px 14px #5b8cff33;
+  }
+  .btn-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+
+  /* ---------- 右侧预览 ---------- */
+  .stage{
+    flex:1;min-width:0;
+    display:grid;place-items:center;
+    padding:40px;overflow:auto;
+    background:#e4e7ec;
+    transition:background .2s;
+  }
+  #output{
+    text-align:center;
+    line-height:1.25;
+    white-space:pre-wrap;
+    word-break:break-word;
+    max-width:100%;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+
+  /* Toast */
+  .toast{
+    position:fixed;left:50%;bottom:32px;transform:translate(-50%,20px);
+    background:#2b3140;color:#fff;padding:10px 20px;border-radius:9px;
+    font-size:13px;opacity:0;pointer-events:none;
+    transition:.25s;border:1px solid #3c4454;
+    box-shadow:0 8px 24px #0008;
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0);}
+
+  @media (max-width:780px){
+    body{flex-direction:column;}
+    .panel{width:100%;max-height:56vh;border-right:none;border-bottom:1px solid var(--line);}
+    .stage{padding:24px;min-height:44vh;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ================= 控制面板 ================= -->
+<aside class="panel">
+  <h1>浮雕文字<em>生成器</em></h1>
+  <p class="sub">输入文字，拖动滑块，实时生成浮雕 / 内雕效果</p>
+
+  <div class="row">
+    <div class="head"><span>文字内容</span></div>
+    <textarea id="text" spellcheck="false">浮雕效果</textarea>
+  </div>
+
+  <div class="row">
+    <div class="head"><span>字体</span></div>
+    <select id="fontFamily">
+      <option value="system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">系统默认</option>
+      <option value="'Helvetica Neue', Arial, sans-serif">Helvetica / Arial</option>
+      <option value="Impact, 'Arial Black', sans-serif">Impact 超粗</option>
+      <option value="Georgia, 'Times New Roman', serif">Georgia 衬线</option>
+      <option value="'Courier New', Consolas, monospace">等宽字体</option>
+      <option value="'PingFang SC', 'Microsoft YaHei', sans-serif">中文黑体</option>
+      <option value="'Songti SC', 'SimSun', serif">中文宋体</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <div class="head"><span>字号</span><span class="val" id="fontSizeVal"></span></div>
+    <input type="range" id="fontSize" min="20" max="220" step="1" value="96">
+  </div>
+
+  <div class="row">
+    <div class="head"><span>字重</span><span class="val" id="fontWeightVal"></span></div>
+    <input type="range" id="fontWeight" min="100" max="900" step="100" value="700">
+  </div>
+
+  <div class="row">
+    <div class="head"><span>字间距</span><span class="val" id="letterSpacingVal"></span></div>
+    <input type="range" id="letterSpacing" min="-10" max="40" step="0.5" value="4">
+  </div>
+
+  <div class="hr"></div>
+
+  <div class="row">
+    <div class="head"><span>效果类型</span></div>
+    <div class="seg" id="modeSeg">
+      <button data-mode="raised" class="active">凸起浮雕</button>
+      <button data-mode="inset">凹陷雕刻</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="head"><span>浮雕深度</span><span class="val" id="depthVal"></span></div>
+    <input type="range" id="depth" min="0" max="30" step="0.5" value="8">
+  </div>
+
+  <div class="row">
+    <div class="head"><span>边缘柔化</span><span class="val" id="blurVal"></span></div>
+    <input type="range" id="blur" min="0" max="25" step="0.5" value="2">
+  </div>
+
+  <div class="row">
+    <div class="head"><span>光照角度</span><span class="val" id="angleVal"></span></div>
+    <input type="range" id="angle" min="0" max="360" step="1" value="135">
+  </div>
+
+  <div class="hr"></div>
+
+  <div class="row">
+    <div class="head"><span>配色</span></div>
+    <div class="colors">
+      <label class="colorItem"><input type="color" id="bg" value="#e4e7ec"><span>背景</span></label>
+      <label class="colorItem" id="colorWrap"><input type="color" id="color" value="#e4e7ec" disabled><span>文字</span></label>
+      <label class="colorItem"><input type="color" id="hl" value="#ffffff"><span>高光</span></label>
+      <label class="colorItem"><input type="color" id="sh" value="#9aa3b2"><span>暗部</span></label>
+    </div>
+  </div>
+
+  <label class="check">
+    <input type="checkbox" id="matchBg" checked>
+    文字颜色自动跟随背景
+  </label>
+
+  <div class="btn-row">
+    <button class="btn primary" id="copyBtn">复制 CSS</button>
+    <button class="btn" id="resetBtn">重置</button>
+  </div>
+</aside>
+
+<!-- ================= 预览区 ================= -->
+<main class="stage" id="stage">
+  <div id="output">浮雕效果</div>
+</main>
+
+<div class="toast" id="toast">已复制</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const $ = id => document.getElementById(id);
+
+  const els = {
+    text:          $('text'),
+    stage:         $('stage'),
+    output:        $('output'),
+    fontFamily:    $('fontFamily'),
+    fontSize:      $('fontSize'),
+    fontWeight:    $('fontWeight'),
+    letterSpacing: $('letterSpacing'),
+    depth:         $('depth'),
+    blur:          $('blur'),
+    angle:         $('angle'),
+    bg:            $('bg'),
+    color:         $('color'),
+    colorWrap:     $('colorWrap'),
+    hl:            $('hl'),
+    sh:            $('sh'),
+    matchBg:       $('matchBg')
+  };
+
+  let mode = 'raised';               // raised = 凸起, inset = 凹陷
+  const fmt = n => String(Math.round(n * 100) / 100);
+
+  /* ------- 核心：计算浮雕 text-shadow ------- */
+  function buildShadow() {
+    const depth = parseFloat(els.depth.value);
+    const blur  = parseFloat(els.blur.value);
+    const rad   = parseFloat(els.angle.value) * Math.PI / 180;
+
+    // 光源方向（屏幕坐标，y 轴向下）
+    // angle=135° → 光源在左上方
+    const lx =  Math.cos(rad) * depth;
+    const ly = -Math.sin(rad) * depth;
+
+    // 凸起：高光在迎光侧，暗部在背光侧；凹陷则相反
+    const raised = (mode === 'raised');
+    const hx = raised ?  lx : -lx;
+    const hy = raised ?  ly : -ly;
+    const sx = -hx;
+    const sy = -hy;
+
+    const highlight = `${fmt(hx)}px ${fmt(hy)}px ${fmt(blur)}px ${els.hl.value}`;
+    const shadow    = `${fmt(sx)}px ${fmt(sy)}px ${fmt(blur * 1.4)}px ${els.sh.value}`;
+
+    return `${highlight}, ${shadow}`;
+  }
+
+  /* ------- 统一刷新 ------- */
+  function update() {
+    const bg    = els.bg.value;
+    const color = els.matchBg.checked ? bg : els.color.value;
+
+    // 预览区背景
+    els.stage.style.background = bg;
+
+    // 文字样式
+    const o = els.output.style;
+    o.fontFamily    = els.fontFamily.value;
+    o.fontSize      = els.fontSize.value + 'px';
+    o.fontWeight    = els.fontWeight.value;
+    o.letterSpacing = els.letterSpacing.value + 'px';
+    o.color         = color;
+    o.textShadow    = buildShadow();
+
+    // 数值显示
+    $('fontSizeVal').textContent      = els.fontSize.value + ' px';
+    $('fontWeightVal').textContent    = els.fontWeight.value;
+    $('letterSpacingVal').textContent = els.letterSpacing.value + ' px';
+    $('depthVal').textContent         = els.depth.value + ' px';
+    $('blurVal').textContent          = els.blur.value + ' px';
+    $('angleVal').textContent         = els.angle.value + ' °';
+  }
+
+  /* ------- 事件绑定 ------- */
+  const inputs = [
+    'fontFamily', 'fontSize', 'fontWeight', 'letterSpacing',
+    'depth', 'blur', 'angle', 'bg', 'color', 'hl', 'sh'
+  ];
+  inputs.forEach(id => {
+    els[id].addEventListener('input', update);
+    els[id].addEventListener('change', update);
+  });
+
+  // 文字内容
+  els.text.addEventListener('input', () => {
+    els.output.textContent = els.text.value;
+    update();
+  });
+
+  // 文字颜色跟随背景
+  els.matchBg.addEventListener('change', () => {
+    const on = els.matchBg.checked;
+    els.color.disabled = on;
+    els.colorWrap.style.opacity = on ? .45 : 1;
+    els.colorWrap.style.pointerEvents = on ? 'none' : 'auto';
+    update();
+  });
+
+  // 凸起 / 凹陷切换
+  document.querySelectorAll('#modeSeg button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#modeSeg button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      mode = btn.dataset.mode;
+      update();
+    });
+  });
+
+  /* ------- 复制 CSS ------- */
+  const toast = $('toast');
+  let toastTimer = null;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1600);
+  }
+
+  $('copyBtn').addEventListener('click', () => {
+    const css =
+`.emboss-text {
+  font-family: ${els.fontFamily.value};
+  font-size: ${els.fontSize.value}px;
+  font-weight: ${els.fontWeight.value};
+  letter-spacing: ${els.letterSpacing.value}px;
+  color: ${els.output.style.color};
+  text-shadow: ${els.output.style.textShadow};
+}
+/* 背景色: ${els.bg.value} */`;
+
+    const done = () => showToast('CSS 已复制到剪贴板 ✓');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(css).then(done).catch(fallback);
+    } else {
+      fallback();
+    }
+    function fallback() {
+      const ta = document.createElement('textarea');
+      ta.value = css;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); }
+      catch (e) { showToast('复制失败，请手动选择'); }
+      ta.remove();
+    }
+  });
+
+  /* ------- 重置 ------- */
+  $('resetBtn').addEventListener('click', () => {
+    els.text.value          = '浮雕效果';
+    els.output.textContent  = '浮雕效果';
+    els.fontFamily.value    = 'system-ui, -apple-system, \'Segoe UI\', \'PingFang SC\', \'Microsoft YaHei\', sans-serif';
+    els.fontSize.value      = 96;
+    els.fontWeight.value    = 700;
+    els.letterSpacing.value = 4;
+    els.depth.value         = 8;
+    els.blur.value          = 2;
+    els.angle.value         = 135;
+    els.bg.value            = '#e4e7ec';
+    els.color.value         = '#e4e7ec';
+    els.hl.value            = '#ffffff';
+    els.sh.value            = '#9aa3b2';
+    els.matchBg.checked     = true;
+    els.color.disabled      = true;
+    els.colorWrap.style.opacity = .45;
+    els.colorWrap.style.pointerEvents = 'none';
+    mode = 'raised';
+    document.querySelectorAll('#modeSeg button').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === 'raised')
+    );
+    update();
+  });
+
+  /* ------- 初始化 ------- */
+  els.colorWrap.style.opacity = .45;
+  els.colorWrap.style.pointerEvents = 'none';
+  els.output.textContent = els.text.value;
+  update();
+})();
+</script>
+</body>
+</html>
