@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>色彩替换相机</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Helvetica Neue",sans-serif;
+    overscroll-behavior:none;touch-action:none}
+
+  #video{position:fixed;left:-4px;top:-4px;width:2px;height:2px;opacity:.01;pointer-events:none}
+  #canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+
+  /* ---------- 磨砂玻璃 ---------- */
+  .glass{
+    background:rgba(24,26,34,.42);
+    -webkit-backdrop-filter:blur(22px) saturate(180%);
+    backdrop-filter:blur(22px) saturate(180%);
+    border:1px solid rgba(255,255,255,.18);
+    box-shadow:0 10px 34px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+
+  /* ---------- 左上/右上 HUD ---------- */
+  #hud{position:fixed;top:calc(16px + env(safe-area-inset-top,0px));right:16px;z-index:20;display:flex;gap:10px}
+  .iconBtn{
+    width:46px;height:46px;border-radius:50%;border:0;padding:0;
+    display:grid;place-items:center;font-size:19px;color:#fff;cursor:pointer;
+    transition:transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .iconBtn:active{transform:scale(.9)}
+
+  /* ---------- 左下颜色按钮 ---------- */
+  #colorBtn{
+    position:fixed;left:20px;bottom:calc(24px + env(safe-area-inset-bottom,0px));
+    width:68px;height:68px;border-radius:50%;padding:0;
+    display:grid;place-items:center;cursor:pointer;z-index:30;
+    transition:transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  #colorBtn:active{transform:scale(.92)}
+  #colorBtn .ring{
+    width:46px;height:46px;border-radius:50%;
+    border:1.5px solid rgba(255,255,255,.55);
+    box-shadow:0 2px 10px rgba(0,0,0,.35), inset 0 0 12px rgba(255,255,255,.25);
+    transition:background .25s ease;
+  }
+
+  /* ---------- 面板 ---------- */
+  #panel{
+    position:fixed;left:12px;right:12px;
+    bottom:calc(104px + env(safe-area-inset-bottom,0px));
+    max-height:64vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    touch-action:pan-y;border-radius:24px;padding:16px 16px 18px;z-index:40;
+    opacity:0;transform:translateY(18px) scale(.97);pointer-events:none;
+    transition:opacity .22s ease,transform .28s cubic-bezier(.2,.9,.3,1);
+  }
+  #panel.open{opacity:1;transform:none;pointer-events:auto}
+
+  .pickerRow{display:flex;gap:12px;align-items:stretch}
+  #svWrap{position:relative;flex:1;border-radius:14px;overflow:hidden;touch-action:none;cursor:crosshair;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);aspect-ratio:1/1;max-height:168px}
+  #svCanvas{display:block;width:100%;height:100%}
+  #hueWrap{position:relative;width:28px;border-radius:14px;overflow:hidden;touch-action:none;cursor:pointer;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);max-height:168px}
+  #hueCanvas{display:block;width:100%;height:100%}
+
+  .cursor{position:absolute;width:16px;height:16px;border-radius:50%;border:2px solid #fff;
+    box-shadow:0 0 0 1.5px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.5);
+    transform:translate(-50%,-50%);pointer-events:none;left:0;top:0}
+  #hueCursor{width:100%;height:5px;border-radius:3px;left:0;transform:translateY(-50%)}
+
+  .hexRow{display:flex;gap:10px;align-items:center;margin-top:14px}
+  .hexField{flex:1;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);
+    border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:9px 12px}
+  .hexField span{opacity:.55;font-weight:600}
+  .hexField input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:#fff;
+    font-size:15px;font-weight:600;letter-spacing:1.5px;
+    font-family:ui-monospace,Menlo,monospace;text-transform:uppercase}
+  .hexField input::placeholder{color:rgba(255,255,255,.35)}
+  .preview{width:46px;height:46px;border-radius:12px;flex:none;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.3),0 3px 12px rgba(0,0,0,.4);transition:background .25s ease}
+
+  .swatches{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .swatchDot{width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.35);
+    cursor:pointer;padding:0;transition:transform .15s}
+  .swatchDot:active{transform:scale(.88)}
+
+  .label{display:flex;justify-content:space-between;align-items:center;font-size:12px;
+    letter-spacing:.5px;color:rgba(255,255,255,.62);margin:16px 2px 8px}
+  .label b{color:#fff;font-weight:600;font-variant-numeric:tabular-nums}
+
+  .dirs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .dirs button{padding:10px 2px;font-size:12px;border-radius:12px;font-family:inherit;cursor:pointer;
+    background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.14);
+    color:rgba(255,255,255,.82);transition:.18s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dirs button:active{transform:scale(.95)}
+  .dirs button.active{background:#fff;color:#111;border-color:transparent;font-weight:700;
+    box-shadow:0 4px 14px rgba(255,255,255,.25)}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
+    background:rgba(255,255,255,.22);outline:none;touch-action:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:22px;height:22px;
+    border-radius:50%;background:#fff;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+  input[type=range]::-moz-range-thumb{width:22px;height:22px;border:0;border-radius:50%;background:#fff;cursor:pointer}
+
+  #err{position:fixed;inset:0;display:none;place-items:center;padding:32px;text-align:center;
+    background:rgba(0,0,0,.88);z-index:100;font-size:15px;line-height:1.7;color:#ffb4b4}
+  #err.show{display:grid}
+  #err small{opacity:.65;font-size:12px}
+</style>
+</head>
+<body>
+
+<video id="video" playsinline muted autoplay></video>
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <button id="flipBtn" class="glass iconBtn" title="切换摄像头">⇄</button>
+</div>
+
+<button id="colorBtn" class="glass" aria-label="选择颜色">
+  <span class="ring" id="swatch"></span>
+</button>
+
+<div id="panel" class="glass">
+  <div class="pickerRow">
+    <div id="svWrap">
+      <canvas id="svCanvas" width="180" height="180"></canvas>
+      <div class="cursor" id="svCursor"></div>
+    </div>
+    <div id="hueWrap">
+      <canvas id="hueCanvas" width="28" height="180"></canvas>
+      <div class="cursor" id="hueCursor"></div>
+    </div>
+  </div>
+
+  <div class="hexRow">
+    <div class="hexField">
+      <span>#</span>
+      <input id="hexInput" type="text" inputmode="text" spellcheck="false"
+             autocapitalize="characters" maxlength="6" placeholder="00E5FF">
+    </div>
+    <div class="preview" id="preview"></div>
+  </div>
+
+  <div class="swatches" id="presets"></div>
+
+  <div class="label"><span>渐变方向</span></div>
+  <div class="dirs" id="dirs"></div>
+
+  <div class="label"><span>颜色容差 · 相近色一并替换</span><b id="tolVal">30%</b></div>
+  <input id="tolRange" type="range" min="0" max="100" value="30">
+
+  <div class="label"><span>替换强度</span><b id="intVal">95%</b></div>
+  <input id="intRange" type="range" min="0" max="100" value="95">
+
+  <div class="label"><span>流动速度</span><b id="spdVal">15%</b></div>
+  <input id="spdRange" type="range" min="0" max="100" value="15">
+
+  <div class="label"><span>渐变循环次数</span><b id="cycVal">1.4</b></div>
+  <input id="cycRange" type="range" min="0" max="100" value="28">
+
+  <div class="label"><span>色相跨度</span><b id="spanVal">160°</b></div>
+  <input id="spanRange" type="range" min="0" max="360" value="160">
+</div>
+
+<div id="err"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* =========================================================================
+     ①  配 置 区 —— 想改什么改这里（也可运行时用 window.ColorFX.set() 改）
+     ========================================================================= */
+  const CONFIG = {
+
+    /* ---- 摄像头 ---- */
+    camera: {
+      facingMode: 'environment',   // 'environment' 后置 / 'user' 前置
+      mirrorFront: true,           // 前置摄像头是否镜像
+      width: 1280,                 // 请求分辨率（ideal）
+      height: 720,
+      maxFps: 30,                  // 渲染帧率上限
+      processWidth: 480            // 每帧参与运算的像素宽度（越小越省电）
+    },
+
+    /* ---- 颜色匹配（决定"哪些像素被替换"）---- */
+    replace: {
+      // 'rgb' | 'weighted' | 'hsv' | 'custom'
+      matcher: 'hsv',
+      tolerance: 0.30,   // 容差 0~1，越大替换范围越广
+      feather: 0.18,     // 边缘羽化 0~1，让替换边界更柔和
+      intensity: 0.95,   // 替换强度 0~1
+      keepLuma: 0.35,    // 保留原画面明暗细节的程度 0~1（0 = 纯平色）
+      // 当 matcher === 'custom' 时使用，返回 0~1 的距离
+      customMatcher: null   // (r,g,b, tr,tg,tb) => number
+    },
+
+    /* ---- 渐变 ---- */
+    gradient: {
+      direction: 'center-out',   // 初始方向 id
+      hueSpan: 160,              // 色相跨度（度）
+      hueOffset: 0,              // 色相整体偏移（度）
+      cycles: 1.4,               // 空间上循环几次
+      speed: 0.15,               // 流动速度
+      saturation: 0.9,           // 渐变饱和度 0~1
+      lightness: 0.55,           // 渐变亮度 0~1
+
+      /* ---- 方向函数表 —— 自由增删改 ----
+         签名：(nx, ny, t) => 0~1 相位
+         nx, ny ∈ [0,1] 画面归一化坐标；t 为秒
+      ------------------------------------ */
+      directions: [
+        { id:'center-out', label:'中心向外', fn:(x,y)=>{
+            const dx=x-.5, dy=y-.5;
+            return Math.min(1, Math.hypot(dx,dy)/0.70710678);
+          }},
+        { id:'outer-in', label:'外向内', fn:(x,y)=>{
+            const dx=x-.5, dy=y-.5;
+            return 1-Math.min(1, Math.hypot(dx,dy)/0.70710678);
+          }},
+        { id:'ltr', label:'左 → 右', fn:(x)=>x },
+        { id:'rtl', label:'右 → 左', fn:(x)=>1-x },
+        { id:'ttb', label:'上 → 下', fn:(x,y)=>y },
+        { id:'btt', label:'下 → 上', fn:(x,y)=>1-y },
+        { id:'diag', label:'对角', fn:(x,y)=>(x+y)/2 },
+        { id:'diag2', label:'反对角', fn:(x,y)=>(x+1-y)/2 },
+        { id:'swirl', label:'旋涡', fn:(x,y,t)=>{
+            const dx=x-.5, dy=y-.5;
+            const a=Math.atan2(dy,dx)/(Math.PI*2)+.5;
+            const r=Math.hypot(dx,dy)/0.70710678;
+            return (a*1.5 + r*1.2 - t*0.35) % 1;
+          }},
+        { id:'angle', label:'极角', fn:(x,y)=>{
+            return Math.atan2(y-.5,x-.5)/(Math.PI*2)+.5;
+          }},
+        { id:'wave', label:'波纹', fn:(x,y,t)=>{
+            const d=Math.hypot(x-.5,y-.5);
+            return (Math.sin(d*22 - t*2.2)+1)/2;
+          }},
+        { id:'noise', label:'碎光', fn:(x,y,t)=>{
+            return (Math.sin(x*9.1+t)*Math.cos(y*7.3-t*0.8)+1)/2;
+          }}
+      ]
+    },
+
+    /* ---- 界面 ---- */
+    ui: {
+      presets: ['#00E5FF','#FF2D95','#FFD400','#7CFF4F',
+                '#7A5CFF','#FF6B00','#00FF9D','#FF3B30'],
+      panelBottom: 104,      // 面板距底部像素（不含安全区）
+      colorBtnSize: 68       // 左下按钮直径
+    }
+  };
+
+  /* =========================================================================
+     ②  基础工具
+     ========================================================================= */
+  const $ = id => document.getElementById(id);
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+  const TAU = Math.PI * 2;
+
+  function hsv2rgb(h, s, v) {
+    h = ((h % 360) + 360) % 360;
+    const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+    let r = 0, g = 0, b = 0;
+    if (h < 60)       { r = c; g = x; }
+    else if (h < 120) { r = x; g = c; }
+    else if (h < 180) { g = c; b = x; }
+    else if (h < 240) { g = x; b = c; }
+    else if (h < 300) { r = x; b = c; }
+    else              { r = c; b = x; }
+    return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+  }
+
+  function hue2rgb(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  }
+
+  function hsl2rgb(h, s, l) {
+    h = (((h % 360) + 360) % 360) / 360;
+    s = clamp01(s); l = clamp01(l);
+    if (s === 0) { const c = Math.round(l*255); return [c,c,c]; }
+    const q = l < .5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    return [
+      Math.round(hue2rgb(p,q,h+1/3)*255),
+      Math.round(hue2rgb(p,q,h)*255),
+      Math.round(hue2rgb(p,q,h-1/3)*255)
+    ];
+  }
+
+  function rgb2hsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b), d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r)      h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else                h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    return [h, max === 0 ? 0 : d / max, max];
+  }
+
+  const rgbToHex = a => '#' + a.map(v => Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('').toUpperCase();
+
+  /* =========================================================================
+     ③  颜色匹配器工厂（可自定义扩展）
+     ========================================================================= */
+  function makeMatcher(name, [tr, tg, tb]) {
+    if (name === 'rgb') {
+      return (r, g, b) =>
+        Math.sqrt((r-tr)**2 + (g-tg)**2 + (b-tb)**2) / 441.6729559300637;
+    }
+    if (name === 'weighted') {  // 人眼加权，对绿色更敏感
+      return (r, g, b) =>
+        Math.sqrt(2*(r-tr)**2 + 4*(g-tg)**2 + 3*(b-tb)**2) / 765;
+    }
+    if (name === 'hsv') {       // 色相优先，对光照变化更鲁棒
+      const [th, ts, tv] = rgb2hsv(tr, tg, tb);
+      return (r, g, b) => {
+        const [h, s, v] = rgb2hsv(r, g, b);
+        let dh = Math.abs(h - th);
+        if (dh > 180) dh = 360 - dh;
+        dh /= 180;
+        return Math.sqrt(dh*dh*0.6 + (s-ts)**2*0.2 + (v-tv)**2*0.2);
+      };
+    }
+    if (name === 'custom' && typeof CONFIG.replace.customMatcher === 'function') {
+      const fn = CONFIG.replace.customMatcher;
+      return (r, g, b) => clamp01(fn(r, g, b, tr, tg, tb));
+    }
+    // 兜底
+    return (r, g, b) =>
+      Math.sqrt((r-tr)**2 + (g-tg)**2 + (b-tb)**2) / 441.6729559300637;
+  }
+
+  /* =========================================================================
+     ④  状态
+     ========================================================================= */
+  const state = {
+    h: 187, s: 1, v: 1,
+    rgb: [0, 229, 255],
+    hex: '#00E5FF'
+  };
+
+  let matcher = makeMatcher(CONFIG.replace.matcher, state.rgb);
+
+  /* =========================================================================
+     ⑤  DOM 引用
+     ========================================================================= */
+  const video     = $('video');
+  const canvas    = $('canvas');
+  const ctx       = canvas.getContext('2d');
+
+  const colorBtn  = $('colorBtn');
+  const swatchEl  = $('swatch');
+  const panel     = $('panel');
+  const flipBtn   = $('flipBtn');
+
+  const svCanvas  = $('svCanvas');
+  const svCtx     = svCanvas.getContext('2d');
+  const svWrap    = $('svWrap');
+  const svCursor  = $('svCursor');
+
+  const hueCanvas = $('hueCanvas');
+  const hueCtx    = hueCanvas.getContext('2d');
+  const hueWrap   = $('hueWrap');
+  const hueCursor = $('hueCursor');
+
+  const hexInput  = $('hexInput');
+  const previewEl = $('preview');
+  const presetsEl = $('presets');
+  const dirsEl    = $('dirs');
+
+  const tolRange = $('tolRange'), tolVal = $('tolVal');
+  const intRange = $('intRange'), intVal = $('intVal');
+  const spdRange = $('spdRange'), spdVal = $('spdVal');
+  const cycRange = $('cycRange'), cycVal = $('cycVal');
+  const spanRange= $('spanRange'), spanVal= $('spanVal');
+
+  const errEl = $('err');
+
+  /* =========================================================================
+     ⑥  拾色器绘制
+     ========================================================================= */
+  function drawSV() {
+    const w = svCanvas.width, h = svCanvas.height;
+    svCtx.fillStyle = `hsl(${state.h},100%,50%)`;
+    svCtx.fillRect(0, 0, w, h);
+
+    let g = svCtx.createLinearGradient(0, 0, w, 0);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    svCtx.fillStyle = g;
+    svCtx.fillRect(0, 0, w, h);
+
+    g = svCtx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,1)');
+    svCtx.fillStyle = g;
+    svCtx.fillRect(0, 0, w, h);
+  }
+
+  function drawHue() {
+    const w = hueCanvas.width, h = hueCanvas.height;
+    const g = hueCtx.createLinearGradient(0, 0, 0, h);
+    for (let i = 0; i <= 12; i++) g.addColorStop(i/12, `hsl(${i*30},100%,50%)`);
+    hueCtx.fillStyle = g;
+    hueCtx.fillRect(0, 0, w, h);
+  }
+
+  /* =========================================================================
+     ⑦  颜色状态同步
+     ========================================================================= */
+  function setColorFromHSV(h, s, v) {
+    state.h = ((h % 360) + 360) % 360;
+    state.s = clamp01(s);
+    state.v = clamp01(v);
+    state.rgb = hsv2rgb(state.h, state.s, state.v);
+    state.hex = rgbToHex(state.rgb);
+    matcher = makeMatcher(CONFIG.replace.matcher, state.rgb);
+    syncColorUI();
+  }
+
+  function applyHex(str) {
+    let s = String(str).trim().replace(/^#/, '');
+    if (s.length === 3) s = s.split('').map(c => c + c).join('');
+    if (!/^[0-9a-fA-F]{6}$/.test(s)) return false;
+    const r = parseInt(s.slice(0,2), 16);
+    const g = parseInt(s.slice(2,4), 16);
+    const b = parseInt(s.slice(4,6), 16);
+    const [h, sv, v] = rgb2hsv(r, g, b);
+    setColorFromHSV(h, sv, v);
+    return true;
+  }
+
+  function syncColorUI() {
+    swatchEl.style.background = state.hex;
+    previewEl.style.background = state.hex;
+    if (document.activeElement !== hexInput) hexInput.value = state.hex.slice(1);
+    svCursor.style.left = (state.s * 100) + '%';
+    svCursor.style.top  = ((1 - state.v) * 100) + '%';
+    hueCursor.style.top = (state.h / 360 * 100) + '%';
+    drawSV();
+  }
+
+  /* =========================================================================
+     ⑧  渲染管线
+     ========================================================================= */
+  const workCanvas = document.createElement('canvas');
+  const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
+  let workW = 0, workH = 0;
+  let imgData = null;
+
+  const LUT_SIZE = 256;
+  const MASK = LUT_SIZE - 1;
+  const hueLUT = new Array(LUT_SIZE);
+
+  function buildLUT() {
+    const s = CONFIG.gradient.saturation, l = CONFIG.gradient.lightness;
+    for (let i = 0; i < LUT_SIZE; i++) hueLUT[i] = hsl2rgb(i * 360 / LUT_SIZE, s, l);
+  }
+
+  function syncWorkSize() {
+    const vw = video.videoWidth || 640;
+    const vh = video.videoHeight || 480;
+    const pw = Math.max(32, Math.min(CONFIG.camera.processWidth, vw));
+    const ph = Math.max(32, Math.round(pw * vh / vw));
+    if (pw !== workW || ph !== workH) {
+      workW = pw; workH = ph;
+      workCanvas.width = pw;
+      workCanvas.height = ph;
+    }
+  }
+
+  function getDirFn(id) {
+    const list = CONFIG.gradient.directions;
+    for (let i = 0; i < list.length; i++) if (list[i].id === id) return list[i].fn;
+    return list[0].fn;
+  }
+
+  let startTime = performance.now();
+  let lastFrame = 0;
+  let facing = CONFIG.camera.facingMode;
+  let stream = null;
+
+  function processPixels(t) {
+    const d = imgData.data;
+    const R = CONFIG.replace;
+    const G = CONFIG.gradient;
+
+    const tol = clamp01(R.tolerance);
+    const softEnd = Math.min(1, tol + clamp01(R.feather));
+    const intensity = clamp01(R.intensity);
+    const keepLuma = clamp01(R.keepLuma);
+
+    const dirFn = getDirFn(G.direction);
+    const hueSpan = G.hueSpan, cycles = G.cycles, speed = G.speed;
+    const baseHue = state.h + G.hueOffset;
+
+    const w = workW, h = workH;
+    const invW = w > 1 ? 1 / (w - 1) : 0;
+    const invH = h > 1 ? 1 / (h - 1) : 0;
+    const hueToIdx = LUT_SIZE / 360;
+
+    for (let y = 0; y < h; y++) {
+      const ny = y * invH;
+      let i = (y * w) << 2;
+      for (let x = 0; x < w; x++, i += 4) {
+        const r = d[i], g = d[i+1], b = d[i+2];
+
+        const dist = matcher(r, g, b);
+        if (dist >= softEnd) continue;
+
+        // 边界羽化
+        let a = dist <= tol ? 1 : (softEnd - dist) / (softEnd - tol);
+        a *= intensity;
+        if (a <= 0.002) continue;
+
+        // 空间 + 时间 → 相位
+        const nx = x * invW;
+        const phase = dirFn(nx, ny, t) * cycles - t * speed;
+
+        let hue = (baseHue + phase * hueSpan) % 360;
+        if (hue < 0) hue += 360;
+
+        const c = hueLUT[(hue * hueToIdx) & MASK];
+        let rr = c[0], gg = c[1], bb = c[2];
+
+        // 保留原画面明暗
+        if (keepLuma > 0) {
+          const l = (0.299*r + 0.587*g + 0.114*b) / 255;
+          const k = 1 + (l - 0.5) * keepLuma * 2;
+          rr *= k; gg *= k; bb *= k;
+        }
+
+        d[i]   = r + (rr - r) * a;
+        d[i+1] = g + (gg - g) * a;
+        d[i+2] = b + (bb - b) * a;
+      }
+    }
+  }
+
+  function drawToScreen() {
+    const cw = canvas.width, ch = canvas.height;
+    if (!cw || !ch || !workW || !workH) return;
+    const scale = Math.max(cw / workW, ch / workH);
+    const dw = workW * scale, dh = workH * scale;
+    ctx.drawImage(workCanvas, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+  }
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+
+    const minDelta = 1000 / Math.max(1, CONFIG.camera.maxFps);
+    if (now - lastFrame < minDelta - 1) return;
+    lastFrame = now;
+
+    if (video.readyState < 2 || !video.videoWidth) return;
+
+    syncWorkSize();
+
+    const mirror = facing === 'user' && CONFIG.camera.mirrorFront;
+    if (mirror) workCtx.setTransform(-1, 0, 0, 1, workW, 0);
+    else        workCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+    workCtx.drawImage(video, 0, 0, workW, workH);
+    workCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+    imgData = workCtx.getImageData(0, 0, workW, workH);
+    buildLUT();
+    processPixels((now - startTime) / 1000);
+    workCtx.putImageData(imgData, 0, 0);
+
+    drawToScreen();
+  }
+
+  /* =========================================================================
+     ⑨  摄像头
+     ========================================================================= */
+  async function startCamera(mode) {
+    facing = mode || CONFIG.camera.facingMode;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError('当前环境不支持 getUserMedia');
+      return;
+    }
+    if (stream) stream.getTracks().forEach(t => t.stop());
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: facing },
+          width:  { ideal: CONFIG.camera.width },
+          height: { ideal: CONFIG.camera.height }
+        }
+      });
+      video.srcObject = stream;
+      await video.play();
+      errEl.classList.remove('show');
+      startTime = performance.now();
+    } catch (e) {
+      showError(e && e.message ? e.message : String(e));
+    }
+  }
+
+  function showError(msg) {
+    errEl.innerHTML =
+      '无法访问摄像头<br><small>' + msg + '</small><br><br>' +
+      '请确认已授权摄像头权限，并通过 <b>https</b> 或 <b>localhost</b> 打开页面。<br><small>点击此处重试</small>';
+    errEl.classList.add('show');
+  }
+
+  errEl.addEventListener('click', () => startCamera(facing));
+  flipBtn.addEventListener('click', () => {
+    startCamera(facing === 'environment' ? 'user' : 'environment');
+  });
+
+  /* =========================================================================
+     ⑩  交互：拾色器拖动
+     ========================================================================= */
+  function bindDrag(el, onMove) {
+    let active = false;
+    const handle = e => {
+      const r = el.getBoundingClientRect();
+      const x = clamp01((e.clientX - r.left) / r.width);
+      const y = clamp01((e.clientY - r.top) / r.height);
+      onMove(x, y);
+    };
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      active = true;
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
+      handle(e);
+    });
+    el.addEventListener('pointermove', e => {
+      if (!active) return;
+      e.preventDefault();
+      handle(e);
+    });
+    const end = () => { active = false; };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    el.addEventListener('lostpointercapture', end);
+  }
+
+  bindDrag(svWrap, (x, y) => setColorFromHSV(state.h, x, 1 - y));
+  bindDrag(hueWrap, (x, y) => setColorFromHSV(y * 360, state.s, state.v));
+
+  /* ---- Hex 输入 ---- */
+  hexInput.addEventListener('input', () => {
+    const v = hexInput.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6).toUpperCase();
+    hexInput.value = v;
+    if (v.length === 6) applyHex(v);
+  });
+  hexInput.addEventListener('blur', () => { hexInput.value = state.hex.slice(1); });
+
+  /* ---- 预设色板 ---- */
+  CONFIG.ui.presets.forEach(hex => {
+    const b = document.createElement('button');
+    b.className = 'swatchDot';
+    b.style.background = hex;
+    b.title = hex;
+    b.addEventListener('click', () => applyHex(hex));
+    presetsEl.appendChild(b);
+  });
+
+  /* ---- 方向按钮 ---- */
+  function buildDirButtons() {
+    dirsEl.innerHTML = '';
+    CONFIG.gradient.directions.forEach(dir => {
+      const b = document.createElement('button');
+      b.textContent = dir.label;
+      b.dataset.dir = dir.id;
+      if (dir.id === CONFIG.gradient.direction) b.classList.add('active');
+      b.addEventListener('click', () => setDirection(dir.id));
+      dirsEl.appendChild(b);
+    });
+  }
+
+  function setDirection(id) {
+    CONFIG.gradient.direction = id;
+    Array.from(dirsEl.children).forEach(el => {
+      el.classList.toggle('active', el.dataset.dir === id);
+    });
+  }
+
+  /* ---- 滑条 ---- */
+  function bindRange(input, label, fmt, apply) {
+    const update = () => {
+      const v = +input.value;
+      label.textContent = fmt(v);
+      apply(v);
+    };
+    input.addEventListener('input', update);
+    update();
+  }
+
+  bindRange(tolRange, tolVal, v => v + '%', v => { CONFIG.replace.tolerance = v / 100; });
+  bindRange(intRange, intVal, v => v + '%', v => { CONFIG.replace.intensity = v / 100; });
+  bindRange(spdRange, spdVal, v => Math.round(v) + '%', v => { CONFIG.gradient.speed = v / 100 * 0.6; });
+  bindRange(cycRange, cycVal, v => (v / 100 * 5).toFixed(1), v => { CONFIG.gradient.cycles = v / 100 * 5; });
+  bindRange(spanRange, spanVal, v => v + '°', v => { CONFIG.gradient.hueSpan = v; });
+
+  /* ---- 面板开合 ---- */
+  colorBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    panel.classList.toggle('open');
+  });
+  document.addEventListener('pointerdown', e => {
+    if (!panel.classList.contains('open')) return;
+    if (panel.contains(e.target) || colorBtn.contains(e.target)) return;
+    panel.classList.remove('open');
+  });
+
+  /* =========================================================================
+     ⑪  画布尺寸
+     ========================================================================= */
+  function resizeCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width  = Math.round(window.innerWidth  * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+  }
+  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 120));
+
+  /* =========================================================================
+     ⑫  对外 API —— 供二次开发 / 运行时调参
+     ========================================================================= */
+  window.ColorFX = {
+    CONFIG,
+    state,
+    setColor: applyHex,
+    getColor: () => state.hex,
+    setDirection,
+
+    /** 注册一个新的渐变方向
+     *  @param id      唯一标识
+     *  @param label   按钮文字
+     *  @param fn      (nx, ny, t) => 0~1
+     *  @param apply   注册后是否立即启用
+     */
+    registerDirection(id, label, fn, apply) {
+      CONFIG.gradient.directions.push({ id, label, fn });
+      buildDirButtons();
+      if (apply) setDirection(id);
+    },
+
+    /** 切换颜色匹配算法：'rgb' | 'weighted' | 'hsv' | 'custom' */
+    setMatcher(name) {
+      CONFIG.replace.matcher = name;
+      matcher = makeMatcher(name, state.rgb);
+    },
+
+    /** 点路径设置配置，如 set('gradient.speed', 0.3) */
+    set(path, value) {
+      const keys = path.split('.');
+      let o = CONFIG;
+      for (let i = 0; i < keys.length - 1; i++) {
+        if (!o[keys[i]]) return false;
+        o = o[keys[i]];
+      }
+      o[keys[keys.length - 1]] = value;
+
+      if (path === 'replace.matcher' || path === 'replace.customMatcher') {
+        matcher = makeMatcher(CONFIG.replace.matcher, state.rgb);
+      }
+      if (path === 'gradient.direction') setDirection(value);
+      return true;
+    },
+
+    /** 注册自定义匹配函数 */
+    setCustomMatcher(fn) {
+      CONFIG.replace.customMatcher = fn;
+      CONFIG.replace.matcher = 'custom';
+      matcher = makeMatcher('custom', state.rgb);
+    }
+  };
+
+  /* =========================================================================
+     ⑬  启动
+     ========================================================================= */
+  resizeCanvas();
+  drawHue();
+  setColorFromHSV(state.h, state.s, state.v);  // 初始化 UI + matcher
+  buildDirButtons();
+  startCamera(CONFIG.camera.facingMode);
+  requestAnimationFrame(loop);
+
+})();
+</script>
+</body>
+</html>
