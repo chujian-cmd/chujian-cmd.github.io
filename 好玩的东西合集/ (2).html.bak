@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>好玩的前端 CDN · 就地预览</title>
+<style>
+  :root{
+    --bg:#f7f8fc; --card:#fff; --text:#151824; --muted:#6b7280;
+    --border:#e7e9f0; --code-bg:#f5f6fa; --radius:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:
+      radial-gradient(1100px 560px at 8% -12%, #e9edff 0%, transparent 60%),
+      radial-gradient(900px 480px at 100% 0%, #ffeef6 0%, transparent 55%),
+      var(--bg);
+    color:var(--text); min-height:100vh; padding:56px 24px 100px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* 页头 */
+  .page-head{max-width:1100px;margin:0 auto 46px}
+  .page-head h1{font-size:clamp(26px,4vw,36px);font-weight:700;letter-spacing:-.025em}
+  .page-head p{margin-top:12px;font-size:15px;line-height:1.7;color:var(--muted);max-width:640px}
+
+  /* 分区 */
+  .section{max-width:1100px;margin:0 auto 44px}
+  .section-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .section-icon{width:40px;height:40px;flex:none;border-radius:12px;display:grid;place-items:center;color:var(--accent);background:var(--soft)}
+  .section-icon svg{width:20px;height:20px}
+  .section-head h2{font-size:17px;font-weight:600;letter-spacing:-.01em}
+  .count{margin-left:auto;font-size:12px;color:var(--muted);background:#fff;border:1px solid var(--border);padding:3px 10px;border-radius:99px}
+
+  /* 卡片网格 */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .card{
+    background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px;display:flex;flex-direction:column;gap:12px;
+    transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  }
+  .card:hover{transform:translateY(-3px);box-shadow:0 14px 30px -14px rgba(20,24,40,.18);border-color:#dcdfe9}
+
+  .card-top{display:flex;align-items:center;gap:10px}
+  .card-top h3{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .tag{font-size:11px;font-weight:500;padding:2px 9px;border-radius:99px;color:var(--accent);background:var(--soft);white-space:nowrap}
+
+  .desc{font-size:13.5px;line-height:1.65;color:var(--muted);flex:1}
+
+  /* 预览按钮 */
+  .preview-btn{
+    margin-left:auto;display:inline-flex;align-items:center;gap:5px;
+    padding:5px 11px;border-radius:99px;border:1px solid var(--border);
+    background:#fff;color:var(--accent);font-size:12px;font-weight:500;
+    cursor:pointer;transition:all .18s ease;font-family:inherit;
+  }
+  .preview-btn:hover{background:var(--soft);border-color:var(--accent)}
+  .preview-btn:active{transform:scale(.96)}
+  .preview-btn svg{width:14px;height:14px}
+
+  /* 代码行 */
+  .code{display:flex;align-items:center;gap:8px;background:var(--code-bg);border:1px solid var(--border);border-radius:10px;padding:6px 6px 6px 12px}
+  .code code{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:#3d4152;white-space:nowrap;overflow-x:auto;scrollbar-width:none}
+  .code code::-webkit-scrollbar{display:none}
+  .copy{flex:none;width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--muted);display:grid;place-items:center;cursor:pointer;transition:color .18s ease,border-color .18s ease,background .18s ease}
+  .copy:hover{color:var(--accent);border-color:currentColor}
+  .copy:active{transform:scale(.94)}
+  .copy svg{width:15px;height:15px}
+  .copy .i-check{display:none}
+  .copy.copied{color:#16a34a;border-color:currentColor;background:#f0fdf4}
+  .copy.copied .i-copy{display:none}
+  .copy.copied .i-check{display:block}
+
+  /* 预览弹窗 */
+  .preview-modal{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;padding:24px}
+  .preview-modal[hidden]{display:none}
+  .preview-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);animation:fadeIn .2s ease}
+  .preview-panel{position:relative;width:min(1100px,100%);height:min(80vh,720px);background:#fff;border-radius:20px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 40px 100px -30px rgba(15,23,42,.6);animation:popIn .25s cubic-bezier(.2,.9,.3,1.2)}
+  .preview-bar{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--border);flex:none}
+  .preview-title{display:flex;align-items:center;gap:10px}
+  .preview-title h3{font-size:15px;font-weight:600}
+  .preview-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .close-btn{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:#fff;color:var(--muted);display:grid;place-items:center;cursor:pointer;transition:all .18s ease}
+  .close-btn:hover{color:#ef4444;border-color:#fca5a5;background:#fef2f2}
+  .close-btn svg{width:16px;height:16px}
+  #previewFrame{flex:1;border:0;width:100%;background:#0f172a}
+
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes popIn{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+
+  @media (max-width:640px){
+    body{padding:36px 16px 72px}
+    .grid{grid-template-columns:1fr}
+    .page-head{margin-bottom:36px}
+    .section{margin-bottom:36px}
+    .preview-modal{padding:0}
+    .preview-panel{width:100%;height:100%;border-radius:0}
+  }
+  @media (prefers-reduced-motion:reduce){.card,.copy,.preview-btn{transition:none}}
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <h1>好玩的前端 CDN 资源</h1>
+  <p>每张卡片都能就地预览效果。点击「预览」在弹窗里直接运行，点击「复制」拿到 CDN 链接。</p>
+</header>
+
+<main id="app"></main>
+
+<!-- 预览弹窗 -->
+<div class="preview-modal" id="previewModal" hidden>
+  <div class="preview-backdrop"></div>
+  <div class="preview-panel">
+    <div class="preview-bar">
+      <div class="preview-title">
+        <h3 id="previewName"></h3>
+        <span class="tag" id="previewTag"></span>
+      </div>
+      <div class="preview-actions">
+        <button class="close-btn" id="previewClose" aria-label="关闭预览">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+    <iframe id="previewFrame" sandbox="allow-scripts allow-popups" title="预览"></iframe>
+  </div>
+</div>
+
+<script>
+/* ================= SVG 图标 ================= */
+const ICONS = {
+  sparkle:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.4 7.1 7.1 2.4-7.1 2.4L12 21.5l-2.4-7.1L2.5 12l7.1-2.4z"/></svg>`,
+  cursor:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 7.6-6.1 1.7L10.6 19z"/></svg>`,
+  cube:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8l8.4 4.7v9L12 21.2 3.6 16.5v-9z"/><path d="M12 12l8.4-4.5M12 12v9.2M12 12L3.6 7.5"/></svg>`,
+  type:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7V5.5h14V7M12 5.5V19M9 19h6"/></svg>`
+};
+const ICON_EYE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const ICON_COPY  = `<svg class="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>`;
+const ICON_CHECK = `<svg class="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
+
+/* ================= 预览 Demo（srcdoc 完整页面） ================= */
+const DEMOS = {
+
+  vanta: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden}</style></head><body>
+<div id="vanta" style="position:fixed;inset:0"></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js"><\/script>
+<script>
+window.addEventListener('load', function(){
+  if (window.VANTA && VANTA.WAVES) {
+    VANTA.WAVES({
+      el:'#vanta', mouseControls:true, touchControls:true, gyroControls:false,
+      minHeight:200, minWidth:200, scale:1, scaleMobile:1,
+      color:0x1e3a8a, shininess:30, waveHeight:20, waveSpeed:0.75, zoom:0.8
+    });
+  }
+});
+<\/script>
+</body></html>`,
+
+  bubbly: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#0f172a}</style></head><body>
+<script src="https://cdn.jsdelivr.net/npm/bubbly-bg@0.2.3/dist/bubbly-bg.js"><\/script>
+<script>
+bubbly({
+  colorStart:'#1e293b', colorStop:'#0f172a',
+  bubbles:40, compose:'lighter',
+  shadowColor:'#ffffff', blur:2,
+  bubbleSize:6, bubbleAlpha:0.6, animate:true
+});
+<\/script>
+</body></html>`,
+
+  granim: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden}#granim-canvas{width:100%;height:100%;display:block}</style></head><body>
+<canvas id="granim-canvas"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/granim@2.0.0/dist/granim.min.js"><\/script>
+<script>
+new Granim({
+  element:'#granim-canvas',
+  direction:'diagonal',
+  isPausedWhenNotInView:true,
+  states:{
+    'default-state':{
+      gradients:[
+        ['#834d9b','#d04ed6'],
+        ['#1CD8D2','#93EDC7'],
+        ['#FF512F','#DD2476'],
+        ['#4A00E0','#8E2DE2']
+      ],
+      transitionSpeed:2500
+    }
+  }
+});
+<\/script>
+</body></html>`,
+
+  particles: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#0f172a}#particles{position:fixed;inset:0}</style></head><body>
+<div id="particles"></div>
+<script src="https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js"><\/script>
+<script>
+particlesJS('particles', {
+  particles:{
+    number:{value:70, density:{enable:true, value_area:800}},
+    color:{value:'#7c6cf7'},
+    shape:{type:'circle'},
+    opacity:{value:0.6, random:true},
+    size:{value:3, random:true},
+    line_linked:{enable:true, distance:130, color:'#4c4f7a', opacity:0.5, width:1},
+    move:{enable:true, speed:2, direction:'none', out_mode:'out'}
+  },
+  interactivity:{
+    detect_on:'canvas',
+    events:{onhover:{enable:true, mode:'grab'}, onclick:{enable:true, mode:'push'}},
+    modes:{grab:{distance:160, line_linked:{opacity:0.8}}, push:{particles_nb:4}}
+  },
+  retina_detect:true
+});
+<\/script>
+</body></html>`,
+
+  mojs: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#0f172a;display:grid;place-items:center;font-family:system-ui,sans-serif;color:#94a3b8;font-size:14px;user-select:none;overflow:hidden;cursor:crosshair}</style></head><body>
+<div>点击任意位置 🎉</div>
+<script src="https://cdn.jsdelivr.net/npm/@mojs/core@1.6.0/dist/mo.min.js"><\/script>
+<script>
+var colors = ['#7c6cf7','#ec4899','#0ea5e9','#f59e0b','#10b981','#ffffff'];
+document.addEventListener('click', function(e){
+  new mojs.Burst({
+    left:0, top:0, radius:{0:130}, count:14,
+    children:{ shape:'circle', radius:6, fill:colors, duration:1200, easing:mojs.easing.bezier(0.1,1,0.3,1) }
+  }).tune({x:e.clientX, y:e.clientY}).replay();
+  new mojs.Burst({
+    left:0, top:0, radius:{0:80}, count:10, angle:{0:180},
+    children:{ shape:'rect', radius:4, fill:colors, duration:1000 }
+  }).tune({x:e.clientX, y:e.clientY}).replay();
+});
+<\/script>
+</body></html>`,
+
+  tilt: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:linear-gradient(135deg,#0f172a,#1e1b4b);display:grid;place-items:center;font-family:system-ui,sans-serif;overflow:hidden}
+.tilt{width:280px;height:180px;border-radius:20px;background:linear-gradient(135deg,#7c6cf7,#ec4899);display:grid;place-items:center;color:#fff;font-size:22px;font-weight:700;letter-spacing:.5px;box-shadow:0 30px 60px -20px rgba(124,108,247,.6);cursor:pointer;transform-style:preserve-3d}
+.tilt span{transform:translateZ(50px);display:block}
+</style></head><body>
+<div class="tilt" data-tilt data-tilt-max="25" data-tilt-speed="400" data-tilt-glare data-tilt-max-glare="0.4"><span>3D Tilt</span></div>
+<script src="https://cdn.jsdelivr.net/npm/vanilla-tilt@1.7.2/dist/vanilla-tilt.min.js"><\/script>
+<script>
+window.addEventListener('load', function(){
+  if (window.VanillaTilt) {
+    VanillaTilt.init(document.querySelectorAll('.tilt'), { max:25, speed:400, glare:true, 'max-glare':0.4 });
+  }
+});
+<\/script>
+</body></html>`,
+
+  confetti: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#0f172a;display:grid;place-items:center;font-family:system-ui,sans-serif;color:#94a3b8;font-size:14px;cursor:pointer;user-select:none;overflow:hidden}</style></head><body>
+<div>点击任意位置 🎊</div>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"><\/script>
+<script>
+document.addEventListener('click', function(e){
+  var x = e.clientX / window.innerWidth;
+  var y = e.clientY / window.innerHeight;
+  confetti({ particleCount:120, spread:80, origin:{x:x, y:y}, colors:['#7c6cf7','#ec4899','#0ea5e9','#f59e0b','#10b981'] });
+  setTimeout(function(){
+    confetti({ particleCount:60, angle:60, spread:55, origin:{x:0,y:1} });
+    confetti({ particleCount:60, angle:120, spread:55, origin:{x:1,y:1} });
+  }, 200);
+});
+<\/script>
+</body></html>`,
+
+  zdog: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 40%, #1e1b4b, #0f172a);display:grid;place-items:center;overflow:hidden}</style></head><body>
+<canvas class="zdog-canvas" width="420" height="420"></canvas>
+<script src="https://cdn.jsdelivr.net/npm/zdog@1/dist/zdog.dist.min.js"><\/script>
+<script>
+var illo = new Zdog.Illustration({
+  element:'.zdog-canvas', zoom:4, dragRotate:true,
+  onDragStart:function(){ isSpinning = false; }
+});
+new Zdog.Ellipse({ addTo:illo, diameter:40, stroke:12, color:'#ec4899' });
+new Zdog.Ellipse({ addTo:illo, diameter:40, stroke:12, color:'#7c6cf7', rotate:{x:Math.PI/2} });
+new Zdog.Ellipse({ addTo:illo, diameter:40, stroke:12, color:'#0ea5e9', rotate:{y:Math.PI/2} });
+new Zdog.Shape({ addTo:illo, stroke:8, color:'#f59e0b', path:[{x:-14,y:-14},{x:14,y:14}] });
+var isSpinning = true;
+(function animate(){
+  if (isSpinning) { illo.rotate.y += 0.015; illo.rotate.x += 0.008; }
+  illo.updateRenderGraph();
+  requestAnimationFrame(animate);
+})();
+<\/script>
+</body></html>`,
+
+  three: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%;overflow:hidden;background:#0f172a}</style></head><body>
+<script src="https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js"><\/script>
+<script>
+var scene = new THREE.Scene();
+var camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 1000);
+camera.position.z = 4;
+var renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+var geo = new THREE.BoxGeometry(1.4,1.4,1.4);
+var mat = new THREE.MeshNormalMaterial({flatShading:true});
+var cube = new THREE.Mesh(geo, mat);
+scene.add(cube);
+
+var light = new THREE.PointLight(0xffffff, 1);
+light.position.set(2,3,4);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0x404060));
+
+var wire = new THREE.LineSegments(
+  new THREE.EdgesGeometry(geo),
+  new THREE.LineBasicMaterial({color:0x7c6cf7})
+);
+cube.add(wire);
+
+function animate(){
+  requestAnimationFrame(animate);
+  cube.rotation.x += 0.008;
+  cube.rotation.y += 0.012;
+  renderer.render(scene, camera);
+}
+animate();
+
+addEventListener('resize', function(){
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+<\/script>
+</body></html>`,
+
+  typed: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:linear-gradient(135deg,#0f172a,#1e1b4b);display:grid;place-items:center;font-family:ui-monospace,Menlo,monospace;overflow:hidden}
+#typed{font-size:clamp(20px,4vw,34px);color:#e2e8f0;font-weight:600;letter-spacing:-.5px}
+</style></head><body>
+<div id="typed"></div>
+<script src="https://cdn.jsdelivr.net/npm/typed.js@2.1.0/dist/typed.umd.js"><\/script>
+<script>
+new Typed('#typed', {
+  strings: [
+    '让页面 <strong style="color:#7c6cf7">动</strong> 起来',
+    '一行 CDN 引入的快乐',
+    '打字机效果 · typed.js',
+    '点进去就能直接预览 ✨'
+  ],
+  typeSpeed: 55,
+  backSpeed: 25,
+  backDelay: 1400,
+  loop: true,
+  smartBackspace: true
+});
+<\/script>
+</body></html>`,
+
+  animatecss: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:#0f172a;display:grid;place-items:center;font-family:system-ui,sans-serif;color:#fff;overflow:hidden}
+.wrap{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;max-width:520px;width:90%}
+.box{height:96px;border-radius:16px;background:linear-gradient(135deg,#7c6cf7,#ec4899);display:grid;place-items:center;font-size:12px;font-weight:600;color:#fff;cursor:pointer}
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/animate.css@4.1.1/animate.min.css">
+</head><body>
+<div class="wrap">
+  <div class="box animate__animated animate__bounce animate__infinite">bounce</div>
+  <div class="box animate__animated animate__pulse animate__infinite">pulse</div>
+  <div class="box animate__animated animate__rubberBand animate__infinite">rubberBand</div>
+  <div class="box animate__animated animate__shakeX animate__infinite">shakeX</div>
+  <div class="box animate__animated animate__heartBeat animate__infinite">heartBeat</div>
+  <div class="box animate__animated animate__flip animate__infinite">flip</div>
+</div>
+<script>
+document.querySelectorAll('.box').forEach(function(el){
+  el.addEventListener('click', function(){
+    el.classList.remove('animate__animated');
+    void el.offsetWidth;
+    el.classList.add('animate__animated');
+  });
+});
+<\/script>
+</body></html>`,
+
+  hovercss: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;background:#0f172a;display:grid;place-items:center;font-family:system-ui,sans-serif;overflow:hidden}
+.wrap{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;max-width:480px;width:90%}
+.card{height:96px;border-radius:16px;background:linear-gradient(135deg,#7c6cf7,#ec4899);display:grid;place-items:center;color:#fff;font-size:13px;font-weight:600;cursor:pointer}
+</style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/hover.css@2.3.2/css/hover-min.css">
+</head><body>
+<div class="wrap">
+  <div class="card hvr-grow">hvr-grow</div>
+  <div class="card hvr-float">hvr-float</div>
+  <div class="card hvr-bob">hvr-bob</div>
+  <div class="card hvr-buzz">hvr-buzz</div>
+</div>
+</body></html>`
+
+};
+
+/* ================= 数据 ================= */
+const SECTIONS = [
+  {
+    title:'背景与粒子特效', icon:'sparkle', accent:'#7c6cf7', soft:'rgba(124,108,247,.12)',
+    items:[
+      { id:'vanta', name:'Vanta.js', tag:'3D 背景', desc:'3D 波浪 / 云层 / 光晕动画背景，需搭配 Three.js。', url:'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js' },
+      { id:'bubbly', name:'bubbly-bg', tag:'背景', desc:'极简气泡背景，体积不到 1kB，轻量点缀首选。', url:'https://cdn.jsdelivr.net/npm/bubbly-bg@0.2.3/dist/bubbly-bg.js' },
+      { id:'granim', name:'granim.js', tag:'渐变', desc:'渐变流动背景，颜色过渡平滑，配置简单。', url:'https://cdn.jsdelivr.net/npm/granim@2.0.0/dist/granim.min.js' },
+      { id:'particles', name:'particles.js', tag:'粒子', desc:'粒子连线背景，鼠标悬停 / 点击有交互反馈。', url:'https://cdn.jsdelivr.net/npm/particles.js@2.0.0/particles.min.js' }
+    ]
+  },
+  {
+    title:'鼠标交互整活', icon:'cursor', accent:'#ec4899', soft:'rgba(236,72,153,.12)',
+    items:[
+      { id:'mojs', name:'mojs', tag:'动效', desc:'点击炸开粒子、图标变形、文字逐字浮现等精致微交互。', url:'https://cdn.jsdelivr.net/npm/@mojs/core@1.6.0/dist/mo.min.js' },
+      { id:'tilt', name:'vanilla-tilt', tag:'3D 倾斜', desc:'跟随鼠标的 3D 倾斜卡片，带光晕反射效果。', url:'https://cdn.jsdelivr.net/npm/vanilla-tilt@1.7.2/dist/vanilla-tilt.min.js' },
+      { id:'confetti', name:'canvas-confetti', tag:'彩带', desc:'高性能彩带 / 烟花爆炸动画，支持自定义颜色与方向。', url:'https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js' }
+    ]
+  },
+  {
+    title:'3D 与高级视觉', icon:'cube', accent:'#0ea5e9', soft:'rgba(14,165,233,.12)',
+    items:[
+      { id:'zdog', name:'Zdog', tag:'3D 模型', desc:'轻量 3D 引擎，用代码绘制可拖拽旋转的 3D 模型。', url:'https://cdn.jsdelivr.net/npm/zdog@1/dist/zdog.dist.min.js' },
+      { id:'three', name:'three.js', tag:'3D', desc:'WebGL 3D 渲染库，这里展示一个旋转的立体方块。', url:'https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js' }
+    ]
+  },
+  {
+    title:'文字与 CSS 动效', icon:'type', accent:'#f59e0b', soft:'rgba(245,158,11,.12)',
+    items:[
+      { id:'typed', name:'typed.js', tag:'打字机', desc:'打字机效果，循环播放多段文字，可自定义速度。', url:'https://cdn.jsdelivr.net/npm/typed.js@2.1.0/dist/typed.umd.js' },
+      { id:'animatecss', name:'animate.css', tag:'CSS', desc:'即取即用的 CSS 动画类库，加个 class 就能动。', url:'https://cdn.jsdelivr.net/npm/animate.css@4.1.1/animate.min.css' },
+      { id:'hovercss', name:'hover.css', tag:'CSS', desc:'一组悬停效果 class，给按钮和卡片加点细节。', url:'https://cdn.jsdelivr.net/npm/hover.css@2.3.2/css/hover-min.css' }
+    ]
+  }
+];
+
+/* ================= 渲染 ================= */
+const app = document.getElementById('app');
+
+app.innerHTML = SECTIONS.map(section => `
+  <section class="section" style="--accent:${section.accent};--soft:${section.soft}">
+    <div class="section-head">
+      <div class="section-icon">${ICONS[section.icon]}</div>
+      <h2>${section.title}</h2>
+      <span class="count">${section.items.length}</span>
+    </div>
+    <div class="grid">
+      ${section.items.map(item => `
+        <article class="card">
+          <div class="card-top">
+            <h3>${item.name}</h3>
+            <span class="tag">${item.tag}</span>
+            <button class="preview-btn" data-id="${item.id}" type="button">
+              ${ICON_EYE}<span>预览</span>
+            </button>
+          </div>
+          <p class="desc">${item.desc}</p>
+          <div class="code">
+            <code>${item.url}</code>
+            <button class="copy" data-url="${item.url}" type="button" aria-label="复制 ${item.name} 的链接">
+              ${ICON_COPY}${ICON_CHECK}
+            </button>
+          </div>
+        </article>
+      `).join('')}
+    </div>
+  </section>
+`).join('');
+
+/* ================= 复制 ================= */
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.copy');
+  if (!btn) return;
+  const url = btn.dataset.url;
+  try { await navigator.clipboard.writeText(url); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  btn.classList.add('copied');
+  clearTimeout(btn._t);
+  btn._t = setTimeout(() => btn.classList.remove('copied'), 1600);
+});
+
+/* ================= 预览弹窗 ================= */
+const modal   = document.getElementById('previewModal');
+const frame   = document.getElementById('previewFrame');
+const nameEl  = document.getElementById('previewName');
+const tagEl   = document.getElementById('previewTag');
+
+function findItem(id){
+  for (const s of SECTIONS) {
+    const hit = s.items.find(it => it.id === id);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function openPreview(item){
+  nameEl.textContent = item.name;
+  tagEl.textContent  = item.tag;
+  frame.srcdoc = DEMOS[item.id] || '<p style="color:#fff;padding:20px;font-family:sans-serif">暂无演示</p>';
+  modal.hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closePreview(){
+  modal.hidden = true;
+  frame.srcdoc = '';               // 清空，停止脚本运行
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('click', (e) => {
+  const pbtn = e.target.closest('.preview-btn');
+  if (pbtn){
+    const item = findItem(pbtn.dataset.id);
+    if (item) openPreview(item);
+    return;
+  }
+  if (e.target.closest('#previewClose') || e.target.closest('.preview-backdrop')){
+    closePreview();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !modal.hidden) closePreview();
+});
+</script>
+</body>
+</html>
