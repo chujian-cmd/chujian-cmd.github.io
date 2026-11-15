@@ -1,0 +1,2 @@
+(window.webpackJsonpGUI=window.webpackJsonpGUI||[]).push([[46],{1589:function(t,o,e){"use strict";e.r(o),e.d(o,"resources",function(){return n});const n={"userscript.js":async function(t){let o=t.addon;t.msg,t.console;const e=await o.tab.traps.getBlockly(),n=e.FieldNumber.prototype.showEditor_;e.FieldNumber.prototype.showEditor_=function(){o.self.disabled||(this.useTouchInteraction_=!0);for(var t=arguments.length,e=new Array(t),s=0;s<t;s++)e[s]=arguments[s];return n.apply(this,e)}}}}}]);
+//# sourceMappingURL=addon-entry-number-pad.d6ae549c4fc9b7c09069.js.map
