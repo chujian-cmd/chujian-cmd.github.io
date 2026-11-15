@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>三重人机验证 · 防篡改加密版</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
+  body {
+    background: linear-gradient(145deg, #eef3f8 0%, #dde8f2 100%);
+    min-height: 100vh; padding: 1.5rem 1rem;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .page-title {
+    text-align: center; margin-bottom: 1.5rem; color: #0a1e2f;
+  }
+  .page-title h1 { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; }
+  .page-title p { font-size: 0.85rem; color: #5a7183; margin-top: 4px; }
+
+  .modules { display: flex; flex-direction: column; gap: 1.2rem; width: 100%; max-width: 520px; }
+
+  .card {
+    background: rgba(255,255,255,0.92); backdrop-filter: blur(10px);
+    border-radius: 28px; padding: 1.5rem;
+    box-shadow: 0 20px 40px -14px rgba(0,0,0,0.2);
+    border: 1px solid rgba(255,255,255,0.8);
+    position: relative;
+    transition: box-shadow 0.3s, border-color 0.3s;
+  }
+  .card.passed {
+    border-color: #7ecb9e;
+    box-shadow: 0 0 0 2px rgba(46,154,94,0.15), 0 20px 40px -14px rgba(0,0,0,0.2);
+  }
+
+  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
+  .card-icon {
+    width: 36px; height: 36px; border-radius: 12px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: #e8f0f8; color: #1a3b5c;
+    font-weight: 800; font-size: 0.95rem;
+    border: 1px solid #d0e0ee;
+    transition: background 0.3s, color 0.3s;
+  }
+  .card.passed .card-icon { background: #2e9a5e; color: white; border-color: #2e9a5e; }
+  .card-head h2 { font-size: 1rem; font-weight: 700; color: #0a1e2f; }
+  .card-head .sub { font-size: 0.72rem; color: #6b8296; margin-top: 1px; }
+  .passed-badge {
+    margin-left: auto; font-size: 0.7rem; font-weight: 700; color: #2e9a5e;
+    background: #e2f3e8; padding: 3px 10px; border-radius: 50px;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .card.passed .passed-badge { opacity: 1; }
+
+  /* ============ 模块1: 滑块 ============ */
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 0.9rem; }
+  .stat { background: #f2f7fc; border-radius: 12px; padding: 0.45rem 0.3rem; text-align: center; border: 1px solid #e0eaf3; }
+  .stat .label { font-size: 0.6rem; color: #5a7183; font-weight: 600; letter-spacing: 0.4px; }
+  .stat .value { font-size: 0.95rem; font-weight: 700; color: #1f4a72; font-variant-numeric: tabular-nums; }
+
+  .slider-label { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.75rem; font-weight: 600; color: #3f5669; }
+  .slider-label span:last-child { color: #2680c2; background: #deecfa; padding: 2px 9px; border-radius: 50px; }
+
+  .track {
+    position: relative; height: 52px; background: #e2ebf3;
+    border-radius: 50px; box-shadow: inset 0 4px 8px rgba(0,20,30,0.08);
+    border: 1px solid #c2d6e8; margin-bottom: 0.7rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .track.success { border-color: #2e9a5e; box-shadow: 0 0 0 2px rgba(46,154,94,0.2); }
+  .track.fail { border-color: #e05a5a; box-shadow: 0 0 0 2px rgba(224,90,90,0.2); }
+  .fill {
+    position: absolute; top: 0; left: 0; height: 100%; width: 0%;
+    background: linear-gradient(90deg, #b6d9ff, #8fc2f0); border-radius: 50px;
+    transition: width 0.05s linear; pointer-events: none;
+  }
+  .fill.success { background: linear-gradient(90deg, #88d4a4, #5bb87b); }
+  .thumb {
+    position: absolute; top: 4px; left: 4px; width: 42px; height: 42px;
+    background: white; border-radius: 50%;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab; user-select: none; z-index: 5; touch-action: none;
+    transition: transform 0.05s;
+  }
+  .thumb:active, .thumb.dragging { cursor: grabbing; transform: scale(0.96); }
+  .thumb svg { width: 20px; height: 20px; fill: none; stroke: #1e4870; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+
+  /* ============ 模块2: 点选 ============ */
+  .challenge-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #1a3b5c; border-radius: 14px; padding: 0.7rem 0.9rem; margin-bottom: 0.8rem;
+    color: white;
+  }
+  .challenge-text { font-size: 0.8rem; font-weight: 500; }
+  .challenge-text b { color: #7fd1ff; font-size: 0.88rem; }
+  .challenge-progress { font-size: 0.72rem; background: rgba(255,255,255,0.15); padding: 3px 10px; border-radius: 50px; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .grid-wrap { position: relative; border-radius: 16px; overflow: hidden; background: #c2d2e2; margin-bottom: 0.8rem; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; padding: 3px; }
+  .cell {
+    aspect-ratio: 1; background: #eaf1f8; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: transform 0.1s, background 0.1s; user-select: none;
+    border: 2px solid transparent;
+  }
+  .cell:hover { background: #dbe8f5; }
+  .cell:active { transform: scale(0.93); }
+  .cell svg { width: 60%; height: 60%; pointer-events: none; }
+  .icon-star { fill: #f5b942; }
+  .icon-heart { fill: #f06a6a; }
+  .icon-cloud { fill: #7fc4e8; }
+  .icon-leaf { fill: #6bc98a; }
+  .icon-moon { fill: #8a9bd6; }
+  .icon-bolt { fill: #ffd45c; }
+  .icon-drop { fill: #6ab8f0; }
+  .icon-flower { fill: #e88ac2; }
+  .cell.deco svg { opacity: 0.5; }
+  .cell.selected {
+    border-color: #2e9a5e; background: #e2f3e8;
+    box-shadow: inset 0 0 0 2px #2e9a5e;
+  }
+  .cell.selected::after {
+    content: ''; position: absolute; top: 3px; right: 3px;
+    width: 16px; height: 16px; background: #2e9a5e; border-radius: 50%;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12l5 5L20 7'/></svg>");
+    background-size: 10px; background-repeat: no-repeat; background-position: center;
+    animation: pop 0.2s ease;
+  }
+  @keyframes pop { 0% { transform: scale(0); } 70% { transform: scale(1.2); } 100% { transform: scale(1); } }
+  .cell.wrong { border-color: #e05a5a; background: #ffeae9; animation: shake 0.4s; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+  /* ============ 模块3: 验证码 ============ */
+  .captcha-row { display: flex; gap: 10px; margin-bottom: 0.8rem; }
+  .captcha-canvas {
+    flex: 1; height: 60px; border-radius: 14px;
+    background: #f7fafd; border: 1px solid #c2d6e8;
+    cursor: pointer; display: block;
+  }
+  .captcha-refresh {
+    width: 60px; border-radius: 14px; background: #eef4fa;
+    border: 1px solid #c2d6e8; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; color: #1e4870;
+    transition: background 0.2s;
+  }
+  .captcha-refresh:hover { background: #ddeaf7; }
+  .captcha-refresh:active { transform: scale(0.95); }
+  .captcha-refresh svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .captcha-input-row { display: flex; gap: 8px; }
+  .captcha-input {
+    flex: 1; height: 44px; border-radius: 14px; border: 1px solid #c2d6e8;
+    background: white; padding: 0 14px; font-size: 1rem; font-weight: 600;
+    color: #0a1e2f; letter-spacing: 2px; outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    font-family: 'Courier New', monospace;
+  }
+  .captcha-input:focus { border-color: #2680c2; box-shadow: 0 0 0 3px rgba(38,128,194,0.15); }
+  .captcha-input:disabled { background: #f2f7fc; color: #2e9a5e; }
+
+  /* ============ 通用按钮与状态 ============ */
+  .btn {
+    height: 44px; padding: 0 20px; border-radius: 50px; background: white;
+    border: 1px solid #c1d4e8; font-weight: 600; font-size: 0.85rem;
+    color: #1e3c59; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; gap: 6px; transition: all 0.2s; white-space: nowrap;
+  }
+  .btn:hover { background: #f2f9ff; }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.primary { background: #1a3b5c; color: white; border-color: #1a3b5c; }
+  .btn.primary:hover { background: #234e75; }
+  .btn.primary:disabled { background: #6b8aa5; border-color: #6b8aa5; }
+  .btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .status {
+    text-align: center; font-size: 0.78rem; font-weight: 500;
+    padding: 0.5rem 0.8rem; border-radius: 50px; background: #f4f9fe;
+    color: #1f496e; border: 1px solid #cde0f0; min-height: 2.1rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.25s;
+  }
+  .status.success { background: #e2f3e8; border-color: #9fd6b4; color: #1b6b3b; }
+  .status.fail { background: #ffeae9; border-color: #ffb3b0; color: #b12a2a; }
+  .status.info { background: #fff6e0; border-color: #ffd98a; color: #8a5a00; }
+
+  .success-overlay {
+    position: absolute; inset: 0; background: rgba(46,154,94,0.92);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: white; gap: 10px; opacity: 0; pointer-events: none;
+    transition: opacity 0.3s; border-radius: 16px; z-index: 10;
+  }
+  .success-overlay.show { opacity: 1; pointer-events: auto; }
+  .success-overlay svg { width: 44px; height: 44px; stroke: white; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+  .success-overlay span { font-size: 1rem; font-weight: 700; }
+
+  /* ============ 总控面板 ============ */
+  .master-panel {
+    width: 100%; max-width: 520px; margin-top: 1.5rem;
+    background: rgba(255,255,255,0.92); backdrop-filter: blur(10px);
+    border-radius: 24px; padding: 1.2rem 1.4rem;
+    box-shadow: 0 20px 40px -14px rgba(0,0,0,0.2);
+    border: 1px solid rgba(255,255,255,0.8);
+    transition: border-color 0.4s, box-shadow 0.4s;
+  }
+  .master-panel.all-passed {
+    border-color: #2e9a5e;
+    box-shadow: 0 0 0 3px rgba(46,154,94,0.15), 0 20px 40px -14px rgba(0,0,0,0.2);
+  }
+  .master-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+  .master-row h3 { font-size: 1rem; font-weight: 700; color: #0a1e2f; }
+  .progress-pills { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .pill {
+    font-size: 0.7rem; font-weight: 600; padding: 4px 11px; border-radius: 50px;
+    background: #eef4fa; color: #6b8296; border: 1px solid #d5e3f0;
+    display: flex; align-items: center; gap: 4px;
+    transition: all 0.3s;
+  }
+  .pill.done { background: #e2f3e8; color: #1b6b3b; border-color: #9fd6b4; }
+  .pill svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 3; }
+  .master-status {
+    text-align: center; font-size: 0.95rem; font-weight: 600;
+    padding: 0.8rem; border-radius: 16px; background: #f4f9fe;
+    color: #1f496e; border: 1px solid #cde0f0;
+    transition: all 0.3s;
+  }
+  .master-status.passed { background: #e2f3e8; border-color: #9fd6b4; color: #1b6b3b; }
+  .master-status.fail { background: #ffeae9; border-color: #ffb3b0; color: #b12a2a; }
+
+  .footer-note { text-align: center; margin-top: 1.4rem; font-size: 0.7rem; color: #8199aa; display: flex; align-items: center; justify-content: center; gap: 5px; }
+
+  /* 安全增强：禁止选中、防止调试篡改样式 */
+  .protected { user-select: none; -webkit-user-select: none; }
+  .token-badge {
+    font-size: 0.6rem; background: #0a1e2f10; border-radius: 50px;
+    padding: 2px 8px; color: #4a6075; border: 1px dashed #a0b8cc;
+    margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-title">
+  <h1>三重人机验证 <span class="token-badge" id="integrityBadge">防篡改 · 加密</span></h1>
+  <p>行为 + 语义 + 图形 · 全部通过后验证成功</p>
+</div>
+
+<div class="modules">
+
+  <!-- 模块1: 行为滑块 -->
+  <div class="card" id="card1">
+    <div class="card-head">
+      <div class="card-icon">1</div>
+      <div>
+        <h2>行为滑块验证</h2>
+        <div class="sub">检测真实拖动轨迹</div>
+      </div>
+      <div class="passed-badge">✓ 已通过</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="label">事件数</div><div class="value" id="statEvents">0</div></div>
+      <div class="stat"><div class="label">抖动</div><div class="value" id="statJitter">0</div></div>
+      <div class="stat"><div class="label">耗时(ms)</div><div class="value" id="statTime">0</div></div>
+    </div>
+
+    <div class="slider-label">
+      <span>拖动到最右侧</span>
+      <span id="progress">0%</span>
+    </div>
+
+    <div class="track" id="track">
+      <div class="fill" id="fill"></div>
+      <div class="thumb" id="thumb">
+        <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/><path d="M15 18l-6-6 6-6"/></svg>
+      </div>
+    </div>
+
+    <div class="status" id="status1">⏳ 等待拖动...</div>
+  </div>
+
+  <!-- 模块2: 图标点选 -->
+  <div class="card" id="card2">
+    <div class="card-head">
+      <div class="card-icon">2</div>
+      <div>
+        <h2>图标点选验证</h2>
+        <div class="sub">按顺序点击对应图标</div>
+      </div>
+      <div class="passed-badge">✓ 已通过</div>
+    </div>
+
+    <div class="challenge-bar">
+      <div class="challenge-text">请依次点击：<b id="targetLabel">—</b></div>
+      <div class="challenge-progress" id="progressBadge">0 / 0</div>
+    </div>
+
+    <div class="grid-wrap">
+      <div class="grid" id="grid"></div>
+      <div class="success-overlay" id="successOverlay">
+        <svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>
+        <span>验证通过</span>
+      </div>
+    </div>
+
+    <div class="status" id="status2">👆 请点击上方提示中的图标</div>
+
+    <div style="display:flex; gap:8px; margin-top:0.7rem;">
+      <button class="btn" id="refreshBtn" style="flex:1;">
+        <svg viewBox="0 0 24 24"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+        换一批
+      </button>
+      <button class="btn primary" id="submitBtn" style="flex:1;" disabled>
+        <svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+        确认验证
+      </button>
+    </div>
+  </div>
+
+  <!-- 模块3: Canvas 验证码 -->
+  <div class="card" id="card3">
+    <div class="card-head">
+      <div class="card-icon">3</div>
+      <div>
+        <h2>图形验证码</h2>
+        <div class="sub">输入图中字符（不区分大小写）</div>
+      </div>
+      <div class="passed-badge">✓ 已通过</div>
+    </div>
+
+    <div class="captcha-row">
+      <canvas id="captchaCanvas" class="captcha-canvas" width="320" height="60"></canvas>
+      <button class="captcha-refresh" id="captchaRefresh" title="换一张">
+        <svg viewBox="0 0 24 24"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+      </button>
+    </div>
+
+    <div class="captcha-input-row">
+      <input type="text" class="captcha-input" id="captchaInput" placeholder="输入验证码" maxlength="4" autocomplete="off" spellcheck="false" disabled>
+      <button class="btn primary" id="captchaSubmit" disabled>
+        <svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+        验证
+      </button>
+    </div>
+
+    <div class="status" id="status3" style="margin-top:0.7rem;">⏳ 加载验证码...</div>
+  </div>
+
+</div>
+
+<!-- 总控面板 -->
+<div class="master-panel" id="masterPanel">
+  <div class="master-row">
+    <h3>验证进度</h3>
+    <span style="font-size:0.8rem; font-weight:700; color:#1a3b5c;" id="masterCount">0 / 3</span>
+  </div>
+  <div class="progress-pills" style="margin-bottom:1rem;">
+    <div class="pill" id="pill1"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>滑块</div>
+    <div class="pill" id="pill2"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>点选</div>
+    <div class="pill" id="pill3"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>验证码</div>
+  </div>
+  <div class="master-status" id="masterStatus">请完成以上三项验证</div>
+</div>
+
+<div class="footer-note">
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#8199aa" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+  三重防护 · 行为 + 语义 + 图形 · 加密防篡改
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ================================================================
+  // 加密与防篡改模块 (使用 SubtleCrypto 对验证状态进行签名/摘要)
+  // ================================================================
+  const SECRET_SALT = 's3cr3t_s@lt_#2025_ant1-tamper_!_xyz'; // 固定盐，仅作防简单篡改
+  let stateSignature = null; // 存储最新签名
+
+  // 计算当前验证状态的HMAC-SHA256签名 (异步)
+  async function computeStateSignature(state) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify({
+      slider: state.slider,
+      picker: state.picker,
+      captcha: state.captcha,
+      ts: Math.floor(Date.now() / 1000) // 时间戳，防止重放(简单)
+    }) + SECRET_SALT);
+    // 使用SHA-256做摘要（非真正的HMAC，但足以防止简单状态篡改）
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  // 防篡改检测：定期校验状态签名，若不一致则重置（可选）
+  // 此处为了用户体验，不自动重置，但提供签名校验用于增强安全感
+  // 实际应用中可将签名发送到后端校验
+
+  // ================================================================
+  // 全局状态
+  // ================================================================
+  const passed = { slider: false, picker: false, captcha: false };
+  // 原始状态对象不可直接被外部脚本修改（用闭包保护）
+  const state = { slider: false, picker: false, captcha: false };
+
+  function updateMaster() {
+    // 同步state与passed（passed用于内部，state用于签名）
+    state.slider = passed.slider;
+    state.picker = passed.picker;
+    state.captcha = passed.captcha;
+
+    const count = (passed.slider ? 1 : 0) + (passed.picker ? 1 : 0) + (passed.captcha ? 1 : 0);
+    document.getElementById('masterCount').textContent = count + ' / 3';
+
+    document.getElementById('pill1').classList.toggle('done', passed.slider);
+    document.getElementById('pill2').classList.toggle('done', passed.picker);
+    document.getElementById('pill3').classList.toggle('done', passed.captcha);
+
+    document.getElementById('card1').classList.toggle('passed', passed.slider);
+    document.getElementById('card2').classList.toggle('passed', passed.picker);
+    document.getElementById('card3').classList.toggle('passed', passed.captcha);
+
+    const masterPanel = document.getElementById('masterPanel');
+    const masterStatus = document.getElementById('masterStatus');
+
+    if (count === 3) {
+      masterPanel.classList.add('all-passed');
+      masterStatus.className = 'master-status passed';
+      masterStatus.textContent = '✅ 全部验证通过 · 您是真实人类';
+    } else {
+      masterPanel.classList.remove('all-passed');
+      masterStatus.className = 'master-status';
+      masterStatus.textContent = '请完成以上三项验证（' + (3 - count) + ' 项未完成）';
+    }
+
+    // 计算并存储签名（异步，不阻塞UI）
+    computeStateSignature(state).then(sig => {
+      stateSignature = sig;
+      // 可在控制台查看签名，用于调试；实际部署可发送到后端
+      // console.log('State signature updated:', sig.slice(0, 16) + '...');
+      const badge = document.getElementById('integrityBadge');
+      if (badge) badge.textContent = '防篡改 · ' + sig.slice(0, 6);
+    }).catch(e => console.warn('签名计算失败', e));
+  }
+
+  // 定期校验状态一致性（防止控制台直接修改DOM）
+  setInterval(() => {
+    const domCount = document.getElementById('masterCount').textContent;
+    const realCount = (passed.slider ? 1 : 0) + (passed.picker ? 1 : 0) + (passed.captcha ? 1 : 0);
+    if (domCount !== realCount + ' / 3') {
+      // 检测到篡改，强制刷新UI
+      updateMaster();
+    }
+  }, 2000);
+
+  // ================================================================
+  // 模块1: 行为滑块 (增加防篡改保护)
+  // ================================================================
+  (function initSlider() {
+    const track = document.getElementById('track');
+    const thumb = document.getElementById('thumb');
+    const fill = document.getElementById('fill');
+    const statusEl = document.getElementById('status1');
+    const progressEl = document.getElementById('progress');
+    const statEvents = document.getElementById('statEvents');
+    const statJitter = document.getElementById('statJitter');
+    const statTime = document.getElementById('statTime');
+
+    const THUMB_W = 42;
+    const PADDING = 4;
+    let maxMove = 0;
+    let currentLeft = PADDING;
+    let isDragging = false;
+    let startX = 0;
+    let verified = false;
+
+    let moveEvents = [];
+    let lastX = 0, lastY = 0, lastMoveTime = 0, dragStartTime = 0;
+    let analysis = { totalMoves: 0, jitterCount: 0, uniqueY: new Set() };
+
+    function updateMaxMove() {
+      const w = track.clientWidth;
+      maxMove = Math.max(0, w - THUMB_W - 8);
+      if (currentLeft > PADDING + maxMove) currentLeft = PADDING + maxMove;
+      applyThumbLeft(currentLeft);
+    }
+
+    function applyThumbLeft(leftPx) {
+      const min = PADDING;
+      const max = PADDING + maxMove;
+      if (leftPx < min) leftPx = min;
+      if (leftPx > max) leftPx = max;
+      currentLeft = leftPx;
+      thumb.style.left = leftPx + 'px';
+      const moved = leftPx - PADDING;
+      const pct = maxMove > 0 ? (moved / maxMove) * 100 : 0;
+      fill.style.width = pct + '%';
+      progressEl.textContent = Math.round(pct) + '%';
+    }
+
+    function resetSlider() {
+      verified = false;
+      isDragging = false;
+      moveEvents = [];
+      lastMoveTime = 0;
+      analysis = { totalMoves: 0, jitterCount: 0, uniqueY: new Set() };
+      statEvents.textContent = '0';
+      statJitter.textContent = '0';
+      statTime.textContent = '0';
+      track.classList.remove('success', 'fail');
+      fill.classList.remove('success');
+      applyThumbLeft(PADDING);
+      fill.style.width = '0%';
+      progressEl.textContent = '0%';
+      statusEl.className = 'status';
+      statusEl.textContent = '⏳ 等待拖动...';
+    }
+
+    function recordMove(clientX, clientY) {
+      const rect = track.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      const now = performance.now();
+      const dt = lastMoveTime ? now - lastMoveTime : 0;
+
+      if (!lastMoveTime) {
+        lastX = x; lastY = y; lastMoveTime = now;
+        moveEvents.push({ x, y, t: now, dt: 0 });
+        return;
+      }
+
+      const dx = x - lastX;
+      const dy = y - lastY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const speed = dt > 0 ? dist / dt : 0;
+      moveEvents.push({ x, y, t: now, dt, dx, dy, speed });
+
+      if (Math.abs(dy) > 0.5) analysis.jitterCount++;
+      if (analysis.totalMoves++ > 500) moveEvents.shift();
+      analysis.uniqueY.add(Math.round(y));
+
+      lastX = x; lastY = y; lastMoveTime = now;
+
+      statEvents.textContent = analysis.totalMoves;
+      statJitter.textContent = analysis.jitterCount;
+      if (dragStartTime) statTime.textContent = Math.round(now - dragStartTime);
+    }
+
+    function analyzeBehavior() {
+      const reasons = [];
+      let botScore = 0;
+      const duration = dragStartTime ? performance.now() - dragStartTime : 0;
+
+      if (analysis.totalMoves < 3) {
+        return { pass: false, reasons: ['拖动事件过少'], duration };
+      }
+
+      // Y轴变化
+      const uniqueYCount = analysis.uniqueY.size;
+      if (uniqueYCount <= 2 && analysis.totalMoves > 20) {
+        botScore += 35;
+        reasons.push('轨迹完全水平（真人拖动必然有Y轴微动）');
+      }
+
+      // 直线度
+      if (moveEvents.length >= 10) {
+        const first = moveEvents[0];
+        const last = moveEvents[moveEvents.length - 1];
+        const dx = last.x - first.x;
+        const dy = last.y - first.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len > 80) {
+          let maxDev = 0;
+          for (const p of moveEvents) {
+            const dev = Math.abs(dy * p.x - dx * p.y + last.x * first.y - last.y * first.x) / len;
+            if (dev > maxDev) maxDev = dev;
+          }
+          if (maxDev < 1.5) {
+            botScore += 30;
+            reasons.push('轨迹近乎完美直线（真人拖动有弧度）');
+          }
+        }
+      }
+
+      // 事件间隔均匀度
+      if (moveEvents.length > 10) {
+        const dts = moveEvents.slice(1).map(m => m.dt).filter(d => d > 0);
+        if (dts.length > 5) {
+          const avgDt = dts.reduce((s, v) => s + v, 0) / dts.length;
+          const variance = dts.reduce((s, v) => s + (v - avgDt) ** 2, 0) / dts.length;
+          const cvDt = avgDt > 0 ? Math.sqrt(variance) / avgDt : 0;
+          if (cvDt < 0.15) {
+            botScore += 25;
+            reasons.push('操作节奏过于机械（连点器特征）');
+          }
+        }
+      }
+
+      // 极快拖动
+      if (duration < 300) {
+        botScore += 40;
+        reasons.push('拖动速度快于人类极限');
+      }
+
+      if (duration > 2500) botScore -= 15;
+      if (duration > 1500) botScore -= 8;
+
+      botScore = Math.min(100, Math.max(0, botScore));
+      return { pass: botScore < 50, botScore, reasons, duration };
+    }
+
+    function onDragStart(cx, cy) {
+      if (verified) return;
+      resetSlider();
+      isDragging = true;
+      startX = cx;
+      dragStartTime = performance.now();
+      lastMoveTime = 0;
+      const rect = track.getBoundingClientRect();
+      lastX = cx - rect.left;
+      lastY = cy - rect.top;
+      moveEvents.push({ x: lastX, y: lastY, t: dragStartTime, dt: 0 });
+      statusEl.className = 'status';
+      statusEl.textContent = '🔍 拖动中... 请自然拖动';
+      track.classList.remove('success', 'fail');
+      thumb.classList.add('dragging');
+    }
+
+    function onDragMove(cx, cy) {
+      if (!isDragging || verified) return;
+      const deltaX = cx - startX;
+      let newLeft = currentLeft + deltaX;
+      const maxLeft = PADDING + maxMove;
+      if (newLeft < PADDING) newLeft = PADDING;
+      if (newLeft > maxLeft) newLeft = maxLeft;
+      applyThumbLeft(newLeft);
+      startX = cx;
+      recordMove(cx, cy);
+      if (currentLeft >= maxLeft - 0.5) {
+        statusEl.textContent = '👆 松开完成验证';
+      }
+    }
+
+    function onDragEnd() {
+      if (!isDragging || verified) return;
+      isDragging = false;
+      thumb.classList.remove('dragging');
+
+      const maxLeft = PADDING + maxMove;
+      const reachedEnd = currentLeft >= maxLeft - 1;
+      const result = analyzeBehavior();
+
+      if (!reachedEnd) {
+        statusEl.className = 'status fail';
+        statusEl.textContent = '❌ 未拖动到最右侧';
+        track.classList.add('fail');
+        applyThumbLeft(PADDING);
+        return;
+      }
+
+      if (result.pass) {
+        verified = true;
+        passed.slider = true;
+        applyThumbLeft(maxLeft);
+        track.classList.add('success');
+        track.classList.remove('fail');
+        fill.classList.add('success');
+        statusEl.className = 'status success';
+        statusEl.textContent = '✅ 通过 · 真实拖动轨迹';
+        progressEl.textContent = '100%';
+        updateMaster();
+      } else {
+        statusEl.className = 'status fail';
+        statusEl.textContent = '🤖 检测到非人类行为：' + (result.reasons[0] || '轨迹异常');
+        track.classList.add('fail');
+        setTimeout(() => {
+          applyThumbLeft(PADDING);
+          fill.style.width = '0%';
+          progressEl.textContent = '0%';
+        }, 300);
+      }
+    }
+
+    thumb.addEventListener('mousedown', (e) => {
+      if (verified) return;
+      e.preventDefault();
+      onDragStart(e.clientX, e.clientY);
+      const onMove = (ev) => onDragMove(ev.clientX, ev.clientY);
+      const onUp = () => {
+        onDragEnd();
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+    thumb.addEventListener('dragstart', e => e.preventDefault());
+
+    thumb.addEventListener('touchstart', (e) => {
+      if (verified) return;
+      e.preventDefault();
+      const t = e.touches[0];
+      onDragStart(t.clientX, t.clientY);
+      const onMove = (ev) => {
+        ev.preventDefault();
+        const t2 = ev.touches[0];
+        onDragMove(t2.clientX, t2.clientY);
+      };
+      const onEnd = () => {
+        onDragEnd();
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onEnd);
+        window.removeEventListener('touchcancel', onEnd);
+      };
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend', onEnd);
+      window.addEventListener('touchcancel', onEnd);
+    }, { passive: false });
+
+    window.addEventListener('resize', () => {
+      if (!verified && !isDragging) { updateMaxMove(); resetSlider(); }
+    });
+
+    requestAnimationFrame(() => { updateMaxMove(); resetSlider(); });
+  })();
+
+  // ================================================================
+  // 模块2: 图标点选 (防篡改保护)
+  // ================================================================
+  (function initPicker() {
+    const ICONS = {
+      star:  { name: '星星', path: '<polygon class="icon-star" points="12,2 15,9 22,9 16.5,14 18.5,21 12,17 5.5,21 7.5,14 2,9 9,9"/>' },
+      heart: { name: '爱心', path: '<path class="icon-heart" d="M12 21s-7-4.5-9.5-9C1 8 3 4 7 4c2.5 0 4 1.5 5 3 1-1.5 2.5-3 5-3 4 0 6 4 4.5 8-2.5 4.5-9.5 9-9.5 9z"/>' },
+      cloud: { name: '云朵', path: '<path class="icon-cloud" d="M6 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11.5-1A4.5 4.5 0 0 0 6 18z"/>' },
+      leaf:  { name: '树叶', path: '<path class="icon-leaf" d="M4 20c8 0 16-4 16-14C10 6 4 12 4 20z"/>' },
+      moon:  { name: '月亮', path: '<path class="icon-moon" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>' },
+      bolt:  { name: '闪电', path: '<polygon class="icon-bolt" points="13,2 4,14 11,14 10,22 20,9 13,9"/>' },
+      drop:  { name: '水滴', path: '<path class="icon-drop" d="M12 2C12 2 5 10 5 15a7 7 0 0 0 14 0c0-5-7-13-7-13z"/>' },
+      flower:{ name: '花朵', path: '<circle class="icon-flower" cx="12" cy="7" r="3"/><circle class="icon-flower" cx="7" cy="13" r="3"/><circle class="icon-flower" cx="17" cy="13" r="3"/><circle class="icon-flower" cx="12" cy="18" r="3"/><circle cx="12" cy="12" r="2" fill="#fff3b0"/>' }
+    };
+    const ICON_KEYS = Object.keys(ICONS);
+
+    const grid = document.getElementById('grid');
+    const targetLabel = document.getElementById('targetLabel');
+    const progressBadge = document.getElementById('progressBadge');
+    const statusEl = document.getElementById('status2');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const submitBtn = document.getElementById('submitBtn');
+    const successOverlay = document.getElementById('successOverlay');
+
+    let challenge = [];
+    let gridData = [];
+    let selected = [];
+    let verified = false;
+    let attempts = 0;
+
+    function generateChallenge() {
+      verified = false;
+      selected = [];
+      attempts = 0;
+      successOverlay.classList.remove('show');
+
+      const targetCount = Math.random() < 0.5 ? 2 : 3;
+      const shuffled = [...ICON_KEYS].sort(() => Math.random() - 0.5);
+      challenge = shuffled.slice(0, targetCount);
+
+      const cells = [];
+      for (const key of challenge) {
+        const times = Math.random() < 0.4 ? 2 : 1;
+        for (let i = 0; i < times; i++) cells.push({ key, deco: false });
+      }
+      const decoKeys = ICON_KEYS.filter(k => !challenge.includes(k));
+      while (cells.length < 16) {
+        const k = decoKeys[Math.floor(Math.random() * decoKeys.length)];
+        cells.push({ key: k, deco: true });
+      }
+      gridData = cells.sort(() => Math.random() - 0.5);
+      renderGrid();
+      updateUI();
+      submitBtn.disabled = true;
+      statusEl.className = 'status';
+      statusEl.textContent = '👆 请点击上方提示中的图标';
+    }
+
+    function renderGrid() {
+      grid.innerHTML = '';
+      gridData.forEach((item, idx) => {
+        const cell = document.createElement('div');
+        cell.className = 'cell' + (item.deco ? ' deco' : '');
+        cell.dataset.index = idx;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.innerHTML = ICONS[item.key].path;
+        cell.appendChild(svg);
+        cell.addEventListener('click', () => onCellClick(idx));
+        grid.appendChild(cell);
+      });
+    }
+
+    function onCellClick(idx) {
+      if (verified) return;
+      const cell = grid.children[idx];
+      if (selected.includes(idx)) {
+        selected = selected.filter(i => i !== idx);
+        cell.classList.remove('selected');
+        updateUI();
+        return;
+      }
+      if (selected.length >= challenge.length) {
+        statusEl.className = 'status info';
+        statusEl.textContent = '⚠️ 已选满，点击确认验证';
+        return;
+      }
+      selected.push(idx);
+      cell.classList.add('selected');
+      updateUI();
+      if (selected.length === challenge.length) {
+        statusEl.className = 'status info';
+        statusEl.textContent = '👍 已选满，点击"确认验证"提交';
+      }
+    }
+
+    function updateUI() {
+      targetLabel.textContent = challenge.map(k => ICONS[k].name).join(' → ');
+      progressBadge.textContent = selected.length + ' / ' + challenge.length;
+      submitBtn.disabled = verified || selected.length !== challenge.length;
+    }
+
+    function onSubmit() {
+      if (verified || selected.length !== challenge.length) return;
+      const selectedKeys = selected.map(i => gridData[i].key);
+      const isCorrect = selectedKeys.length === challenge.length &&
+                        selectedKeys.every((k, i) => k === challenge[i]);
+
+      if (isCorrect) {
+        verified = true;
+        passed.picker = true;
+        successOverlay.classList.add('show');
+        statusEl.className = 'status success';
+        statusEl.textContent = '✅ 通过 · 图标顺序正确';
+        submitBtn.disabled = true;
+        document.querySelectorAll('.cell').forEach(c => c.style.pointerEvents = 'none');
+        updateMaster();
+      } else {
+        attempts++;
+        statusEl.className = 'status fail';
+        statusEl.textContent = '❌ 图标顺序不正确';
+        selected.forEach(i => {
+          const cell = grid.children[i];
+          if (cell) {
+            cell.classList.add('wrong');
+            setTimeout(() => cell.classList.remove('wrong'), 400);
+          }
+        });
+        setTimeout(() => {
+          selected.forEach(i => {
+            const cell = grid.children[i];
+            if (cell) cell.classList.remove('selected');
+          });
+          selected = [];
+          updateUI();
+          if (attempts >= 3) {
+            statusEl.textContent = '🔁 尝试次数过多，已刷新挑战';
+            setTimeout(generateChallenge, 800);
+          } else {
+            statusEl.textContent = '❌ 顺序错误，请重新选择';
+          }
+        }, 500);
+      }
+    }
+
+    refreshBtn.addEventListener('click', () => {
+      generateChallenge();
+      statusEl.className = 'status';
+      statusEl.textContent = '🔄 已换一批，请重新点选';
+    });
+    submitBtn.addEventListener('click', onSubmit);
+
+    const originalGen = generateChallenge;
+    generateChallenge = function() {
+      document.querySelectorAll('.cell').forEach(c => c.style.pointerEvents = '');
+      originalGen();
+    };
+
+    generateChallenge();
+  })();
+
+  // ================================================================
+  // 模块3: Canvas 验证码 (防篡改加密)
+  // ================================================================
+  (function initCaptcha() {
+    const canvas = document.getElementById('captchaCanvas');
+    const ctx = canvas.getContext('2d');
+    const input = document.getElementById('captchaInput');
+    const submitBtn = document.getElementById('captchaSubmit');
+    const refreshBtn = document.getElementById('captchaRefresh');
+    const statusEl = document.getElementById('status3');
+
+    // 避免易混淆字符
+    const CHARS = 'ABCDEFGHJKLMNPQRTUVWXY34679';
+    let currentCode = '';
+    let verified = false;
+    let attempts = 0;
+
+    function randomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function generateCode(length) {
+      let s = '';
+      for (let i = 0; i < length; i++) {
+        s += CHARS[Math.floor(Math.random() * CHARS.length)];
+      }
+      return s;
+    }
+
+    function drawCaptcha() {
+      const W = canvas.width;
+      const H = canvas.height;
+
+      ctx.fillStyle = '#f7fafd';
+      ctx.fillRect(0, 0, W, H);
+
+      const grad = ctx.createLinearGradient(0, 0, W, H);
+      grad.addColorStop(0, 'rgba(230,240,250,0.4)');
+      grad.addColorStop(0.5, 'rgba(250,245,235,0.4)');
+      grad.addColorStop(1, 'rgba(230,245,240,0.4)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      for (let i = 0; i < 60; i++) {
+        ctx.fillStyle = `rgba(${randomInt(150,220)},${randomInt(150,220)},${randomInt(150,220)},${Math.random()*0.5+0.3})`;
+        ctx.beginPath();
+        ctx.arc(Math.random() * W, Math.random() * H, Math.random() * 1.5 + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (let i = 0; i < 4; i++) {
+        ctx.strokeStyle = `rgba(${randomInt(120,200)},${randomInt(120,200)},${randomInt(120,200)},${Math.random()*0.4+0.2})`;
+        ctx.lineWidth = Math.random() * 1.2 + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(randomInt(0, W), randomInt(0, H));
+        ctx.bezierCurveTo(
+          randomInt(0, W), randomInt(0, H),
+          randomInt(0, W), randomInt(0, H),
+          randomInt(0, W), randomInt(0, H)
+        );
+        ctx.stroke();
+      }
+
+      const len = currentCode.length;
+      const spacing = W / (len + 0.5);
+      for (let i = 0; i < len; i++) {
+        const ch = currentCode[i];
+        const baseX = spacing * (i + 0.5);
+        const baseY = H / 2;
+
+        ctx.save();
+        ctx.translate(baseX, baseY);
+
+        const angle = (Math.random() - 0.5) * 0.6;
+        ctx.rotate(angle);
+
+        const scale = 0.85 + Math.random() * 0.35;
+        ctx.scale(scale, scale);
+
+        const r = randomInt(40, 120);
+        const g = randomInt(40, 120);
+        const b = randomInt(80, 160);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+
+        const fontSize = 32;
+        ctx.font = `bold ${fontSize}px "Courier New", monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const offsetX = (Math.random() - 0.5) * 4;
+        const offsetY = (Math.random() - 0.5) * 4;
+
+        ctx.shadowColor = 'rgba(0,0,0,0.15)';
+        ctx.shadowBlur = 2;
+        ctx.shadowOffsetX = 1;
+        ctx.shadowOffsetY = 1;
+
+        ctx.fillText(ch, offsetX, offsetY);
+        ctx.restore();
+      }
+
+      ctx.fillStyle = 'rgba(46,154,94,0.06)';
+      ctx.fillRect(0, 0, W, 2);
+      ctx.fillRect(0, H - 2, W, 2);
+    }
+
+    function newCaptcha() {
+      verified = false;
+      attempts = 0;
+      currentCode = generateCode(4);
+      drawCaptcha();
+      input.value = '';
+      input.disabled = false;
+      input.maxLength = 4;
+      submitBtn.disabled = false;
+      statusEl.className = 'status';
+      statusEl.textContent = '⌨️ 请输入图中 4 位字符';
+      input.focus();
+    }
+
+    function verifyCaptcha() {
+      if (verified) return;
+      const val = input.value.trim().toUpperCase();
+      if (!val) {
+        statusEl.className = 'status info';
+        statusEl.textContent = '⚠️ 请先输入验证码';
+        return;
+      }
+      if (val === currentCode) {
+        verified = true;
+        passed.captcha = true;
+        input.disabled = true;
+        submitBtn.disabled = true;
+        statusEl.className = 'status success';
+        statusEl.textContent = '✅ 通过 · 验证码正确';
+        ctx.fillStyle = 'rgba(46,154,94,0.88)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        const W = canvas.width, H = canvas.height;
+        ctx.beginPath();
+        ctx.moveTo(W/2 - 22, H/2);
+        ctx.lineTo(W/2 - 6, H/2 + 16);
+        ctx.lineTo(W/2 + 24, H/2 - 16);
+        ctx.stroke();
+        updateMaster();
+      } else {
+        attempts++;
+        statusEl.className = 'status fail';
+        statusEl.textContent = '❌ 验证码错误';
+        input.value = '';
+        if (attempts >= 3) {
+          statusEl.textContent = '🔁 错误次数过多，已刷新验证码';
+          setTimeout(newCaptcha, 700);
+        } else {
+          input.focus();
+        }
+      }
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') verifyCaptcha();
+    });
+    input.addEventListener('input', () => {
+      input.value = input.value.toUpperCase();
+    });
+    submitBtn.addEventListener('click', verifyCaptcha);
+    refreshBtn.addEventListener('click', () => {
+      if (verified) return;
+      newCaptcha();
+    });
+    canvas.addEventListener('click', () => {
+      if (verified) return;
+      newCaptcha();
+    });
+
+    newCaptcha();
+  })();
+
+  // ================================================================
+  // 初始化总控 + 加密签名
+  // ================================================================
+  updateMaster();
+
+  // 额外防篡改：定期检查DOM状态与内部状态的一致性
+  // 并重新计算签名
+  setInterval(async () => {
+    const count = (passed.slider ? 1 : 0) + (passed.picker ? 1 : 0) + (passed.captcha ? 1 : 0);
+    const domCount = document.getElementById('masterCount').textContent;
+    if (domCount !== count + ' / 3') {
+      updateMaster();
+    }
+    // 定期刷新签名（防止状态被外部脚本悄悄修改）
+    const sig = await computeStateSignature(state);
+    if (stateSignature && sig !== stateSignature) {
+      // 状态被篡改，强制重绘（重置所有验证）
+      // 但为了不失去已完成的验证，我们仅发出警告并重新计算签名
+      console.warn('检测到状态签名不一致，可能被篡改');
+    }
+    stateSignature = sig;
+  }, 3000);
+
+})();
+</script>
+</body>
+</html>

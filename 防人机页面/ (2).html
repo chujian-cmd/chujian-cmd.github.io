@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>人机验证 · 点选验证</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
+  body {
+    background: linear-gradient(145deg, #f0f4f9 0%, #e2ecf5 100%);
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem;
+  }
+  .card {
+    background: rgba(255,255,255,0.92); backdrop-filter: blur(10px);
+    width: 100%; max-width: 500px; border-radius: 32px;
+    padding: 1.8rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.7);
+  }
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 1.2rem; }
+  .shield {
+    background: #1a3b5c; width: 46px; height: 46px; border-radius: 16px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .shield svg { width: 24px; height: 24px; fill: none; stroke: #c7e0ff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .header h1 { font-size: 1.35rem; font-weight: 700; color: #0a1e2f; }
+  .header p { font-size: 0.8rem; color: #4b5e6e; margin-top: 2px; }
+
+  .challenge-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #1a3b5c; border-radius: 16px; padding: 0.9rem 1.1rem; margin-bottom: 1rem;
+    color: white; box-shadow: 0 8px 20px -6px rgba(26,59,92,0.5);
+  }
+  .challenge-text { font-size: 0.9rem; font-weight: 500; }
+  .challenge-text b { color: #7fd1ff; font-size: 1rem; }
+  .challenge-progress {
+    font-size: 0.8rem; background: rgba(255,255,255,0.15); padding: 4px 12px;
+    border-radius: 50px; font-variant-numeric: tabular-nums; font-weight: 600;
+  }
+
+  .grid-wrap {
+    position: relative; border-radius: 20px; overflow: hidden;
+    box-shadow: 0 8px 24px -8px rgba(0,0,0,0.2); margin-bottom: 1rem;
+    background: #dce6f0;
+  }
+  .grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
+    padding: 4px; background: #c2d2e2;
+  }
+  .cell {
+    aspect-ratio: 1; background: #eaf1f8; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: transform 0.12s, box-shadow 0.12s, background 0.12s;
+    user-select: none; -webkit-user-select: none;
+    border: 2px solid transparent;
+  }
+  .cell:hover { background: #dbe8f5; }
+  .cell:active { transform: scale(0.94); }
+
+  .cell svg { width: 62%; height: 62%; pointer-events: none; }
+
+  /* 图标配色 */
+  .icon-star { fill: #f5b942; }
+  .icon-heart { fill: #f06a6a; }
+  .icon-cloud { fill: #7fc4e8; }
+  .icon-leaf { fill: #6bc98a; }
+  .icon-moon { fill: #8a9bd6; }
+  .icon-bolt { fill: #ffd45c; }
+  .icon-drop { fill: #6ab8f0; }
+  .icon-flower { fill: #e88ac2; }
+
+  /* 选中状态 */
+  .cell.selected {
+    border-color: #2e9a5e; background: #e2f3e8;
+    box-shadow: inset 0 0 0 2px #2e9a5e, 0 4px 12px -4px rgba(46,154,94,0.4);
+  }
+  .cell.selected::after {
+    content: ''; position: absolute; top: 4px; right: 4px;
+    width: 18px; height: 18px; background: #2e9a5e; border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12l5 5L20 7'/></svg>");
+    background-size: 12px; background-repeat: no-repeat; background-position: center;
+    animation: pop 0.2s ease;
+  }
+  @keyframes pop { 0% { transform: scale(0); } 70% { transform: scale(1.2); } 100% { transform: scale(1); } }
+
+  /* 错误闪烁 */
+  .cell.wrong { border-color: #e05a5a; background: #ffeae9; animation: shake 0.4s; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+  /* 干扰图标（低透明度，增加识别难度但保留可用性） */
+  .cell.deco svg { opacity: 0.55; }
+
+  .status {
+    text-align: center; font-size: 0.88rem; font-weight: 500;
+    padding: 0.7rem 1rem; border-radius: 50px; background: #f4f9fe;
+    color: #1f496e; border: 1px solid #cde0f0; min-height: 2.6rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.25s; margin-bottom: 1rem;
+  }
+  .status.success { background: #e2f3e8; border-color: #9fd6b4; color: #1b6b3b; }
+  .status.fail { background: #ffeae9; border-color: #ffb3b0; color: #b12a2a; }
+  .status.info { background: #fff6e0; border-color: #ffd98a; color: #8a5a00; }
+
+  .btn-row { display: flex; gap: 10px; }
+  .btn {
+    flex: 1; padding: 0.8rem; border-radius: 50px; background: white;
+    border: 1px solid #c1d4e8; font-weight: 600; font-size: 0.88rem;
+    color: #1e3c59; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; gap: 6px; transition: all 0.2s;
+  }
+  .btn:hover { background: #f2f9ff; border-color: #a5c0da; }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  .btn.primary { background: #1a3b5c; color: white; border-color: #1a3b5c; }
+  .btn.primary:hover { background: #234e75; }
+  .btn.primary:disabled { background: #6b8aa5; border-color: #6b8aa5; }
+
+  .footer { text-align: center; margin-top: 1.1rem; font-size: 0.7rem; color: #8199aa; display: flex; align-items: center; justify-content: center; gap: 5px; }
+
+  /* 成功遮罩 */
+  .success-overlay {
+    position: absolute; inset: 0; background: rgba(46,154,94,0.92);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: white; gap: 12px; opacity: 0; pointer-events: none;
+    transition: opacity 0.3s; border-radius: 20px; z-index: 10;
+  }
+  .success-overlay.show { opacity: 1; pointer-events: auto; }
+  .success-overlay svg { width: 56px; height: 56px; stroke: white; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; animation: popBig 0.4s ease; }
+  .success-overlay span { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.5px; }
+  @keyframes popBig { 0% { transform: scale(0); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }
+</style>
+</head>
+<body>
+<div class="card no-select">
+  <div class="header">
+    <div class="shield">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3L4 7v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V7l-8-4z"/>
+        <path d="M8 12l2.5 2.5L16 9"/>
+      </svg>
+    </div>
+    <div>
+      <h1>点选验证</h1>
+      <p>请按照提示点击对应图标</p>
+    </div>
+  </div>
+
+  <!-- 挑战目标 -->
+  <div class="challenge-bar">
+    <div class="challenge-text">请依次点击：<b id="targetLabel">—</b></div>
+    <div class="challenge-progress" id="progressBadge">0 / 0</div>
+  </div>
+
+  <!-- 图标网格 -->
+  <div class="grid-wrap">
+    <div class="grid" id="grid"></div>
+    <div class="success-overlay" id="successOverlay">
+      <svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>
+      <span>验证通过</span>
+    </div>
+  </div>
+
+  <div class="status" id="status">👆 请点击上方提示中的图标</div>
+
+  <div class="btn-row">
+    <button class="btn" id="refreshBtn">
+      <svg viewBox="0 0 24 24"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+      换一批
+    </button>
+    <button class="btn primary" id="submitBtn" disabled>
+      <svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+      确认验证
+    </button>
+  </div>
+
+  <div class="footer">
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#8199aa" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    语义识别 · 点击验证
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ============ 图标库 ============
+  // 每个图标有 name(中文名) 和 svg 路径 (viewBox 0 0 24 24)
+  const ICONS = {
+    star: {
+      name: '星星',
+      path: '<polygon class="icon-star" points="12,2 15,9 22,9 16.5,14 18.5,21 12,17 5.5,21 7.5,14 2,9 9,9"/>'
+    },
+    heart: {
+      name: '爱心',
+      path: '<path class="icon-heart" d="M12 21s-7-4.5-9.5-9C1 8 3 4 7 4c2.5 0 4 1.5 5 3 1-1.5 2.5-3 5-3 4 0 6 4 4.5 8-2.5 4.5-9.5 9-9.5 9z"/>'
+    },
+    cloud: {
+      name: '云朵',
+      path: '<path class="icon-cloud" d="M6 18h11a4 4 0 0 0 0-8 6 6 0 0 0-11.5-1A4.5 4.5 0 0 0 6 18z"/>'
+    },
+    leaf: {
+      name: '树叶',
+      path: '<path class="icon-leaf" d="M4 20c8 0 16-4 16-14C10 6 4 12 4 20z"/><path class="icon-leaf" d="M4 20C8 16 12 12 18 8" stroke="white" stroke-width="1" fill="none"/>'
+    },
+    moon: {
+      name: '月亮',
+      path: '<path class="icon-moon" d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>'
+    },
+    bolt: {
+      name: '闪电',
+      path: '<polygon class="icon-bolt" points="13,2 4,14 11,14 10,22 20,9 13,9"/>'
+    },
+    drop: {
+      name: '水滴',
+      path: '<path class="icon-drop" d="M12 2C12 2 5 10 5 15a7 7 0 0 0 14 0c0-5-7-13-7-13z"/>'
+    },
+    flower: {
+      name: '花朵',
+      path: '<circle class="icon-flower" cx="12" cy="7" r="3"/><circle class="icon-flower" cx="7" cy="13" r="3"/><circle class="icon-flower" cx="17" cy="13" r="3"/><circle class="icon-flower" cx="12" cy="18" r="3"/><circle cx="12" cy="12" r="2" fill="#fff3b0"/>'
+    }
+  };
+
+  const ICON_KEYS = Object.keys(ICONS);
+
+  // ============ DOM ============
+  const grid = document.getElementById('grid');
+  const targetLabel = document.getElementById('targetLabel');
+  const progressBadge = document.getElementById('progressBadge');
+  const statusEl = document.getElementById('status');
+  const refreshBtn = document.getElementById('refreshBtn');
+  const submitBtn = document.getElementById('submitBtn');
+  const successOverlay = document.getElementById('successOverlay');
+
+  // ============ 状态 ============
+  let challenge = [];       // 需要点击的图标 key 序列（如 ['star','heart']）
+  let gridData = [];        // 16 个格子的数据 [{key, deco}]
+  let selected = [];        // 已选中的格子索引
+  let verified = false;
+  let attempts = 0;         // 尝试次数（防爆破）
+  const MAX_ATTEMPTS = 5;   // 超过后刷新挑战
+
+  // ============ 生成挑战 ============
+  function generateChallenge() {
+    verified = false;
+    selected = [];
+    attempts = 0;
+    successOverlay.classList.remove('show');
+
+    // 1. 随机选 2~3 个不同图标作为挑战目标
+    const targetCount = Math.random() < 0.5 ? 2 : 3;
+    const shuffledIcons = [...ICON_KEYS].sort(() => Math.random() - 0.5);
+    challenge = shuffledIcons.slice(0, targetCount);
+
+    // 2. 构建 16 格网格：先放入所有挑战目标，再填充干扰
+    gridData = [];
+    // 挑战目标出现多次（每个目标出现 1~2 次，增加干扰）
+    const cells = [];
+    for (const key of challenge) {
+      const times = Math.random() < 0.4 ? 2 : 1; // 有的目标出现2次
+      for (let i = 0; i < times; i++) {
+        cells.push({ key, deco: false });
+      }
+    }
+    // 填充干扰图标（未在挑战中的图标）
+    const decoKeys = ICON_KEYS.filter(k => !challenge.includes(k));
+    while (cells.length < 16) {
+      const k = decoKeys[Math.floor(Math.random() * decoKeys.length)];
+      cells.push({ key: k, deco: true });
+    }
+    // 打乱
+    gridData = cells.sort(() => Math.random() - 0.5);
+
+    // 3. 渲染
+    renderGrid();
+    updateUI();
+  }
+
+  function renderGrid() {
+    grid.innerHTML = '';
+    gridData.forEach((item, idx) => {
+      const cell = document.createElement('div');
+      cell.className = 'cell' + (item.deco ? ' deco' : '');
+      cell.dataset.index = idx;
+      cell.dataset.key = item.key;
+      // SVG 图标
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.innerHTML = ICONS[item.key].path;
+      cell.appendChild(svg);
+      cell.addEventListener('click', () => onCellClick(idx, cell));
+      grid.appendChild(cell);
+    });
+  }
+
+  // ============ 点击格子 ============
+  function onCellClick(idx, cell) {
+    if (verified) return;
+    // 已选中则取消
+    if (selected.includes(idx)) {
+      selected = selected.filter(i => i !== idx);
+      cell.classList.remove('selected');
+      updateUI();
+      return;
+    }
+
+    // 检查是否还能继续选
+    if (selected.length >= challenge.length) {
+      statusEl.className = 'status info';
+      statusEl.textContent = '⚠️ 已选满，请先取消或点击确认';
+      return;
+    }
+
+    // 添加到选中
+    selected.push(idx);
+    cell.classList.add('selected');
+    updateUI();
+
+    // 如果选满了，自动提示确认
+    if (selected.length === challenge.length) {
+      statusEl.className = 'status info';
+      statusEl.textContent = '👍 已选满，点击"确认验证"提交';
+    }
+  }
+
+  // ============ 更新界面 ============
+  function updateUI() {
+    // 目标提示
+    const targetNames = challenge.map(k => ICONS[k].name).join(' → ');
+    targetLabel.textContent = targetNames;
+    // 进度
+    progressBadge.textContent = selected.length + ' / ' + challenge.length;
+    // 提交按钮
+    submitBtn.disabled = verified || selected.length !== challenge.length;
+
+    // 初始状态提示
+    if (selected.length === 0 && !verified) {
+      statusEl.className = 'status';
+      statusEl.textContent = '👆 请点击上方提示中的图标';
+    }
+  }
+
+  // ============ 验证提交 ============
+  function onSubmit() {
+    if (verified || selected.length !== challenge.length) return;
+
+    // 获取选中的图标 key 序列
+    const selectedKeys = selected.map(i => gridData[i].key);
+    // 比较：必须完全等于 challenge 的顺序
+    const isCorrect = selectedKeys.length === challenge.length &&
+                      selectedKeys.every((k, i) => k === challenge[i]);
+
+    if (isCorrect) {
+      // 通过
+      verified = true;
+      successOverlay.classList.add('show');
+      statusEl.className = 'status success';
+      statusEl.textContent = '✅ 验证通过 · 人类用户';
+      submitBtn.disabled = true;
+      // 锁定所有格子
+      document.querySelectorAll('.cell').forEach(c => c.style.pointerEvents = 'none');
+      // 延迟后可以重置
+      setTimeout(() => {
+        // 3秒后可重新开始（或者保持通过状态）
+      }, 3000);
+    } else {
+      // 失败
+      attempts++;
+      statusEl.className = 'status fail';
+      statusEl.textContent = '❌ 验证失败，图标顺序不正确';
+      // 抖动所有选中的格子
+      selected.forEach(i => {
+        const cell = grid.children[i];
+        if (cell) {
+          cell.classList.add('wrong');
+          setTimeout(() => cell.classList.remove('wrong'), 400);
+        }
+      });
+      // 清空选择
+      setTimeout(() => {
+        selected.forEach(i => {
+          const cell = grid.children[i];
+          if (cell) cell.classList.remove('selected');
+        });
+        selected = [];
+        updateUI();
+        // 失败次数过多则刷新挑战
+        if (attempts >= 3) {
+          statusEl.textContent = '🔁 尝试次数过多，已刷新挑战';
+          setTimeout(generateChallenge, 800);
+        } else {
+          statusEl.textContent = '❌ 顺序错误，请重新选择';
+        }
+      }, 500);
+    }
+  }
+
+  // ============ 事件绑定 ============
+  refreshBtn.addEventListener('click', () => {
+    generateChallenge();
+    statusEl.className = 'status';
+    statusEl.textContent = '🔄 已换一批，请重新点选';
+  });
+
+  submitBtn.addEventListener('click', onSubmit);
+
+  // 初始化
+  generateChallenge();
+
+  // 重置时清除指针事件锁
+  const originalGenerate = generateChallenge;
+  generateChallenge = function() {
+    document.querySelectorAll('.cell').forEach(c => c.style.pointerEvents = '');
+    originalGenerate();
+  };
+
+})();
+</script>
+</body>
+</html>

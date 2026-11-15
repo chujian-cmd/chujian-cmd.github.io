@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>防人机 · 行为验证</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
+  body {
+    background: linear-gradient(145deg, #f0f4f9 0%, #e2ecf5 100%);
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem;
+  }
+  .card {
+    background: rgba(255,255,255,0.9); backdrop-filter: blur(10px);
+    width: 100%; max-width: 480px; border-radius: 36px;
+    padding: 2rem 1.8rem; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.7);
+  }
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 1.6rem; }
+  .shield {
+    background: #1a3b5c; width: 48px; height: 48px; border-radius: 18px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .shield svg { width: 26px; height: 26px; fill: none; stroke: #c7e0ff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .header h1 { font-size: 1.5rem; font-weight: 700; color: #0a1e2f; }
+  .header p { font-size: 0.82rem; color: #4b5e6e; margin-top: 3px; }
+
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;
+    margin-bottom: 1.4rem;
+  }
+  .stat {
+    background: #eef4fa; border-radius: 14px; padding: 0.6rem 0.4rem;
+    text-align: center; border: 1px solid #d5e3f0;
+  }
+  .stat .label { font-size: 0.65rem; color: #5a7183; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 1.1rem; font-weight: 700; color: #1f4a72; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+  .slider-label { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.8rem; font-weight: 600; color: #3f5669; }
+  .slider-label span:last-child { color: #2680c2; background: #deecfa; padding: 2px 10px; border-radius: 50px; }
+
+  .track {
+    position: relative; height: 60px; background: #e2ebf3;
+    border-radius: 60px; box-shadow: inset 0 4px 8px rgba(0,20,30,0.08), inset 0 -2px 4px rgba(255,255,255,0.7);
+    border: 1px solid #c2d6e8; margin-bottom: 1rem; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .track.success { border-color: #2e9a5e; box-shadow: 0 0 0 2px rgba(46,154,94,0.2), inset 0 4px 8px rgba(0,50,20,0.08); }
+  .track.fail { border-color: #e05a5a; box-shadow: 0 0 0 2px rgba(224,90,90,0.2); }
+
+  .fill {
+    position: absolute; top: 0; left: 0; height: 100%; width: 0%;
+    background: linear-gradient(90deg, #b6d9ff, #8fc2f0); border-radius: 60px;
+    transition: width 0.05s linear; pointer-events: none;
+  }
+  .fill.success { background: linear-gradient(90deg, #88d4a4, #5bb87b); }
+  .fill.fail { background: linear-gradient(90deg, #f5b0b0, #e88a8a); }
+
+  .thumb {
+    position: absolute; top: 5px; left: 5px; width: 48px; height: 48px;
+    background: white; border-radius: 50%;
+    box-shadow: 0 6px 14px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.02);
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab; user-select: none; z-index: 5; touch-action: none;
+    transition: transform 0.05s, box-shadow 0.15s;
+  }
+  .thumb:active, .thumb.dragging { cursor: grabbing; transform: scale(0.97); box-shadow: 0 10px 18px rgba(0,0,0,0.2); }
+  .thumb svg { width: 22px; height: 22px; fill: none; stroke: #1e4870; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .thumb.success svg { stroke: #1b7b43; }
+  .thumb.fail svg { stroke: #b12a2a; }
+
+  .status {
+    text-align: center; font-size: 0.88rem; font-weight: 500;
+    padding: 0.7rem 1rem; border-radius: 50px; background: #f4f9fe;
+    color: #1f496e; border: 1px solid #cde0f0; min-height: 2.8rem;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.25s; margin-bottom: 1rem; line-height: 1.4;
+  }
+  .status.success { background: #e2f3e8; border-color: #9fd6b4; color: #1b6b3b; }
+  .status.fail { background: #ffeae9; border-color: #ffb3b0; color: #b12a2a; }
+  .status.warn { background: #fff6e0; border-color: #ffd98a; color: #8a5a00; }
+
+  .reset-btn {
+    width: 100%; padding: 0.85rem; border-radius: 50px; background: white;
+    border: 1px solid #c1d4e8; font-weight: 600; font-size: 0.9rem;
+    color: #1e3c59; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; gap: 6px; transition: all 0.2s;
+  }
+  .reset-btn:hover { background: #f2f9ff; border-color: #a5c0da; }
+  .reset-btn:active { transform: scale(0.98); }
+  .reset-btn svg { width: 18px; height: 18px; fill: none; stroke: #2a577c; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .footer { text-align: center; margin-top: 1.2rem; font-size: 0.7rem; color: #8199aa; display: flex; align-items: center; justify-content: center; gap: 5px; }
+
+  /* 开发者检测面板（隐藏，按F12或输入secret可见） */
+  #devPanel {
+    display: none; margin-top: 1rem; padding: 0.8rem; background: #1a1e24;
+    border-radius: 12px; color: #9fefb0; font-size: 0.7rem; font-family: monospace;
+    line-height: 1.6; max-height: 200px; overflow-y: auto;
+  }
+  #devPanel.show { display: block; }
+
+  .challenge-badge {
+    display: inline-block; background: #2a5a8a; color: white;
+    font-size: 0.65rem; padding: 2px 8px; border-radius: 50px;
+    font-weight: 700; letter-spacing: 0.5px; margin-left: 6px; vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<div class="card no-select">
+  <div class="header">
+    <div class="shield">
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3L4 7v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V7l-8-4z"/>
+        <path d="M8 12l2.5 2.5L16 9"/>
+      </svg>
+    </div>
+    <div>
+      <h1>行为验证 <span class="challenge-badge">v2.0</span></h1>
+      <p>检测真实人类拖动轨迹</p>
+    </div>
+  </div>
+
+  <!-- 实时统计 -->
+  <div class="stats">
+    <div class="stat"><div class="label">拖动事件</div><div class="value" id="statEvents">0</div></div>
+    <div class="stat"><div class="label">轨迹变化</div><div class="value" id="statJitter">0</div></div>
+    <div class="stat"><div class="label">耗时(ms)</div><div class="value" id="statTime">0</div></div>
+  </div>
+
+  <div class="slider-label">
+    <span>拖动滑块到最右侧</span>
+    <span id="progress">0%</span>
+  </div>
+
+  <div class="track" id="track">
+    <div class="fill" id="fill"></div>
+    <div class="thumb" id="thumb">
+      <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+  </div>
+
+  <div class="status" id="status">⏳ 等待拖动...</div>
+
+  <button class="reset-btn" id="resetBtn">
+    <svg viewBox="0 0 24 24"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+    重新验证
+  </button>
+
+  <div class="footer">
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#8199aa" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    轨迹分析 · 行为识别
+  </div>
+
+  <div id="devPanel"></div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ============ DOM ============
+  const track     = document.getElementById('track');
+  const thumb     = document.getElementById('thumb');
+  const fill      = document.getElementById('fill');
+  const statusEl  = document.getElementById('status');
+  const progressEl= document.getElementById('progress');
+  const resetBtn  = document.getElementById('resetBtn');
+  const statEvents= document.getElementById('statEvents');
+  const statJitter= document.getElementById('statJitter');
+  const statTime  = document.getElementById('statTime');
+  const devPanel  = document.getElementById('devPanel');
+
+  // ============ 常量 ============
+  const THUMB_W = 48;
+  const PADDING = 5;
+
+  // ============ 状态 ============
+  let maxMove = 0;
+  let currentLeft = PADDING;
+  let isDragging = false;
+  let startX = 0;
+  let verified = false;
+
+  // ============ 人类行为采集 ============
+  // 采集的原始数据
+  let moveEvents = [];        // { x, y, t } 相对轨道的坐标
+  let lastX = 0, lastY = 0;
+  let dragStartTime = 0;
+
+  // 分析结果
+  let analysis = {
+    totalMoves: 0,
+    jitterCount: 0,          // Y方向抖动次数（人类特征）
+    reversalCount: 0,        // X方向反向次数（人类修正）
+    speedChanges: 0,         // 速度剧烈变化次数
+    avgSpeed: 0,             // 平均速度 px/ms
+    maxSpeed: 0,
+    duration: 0,
+    uniqueY: new Set(),      // Y坐标种类数（人类通常>=2）
+    directionChanges: 0,
+    zeroSpeedFrames: 0,      // 速度接近0的帧数
+    isLinear: false,         // 轨迹是否近乎直线
+    isConstantSpeed: false,  // 速度是否恒定
+    botScore: 0,             // 0-100，越高越像机器人
+    humanScore: 0,           // 0-100，越高越像人类
+    reasons: []              // 判定理由
+  };
+
+  // 上一次事件的时间戳（用于计算瞬时速度）
+  let lastMoveTime = 0;
+
+  // ============ 工具函数 ============
+  function getTrackRect() {
+    return track.getBoundingClientRect();
+  }
+
+  function updateMaxMove() {
+    const w = track.clientWidth;
+    maxMove = Math.max(0, w - THUMB_W - 10);
+    if (currentLeft > PADDING + maxMove) currentLeft = PADDING + maxMove;
+    if (currentLeft < PADDING) currentLeft = PADDING;
+    applyThumbLeft(currentLeft);
+  }
+
+  function applyThumbLeft(leftPx) {
+    const min = PADDING;
+    const max = PADDING + maxMove;
+    if (leftPx < min) leftPx = min;
+    if (leftPx > max) leftPx = max;
+    currentLeft = leftPx;
+    thumb.style.left = leftPx + 'px';
+    const moved = leftPx - PADDING;
+    const pct = maxMove > 0 ? (moved / maxMove) * 100 : 0;
+    fill.style.width = pct + '%';
+    progressEl.textContent = Math.round(pct) + '%';
+  }
+
+  // 重置采集数据
+  function resetAnalysisData() {
+    moveEvents = [];
+    lastX = 0; lastY = 0;
+    lastMoveTime = 0;
+    dragStartTime = 0;
+    analysis = {
+      totalMoves: 0, jitterCount: 0, reversalCount: 0, speedChanges: 0,
+      avgSpeed: 0, maxSpeed: 0, duration: 0, uniqueY: new Set(),
+      directionChanges: 0, zeroSpeedFrames: 0, isLinear: false,
+      isConstantSpeed: false, botScore: 0, humanScore: 0, reasons: []
+    };
+    statEvents.textContent = '0';
+    statJitter.textContent = '0';
+    statTime.textContent = '0';
+    devPanel.textContent = '';
+  }
+
+  // 记录一次移动事件
+  function recordMove(clientX, clientY) {
+    const rect = getTrackRect();
+    // 相对于轨道左上角的坐标
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const now = performance.now();
+    const dt = lastMoveTime ? now - lastMoveTime : 0;
+
+    // 第一帧
+    if (!lastMoveTime) {
+      lastX = x; lastY = y;
+      lastMoveTime = now;
+      moveEvents.push({ x, y, t: now, dt: 0 });
+      return;
+    }
+
+    // 速度计算 (px/ms)
+    const dx = x - lastX;
+    const dy = y - lastY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const speed = dt > 0 ? dist / dt : 0;
+
+    // 记录
+    moveEvents.push({ x, y, t: now, dt, dx, dy, speed });
+
+    // ---- 实时检测特征 ----
+    // 1. Y方向抖动（人类手抖 / 鼠标微动）
+    if (Math.abs(dy) > 0.5) {
+      analysis.jitterCount++;
+    }
+
+    // 2. X方向反向（人类修正）
+    if (dx < -0.3 && x > PADDING + 10 && x < PADDING + maxMove - 10) {
+      analysis.reversalCount++;
+    }
+
+    // 3. 速度变化
+    if (moveEvents.length >= 3) {
+      const prev = moveEvents[moveEvents.length - 3];
+      const prevDist = Math.sqrt((prev.x - lastX)**2 + (prev.y - lastY)**2);
+      const prevDt = prev.dt || 1;
+      const prevSpeed = prevDist / prevDt;
+      if (Math.abs(speed - prevSpeed) > 0.3 && speed > 0.1) {
+        analysis.speedChanges++;
+      }
+    }
+
+    // 4. 速度接近0（停顿）
+    if (speed < 0.05 && dist < 1) {
+      analysis.zeroSpeedFrames++;
+    }
+
+    // 5. 方向变化（X方向）
+    if (moveEvents.length >= 2) {
+      const prev2 = moveEvents[moveEvents.length - 2];
+      if (Math.sign(dx) !== Math.sign(prev2.dx) && Math.abs(dx) > 0.5 && Math.abs(prev2.dx) > 0.5) {
+        analysis.directionChanges++;
+      }
+    }
+
+    // 更新
+    lastX = x; lastY = y;
+    lastMoveTime = now;
+    analysis.totalMoves++;
+    analysis.uniqueY.add(Math.round(y));
+
+    // 实时更新统计
+    statEvents.textContent = analysis.totalMoves;
+    statJitter.textContent = analysis.jitterCount + analysis.reversalCount;
+    if (dragStartTime) {
+      statTime.textContent = Math.round(now - dragStartTime);
+    }
+
+    // 限制记录数量防止内存溢出
+    if (moveEvents.length > 500) moveEvents.shift();
+  }
+
+  // ============ 核心分析函数 ============
+  function analyzeBehavior() {
+    const a = analysis;
+    const reasons = [];
+    let botScore = 0;
+
+    // 数据不足
+    if (a.totalMoves < 3) {
+      return { pass: false, score: 100, reasons: ['拖动事件过少'] };
+    }
+
+    a.duration = dragStartTime ? performance.now() - dragStartTime : 0;
+
+    // ---- 1. 轨迹Y轴变化（人类手抖 / 鼠标微动导致Y变化）----
+    // 纯机器拖动通常Y固定
+    const uniqueYCount = a.uniqueY.size;
+    if (uniqueYCount <= 1) {
+      botScore += 30;
+      reasons.push('Y轴无变化（轨迹完全水平）');
+    } else if (uniqueYCount <= 2) {
+      botScore += 15;
+      reasons.push('Y轴变化过少');
+    }
+
+    // ---- 2. 速度变化 ----
+    if (a.totalMoves > 5) {
+      // 计算速度序列
+      const speeds = moveEvents.filter(m => m.dt > 0).map(m => m.speed);
+      if (speeds.length > 2) {
+        const avg = speeds.reduce((s, v) => s + v, 0) / speeds.length;
+        const variance = speeds.reduce((s, v) => s + (v - avg)**2, 0) / speeds.length;
+        const stdDev = Math.sqrt(variance);
+        const cv = avg > 0.01 ? stdDev / avg : 0; // 变异系数
+
+        a.avgSpeed = avg;
+        a.maxSpeed = Math.max(...speeds);
+
+        if (cv < 0.15) {
+          botScore += 25;
+          reasons.push('速度过于恒定（变异系数=' + cv.toFixed(3) + '）');
+        } else if (cv < 0.3) {
+          botScore += 10;
+          reasons.push('速度变化偏小');
+        }
+      }
+    }
+
+    // ---- 3. 加速度 / 速度突变 ----
+    const speedChanges = a.speedChanges;
+    if (a.totalMoves > 10) {
+      const changeRate = speedChanges / a.totalMoves;
+      if (changeRate < 0.05) {
+        botScore += 20;
+        reasons.push('缺乏速度突变（人类拖动通常有急加速/减速）');
+      }
+    }
+
+    // ---- 4. 方向修正（人类微调）----
+    if (a.reversalCount === 0 && a.directionChanges === 0) {
+      botScore += 15;
+      reasons.push('无反向修正（人类拖动常有微调）');
+    }
+
+    // ---- 5. 轨迹线性度（机器人常走直线）----
+    // 计算所有点相对起止点直线的偏差
+    if (moveEvents.length >= 5) {
+      const first = moveEvents[0];
+      const last = moveEvents[moveEvents.length - 1];
+      const dx = last.x - first.x;
+      const dy = last.y - first.y;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      if (len > 50) {
+        let maxDeviation = 0;
+        for (const p of moveEvents) {
+          // 点到直线距离
+          const dev = Math.abs(dy * p.x - dx * p.y + last.x * first.y - last.y * first.x) / len;
+          if (dev > maxDeviation) maxDeviation = dev;
+        }
+        // 如果最大偏差小于2px，轨迹几乎完全直线
+        if (maxDeviation < 2) {
+          botScore += 20;
+          reasons.push('轨迹近乎直线（最大偏差=' + maxDeviation.toFixed(1) + 'px）');
+          a.isLinear = true;
+        }
+      }
+    }
+
+    // ---- 6. 停顿 / 卡顿 ----
+    if (a.zeroSpeedFrames === 0 && a.totalMoves > 20) {
+      botScore += 10;
+      reasons.push('无任何停顿');
+    }
+
+    // ---- 7. 拖动时长（人类通常 > 300ms）----
+    if (a.duration > 0 && a.duration < 200) {
+      botScore += 25;
+      reasons.push('拖动过快（' + Math.round(a.duration) + 'ms）');
+    } else if (a.duration > 0 && a.duration < 400) {
+      botScore += 10;
+      reasons.push('拖动偏快');
+    }
+
+    // ---- 8. 事件频率异常 ----
+    // 人类鼠标事件间隔通常有波动
+    if (moveEvents.length > 10) {
+      const dts = moveEvents.slice(1).map(m => m.dt).filter(d => d > 0);
+      if (dts.length > 5) {
+        const avgDt = dts.reduce((s, v) => s + v, 0) / dts.length;
+        const variance = dts.reduce((s, v) => s + (v - avgDt)**2, 0) / dts.length;
+        const cvDt = avgDt > 0 ? Math.sqrt(variance) / avgDt : 0;
+        // 连点器通常事件间隔极其均匀
+        if (cvDt < 0.1 && avgDt < 30) {
+          botScore += 30;
+          reasons.push('事件间隔过于均匀（连点器特征）');
+        }
+      }
+    }
+
+    // 得分限制
+    botScore = Math.min(100, botScore);
+    const humanScore = Math.max(0, 100 - botScore);
+
+    // 最终判定
+    const pass = botScore < 50;
+
+    return {
+      pass,
+      botScore,
+      humanScore,
+      reasons,
+      details: {
+        totalMoves: a.totalMoves,
+        jitterCount: a.jitterCount,
+        reversalCount: a.reversalCount,
+        uniqueYCount,
+        speedChanges: a.speedChanges,
+        duration: a.duration,
+        avgSpeed: a.avgSpeed,
+        isLinear: a.isLinear,
+        directionChanges: a.directionChanges
+      }
+    };
+  }
+
+  // ============ 事件处理 ============
+  function onDragStart(clientX, clientY) {
+    if (verified) return;
+    resetAnalysisData();
+    isDragging = true;
+    startX = clientX;
+    dragStartTime = performance.now();
+    lastMoveTime = 0;
+
+    // 记录起始点（相对轨道）
+    const rect = getTrackRect();
+    lastX = clientX - rect.left;
+    lastY = clientY - rect.top;
+    moveEvents.push({ x: lastX, y: lastY, t: dragStartTime, dt: 0 });
+
+    // 清除状态
+    statusEl.className = 'status';
+    statusEl.textContent = '🔍 拖动中... 请自然拖动';
+    track.classList.remove('success', 'fail');
+    thumb.classList.remove('success', 'fail');
+    fill.classList.remove('success', 'fail');
+    thumb.classList.add('dragging');
+  }
+
+  function onDragMove(clientX, clientY) {
+    if (!isDragging || verified) return;
+
+    const deltaX = clientX - startX;
+    let newLeft = currentLeft + deltaX;
+    const minLeft = PADDING;
+    const maxLeft = PADDING + maxMove;
+    if (newLeft < minLeft) newLeft = minLeft;
+    if (newLeft > maxLeft) newLeft = maxLeft;
+    applyThumbLeft(newLeft);
+    startX = clientX;
+
+    // 记录行为
+    recordMove(clientX, clientY);
+
+    // 实时提示
+    if (currentLeft >= maxLeft - 0.5) {
+      statusEl.textContent = '👆 松开完成验证';
+    } else {
+      statusEl.textContent = '🔍 拖动中... 请自然拖动';
+    }
+  }
+
+  function onDragEnd() {
+    if (!isDragging || verified) return;
+    isDragging = false;
+    thumb.classList.remove('dragging');
+
+    const maxLeft = PADDING + maxMove;
+    const reachedEnd = currentLeft >= maxLeft - 1;
+
+    // 先分析行为（无论是否到终点都要分析，但只有到终点才可能通过）
+    const result = analyzeBehavior();
+
+    // 显示开发者分析（可注释掉）
+    showDevPanel(result);
+
+    if (!reachedEnd) {
+      // 未到终点，直接失败
+      statusEl.className = 'status fail';
+      statusEl.textContent = '❌ 未拖动到最右侧';
+      thumb.classList.add('fail');
+      track.classList.add('fail');
+      applyThumbLeft(PADDING);
+      return;
+    }
+
+    // 到达终点，检查行为分数
+    if (result.pass) {
+      // 通过
+      verified = true;
+      applyThumbLeft(maxLeft);
+      track.classList.add('success');
+      track.classList.remove('fail');
+      thumb.classList.add('success');
+      thumb.classList.remove('fail');
+      fill.classList.add('success');
+      fill.classList.remove('fail');
+      statusEl.className = 'status success';
+      statusEl.textContent = '✅ 验证通过 · 真实人类';
+      progressEl.textContent = '100%';
+    } else {
+      // 未通过行为检测
+      statusEl.className = 'status fail';
+      statusEl.textContent = '🤖 检测到非人类行为：' + (result.reasons[0] || '轨迹异常');
+      track.classList.add('fail');
+      thumb.classList.add('fail');
+      fill.classList.add('fail');
+      // 回弹
+      setTimeout(() => {
+        applyThumbLeft(PADDING);
+        fill.style.width = '0%';
+        progressEl.textContent = '0%';
+      }, 300);
+      // 不自动重置，让用户看到失败原因，点击重置
+    }
+  }
+
+  function showDevPanel(result) {
+    devPanel.classList.add('show');
+    const d = result.details;
+    devPanel.innerHTML = `
+      <div>🔬 <b>行为分析</b></div>
+      <div>事件数: ${d.totalMoves} | Y轴种类: ${d.uniqueYCount} | 抖动: ${d.jitterCount}</div>
+      <div>反向修正: ${d.reversalCount} | 方向变化: ${d.directionChanges}</div>
+      <div>速度突变: ${d.speedChanges} | 拖动时长: ${Math.round(d.duration)}ms</div>
+      <div>直线轨迹: ${d.isLinear ? '⚠️ 是' : '✅ 否'}</div>
+      <div style="margin-top:6px;color:${result.pass?'#9fefb0':'#ff9f9f'}">
+        ${result.pass ? '✅ 通过' : '❌ 拦截'} | 人味分: ${result.humanScore}/100
+      </div>
+      ${result.reasons.length ? '<div style="margin-top:4px;color:#ffb86b">📋 ' + result.reasons.join(' · ') + '</div>' : ''}
+    `;
+  }
+
+  function resetAll() {
+    verified = false;
+    isDragging = false;
+    track.classList.remove('success', 'fail');
+    thumb.classList.remove('success', 'fail', 'dragging');
+    fill.classList.remove('success', 'fail');
+    statusEl.className = 'status';
+    statusEl.textContent = '⏳ 等待拖动...';
+    applyThumbLeft(PADDING);
+    fill.style.width = '0%';
+    progressEl.textContent = '0%';
+    resetAnalysisData();
+    devPanel.classList.remove('show');
+    updateMaxMove();
+  }
+
+  // ============ 事件绑定 ============
+  thumb.addEventListener('mousedown', (e) => {
+    if (verified) return;
+    e.preventDefault();
+    onDragStart(e.clientX, e.clientY);
+
+    const onMove = (ev) => onDragMove(ev.clientX, ev.clientY);
+    const onUp = () => {
+      onDragEnd();
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+
+  thumb.addEventListener('dragstart', e => e.preventDefault());
+
+  thumb.addEventListener('touchstart', (e) => {
+    if (verified) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    onDragStart(t.clientX, t.clientY);
+
+    const onMove = (ev) => {
+      ev.preventDefault();
+      const t2 = ev.touches[0];
+      onDragMove(t2.clientX, t2.clientY);
+    };
+    const onEnd = () => {
+      onDragEnd();
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
+    };
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+  }, { passive: false });
+
+  resetBtn.addEventListener('click', resetAll);
+
+  // 窗口尺寸变化
+  window.addEventListener('resize', () => {
+    if (!verified && !isDragging) {
+      updateMaxMove();
+      resetAll();
+    } else if (verified) {
+      updateMaxMove();
+      applyThumbLeft(PADDING + maxMove);
+    }
+  });
+
+  // 初始化
+  requestAnimationFrame(() => {
+    updateMaxMove();
+    resetAll();
+  });
+
+  // 快捷键：按 D 显示开发者面板（调试用，正式环境可删除）
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'd' || e.key === 'D') {
+      devPanel.classList.toggle('show');
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
