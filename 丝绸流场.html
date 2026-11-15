@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>丝绸流场 · Silk Flow</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #04050c;
+    cursor: crosshair;
+  }
+  canvas { display: block; }
+  #hint {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%);
+    font: 12px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    letter-spacing: .18em;
+    color: rgba(180, 210, 255, .55);
+    pointer-events: none;
+    user-select: none;
+    transition: opacity 1.2s ease;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">移动鼠标 · 按住加速</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  /* ============================================================
+     Value Noise（值噪声 + fBm）
+     ============================================================ */
+  const PERM = new Uint8Array(512);
+  (function initPerm() {
+    const p = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) p[i] = i;
+    for (let i = 255; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = p[i]; p[i] = p[j]; p[j] = t;
+    }
+    for (let i = 0; i < 512; i++) PERM[i] = p[i & 255];
+  })();
+
+  const fade = (t) => t * t * (3 - 2 * t);
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  function noise2(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = x - xi, yf = y - yi;
+    const X = xi & 255, Y = yi & 255;
+    const u = fade(xf), v = fade(yf);
+    const aa = PERM[PERM[X] + Y]       / 255;
+    const ba = PERM[PERM[X + 1] + Y]   / 255;
+    const ab = PERM[PERM[X] + Y + 1]   / 255;
+    const bb = PERM[PERM[X + 1] + Y + 1] / 255;
+    return lerp(lerp(aa, ba, u), lerp(ab, bb, u), v) * 2 - 1;
+  }
+
+  function fbm(x, y) {
+    return noise2(x, y) * 0.65 + noise2(x * 2.13 + 13.5, y * 2.13 + 7.7) * 0.35;
+  }
+
+  /* ============================================================
+     状态
+     ============================================================ */
+  let W = 0, H = 0, DPR = 1;
+  let particles = [];
+  let time = 0;
+  let seedCursor = 0;
+  const rand = Math.random;
+
+  const pointer = {
+    x: 0, y: 0,
+    active: false,
+    down: false
+  };
+
+  const FIELD_FREQ = 0.0018;
+  const FIELD_FORCE = 0.18;
+  const DAMPING = 0.955;
+  const MAX_SPEED = 6;
+  const POINTER_R = 210;
+  const POINTER_R2 = POINTER_R * POINTER_R;
+
+  /* ============================================================
+     粒子工厂
+     ============================================================ */
+  function makeColor(hue) {
+    return 'hsl(' + (hue | 0) + ',95%,66%)';
+  }
+
+  function spawnRandom(p) {
+    p.x = p.px = rand() * W;
+    p.y = p.py = rand() * H;
+
+    const a = rand() * Math.PI * 2;
+    const s = rand() * 1.2;
+    p.vx = Math.cos(a) * s;
+    p.vy = Math.sin(a) * s;
+
+    p.life = 0;
+    p.maxLife = 200 + rand() * 420;
+
+    p.hue = 175 + rand() * 155;      // 青 → 蓝 → 紫 → 品红
+    p.w = 0.5 + rand() * 1.5;
+    p.a = 0.25 + rand() * 0.55;
+    p.color = makeColor(p.hue);
+  }
+
+  function seedAt(x, y, vx, vy) {
+    if (!particles.length) return;
+    const p = particles[seedCursor = (seedCursor + 1) % particles.length];
+
+    p.x = p.px = x;
+    p.y = p.py = y;
+    p.vx = vx * 0.35 + (rand() - 0.5) * 2.6;
+    p.vy = vy * 0.35 + (rand() - 0.5) * 2.6;
+
+    p.life = 0;
+    p.maxLife = 120 + rand() * 280;
+
+    p.hue = 175 + rand() * 155;
+    p.w = 0.6 + rand() * 1.5;
+    p.a = 0.35 + rand() * 0.5;
+    p.color = makeColor(p.hue);
+  }
+
+  /* ============================================================
+     尺寸
+     ============================================================ */
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    // 铺底
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#04050c';
+    ctx.fillRect(0, 0, W, H);
+
+    initParticles();
+  }
+
+  function initParticles() {
+    const target = Math.round(
+      Math.min(1500, Math.max(420, (W * H) / 1500))
+    );
+    particles = new Array(target);
+    for (let i = 0; i < target; i++) {
+      const p = {};
+      spawnRandom(p);
+      p.life = rand() * p.maxLife;   // 生命周期错峰
+      particles[i] = p;
+    }
+  }
+
+  /* ============================================================
+     主循环
+     ============================================================ */
+  function frame(now) {
+    time = now;
+
+    /* --- 丝绸拖尾：半透明覆盖而非清除 --- */
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(4, 5, 12, 0.055)';
+    ctx.fillRect(0, 0, W, H);
+
+    /* --- 叠加发光 --- */
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+
+    const tz = time * 0.00022;
+    const px = pointer.x;
+    const py = pointer.y;
+    const pactive = pointer.active;
+    const boost = pointer.down ? 2.4 : 1;
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+
+      /* 1. 流场力 */
+      const n = fbm(p.x * FIELD_FREQ, p.y * FIELD_FREQ + tz);
+      const ang = n * Math.PI * 3 + tz * 3;
+      p.vx += Math.cos(ang) * FIELD_FORCE;
+      p.vy += Math.sin(ang) * FIELD_FORCE;
+
+      /* 2. 指针涡旋 */
+      if (pactive) {
+        const dx = p.x - px;
+        const dy = p.y - py;
+        const d2 = dx * dx + dy * dy;
+
+        if (d2 < POINTER_R2) {
+          const d = Math.sqrt(d2) + 0.0001;
+          const f = 1 - d / POINTER_R;
+          const ff = f * f * boost;
+
+          // 切向（旋转）
+          p.vx += (-dy / d) * ff * 1.5;
+          p.vy += ( dx / d) * ff * 1.5;
+          // 法向（外推）
+          p.vx += (dx / d) * ff * 0.7;
+          p.vy += (dy / d) * ff * 0.7;
+        }
+      }
+
+      /* 3. 阻尼 + 限速 */
+      p.vx *= DAMPING;
+      p.vy *= DAMPING;
+
+      let sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+      if (sp > MAX_SPEED) {
+        const k = MAX_SPEED / sp;
+        p.vx *= k;
+        p.vy *= k;
+        sp = MAX_SPEED;
+      }
+
+      /* 4. 位移 */
+      p.px = p.x;
+      p.py = p.y;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life++;
+
+      /* 5. 绘制丝线 */
+      const alpha = Math.min(0.55, 0.07 + sp * 0.10) * p.a;
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = p.w;
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+
+      /* 6. 回收 */
+      if (p.life > p.maxLife ||
+          p.x < -60 || p.x > W + 60 ||
+          p.y < -60 || p.y > H + 60) {
+        spawnRandom(p);
+      }
+    }
+
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(frame);
+  }
+
+  /* ============================================================
+     交互
+     ============================================================ */
+  function setPointer(x, y) {
+    if (!pointer.active) {
+      pointer.x = x;
+      pointer.y = y;
+      pointer.active = true;
+      return;
+    }
+
+    const dx = x - pointer.x;
+    const dy = y - pointer.y;
+    pointer.x = x;
+    pointer.y = y;
+
+    const sp = Math.sqrt(dx * dx + dy * dy);
+    if (sp > 0.8) {
+      const count = Math.min(6, 1 + ((sp * 0.4) | 0));
+      const jitter = pointer.down ? 40 : 26;
+      for (let i = 0; i < count; i++) {
+        seedAt(
+          x + (rand() - 0.5) * jitter,
+          y + (rand() - 0.5) * jitter,
+          dx, dy
+        );
+      }
+    }
+  }
+
+  const hint = document.getElementById('hint');
+  let hintHidden = false;
+  function hideHint() {
+    if (hintHidden) return;
+    hintHidden = true;
+    hint.style.opacity = '0';
+  }
+
+  window.addEventListener('pointermove', (e) => {
+    setPointer(e.clientX, e.clientY);
+    hideHint();
+  }, { passive: true });
+
+  window.addEventListener('pointerdown', (e) => {
+    pointer.down = true;
+    pointer.active = true;
+    pointer.x = e.clientX;
+    pointer.y = e.clientY;
+
+    // 点击爆散
+    for (let i = 0; i < 26; i++) {
+      const a = rand() * Math.PI * 2;
+      const r = rand() * 24;
+      seedAt(
+        e.clientX + Math.cos(a) * r,
+        e.clientY + Math.sin(a) * r,
+        Math.cos(a) * 6,
+        Math.sin(a) * 6
+      );
+    }
+    hideHint();
+  }, { passive: true });
+
+  window.addEventListener('pointerup', () => { pointer.down = false; }, { passive: true });
+  window.addEventListener('pointercancel', () => { pointer.down = false; pointer.active = false; }, { passive: true });
+  window.addEventListener('pointerleave', () => { pointer.active = false; pointer.down = false; });
+
+  let rt = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(rt);
+    rt = setTimeout(resize, 150);
+  });
+
+  /* ============================================================
+     启动
+     ============================================================ */
+  resize();
+  requestAnimationFrame(frame);
+
+  setTimeout(hideHint, 9000);
+})();
+</script>
+</body>
+</html>
