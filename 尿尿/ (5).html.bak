@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>恶俗第一视角 · 黄色液体喷射 (修复版)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            touch-action: none;
+        }
+        #info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255, 255, 200, 0.8);
+            background: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 100;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 0, 0.3);
+        }
+        #warning {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: rgba(255, 200, 0, 0.7);
+            background: rgba(40, 20, 0, 0.6);
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 12px;
+            border: 1px solid #ffaa00;
+            pointer-events: none;
+            z-index: 100;
+            letter-spacing: 1px;
+        }
+        #joystick-container {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            width: 120px;
+            height: 120px;
+            border-radius: 60px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 200, 0, 0.3);
+            backdrop-filter: blur(5px);
+            z-index: 200;
+            display: none;
+            touch-action: none;
+            pointer-events: auto;
+        }
+        #joystick-thumb {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(255, 200, 0, 0.7);
+            box-shadow: 0 0 20px rgba(255, 200, 0, 0.5);
+            transform: translate(-50%, -50%);
+            transition: transform 0.05s;
+            pointer-events: none;
+        }
+        #mobile-hint {
+            position: fixed;
+            bottom: 160px;
+            left: 30px;
+            color: rgba(255, 255, 200, 0.6);
+            font-size: 12px;
+            background: rgba(0,0,0,0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+            z-index: 200;
+            display: none;
+            pointer-events: none;
+        }
+        #desktop-hint {
+            position: fixed;
+            bottom: 160px;
+            left: 30px;
+            color: rgba(255, 255, 200, 0.6);
+            font-size: 12px;
+            background: rgba(0,0,0,0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+            z-index: 200;
+            display: block;
+            pointer-events: none;
+        }
+        @media (pointer: coarse) {
+            #joystick-container { display: block; }
+            #mobile-hint { display: block; }
+            #desktop-hint { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div id="info">🖱️ 鼠标移动视角 | WASD/摇杆移动 | 液体落地渐渐消失</div>
+    <div id="warning">⚠️ 恶俗警告 · 黄色液体喷射</div>
+    
+    <div id="joystick-container">
+        <div id="joystick-thumb"></div>
+    </div>
+    <div id="mobile-hint">👆 拖动摇杆移动 | 滑动屏幕转视角</div>
+    <div id="desktop-hint">⌨️ WASD 移动 | 🖱️ 鼠标转视角</div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 初始化场景、相机、渲染器 ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 1000);
+        camera.position.set(0, 1.6, 0);
+        camera.rotation.order = 'YXZ';
+        camera.rotation.x = -0.1;
+        camera.rotation.y = 0;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // --- 光照 ---
+        const ambientLight = new THREE.AmbientLight(0x404060);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffeedd, 1);
+        dirLight.position.set(2, 5, 3);
+        dirLight.castShadow = true;
+        dirLight.receiveShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        const d = 10;
+        dirLight.shadow.camera.left = -d;
+        dirLight.shadow.camera.right = d;
+        dirLight.shadow.camera.top = d;
+        dirLight.shadow.camera.bottom = -d;
+        dirLight.shadow.camera.near = 1;
+        dirLight.shadow.camera.far = 15;
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0xffaa00, 0.5, 20);
+        pointLight.position.set(0, 2, 1);
+        scene.add(pointLight);
+
+        // --- 地面 ---
+        const groundGeometry = new THREE.CircleGeometry(30, 64);
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x3a3a3a, 
+            roughness: 0.8, 
+            metalness: 0.2,
+            side: THREE.DoubleSide,
+            polygonOffset: true,
+            polygonOffsetFactor: 1,
+            polygonOffsetUnits: 1
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.01;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const gridHelper = new THREE.GridHelper(40, 40, 0x666666, 0x444444);
+        gridHelper.position.y = 0;
+        scene.add(gridHelper);
+
+        scene.fog = new THREE.FogExp2(0x1a1a1a, 0.03);
+
+        // --- 配置参数 ---
+        const config = {
+            spawnRate: 35,
+            particleSpeedY: 2.5,
+            particleSpeedXZ: 0.8,
+            gravity: 9.8,
+            particleSize: 0.06,
+            groundSpotSize: 0.18,
+            spotLifetime: 4.0,
+            fadeStart: 1.0,
+            moveSpeed: 3.0,
+            mouseSensitivity: 0.002
+        };
+
+        // --- 状态变量 ---
+        const activeParticles = [];
+        const groundSpots = [];
+        const clock = new THREE.Clock();
+
+        // 移动状态
+        const moveState = {
+            forward: false,
+            backward: false,
+            left: false,
+            right: false
+        };
+
+        // 旋转状态
+        let targetRotX = -0.1;
+        let targetRotY = 0;
+        const maxRotX = 0.5;
+        const maxRotY = 1.2;
+        let currentRotX = -0.1;
+        let currentRotY = 0;
+
+        // 摇杆状态
+        const joystick = {
+            active: false,
+            touchId: null,
+            centerX: 0,
+            centerY: 0,
+            deltaX: 0,
+            deltaY: 0
+        };
+
+        // 用于触摸旋转的独立状态
+        const touchRotate = {
+            active: false,
+            touchId: null,
+            lastX: 0,
+            lastY: 0
+        };
+
+        // 喷射点局部偏移
+        const localOffset = new THREE.Vector3(0, -0.45, -0.7);
+
+        // --- 粒子生成 ---
+        function spawnParticle(basePos, baseDir) {
+            const size = config.particleSize * (0.7 + Math.random() * 0.6);
+            const geometry = new THREE.SphereGeometry(size, 6, 6);
+            const hue = 0.12 + (Math.random() - 0.5) * 0.1;
+            const color = new THREE.Color().setHSL(hue, 1, 0.55 + Math.random() * 0.2);
+            
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                emissive: new THREE.Color(0x553300),
+                roughness: 0.3,
+                metalness: 0.1,
+                transparent: true,
+                opacity: 0.95
+            });
+            
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.castShadow = true;
+            
+            const pos = basePos.clone().add(
+                new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.1,
+                    (Math.random() - 0.5) * 0.1,
+                    (Math.random() - 0.5) * 0.1
+                )
+            );
+            sphere.position.copy(pos);
+            
+            const forwardDir = baseDir.clone().normalize();
+            const speedBase = 2.5 + Math.random() * 1.5;
+            const vel = forwardDir.clone().multiplyScalar(speedBase);
+            vel.x += (Math.random() - 0.5) * config.particleSpeedXZ;
+            vel.z += (Math.random() - 0.5) * config.particleSpeedXZ;
+            vel.y += 1.5 + Math.random() * 1.0;
+            
+            sphere.userData.velocity = vel;
+            sphere.userData.age = 0;
+            
+            scene.add(sphere);
+            activeParticles.push(sphere);
+        }
+
+        // --- 创建地面斑点 (使用实例化或独立网格，但修复重叠问题) ---
+        // 修复思路：为每个斑点设置 polygonOffset 使其略微高于地面，并禁用深度写入？不，要正确渲染重叠。
+        // 重叠错乱通常是因为透明物体渲染顺序问题。我们使用以下方法：
+        // 1. 所有斑点使用相同的材质但独立的几何体？不。
+        // 2. 让斑点不透明？但需要淡出。
+        // 3. 设置渲染顺序：使斑点按照距离相机的远近排序？透明物体排序由Three.js自动处理，但有时不完美。
+        // 4. 简单有效：让斑点使用 `depthWrite: false` 并且设置 `renderOrder`，但可能导致渲染错误。
+        // 5. 最佳：使用稍微抬高一点位置的斑点，并让它们不透明？但需要淡出。
+        // 实际上对于地面贴片，我们可以将它们放在同一个平面上但稍微抬高不同高度来避免z-fighting，但重叠时仍有透明混合问题。
+        // 更稳健的方法：使用一个单独的贴花系统，但复杂。
+        // 这里我们采用：每个斑点使用独立的材质，并设置 `depthWrite: true` 和 `transparent: true`，同时设置 `renderOrder` 为基于距离的排序？不行。
+        // 发现一个问题：地面斑点重叠时出现错乱可能是因为深度测试和混合顺序导致。我们可以让斑点不写深度但开启深度测试，这样它们会正确混合但不会互相遮挡？
+        // 实际上，多个透明物体重叠时，正确的混合需要正确的渲染顺序（从远到近）。Three.js 对透明物体按距离排序，但地面上的平面距离相机的距离可能计算不准确。
+        // 一个简单粗暴的解决办法：让斑点不透明（opacity=1）并只通过缩小来消失？但需要“渐渐消失”，透明度降低是必须的。
+        // 另一种方法：使用CanvasTexture动态生成贴花？太复杂。
+        // 我们换一种思路：所有斑点共享一个几何体，但使用instancedMesh？仍然有透明排序问题。
+        // 经过测试，主要问题可能是斑点的旋转导致其与地面z-fighting，并且重叠时深度测试导致某些部分被裁剪。
+        // 我们采取以下措施：
+        // a) 将斑点抬高到 y=0.01 或更高，避免与地面z-fighting。
+        // b) 设置斑点的材质 depthWrite: false，这样它们不会相互遮挡，而是根据渲染顺序混合。但渲染顺序需要从后往前。
+        // c) 手动管理渲染顺序：每次更新时，根据斑点与相机的距离（平方）排序，然后设置 renderOrder？但renderOrder是整数，影响排序。
+        // d) 更简单：让斑点使用加法混合？不，那是发光效果。
+        // 实际上，观察发现重叠错乱可能是因为透明斑点相互覆盖时，后面的斑点的深度测试被前面的斑点遮挡，导致后面的斑点部分不可见。
+        // 关闭 depthWrite 可以让所有斑点都渲染出来，但混合顺序取决于渲染顺序。
+        // 我们采用：关闭斑点的 depthWrite，并设置 renderOrder = 1（默认是0），这样它们在地面之后渲染？地面是不透明的，会在之前渲染。
+        // 同时，让斑点不写深度但开启深度测试，这样被不透明物体遮挡时会被裁剪，但斑点之间不会相互遮挡。
+        // 但是斑点之间仍然需要正确的混合顺序。Three.js 的透明排序是按距离相机的距离，对于地面上的平面，距离计算可能不够精确。
+        // 为了简单且视觉上可接受，我们关闭 depthWrite，并让所有斑点的 renderOrder 为 0，依靠 Three.js 的默认排序。多数情况下看起来可以接受。
+        // 如果仍然错乱，可以尝试给斑点设置稍微不同的y坐标（比如0.005 + 微小随机）来避免完全共面，但更可能的是透明排序问题。
+        // 最终选择：斑点的材质 depthWrite: false, depthTest: true, transparent: true。这通常能解决大部分重叠问题。
+        // 另外，地面本身设置了 polygonOffset 来避免与网格的z-fighting。
+        // 我们还将斑点的位置y统一设置为0.02，避免和地面以及其他斑点z-fighting。
+
+        function createGroundSpot(pos, sizeScale = 1.0) {
+            const size = config.groundSpotSize * (0.7 + Math.random() * 0.6) * sizeScale;
+            const geometry = new THREE.CircleGeometry(size, 8);
+            const hue = 0.12 + (Math.random() - 0.5) * 0.06;
+            const color = new THREE.Color().setHSL(hue, 1, 0.55);
+            // 关键修复：关闭 depthWrite，让斑点之间不互相遮挡，而是按渲染顺序混合
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                emissive: new THREE.Color(0x442200),
+                roughness: 0.6,
+                metalness: 0.1,
+                transparent: true,
+                opacity: 0.9,
+                side: THREE.DoubleSide,
+                depthWrite: false,   // 关闭深度写入，让重叠的斑点都能显示
+                depthTest: true,     // 仍然进行深度测试，以便被其他物体正确遮挡
+                polygonOffset: true,
+                polygonOffsetFactor: -1,
+                polygonOffsetUnits: -1
+            });
+            const spot = new THREE.Mesh(geometry, material);
+            spot.rotation.x = -Math.PI / 2;
+            spot.position.copy(pos);
+            // 稍微抬高一点，避免与地面z-fighting，也避免与其它斑点完全共面
+            spot.position.y = 0.02 + Math.random() * 0.01;
+            spot.receiveShadow = true;
+            // 设置渲染顺序稍高，确保在不透明物体之后，但透明物体之间不重要
+            spot.renderOrder = 1;
+            
+            spot.userData.age = 0;
+            spot.userData.lifetime = config.spotLifetime * (0.8 + Math.random() * 0.6);
+            spot.userData.fadeStart = config.fadeStart;
+            spot.userData.initialOpacity = 0.9;
+            
+            scene.add(spot);
+            groundSpots.push(spot);
+        }
+
+        // --- 更新粒子系统 ---
+        function updateParticles(deltaTime) {
+            if (!updateParticles.spawnAccum) updateParticles.spawnAccum = 0;
+            updateParticles.spawnAccum += deltaTime * config.spawnRate;
+            const spawnCount = Math.floor(updateParticles.spawnAccum);
+            updateParticles.spawnAccum -= spawnCount;
+            
+            const offsetWorld = localOffset.clone().applyQuaternion(camera.quaternion);
+            const basePos = camera.position.clone().add(offsetWorld);
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            
+            for (let i = 0; i < spawnCount; i++) {
+                const dirVariation = forward.clone().add(
+                    new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3
+                    )
+                ).normalize();
+                spawnParticle(basePos, dirVariation);
+            }
+            
+            for (let i = activeParticles.length - 1; i >= 0; i--) {
+                const p = activeParticles[i];
+                const v = p.userData.velocity;
+                const age = p.userData.age + deltaTime;
+                p.userData.age = age;
+                
+                v.y -= config.gravity * deltaTime;
+                
+                p.position.x += v.x * deltaTime;
+                p.position.y += v.y * deltaTime;
+                p.position.z += v.z * deltaTime;
+                
+                p.rotation.x += deltaTime * 2;
+                p.rotation.y += deltaTime * 3;
+                
+                if (p.position.y < 0.02) {
+                    const spotPos = p.position.clone();
+                    // y坐标在createGroundSpot中设置
+                    const sizeScale = 0.8 + Math.random() * 0.8;
+                    createGroundSpot(spotPos, sizeScale);
+                    
+                    scene.remove(p);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                    activeParticles.splice(i, 1);
+                } else if (p.position.length() > 50) {
+                    scene.remove(p);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                    activeParticles.splice(i, 1);
+                }
+            }
+            
+            // 更新地面斑点，并动态排序以改善混合顺序（按距离相机远近从远到近渲染，Three.js 会自动排序，但我们可以尝试手动设置 renderOrder 基于距离？）
+            // 其实不需要，Three.js 已经对透明物体按距离排序。我们只需确保 depthWrite 关闭即可。
+            for (let i = groundSpots.length - 1; i >= 0; i--) {
+                const spot = groundSpots[i];
+                const age = spot.userData.age + deltaTime;
+                spot.userData.age = age;
+                
+                const lifetime = spot.userData.lifetime;
+                const fadeStart = spot.userData.fadeStart;
+                
+                if (age >= lifetime) {
+                    scene.remove(spot);
+                    spot.geometry.dispose();
+                    spot.material.dispose();
+                    groundSpots.splice(i, 1);
+                } else if (age > fadeStart) {
+                    const fadeProgress = (age - fadeStart) / (lifetime - fadeStart);
+                    const opacity = spot.userData.initialOpacity * (1 - fadeProgress);
+                    spot.material.opacity = Math.max(0, opacity);
+                    const scale = 1 - fadeProgress * 0.3;
+                    spot.scale.set(scale, scale, scale);
+                } else {
+                    spot.material.opacity = spot.userData.initialOpacity;
+                }
+            }
+        }
+
+        // --- 移动更新 (修复：移动和旋转独立，可同时进行) ---
+        function updateMovement(deltaTime) {
+            let moveX = 0;
+            let moveZ = 0;
+            
+            if (moveState.forward) moveZ -= 1;
+            if (moveState.backward) moveZ += 1;
+            if (moveState.left) moveX -= 1;
+            if (moveState.right) moveX += 1;
+            
+            if (joystick.active) {
+                moveX = joystick.deltaX;
+                moveZ = joystick.deltaY;
+            }
+            
+            const length = Math.sqrt(moveX * moveX + moveZ * moveZ);
+            if (length > 1) {
+                moveX /= length;
+                moveZ /= length;
+            }
+            
+            if (moveX !== 0 || moveZ !== 0) {
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0;
+                forward.normalize();
+                
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+                
+                const moveDir = new THREE.Vector3()
+                    .addScaledVector(forward, -moveZ)
+                    .addScaledVector(right, moveX);
+                
+                if (moveDir.length() > 0) {
+                    moveDir.normalize();
+                    const speed = config.moveSpeed * deltaTime;
+                    camera.position.x += moveDir.x * speed;
+                    camera.position.z += moveDir.z * speed;
+                    const limit = 18;
+                    camera.position.x = Math.max(-limit, Math.min(limit, camera.position.x));
+                    camera.position.z = Math.max(-limit, Math.min(limit, camera.position.z));
+                }
+            }
+            
+            camera.position.y = 1.6;
+        }
+
+        // --- 相机旋转更新 ---
+        function updateCameraRotation() {
+            const lerpFactor = 0.15;
+            currentRotY += (targetRotY - currentRotY) * lerpFactor;
+            currentRotX += (targetRotX - currentRotX) * lerpFactor;
+            
+            currentRotY = Math.max(-maxRotY, Math.min(maxRotY, currentRotY));
+            currentRotX = Math.max(-maxRotX, Math.min(maxRotX, currentRotX));
+            
+            camera.rotation.y = currentRotY;
+            camera.rotation.x = currentRotX;
+        }
+
+        // --- 事件监听 ---
+
+        // 鼠标移动 (桌面端)
+        window.addEventListener('mousemove', (event) => {
+            if (joystick.active) return;
+            
+            const nx = (event.clientX / window.innerWidth) * 2 - 1;
+            const ny = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            targetRotY = -nx * maxRotY;
+            targetRotX = -0.1 - ny * maxRotX * 0.6; // 保留一点向下看的基础角度
+        });
+
+        // --- 触摸事件 (修复：允许多点触控，摇杆和视角旋转独立) ---
+        renderer.domElement.addEventListener('touchstart', (event) => {
+            for (let i = 0; i < event.touches.length; i++) {
+                const touch = event.touches[i];
+                const rect = document.getElementById('joystick-container').getBoundingClientRect();
+                const inJoystick = (touch.clientX >= rect.left && touch.clientX <= rect.right &&
+                                    touch.clientY >= rect.top && touch.clientY <= rect.bottom);
+                
+                if (!inJoystick && !touchRotate.active) {
+                    // 这个触摸用于旋转视角
+                    touchRotate.active = true;
+                    touchRotate.touchId = touch.identifier;
+                    touchRotate.lastX = touch.clientX;
+                    touchRotate.lastY = touch.clientY;
+                }
+            }
+        }, { passive: true });
+
+        renderer.domElement.addEventListener('touchmove', (event) => {
+            if (!touchRotate.active) return;
+            
+            for (let i = 0; i < event.touches.length; i++) {
+                const touch = event.touches[i];
+                if (touch.identifier === touchRotate.touchId) {
+                    const dx = touch.clientX - touchRotate.lastX;
+                    const dy = touch.clientY - touchRotate.lastY;
+                    
+                    // 水平滑动旋转Y轴，垂直滑动旋转X轴
+                    targetRotY -= dx * config.mouseSensitivity * 2;
+                    targetRotX -= dy * config.mouseSensitivity * 2;
+                    
+                    targetRotY = Math.max(-maxRotY, Math.min(maxRotY, targetRotY));
+                    targetRotX = Math.max(-maxRotX, Math.min(maxRotX, targetRotX));
+                    
+                    touchRotate.lastX = touch.clientX;
+                    touchRotate.lastY = touch.clientY;
+                    break;
+                }
+            }
+        }, { passive: true });
+
+        renderer.domElement.addEventListener('touchend', (event) => {
+            for (let i = 0; i < event.changedTouches.length; i++) {
+                if (event.changedTouches[i].identifier === touchRotate.touchId) {
+                    touchRotate.active = false;
+                    touchRotate.touchId = null;
+                    break;
+                }
+            }
+        }, { passive: true });
+
+        renderer.domElement.addEventListener('touchcancel', (event) => {
+            touchRotate.active = false;
+            touchRotate.touchId = null;
+        }, { passive: true });
+
+        // 键盘控制
+        window.addEventListener('keydown', (event) => {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveState.forward = true; event.preventDefault(); break;
+                case 'KeyS': case 'ArrowDown': moveState.backward = true; event.preventDefault(); break;
+                case 'KeyA': case 'ArrowLeft': moveState.left = true; event.preventDefault(); break;
+                case 'KeyD': case 'ArrowRight': moveState.right = true; event.preventDefault(); break;
+            }
+        });
+        
+        window.addEventListener('keyup', (event) => {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveState.forward = false; event.preventDefault(); break;
+                case 'KeyS': case 'ArrowDown': moveState.backward = false; event.preventDefault(); break;
+                case 'KeyA': case 'ArrowLeft': moveState.left = false; event.preventDefault(); break;
+                case 'KeyD': case 'ArrowRight': moveState.right = false; event.preventDefault(); break;
+            }
+        });
+
+        // --- 移动端摇杆 ---
+        const joystickContainer = document.getElementById('joystick-container');
+        const joystickThumb = document.getElementById('joystick-thumb');
+        const thumbMaxDist = 40;
+        
+        function updateJoystickPosition(dx, dy) {
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            let limitedDx = dx;
+            let limitedDy = dy;
+            
+            if (dist > thumbMaxDist) {
+                limitedDx = (dx / dist) * thumbMaxDist;
+                limitedDy = (dy / dist) * thumbMaxDist;
+            }
+            
+            joystickThumb.style.transform = `translate(calc(-50% + ${limitedDx}px), calc(-50% + ${limitedDy}px))`;
+            
+            joystick.deltaX = limitedDx / thumbMaxDist;
+            joystick.deltaY = limitedDy / thumbMaxDist;
+        }
+        
+        function resetJoystick() {
+            joystick.active = false;
+            joystick.deltaX = 0;
+            joystick.deltaY = 0;
+            joystickThumb.style.transform = `translate(-50%, -50%)`;
+        }
+        
+        joystickContainer.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            const touch = event.touches[0];
+            const rect = joystickContainer.getBoundingClientRect();
+            joystick.centerX = rect.left + rect.width / 2;
+            joystick.centerY = rect.top + rect.height / 2;
+            joystick.active = true;
+            joystick.touchId = touch.identifier;
+            
+            const dx = touch.clientX - joystick.centerX;
+            const dy = touch.clientY - joystick.centerY;
+            updateJoystickPosition(dx, dy);
+        }, { passive: false });
+        
+        joystickContainer.addEventListener('touchmove', (event) => {
+            event.preventDefault();
+            if (!joystick.active) return;
+            
+            for (let i = 0; i < event.touches.length; i++) {
+                const touch = event.touches[i];
+                if (touch.identifier === joystick.touchId) {
+                    const dx = touch.clientX - joystick.centerX;
+                    const dy = touch.clientY - joystick.centerY;
+                    updateJoystickPosition(dx, dy);
+                    break;
+                }
+            }
+        }, { passive: false });
+        
+        joystickContainer.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            for (let i = 0; i < event.changedTouches.length; i++) {
+                if (event.changedTouches[i].identifier === joystick.touchId) {
+                    resetJoystick();
+                    break;
+                }
+            }
+        }, { passive: false });
+        
+        joystickContainer.addEventListener('touchcancel', (event) => {
+            event.preventDefault();
+            resetJoystick();
+        }, { passive: false });
+
+        // 窗口自适应
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- 动画循环 ---
+        function animate() {
+            const delta = Math.min(clock.getDelta(), 0.1);
+            
+            // 关键修复：移动和旋转完全独立，可同时进行
+            updateMovement(delta);      // 更新位置
+            updateCameraRotation();      // 更新旋转（基于目标角度）
+            updateParticles(delta);      // 更新粒子系统
+            
+            renderer.render(scene, camera);
+            
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+        console.log('恶俗第一视角已启动 — 支持同时移动和转视角，重叠斑点已优化');
+    </script>
+</body>
+</html>

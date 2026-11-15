@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>恶俗第一视角 · 黄色液体喷射 (可移动版)</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+            touch-action: none; /* 防止触摸滚动 */
+        }
+        #info {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255, 255, 200, 0.8);
+            background: rgba(0,0,0,0.5);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            pointer-events: none;
+            z-index: 100;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 0, 0.3);
+        }
+        #warning {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            color: rgba(255, 200, 0, 0.7);
+            background: rgba(40, 20, 0, 0.6);
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 12px;
+            border: 1px solid #ffaa00;
+            pointer-events: none;
+            z-index: 100;
+            letter-spacing: 1px;
+        }
+        /* 移动端摇杆区域 - 只在触摸设备显示 */
+        #joystick-container {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            width: 120px;
+            height: 120px;
+            border-radius: 60px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 200, 0, 0.3);
+            backdrop-filter: blur(5px);
+            z-index: 200;
+            display: none; /* 默认隐藏，触摸设备显示 */
+            touch-action: none;
+            pointer-events: auto;
+        }
+        #joystick-thumb {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(255, 200, 0, 0.7);
+            box-shadow: 0 0 20px rgba(255, 200, 0, 0.5);
+            transform: translate(-50%, -50%);
+            transition: transform 0.05s;
+            pointer-events: none;
+        }
+        /* 移动端提示 */
+        #mobile-hint {
+            position: fixed;
+            bottom: 160px;
+            left: 30px;
+            color: rgba(255, 255, 200, 0.6);
+            font-size: 12px;
+            background: rgba(0,0,0,0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+            z-index: 200;
+            display: none;
+            pointer-events: none;
+        }
+        /* 桌面端提示 */
+        #desktop-hint {
+            position: fixed;
+            bottom: 160px;
+            left: 30px;
+            color: rgba(255, 255, 200, 0.6);
+            font-size: 12px;
+            background: rgba(0,0,0,0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+            z-index: 200;
+            display: block;
+            pointer-events: none;
+        }
+        @media (pointer: coarse) {
+            #joystick-container {
+                display: block;
+            }
+            #mobile-hint {
+                display: block;
+            }
+            #desktop-hint {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="info">🖱️ 鼠标移动视角 | WASD/摇杆移动 | 液体落地渐渐消失</div>
+    <div id="warning">⚠️ 恶俗警告 · 黄色液体喷射</div>
+    
+    <!-- 移动端摇杆 -->
+    <div id="joystick-container">
+        <div id="joystick-thumb"></div>
+    </div>
+    <div id="mobile-hint">👆 拖动摇杆移动</div>
+    <div id="desktop-hint">⌨️ WASD 移动 | 🖱️ 鼠标转视角</div>
+
+    <!-- 引入 Three.js 核心库和扩展 -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 初始化场景、相机、渲染器 ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 1000);
+        // 相机位置将在移动时更新，初始在原点上方
+        camera.position.set(0, 1.6, 0);
+        camera.rotation.order = 'YXZ';
+        camera.rotation.x = -0.1; // 轻微向下看
+        camera.rotation.y = 0;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // 限制像素比，提高性能
+        document.body.appendChild(renderer.domElement);
+
+        // --- 光照 ---
+        const ambientLight = new THREE.AmbientLight(0x404060);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffeedd, 1);
+        dirLight.position.set(2, 5, 3);
+        dirLight.castShadow = true;
+        dirLight.receiveShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        const d = 10;
+        dirLight.shadow.camera.left = -d;
+        dirLight.shadow.camera.right = d;
+        dirLight.shadow.camera.top = d;
+        dirLight.shadow.camera.bottom = -d;
+        dirLight.shadow.camera.near = 1;
+        dirLight.shadow.camera.far = 15;
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0xffaa00, 0.5, 20);
+        pointLight.position.set(0, 2, 1);
+        scene.add(pointLight);
+
+        // --- 地面 ---
+        const groundGeometry = new THREE.CircleGeometry(30, 64);
+        const groundMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x3a3a3a, 
+            roughness: 0.8, 
+            metalness: 0.2,
+            side: THREE.DoubleSide
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = -0.01;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const gridHelper = new THREE.GridHelper(40, 40, 0x666666, 0x444444);
+        gridHelper.position.y = 0;
+        scene.add(gridHelper);
+
+        scene.fog = new THREE.FogExp2(0x1a1a1a, 0.03);
+
+        // --- 配置参数 ---
+        const config = {
+            spawnRate: 35,
+            particleSpeedY: 2.5,
+            particleSpeedXZ: 0.8,
+            gravity: 9.8,
+            particleSize: 0.06,
+            groundSpotSize: 0.18,
+            spotLifetime: 4.0,
+            fadeStart: 1.0,
+            color: 0xffdd44,
+            colorVariation: 0.2,
+            moveSpeed: 3.0,        // 移动速度
+            mouseSensitivity: 0.002 // 鼠标灵敏度
+        };
+
+        // --- 状态变量 ---
+        const activeParticles = [];
+        const groundSpots = [];
+        const clock = new THREE.Clock();
+
+        // 玩家移动状态
+        const moveState = {
+            forward: false,
+            backward: false,
+            left: false,
+            right: false
+        };
+
+        // 鼠标/触摸旋转
+        let targetRotX = 0;
+        let targetRotY = 0;
+        const maxRotX = 0.5;
+        const maxRotY = 1.2;
+        let currentRotX = 0;
+        let currentRotY = 0;
+
+        // 移动端摇杆状态
+        const joystick = {
+            active: false,
+            touchId: null,
+            centerX: 0,
+            centerY: 0,
+            deltaX: 0,
+            deltaY: 0
+        };
+
+        // 喷射点相对于相机的局部偏移 (相机空间: 前方为 -Z)
+        const localOffset = new THREE.Vector3(0, -0.45, -0.7);
+
+        // --- 工具函数 ---
+        function spawnParticle(basePos, baseDir) {
+            const size = config.particleSize * (0.7 + Math.random() * 0.6);
+            const geometry = new THREE.SphereGeometry(size, 6, 6);
+            const hue = 0.12 + (Math.random() - 0.5) * 0.1;
+            const color = new THREE.Color().setHSL(hue, 1, 0.55 + Math.random() * 0.2);
+            
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                emissive: new THREE.Color(0x553300),
+                roughness: 0.3,
+                metalness: 0.1,
+                transparent: true,
+                opacity: 0.95
+            });
+            
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.castShadow = true;
+            
+            const pos = basePos.clone().add(
+                new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.1,
+                    (Math.random() - 0.5) * 0.1,
+                    (Math.random() - 0.5) * 0.1
+                )
+            );
+            sphere.position.copy(pos);
+            
+            const forwardDir = baseDir.clone().normalize();
+            const speedBase = 2.5 + Math.random() * 1.5;
+            const vel = forwardDir.clone().multiplyScalar(speedBase);
+            vel.x += (Math.random() - 0.5) * config.particleSpeedXZ;
+            vel.z += (Math.random() - 0.5) * config.particleSpeedXZ;
+            vel.y += 1.5 + Math.random() * 1.0;
+            
+            sphere.userData.velocity = vel;
+            sphere.userData.age = 0;
+            
+            scene.add(sphere);
+            activeParticles.push(sphere);
+        }
+
+        function createGroundSpot(pos, sizeScale = 1.0) {
+            const size = config.groundSpotSize * (0.7 + Math.random() * 0.6) * sizeScale;
+            const geometry = new THREE.CircleGeometry(size, 8);
+            const hue = 0.12 + (Math.random() - 0.5) * 0.06;
+            const color = new THREE.Color().setHSL(hue, 1, 0.55);
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                emissive: new THREE.Color(0x442200),
+                roughness: 0.6,
+                metalness: 0.1,
+                transparent: true,
+                opacity: 0.9,
+                side: THREE.DoubleSide
+            });
+            const spot = new THREE.Mesh(geometry, material);
+            spot.rotation.x = -Math.PI / 2;
+            spot.position.copy(pos);
+            spot.position.y = 0.005;
+            spot.receiveShadow = true;
+            
+            spot.userData.age = 0;
+            spot.userData.lifetime = config.spotLifetime * (0.8 + Math.random() * 0.6);
+            spot.userData.fadeStart = config.fadeStart;
+            spot.userData.initialOpacity = 0.9;
+            
+            scene.add(spot);
+            groundSpots.push(spot);
+        }
+
+        // --- 更新粒子系统 ---
+        function updateParticles(deltaTime) {
+            // 生成新粒子
+            if (!updateParticles.spawnAccum) updateParticles.spawnAccum = 0;
+            updateParticles.spawnAccum += deltaTime * config.spawnRate;
+            const spawnCount = Math.floor(updateParticles.spawnAccum);
+            updateParticles.spawnAccum -= spawnCount;
+            
+            const offsetWorld = localOffset.clone().applyQuaternion(camera.quaternion);
+            const basePos = camera.position.clone().add(offsetWorld);
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            
+            for (let i = 0; i < spawnCount; i++) {
+                const dirVariation = forward.clone().add(
+                    new THREE.Vector3(
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3,
+                        (Math.random() - 0.5) * 0.3
+                    )
+                ).normalize();
+                spawnParticle(basePos, dirVariation);
+            }
+            
+            // 更新空中的粒子
+            for (let i = activeParticles.length - 1; i >= 0; i--) {
+                const p = activeParticles[i];
+                const v = p.userData.velocity;
+                const age = p.userData.age + deltaTime;
+                p.userData.age = age;
+                
+                v.y -= config.gravity * deltaTime;
+                
+                p.position.x += v.x * deltaTime;
+                p.position.y += v.y * deltaTime;
+                p.position.z += v.z * deltaTime;
+                
+                p.rotation.x += deltaTime * 2;
+                p.rotation.y += deltaTime * 3;
+                
+                // 落地检测
+                if (p.position.y < 0.02) {
+                    const spotPos = p.position.clone();
+                    spotPos.y = 0.005;
+                    const sizeScale = 0.8 + Math.random() * 0.8;
+                    createGroundSpot(spotPos, sizeScale);
+                    
+                    scene.remove(p);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                    activeParticles.splice(i, 1);
+                } else if (p.position.length() > 50) {
+                    // 太远则移除
+                    scene.remove(p);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                    activeParticles.splice(i, 1);
+                }
+            }
+            
+            // 更新地面斑点
+            for (let i = groundSpots.length - 1; i >= 0; i--) {
+                const spot = groundSpots[i];
+                const age = spot.userData.age + deltaTime;
+                spot.userData.age = age;
+                
+                const lifetime = spot.userData.lifetime;
+                const fadeStart = spot.userData.fadeStart;
+                
+                if (age >= lifetime) {
+                    scene.remove(spot);
+                    spot.geometry.dispose();
+                    spot.material.dispose();
+                    groundSpots.splice(i, 1);
+                } else if (age > fadeStart) {
+                    const fadeProgress = (age - fadeStart) / (lifetime - fadeStart);
+                    const opacity = spot.userData.initialOpacity * (1 - fadeProgress);
+                    spot.material.opacity = Math.max(0, opacity);
+                    const scale = 1 - fadeProgress * 0.3;
+                    spot.scale.set(scale, scale, scale);
+                } else {
+                    spot.material.opacity = spot.userData.initialOpacity;
+                }
+            }
+        }
+
+        // --- 处理移动输入 ---
+        function updateMovement(deltaTime) {
+            // 摇杆输入映射到移动状态
+            let moveX = 0;
+            let moveZ = 0;
+            
+            // 键盘输入
+            if (moveState.forward) moveZ -= 1;
+            if (moveState.backward) moveZ += 1;
+            if (moveState.left) moveX -= 1;
+            if (moveState.right) moveX += 1;
+            
+            // 摇杆输入覆盖键盘 (如果摇杆激活)
+            if (joystick.active) {
+                // 摇杆的 deltaX, deltaY 范围 -1 到 1
+                moveX = joystick.deltaX;
+                moveZ = joystick.deltaY;
+            }
+            
+            // 限制长度
+            const length = Math.sqrt(moveX * moveX + moveZ * moveZ);
+            if (length > 1) {
+                moveX /= length;
+                moveZ /= length;
+            }
+            
+            if (moveX !== 0 || moveZ !== 0) {
+                // 根据相机朝向计算移动方向
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0;
+                forward.normalize();
+                
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+                
+                const moveDir = new THREE.Vector3()
+                    .addScaledVector(forward, -moveZ)  // moveZ正为后退，负为前进
+                    .addScaledVector(right, moveX);
+                
+                if (moveDir.length() > 0) {
+                    moveDir.normalize();
+                    const speed = config.moveSpeed * deltaTime;
+                    camera.position.x += moveDir.x * speed;
+                    camera.position.z += moveDir.z * speed;
+                    // 限制移动范围
+                    const limit = 18;
+                    camera.position.x = Math.max(-limit, Math.min(limit, camera.position.x));
+                    camera.position.z = Math.max(-limit, Math.min(limit, camera.position.z));
+                }
+            }
+            
+            // 保持高度恒定
+            camera.position.y = 1.6;
+        }
+
+        // --- 相机旋转更新 (平滑) ---
+        function updateCameraRotation() {
+            const lerpFactor = 0.1;
+            currentRotY += (targetRotY - currentRotY) * lerpFactor;
+            currentRotX += (targetRotX - currentRotX) * lerpFactor;
+            
+            // 限制范围
+            currentRotY = Math.max(-maxRotY, Math.min(maxRotY, currentRotY));
+            currentRotX = Math.max(-maxRotX, Math.min(maxRotX, currentRotX));
+            
+            camera.rotation.y = currentRotY;
+            camera.rotation.x = currentRotX - 0.1; // 基础向下看
+        }
+
+        // --- 事件监听 ---
+        
+        // 鼠标移动 (桌面端)
+        window.addEventListener('mousemove', (event) => {
+            if (joystick.active) return; // 触摸操作时忽略鼠标
+            
+            const nx = (event.clientX / window.innerWidth) * 2 - 1;
+            const ny = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            targetRotY = -nx * maxRotY;
+            targetRotX = -ny * maxRotX * 0.8;
+        });
+
+        // 触摸事件 - 旋转视角 (在非摇杆区域)
+        let touchRotateId = null;
+        let lastTouchX = 0;
+        let lastTouchY = 0;
+        
+        renderer.domElement.addEventListener('touchstart', (event) => {
+            // 检查是否在摇杆区域内
+            const touch = event.touches[0];
+            const rect = document.getElementById('joystick-container').getBoundingClientRect();
+            const inJoystick = (touch.clientX >= rect.left && touch.clientX <= rect.right &&
+                                touch.clientY >= rect.top && touch.clientY <= rect.bottom);
+            
+            if (!inJoystick && touchRotateId === null) {
+                touchRotateId = touch.identifier;
+                lastTouchX = touch.clientX;
+                lastTouchY = touch.clientY;
+            }
+        }, { passive: true });
+        
+        renderer.domElement.addEventListener('touchmove', (event) => {
+            if (touchRotateId === null) return;
+            
+            for (let i = 0; i < event.touches.length; i++) {
+                const touch = event.touches[i];
+                if (touch.identifier === touchRotateId) {
+                    const dx = touch.clientX - lastTouchX;
+                    const dy = touch.clientY - lastTouchY;
+                    
+                    // 根据滑动距离旋转
+                    targetRotY -= dx * config.mouseSensitivity * 2;
+                    targetRotX -= dy * config.mouseSensitivity * 2;
+                    
+                    // 限制范围
+                    targetRotY = Math.max(-maxRotY, Math.min(maxRotY, targetRotY));
+                    targetRotX = Math.max(-maxRotX, Math.min(maxRotX, targetRotX));
+                    
+                    lastTouchX = touch.clientX;
+                    lastTouchY = touch.clientY;
+                    break;
+                }
+            }
+        }, { passive: true });
+        
+        renderer.domElement.addEventListener('touchend', (event) => {
+            for (let i = 0; i < event.changedTouches.length; i++) {
+                if (event.changedTouches[i].identifier === touchRotateId) {
+                    touchRotateId = null;
+                    break;
+                }
+            }
+        }, { passive: true });
+
+        // 键盘控制
+        window.addEventListener('keydown', (event) => {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveState.forward = true; event.preventDefault(); break;
+                case 'KeyS': case 'ArrowDown': moveState.backward = true; event.preventDefault(); break;
+                case 'KeyA': case 'ArrowLeft': moveState.left = true; event.preventDefault(); break;
+                case 'KeyD': case 'ArrowRight': moveState.right = true; event.preventDefault(); break;
+            }
+        });
+        
+        window.addEventListener('keyup', (event) => {
+            switch (event.code) {
+                case 'KeyW': case 'ArrowUp': moveState.forward = false; event.preventDefault(); break;
+                case 'KeyS': case 'ArrowDown': moveState.backward = false; event.preventDefault(); break;
+                case 'KeyA': case 'ArrowLeft': moveState.left = false; event.preventDefault(); break;
+                case 'KeyD': case 'ArrowRight': moveState.right = false; event.preventDefault(); break;
+            }
+        });
+
+        // --- 移动端摇杆 ---
+        const joystickContainer = document.getElementById('joystick-container');
+        const joystickThumb = document.getElementById('joystick-thumb');
+        const thumbMaxDist = 40; // 最大偏移距离
+        
+        function updateJoystickPosition(dx, dy) {
+            // 计算偏移量，限制最大距离
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            let limitedDx = dx;
+            let limitedDy = dy;
+            
+            if (dist > thumbMaxDist) {
+                limitedDx = (dx / dist) * thumbMaxDist;
+                limitedDy = (dy / dist) * thumbMaxDist;
+            }
+            
+            // 更新摇杆视觉
+            joystickThumb.style.transform = `translate(calc(-50% + ${limitedDx}px), calc(-50% + ${limitedDy}px))`;
+            
+            // 更新输入值 (归一化到 -1 到 1)
+            joystick.deltaX = limitedDx / thumbMaxDist;
+            joystick.deltaY = limitedDy / thumbMaxDist;
+        }
+        
+        function resetJoystick() {
+            joystick.active = false;
+            joystick.deltaX = 0;
+            joystick.deltaY = 0;
+            joystickThumb.style.transform = `translate(-50%, -50%)`;
+        }
+        
+        joystickContainer.addEventListener('touchstart', (event) => {
+            event.preventDefault();
+            const touch = event.touches[0];
+            const rect = joystickContainer.getBoundingClientRect();
+            joystick.centerX = rect.left + rect.width / 2;
+            joystick.centerY = rect.top + rect.height / 2;
+            joystick.active = true;
+            joystick.touchId = touch.identifier;
+            
+            const dx = touch.clientX - joystick.centerX;
+            const dy = touch.clientY - joystick.centerY;
+            updateJoystickPosition(dx, dy);
+        }, { passive: false });
+        
+        joystickContainer.addEventListener('touchmove', (event) => {
+            event.preventDefault();
+            if (!joystick.active) return;
+            
+            for (let i = 0; i < event.touches.length; i++) {
+                const touch = event.touches[i];
+                if (touch.identifier === joystick.touchId) {
+                    const dx = touch.clientX - joystick.centerX;
+                    const dy = touch.clientY - joystick.centerY;
+                    updateJoystickPosition(dx, dy);
+                    break;
+                }
+            }
+        }, { passive: false });
+        
+        joystickContainer.addEventListener('touchend', (event) => {
+            event.preventDefault();
+            for (let i = 0; i < event.changedTouches.length; i++) {
+                if (event.changedTouches[i].identifier === joystick.touchId) {
+                    resetJoystick();
+                    break;
+                }
+            }
+        }, { passive: false });
+        
+        joystickContainer.addEventListener('touchcancel', (event) => {
+            event.preventDefault();
+            resetJoystick();
+        }, { passive: false });
+
+        // --- 窗口自适应 ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- 动画循环 ---
+        function animate() {
+            const delta = Math.min(clock.getDelta(), 0.1);
+            
+            // 更新移动
+            updateMovement(delta);
+            
+            // 更新相机旋转
+            updateCameraRotation();
+            
+            // 更新粒子系统
+            updateParticles(delta);
+            
+            // 渲染
+            renderer.render(scene, camera);
+            
+            requestAnimationFrame(animate);
+        }
+
+        // 启动
+        animate();
+        console.log('恶俗第一视角已启动 — 支持移动端移动');
+    </script>
+</body>
+</html>

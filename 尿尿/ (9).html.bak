@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>第一视角 · 液体喷射</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.128.0/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- 初始化 ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0d0d12);
+        scene.fog = new THREE.FogExp2(0x0d0d12, 0.025);
+
+        const camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.05, 200);
+        camera.position.set(0, 1.65, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.1;
+        document.body.appendChild(renderer.domElement);
+
+        // --- 光照 ---
+        scene.add(new THREE.AmbientLight(0x2a2a3a, 0.6));
+
+        const dirLight = new THREE.DirectionalLight(0x8899bb, 0.7);
+        dirLight.position.set(-3, 8, 5);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        dirLight.shadow.camera.near = 1;
+        dirLight.shadow.camera.far = 30;
+        dirLight.shadow.camera.left = -15;
+        dirLight.shadow.camera.right = 15;
+        dirLight.shadow.camera.top = 15;
+        dirLight.shadow.camera.bottom = -15;
+        dirLight.shadow.bias = -0.0005;
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0xffcc66, 0.8, 12, 2);
+        pointLight.position.set(0, 2.5, 0.5);
+        scene.add(pointLight);
+
+        // --- 地面 ---
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: 0x25252a,
+            roughness: 0.9,
+            metalness: 0.15,
+        });
+        const ground = new THREE.Mesh(new THREE.CircleGeometry(40, 80), groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.position.y = 0;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const grid = new THREE.GridHelper(60, 60, 0x3a3a42, 0x2a2a30);
+        grid.position.y = 0.001;
+        scene.add(grid);
+
+        // --- 配置 ---
+        const CONFIG = {
+            spawnRate: 28,
+            gravity: 9.8,
+            particleSize: 0.05,
+            groundSpotSize: 0.16,
+            spotLifetime: 5.0,
+            fadeStart: 1.5,
+            moveSpeed: 3.0,
+            lookSensitivity: 0.0022,
+            jetSpeed: 3.2,
+            jetSpreadXZ: 0.5,
+            jetUp: 1.2,
+            // 上下旋转限制（弧度）
+            maxPitchUp: 0.9,    // 抬头限制（约51度）
+            maxPitchDown: 1.2,  // 低头限制（约69度）
+        };
+
+        // --- 状态 ---
+        const activeParticles = [];
+        const groundSpots = [];
+        const clock = new THREE.Clock();
+
+        const moveState = { forward: false, backward: false, left: false, right: false };
+        
+        // 视角旋转：左右无限制，上下有限制
+        let rotX = 0;   // 上下
+        let rotY = 0;   // 左右
+
+        const joystick = { active: false, touchId: null, centerX: 0, centerY: 0, deltaX: 0, deltaY: 0 };
+        const lookState = { active: false, id: null, lastX: 0, lastY: 0 };
+
+        const localOffset = new THREE.Vector3(0, -0.4, -0.6);
+
+        const _v1 = new THREE.Vector3();
+        const _v2 = new THREE.Vector3();
+        const _v3 = new THREE.Vector3();
+
+        // 辅助函数：应用上下旋转限制
+        function clampPitch(value) {
+            return Math.max(-CONFIG.maxPitchDown, Math.min(CONFIG.maxPitchUp, value));
+        }
+
+        // --- 粒子 ---
+        function spawnParticle(basePos, baseDir) {
+            const isDroplet = Math.random() < 0.7;
+            const size = CONFIG.particleSize * (0.6 + Math.random() * 0.8);
+
+            let geometry;
+            if (isDroplet) {
+                geometry = new THREE.SphereGeometry(size * 0.55, 5, 4);
+                geometry.scale(1, 2.2, 1);
+            } else {
+                geometry = new THREE.SphereGeometry(size * 0.7, 6, 5);
+            }
+
+            const hue = 0.11 + Math.random() * 0.03;
+            const sat = 0.9 + Math.random() * 0.1;
+            const lig = 0.5 + Math.random() * 0.2;
+            const color = new THREE.Color().setHSL(hue, sat, lig);
+
+            const material = new THREE.MeshStandardMaterial({
+                color,
+                emissive: new THREE.Color(0x332200),
+                emissiveIntensity: 0.3,
+                roughness: 0.25,
+                metalness: 0.05,
+                transparent: true,
+                opacity: 0.9,
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            
+            mesh.position.copy(basePos).add(_v1.set(
+                (Math.random() - 0.5) * 0.08,
+                (Math.random() - 0.5) * 0.08,
+                (Math.random() - 0.5) * 0.08
+            ));
+
+            const speed = CONFIG.jetSpeed * (0.6 + Math.random() * 0.8);
+            const vel = baseDir.clone().multiplyScalar(speed);
+            vel.x += (Math.random() - 0.5) * CONFIG.jetSpreadXZ;
+            vel.z += (Math.random() - 0.5) * CONFIG.jetSpreadXZ;
+            vel.y += CONFIG.jetUp * (0.7 + Math.random() * 0.6);
+
+            mesh.userData.velocity = vel;
+            mesh.userData.age = 0;
+            mesh.userData.isDroplet = isDroplet;
+            mesh.userData.size = size;
+
+            if (isDroplet) {
+                mesh.quaternion.setFromUnitVectors(
+                    new THREE.Vector3(0, 1, 0),
+                    vel.clone().normalize()
+                );
+            }
+
+            scene.add(mesh);
+            activeParticles.push(mesh);
+        }
+
+        function createGroundSpot(pos, particleSize) {
+            const baseSize = CONFIG.groundSpotSize * (0.6 + Math.random() * 0.8) * (0.8 + particleSize * 3);
+            
+            const geometry = new THREE.CircleGeometry(baseSize, 10);
+            const hue = 0.11 + Math.random() * 0.04;
+            const color = new THREE.Color().setHSL(hue, 1.0, 0.55);
+            
+            const material = new THREE.MeshStandardMaterial({
+                color,
+                emissive: new THREE.Color(0x2a1800),
+                emissiveIntensity: 0.4,
+                roughness: 0.15,
+                metalness: 0.1,
+                transparent: true,
+                opacity: 0.85,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                depthTest: true,
+                polygonOffset: true,
+                polygonOffsetFactor: -1,
+                polygonOffsetUnits: -1,
+            });
+
+            const spot = new THREE.Mesh(geometry, material);
+            spot.rotation.x = -Math.PI / 2;
+            spot.position.set(pos.x, 0.012 + Math.random() * 0.008, pos.z);
+            
+            spot.userData.age = 0;
+            spot.userData.lifetime = CONFIG.spotLifetime * (0.7 + Math.random() * 0.6);
+            spot.userData.fadeStart = CONFIG.fadeStart;
+            spot.userData.initialOpacity = 0.85;
+            spot.userData.baseScale = 1;
+            spot.userData.spreadSpeed = 0.3 + Math.random() * 0.4;
+
+            scene.add(spot);
+            groundSpots.push(spot);
+        }
+
+        // --- 更新 ---
+        function updateParticles(delta) {
+            if (!updateParticles.acc) updateParticles.acc = 0;
+            updateParticles.acc += delta * CONFIG.spawnRate;
+            const count = Math.floor(updateParticles.acc);
+            updateParticles.acc -= count;
+
+            const offsetWorld = localOffset.clone().applyQuaternion(camera.quaternion);
+            const basePos = camera.position.clone().add(offsetWorld);
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+
+            for (let i = 0; i < count; i++) {
+                const dir = forward.clone().add(_v1.set(
+                    (Math.random() - 0.5) * 0.25,
+                    (Math.random() - 0.5) * 0.15,
+                    (Math.random() - 0.5) * 0.25
+                )).normalize();
+                spawnParticle(basePos, dir);
+            }
+
+            for (let i = activeParticles.length - 1; i >= 0; i--) {
+                const p = activeParticles[i];
+                const v = p.userData.velocity;
+                p.userData.age += delta;
+
+                v.y -= CONFIG.gravity * delta;
+                v.multiplyScalar(1 - 0.15 * delta);
+
+                p.position.x += v.x * delta;
+                p.position.y += v.y * delta;
+                p.position.z += v.z * delta;
+
+                if (p.userData.isDroplet && v.lengthSq() > 0.01) {
+                    _v2.copy(v).normalize();
+                    p.quaternion.setFromUnitVectors(_v3.set(0, 1, 0), _v2);
+                }
+
+                if (p.position.y < 0.03) {
+                    createGroundSpot(p.position, p.userData.size);
+                    scene.remove(p);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                    activeParticles.splice(i, 1);
+                } else if (p.position.length() > 60) {
+                    scene.remove(p);
+                    p.geometry.dispose();
+                    p.material.dispose();
+                    activeParticles.splice(i, 1);
+                }
+            }
+
+            for (let i = groundSpots.length - 1; i >= 0; i--) {
+                const s = groundSpots[i];
+                s.userData.age += delta;
+                const age = s.userData.age;
+                const life = s.userData.lifetime;
+                const fade = s.userData.fadeStart;
+
+                if (age >= life) {
+                    scene.remove(s);
+                    s.geometry.dispose();
+                    s.material.dispose();
+                    groundSpots.splice(i, 1);
+                } else if (age > fade) {
+                    const progress = (age - fade) / (life - fade);
+                    s.material.opacity = Math.max(0, s.userData.initialOpacity * (1 - progress * progress));
+                    const spread = 1 + progress * s.userData.spreadSpeed;
+                    s.scale.setScalar(spread);
+                } else {
+                    const progress = age / fade;
+                    s.material.opacity = s.userData.initialOpacity;
+                    const spread = 1 + progress * 0.15;
+                    s.scale.setScalar(spread);
+                }
+            }
+        }
+
+        function updateMovement(delta) {
+            let moveX = 0, moveZ = 0;
+            if (moveState.forward) moveZ -= 1;
+            if (moveState.backward) moveZ += 1;
+            if (moveState.left) moveX -= 1;
+            if (moveState.right) moveX += 1;
+
+            if (joystick.active) {
+                moveX = joystick.deltaX;
+                moveZ = joystick.deltaY;
+            }
+
+            const len = Math.sqrt(moveX * moveX + moveZ * moveZ);
+            if (len > 1) { moveX /= len; moveZ /= len; }
+
+            if (moveX !== 0 || moveZ !== 0) {
+                const forward = _v1.set(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0;
+                forward.normalize();
+                const right = _v2.set(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+
+                const dir = _v3.set(0, 0, 0)
+                    .addScaledVector(forward, -moveZ)
+                    .addScaledVector(right, moveX);
+                
+                if (dir.lengthSq() > 0) {
+                    dir.normalize();
+                    const speed = CONFIG.moveSpeed * delta;
+                    camera.position.x += dir.x * speed;
+                    camera.position.z += dir.z * speed;
+                }
+            }
+            camera.position.y = 1.65;
+        }
+
+        function updateCameraRotation() {
+            // 左右无限制，上下限制
+            camera.rotation.y = rotY;
+            camera.rotation.x = clampPitch(rotX);
+            camera.rotation.z = 0;
+        }
+
+        // --- 输入 ---
+
+        // 桌面端：鼠标拖拽
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            lookState.active = true;
+            lookState.id = 'mouse';
+            lookState.lastX = e.clientX;
+            lookState.lastY = e.clientY;
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!lookState.active || lookState.id !== 'mouse') return;
+            const dx = e.clientX - lookState.lastX;
+            const dy = e.clientY - lookState.lastY;
+            rotY -= dx * CONFIG.lookSensitivity;
+            rotX = clampPitch(rotX - dy * CONFIG.lookSensitivity);
+            lookState.lastX = e.clientX;
+            lookState.lastY = e.clientY;
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (lookState.id === 'mouse') {
+                lookState.active = false;
+                lookState.id = null;
+            }
+        });
+
+        // 键盘
+        window.addEventListener('keydown', (e) => {
+            switch (e.code) {
+                case 'KeyW': case 'ArrowUp': moveState.forward = true; e.preventDefault(); break;
+                case 'KeyS': case 'ArrowDown': moveState.backward = true; e.preventDefault(); break;
+                case 'KeyA': case 'ArrowLeft': moveState.left = true; e.preventDefault(); break;
+                case 'KeyD': case 'ArrowRight': moveState.right = true; e.preventDefault(); break;
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            switch (e.code) {
+                case 'KeyW': case 'ArrowUp': moveState.forward = false; e.preventDefault(); break;
+                case 'KeyS': case 'ArrowDown': moveState.backward = false; e.preventDefault(); break;
+                case 'KeyA': case 'ArrowLeft': moveState.left = false; e.preventDefault(); break;
+                case 'KeyD': case 'ArrowRight': moveState.right = false; e.preventDefault(); break;
+            }
+        });
+
+        // --- 摇杆 ---
+        const joystickEl = document.createElement('div');
+        joystickEl.style.cssText = 'position:fixed;bottom:40px;left:40px;width:110px;height:110px;border-radius:55px;background:rgba(255,255,255,0.06);border:1.5px solid rgba(255,200,0,0.25);z-index:200;display:none;touch-action:none;';
+        const thumbEl = document.createElement('div');
+        thumbEl.style.cssText = 'position:absolute;top:50%;left:50%;width:44px;height:44px;border-radius:50%;background:rgba(255,200,0,0.5);box-shadow:0 0 12px rgba(255,200,0,0.3);transform:translate(-50%,-50%);pointer-events:none;';
+        joystickEl.appendChild(thumbEl);
+        document.body.appendChild(joystickEl);
+
+        if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+            joystickEl.style.display = 'block';
+        }
+
+        const thumbMaxDist = 36;
+
+        function updateJoystick(dx, dy) {
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            let lx = dx, ly = dy;
+            if (dist > thumbMaxDist) { lx = (dx / dist) * thumbMaxDist; ly = (dy / dist) * thumbMaxDist; }
+            thumbEl.style.transform = `translate(calc(-50% + ${lx}px), calc(-50% + ${ly}px))`;
+            joystick.deltaX = lx / thumbMaxDist;
+            joystick.deltaY = ly / thumbMaxDist;
+        }
+
+        function resetJoystick() {
+            joystick.active = false;
+            joystick.deltaX = 0;
+            joystick.deltaY = 0;
+            thumbEl.style.transform = 'translate(-50%, -50%)';
+        }
+
+        joystickEl.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const t = e.touches[0];
+            const rect = joystickEl.getBoundingClientRect();
+            joystick.centerX = rect.left + rect.width / 2;
+            joystick.centerY = rect.top + rect.height / 2;
+            joystick.active = true;
+            joystick.touchId = t.identifier;
+            updateJoystick(t.clientX - joystick.centerX, t.clientY - joystick.centerY);
+        }, { passive: false });
+
+        joystickEl.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (!joystick.active) return;
+            for (let i = 0; i < e.touches.length; i++) {
+                const t = e.touches[i];
+                if (t.identifier === joystick.touchId) {
+                    updateJoystick(t.clientX - joystick.centerX, t.clientY - joystick.centerY);
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        joystickEl.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === joystick.touchId) {
+                    resetJoystick();
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        joystickEl.addEventListener('touchcancel', (e) => {
+            e.preventDefault();
+            resetJoystick();
+        }, { passive: false });
+
+        // --- 触摸视角拖拽（支持多点，与摇杆独立） ---
+        const touchMap = new Map();
+
+        renderer.domElement.addEventListener('touchstart', (e) => {
+            for (let i = 0; i < e.touches.length; i++) {
+                const t = e.touches[i];
+                const rect = joystickEl.getBoundingClientRect();
+                const inJoystick = (t.clientX >= rect.left && t.clientX <= rect.right &&
+                                    t.clientY >= rect.top && t.clientY <= rect.bottom);
+                
+                if (!inJoystick) {
+                    touchMap.set(t.identifier, 'look');
+                    if (!lookState.active) {
+                        lookState.active = true;
+                        lookState.id = t.identifier;
+                        lookState.lastX = t.clientX;
+                        lookState.lastY = t.clientY;
+                    }
+                } else {
+                    touchMap.set(t.identifier, 'joystick');
+                }
+            }
+        }, { passive: true });
+
+        renderer.domElement.addEventListener('touchmove', (e) => {
+            for (let i = 0; i < e.touches.length; i++) {
+                const t = e.touches[i];
+                if (touchMap.get(t.identifier) === 'look' && lookState.active && t.identifier === lookState.id) {
+                    const dx = t.clientX - lookState.lastX;
+                    const dy = t.clientY - lookState.lastY;
+                    rotY -= dx * CONFIG.lookSensitivity;
+                    rotX = clampPitch(rotX - dy * CONFIG.lookSensitivity);
+                    lookState.lastX = t.clientX;
+                    lookState.lastY = t.clientY;
+                }
+            }
+        }, { passive: true });
+
+        renderer.domElement.addEventListener('touchend', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const t = e.changedTouches[i];
+                touchMap.delete(t.identifier);
+                if (lookState.active && t.identifier === lookState.id) {
+                    lookState.active = false;
+                    lookState.id = null;
+                    for (const [id, usage] of touchMap.entries()) {
+                        if (usage === 'look') {
+                            lookState.active = true;
+                            lookState.id = id;
+                            break;
+                        }
+                    }
+                }
+            }
+        }, { passive: true });
+
+        renderer.domElement.addEventListener('touchcancel', (e) => {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const t = e.changedTouches[i];
+                touchMap.delete(t.identifier);
+                if (lookState.active && t.identifier === lookState.id) {
+                    lookState.active = false;
+                    lookState.id = null;
+                }
+            }
+        }, { passive: true });
+
+        // 窗口自适应
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- 动画循环 ---
+        function animate() {
+            const delta = Math.min(clock.getDelta(), 0.1);
+            updateMovement(delta);
+            updateCameraRotation();
+            updateParticles(delta);
+
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
