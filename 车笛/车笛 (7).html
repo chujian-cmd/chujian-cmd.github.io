@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>手机警报器 (纯功能版)</title>
+    <style>
+        :root {
+            --bg: #121212;
+            --panel: #1e1e1e;
+            --btn: #2a2a2a;
+            --btn-active: #404040;
+            --text: #e0e0e0;
+            --text-dim: #888;
+            --accent: #ff3b30;
+            --accent-glow: rgba(255, 59, 48, 0.3);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex; flex-direction: column; align-items: center;
+            min-height: 100vh; padding: 1rem;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container { width: 100%; max-width: 600px; display: flex; flex-direction: column; gap: 1rem; }
+
+        .header {
+            text-align: center; padding: 1rem 0;
+            border-bottom: 1px solid #333;
+        }
+        
+        .header h1 { font-size: 1.2rem; letter-spacing: 2px; font-weight: 500; }
+        .status { font-size: 0.75rem; color: #4caf50; margin-top: 0.5rem; display: flex; align-items: center; justify-content: center; gap: 5px; }
+        .status::before { content: ''; display: inline-block; width: 8px; height: 8px; background: currentColor; border-radius: 50%; }
+
+        .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.8rem; }
+        .full-width { grid-column: span 2; }
+
+        .group-title {
+            font-size: 0.75rem; color: var(--text-dim); margin: 0.5rem 0 0.2rem;
+            text-transform: uppercase; letter-spacing: 1px; font-weight: bold;
+            border-left: 3px solid var(--text-dim); padding-left: 8px;
+        }
+
+        .btn {
+            background: var(--btn); border: 1px solid #3a3a3a; border-radius: 8px;
+            padding: 1rem 0.5rem; color: var(--text); cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem;
+            transition: all 0.1s; position: relative; overflow: hidden;
+            touch-action: none; /* 防止长按触发浏览器默认行为 */
+        }
+
+        .btn:active, .btn.active {
+            background: var(--btn-active);
+            transform: scale(0.97);
+        }
+
+        .btn.active { border-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+
+        .btn strong { font-size: 1rem; font-weight: 600; }
+        .btn span { font-size: 0.7rem; color: var(--text-dim); }
+        
+        /* 特殊按钮颜色 */
+        .btn.danger { background: #2c1a1a; border-color: #552222; }
+        .btn.danger.active { background: #4a2020; border-color: var(--accent); }
+        .btn.success { background: #1a2c1a; border-color: #225522; }
+        .btn.success:active, .btn.success.active { background: #204a20; border-color: #4caf50; }
+        
+        /* 底部控制栏 */
+        .controls { display: flex; gap: 0.8rem; margin-top: 1rem; }
+        .controls .btn { flex: 1; padding: 1.2rem 0.5rem; }
+        .btn.stop { background: #331111; color: #ff6666; border-color: #551111; }
+        .btn.stop:active { background: #551111; }
+
+        /* 音量条 */
+        .slider-container { display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--panel); border-radius: 8px; }
+        input[type="range"] { flex: 1; -webkit-appearance: none; height: 6px; background: #333; border-radius: 3px; outline: none; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; background: var(--text); border-radius: 50%; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>手机警报器</h1>
+        <div class="status" id="status">系统就绪</div>
+    </div>
+
+    <!-- 号角与广播 -->
+    <div class="group-title">号角与广播</div>
+    <div class="grid">
+        <button class="btn danger" data-action="horn"><strong>气笛号角</strong><span>点击触发</span></button>
+        <button class="btn success" data-action="broadcast"><strong>车外广播</strong><span>长按发声</span></button>
+    </div>
+
+    <!-- 手动电笛 (长按触发) -->
+    <div class="group-title">手动电笛 (长按 / 松开)</div>
+    <div class="grid">
+        <button class="btn" data-action="siren-high"><strong>高音电笛</strong><span>长按爬升 / 松开滑落</span></button>
+        <button class="btn" data-action="siren-low"><strong>低音电笛</strong><span>长按爬升 / 飞轮拖尾</span></button>
+    </div>
+
+    <!-- 巡航警报 (循环触发) -->
+    <div class="group-title">巡航警报</div>
+    <div class="grid">
+        <button class="btn" data-action="wail-std"><strong>巡航 Wail</strong><span>标准</span></button>
+        <button class="btn" data-action="wail-slow"><strong>慢速 Wail</strong><span>慢速</span></button>
+        <button class="btn" data-action="wail-fast"><strong>快速 Wail</strong><span>快速</span></button>
+    </div>
+
+    <!-- 急促与特种 -->
+    <div class="group-title">急促与特种</div>
+    <div class="grid">
+        <button class="btn" data-action="yelp"><strong>急促 Yelp</strong><span>极速短音</span></button>
+        <button class="btn" data-action="hilo"><strong>救护 Hi-Lo</strong><span>高低双音</span></button>
+        <button class="btn" data-action="phaser"><strong>战术颤音</strong><span>高频振荡</span></button>
+        <button class="btn" data-action="pulse"><strong>重低音脉冲</strong><span>低频震动</span></button>
+    </div>
+
+    <!-- 并发模式 -->
+    <div class="group-title">双音并发</div>
+    <div class="grid">
+        <button class="btn" data-action="concurrent-a"><strong>并发 A</strong><span>巡航 + 急促</span></button>
+        <button class="btn" data-action="concurrent-b"><strong>并发 B</strong><span>急促 + 颤音</span></button>
+    </div>
+
+    <!-- 音量控制 -->
+    <div class="slider-container">
+        <span style="font-size: 0.8rem; color: var(--text-dim);">音量</span>
+        <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="0.7">
+        <span id="volumeValue" style="font-size: 0.8rem; width: 35px; text-align: right;">70%</span>
+    </div>
+
+    <!-- 停止控制 -->
+    <div class="controls">
+        <button class="btn stop full-width" id="stopAll" style="padding: 1.5rem;">
+            <strong style="font-size: 1.2rem;">一键全停 / 静音</strong>
+        </button>
+    </div>
+</div>
+
+<script>
+(function() {
+    let audioCtx = null;
+    let masterGain = null;
+    let currentVolume = 0.7;
+    let isMuted = false;
+    
+    // 记录当前正在播放的节点和定时器，便于一键停止
+    let activeNodes = [];
+    let activeIntervals = [];
+    
+    const statusEl = document.getElementById('status');
+
+    // ================= 1. 音频核心管理 =================
+    function getAudioContext() {
+        if (audioCtx) return audioCtx;
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        audioCtx = new AC();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = isMuted ? 0 : currentVolume;
+        masterGain.connect(audioCtx.destination);
+        return audioCtx;
+    }
+
+    function ensureRunning() {
+        const ctx = getAudioContext();
+        if (!ctx) return Promise.resolve(null);
+        if (ctx.state === 'running') return Promise.resolve(ctx);
+        return Promise.race([
+            ctx.resume().then(() => ctx).catch(() => ctx),
+            new Promise(resolve => setTimeout(() => resolve(ctx), 400))
+        ]);
+    }
+
+    // 停止所有声音并清理定时器
+    function stopAllSounds() {
+        // 停止所有振荡器
+        activeNodes.forEach(osc => {
+            try { osc.stop(); osc.disconnect(); } catch(e){}
+        });
+        activeNodes = [];
+        
+        // 清除所有循环定时器
+        activeIntervals.forEach(interval => clearInterval(interval));
+        activeIntervals = [];
+        
+        // 移除所有按钮的 active 状态
+        document.querySelectorAll('.btn').forEach(btn => btn.classList.remove('active'));
+        statusEl.textContent = "系统就绪";
+        statusEl.style.color = "#4caf50";
+    }
+
+    // ================= 2. 基础发声单元 =================
+    
+    // 播放固定频率/时间的单音
+    function playTone(freq, type, dur, vol, delay = 0) {
+        if (!audioCtx || !masterGain) return;
+        const now = audioCtx.currentTime;
+        const startAt = now + delay;
+        const endAt = startAt + dur;
+        
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        
+        // 包络（防爆音）
+        gain.gain.setValueAtTime(0, startAt);
+        gain.gain.linearRampToValueAtTime(vol, startAt + 0.02);
+        gain.gain.setValueAtTime(vol, endAt - 0.02);
+        gain.gain.linearRampToValueAtTime(0, endAt);
+        
+        osc.connect(gain);
+        gain.connect(masterGain);
+        
+        osc.start(startAt);
+        osc.stop(endAt + 0.05);
+        activeNodes.push(osc);
+    }
+
+    // 启动一个长音（返回对象，便于手动停止）
+    function startOsc(freq, type = 'sine', vol = 0.5) {
+        if (!audioCtx || !masterGain) return null;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        
+        gain.gain.setValueAtTime(0, audioCtx.currentTime);
+        gain.gain.linearRampToValueAtTime(vol, audioCtx.currentTime + 0.05);
+        
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start();
+        
+        activeNodes.push(osc);
+        return { osc, gain };
+    }
+
+    // ================= 3. 各功能音效实现 =================
+
+    // 气笛号角
+    function playHorn() {
+        playTone(400, 'sawtooth', 0.3, 0.6);
+        playTone(600, 'sawtooth', 0.3, 0.5);
+        playTone(800, 'square', 0.3, 0.3);
+    }
+
+    // 车外广播（模拟对讲机/喇叭啸叫）
+    function playBroadcast(hold) {
+        if (hold) {
+            const { osc, gain } = startOsc(880, 'square', 0.2);
+            if (osc) {
+                // 增加高频噪音感模拟广播
+                gain.gain.setTargetAtTime(0.4, audioCtx.currentTime, 0.05);
+                window.broadcastNode = osc;
+            }
+        } else {
+            if (window.broadcastNode) {
+                try { window.broadcastNode.stop(); } catch(e){}
+                window.broadcastNode = null;
+            }
+        }
+    }
+
+    // 手动电笛：高音
+    function startSirenHigh() {
+        const node = startOsc(600, 'sawtooth', 0.3);
+        if (!node) return;
+        const now = audioCtx.currentTime;
+        // 按住时频率爬升
+        node.osc.frequency.setValueAtTime(600, now);
+        node.osc.frequency.linearRampToValueAtTime(1400, now + 3);
+        window.manualSirenHigh = node;
+    }
+    function stopSirenHigh() {
+        if (!window.manualSirenHigh) return;
+        const { osc, gain } = window.manualSirenHigh;
+        const now = audioCtx.currentTime;
+        // 松开时滑落
+        osc.frequency.cancelScheduledValues(now);
+        osc.frequency.setValueAtTime(osc.frequency.value, now);
+        osc.frequency.exponentialRampToValueAtTime(200, now + 0.4);
+        gain.gain.setTargetAtTime(0, now + 0.3, 0.1);
+        setTimeout(() => { try { osc.stop(); } catch(e){} }, 500);
+        window.manualSirenHigh = null;
+    }
+
+    // 手动电笛：低音
+    function startSirenLow() {
+        const node = startOsc(300, 'square', 0.4);
+        if (!node) return;
+        const now = audioCtx.currentTime;
+        node.osc.frequency.setValueAtTime(300, now);
+        node.osc.frequency.linearRampToValueAtTime(800, now + 3);
+        window.manualSirenLow = node;
+    }
+    function stopSirenLow() {
+        if (!window.manualSirenLow) return;
+        const { osc, gain } = window.manualSirenLow;
+        const now = audioCtx.currentTime;
+        osc.frequency.cancelScheduledValues(now);
+        osc.frequency.setValueAtTime(osc.frequency.value, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.6); // 飞轮拖尾
+        gain.gain.setTargetAtTime(0, now + 0.4, 0.15);
+        setTimeout(() => { try { osc.stop(); } catch(e){} }, 800);
+        window.manualSirenLow = null;
+    }
+
+    // 循环扫频（Wail）
+    function startWail(speed = 1) {
+        const node = startOsc(800, 'sine', 0.4);
+        if (!node) return;
+        const osc = node.osc;
+        let goingUp = true;
+        
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const time = 1.2 / speed;
+            osc.frequency.cancelScheduledValues(now);
+            osc.frequency.setValueAtTime(osc.frequency.value, now);
+            
+            if (goingUp) {
+                osc.frequency.linearRampToValueAtTime(1200, now + time);
+            } else {
+                osc.frequency.linearRampToValueAtTime(600, now + time);
+            }
+            goingUp = !goingUp;
+        }, 1200 / speed);
+        
+        activeIntervals.push(interval);
+        window.currentLoopNode = osc;
+    }
+
+    // 急促 Yelp
+    function startYelp() {
+        const node = startOsc(800, 'sine', 0.3);
+        if (!node) return;
+        const osc = node.osc;
+        let goingUp = true;
+        
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            osc.frequency.cancelScheduledValues(now);
+            osc.frequency.setValueAtTime(osc.frequency.value, now);
+            
+            if (goingUp) {
+                osc.frequency.linearRampToValueAtTime(1500, now + 0.15);
+            } else {
+                osc.frequency.linearRampToValueAtTime(800, now + 0.15);
+            }
+            goingUp = !goingUp;
+        }, 150);
+        
+        activeIntervals.push(interval);
+        window.currentLoopNode = osc;
+    }
+
+    // 救护 Hi-Lo
+    function startHiLo() {
+        const node = startOsc(960, 'sine', 0.4);
+        if (!node) return;
+        const osc = node.osc;
+        let isHigh = true;
+        
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            osc.frequency.setValueAtTime(isHigh ? 770 : 960, audioCtx.currentTime);
+            isHigh = !isHigh;
+        }, 400);
+        
+        activeIntervals.push(interval);
+        window.currentLoopNode = osc;
+    }
+
+    // 战术颤音 (Frequency Modulation)
+    function startPhaser() {
+        const node = startOsc(1000, 'sine', 0.4);
+        if (!node) return;
+        const osc = node.osc;
+        
+        // 使用高频定时器进行快速颤音
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            const jitter = 900 + Math.random() * 200;
+            osc.frequency.setTargetAtTime(jitter, audioCtx.currentTime, 0.02);
+        }, 30);
+        
+        activeIntervals.push(interval);
+        window.currentLoopNode = osc;
+    }
+
+    // 重低音脉冲
+    function startPulse() {
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            // 低频短音
+            playTone(60, 'sine', 0.15, 0.8);
+            playTone(120, 'square', 0.1, 0.2);
+        }, 200);
+        
+        activeIntervals.push(interval);
+    }
+
+    // ================= 4. UI 交互绑定 =================
+
+    const carGrid = document.querySelector('.container');
+    const statusText = document.getElementById('status');
+
+    // 全局音量
+    const volumeSlider = document.getElementById('volumeSlider');
+    const volumeValue = document.getElementById('volumeValue');
+    volumeSlider.addEventListener('input', (e) => {
+        getAudioContext();
+        const v = parseFloat(e.target.value);
+        volumeValue.textContent = Math.round(v * 100) + '%';
+        currentVolume = v;
+        if (masterGain && !isMuted) {
+            masterGain.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+        }
+    });
+
+    // 一键全停
+    document.getElementById('stopAll').addEventListener('click', () => {
+        isMuted = !isMuted;
+        if (audioCtx) {
+            masterGain.gain.setTargetAtTime(isMuted ? 0 : currentVolume, audioCtx.currentTime, 0.05);
+        }
+        if (isMuted) {
+            stopAllSounds();
+            statusEl.textContent = "已静音 / 全停";
+            statusEl.style.color = "#ff3b30";
+            document.getElementById('stopAll').classList.add('active');
+        } else {
+            statusEl.textContent = "系统就绪";
+            statusEl.style.color = "#4caf50";
+            document.getElementById('stopAll').classList.remove('active');
+        }
+    });
+
+    // 监听所有点击/触摸事件
+    carGrid.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.btn');
+        if (!btn || btn.id === 'stopAll') return;
+        
+        e.preventDefault();
+        await ensureRunning();
+        if (isMuted) {
+            // 如果被静音了，点任何发声按钮自动解除静音
+            document.getElementById('stopAll').click();
+        }
+
+        const action = btn.dataset.action;
+        if (!action) return;
+
+        // 连续播放类的先全停，除了并发模式
+        if (!action.startsWith('concurrent')) {
+            if (['wail-std', 'wail-slow', 'wail-fast', 'yelp', 'hilo', 'phaser', 'pulse'].includes(action)) {
+                stopAllSounds();
+                btn.classList.add('active');
+                statusEl.textContent = btn.querySelector('strong').textContent;
+                statusEl.style.color = "#ffb74d";
+            }
+        }
+
+        switch (action) {
+            case 'horn': playHorn(); break;
+            // 广播由 touchstart / touchend 处理
+            case 'wail-std': startWail(1); break;
+            case 'wail-slow': startWail(0.6); break;
+            case 'wail-fast': startWail(1.8); break;
+            case 'yelp': startYelp(); break;
+            case 'hilo': startHiLo(); break;
+            case 'phaser': startPhaser(); break;
+            case 'pulse': startPulse(); break;
+            
+            case 'concurrent-a':
+                stopAllSounds();
+                btn.classList.add('active');
+                statusEl.textContent = "并发 A (巡航+急促)";
+                statusEl.style.color = "#ffb74d";
+                // 两路并发播放
+                startWail(1);
+                setTimeout(() => { if(audioCtx) startYelpVol(0.15); }, 100);
+                break;
+            case 'concurrent-b':
+                stopAllSounds();
+                btn.classList.add('active');
+                statusEl.textContent = "并发 B (急促+颤音)";
+                statusEl.style.color = "#ffb74d";
+                startYelp();
+                setTimeout(() => { if(audioCtx) startPhaserVol(0.15); }, 100);
+                break;
+        }
+    });
+
+    // 长按/松开的处理逻辑（手动电笛 + 车外广播）
+    function handlePointerDown(e) {
+        const btn = e.target.closest('.btn');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (!action) return;
+        
+        e.preventDefault(); // 阻止默认的选中、系统菜单
+        ensureRunning().then(() => {
+            if (isMuted) document.getElementById('stopAll').click();
+            
+            if (action === 'siren-high') {
+                btn.classList.add('active');
+                startSirenHigh();
+            } else if (action === 'siren-low') {
+                btn.classList.add('active');
+                startSirenLow();
+            } else if (action === 'broadcast') {
+                btn.classList.add('active');
+                playBroadcast(true);
+            }
+        });
+    }
+
+    function handlePointerUp(e) {
+        const btn = e.target.closest('.btn');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        
+        if (action === 'siren-high') {
+            btn.classList.remove('active');
+            stopSirenHigh();
+        } else if (action === 'siren-low') {
+            btn.classList.remove('active');
+            stopSirenLow();
+        } else if (action === 'broadcast') {
+            btn.classList.remove('active');
+            playBroadcast(false);
+        }
+    }
+
+    // 触摸和鼠标事件绑定
+    carGrid.addEventListener('pointerdown', handlePointerDown);
+    carGrid.addEventListener('pointerup', handlePointerUp);
+    carGrid.addEventListener('pointercancel', handlePointerUp);
+    carGrid.addEventListener('pointerleave', handlePointerUp);
+
+    // 辅助函数：带独立音量的并发播放
+    function startYelpVol(vol) {
+        const node = startOsc(800, 'sine', vol);
+        if (!node) return;
+        let goingUp = true;
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            node.osc.frequency.cancelScheduledValues(now);
+            node.osc.frequency.setValueAtTime(node.osc.frequency.value, now);
+            if (goingUp) node.osc.frequency.linearRampToValueAtTime(1500, now + 0.15);
+            else node.osc.frequency.linearRampToValueAtTime(800, now + 0.15);
+            goingUp = !goingUp;
+        }, 150);
+        activeIntervals.push(interval);
+    }
+
+    function startPhaserVol(vol) {
+        const node = startOsc(1000, 'sine', vol);
+        if (!node) return;
+        const interval = setInterval(() => {
+            if (!audioCtx) return;
+            node.osc.frequency.setTargetAtTime(900 + Math.random() * 200, audioCtx.currentTime, 0.02);
+        }, 30);
+        activeIntervals.push(interval);
+    }
+
+    // 预载音频上下文
+    getAudioContext();
+})();
+</script>
+</body>
+</html>
