@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Da0Mine · 粒子感应文字</title>
+<style>
+  :root { --hint: rgba(255, 255, 255, 0.4); }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #scene { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  .hint {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    color: var(--hint); font-size: 13px; letter-spacing: 0.12em;
+    user-select: none; pointer-events: none; transition: opacity .6s ease;
+  }
+  .hint.fade { opacity: 0; }
+  #input {
+    position: fixed; left: 20px; bottom: 20px; z-index: 10;
+    width: 260px; padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    color: #fff; font-size: 14px; letter-spacing: 0.04em;
+    outline: none; backdrop-filter: blur(4px);
+    transition: border-color .2s ease, background .2s ease;
+  }
+  #input:focus {
+    border-color: rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.1);
+  }
+  #input::placeholder { color: rgba(255, 255, 255, 0.35); }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <input id="input" type="text" placeholder="输入文字后回车，编译成点阵…" maxlength="20" autocomplete="off" spellcheck="false" />
+  <div class="hint" id="hint">移动 / 滑动鼠标，让粒子散开又聚拢</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("scene");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const hint = document.getElementById("hint");
+
+  let DPR = Math.min(window.devicePixelRatio || 1, 2);
+  let W = 0, H = 0;
+  let particles = [];
+  let TEXT = "Da0Mine";
+
+  const mouse = { x: -9999, y: -9999, active: false };
+
+  // 交互参数
+  const REPEL_RADIUS = 120;  // 鼠标排斥作用半径
+  const REPEL_FORCE  = 1.1;  // 排斥强度
+  const SPRING       = 0.02; // 回归原位的弹力（调小 → 汇聚更缓慢）
+  const FRICTION     = 0.86; // 阻尼
+
+  function buildParticles() {
+    // 离屏画布采样文字像素 → 生成点阵
+    const off = document.createElement("canvas");
+    const octx = off.getContext("2d");
+    off.width = W;
+    off.height = H;
+
+    // 自适应字号：让文字宽度约占画布 86%
+    let fontSize = Math.min(H * 0.34, W * 0.16);
+    fontSize = Math.max(40, fontSize);
+    const fontFamily = '"Arial Black", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif';
+
+    octx.fillStyle = "#fff";
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    octx.font = `bold ${fontSize}px ${fontFamily}`;
+
+    const maxW = W * 0.86;
+    const measured = octx.measureText(TEXT).width;
+    if (measured > maxW) {
+      fontSize *= maxW / measured;
+      octx.font = `bold ${fontSize}px ${fontFamily}`;
+    }
+    octx.fillText(TEXT, W / 2, H / 2);
+
+    const img = octx.getImageData(0, 0, W, H).data;
+
+    // 采样步长：随字号自适应，控制总点数
+    const gap = Math.max(4, Math.round(fontSize / 26));
+    particles = [];
+    for (let y = 0; y < H; y += gap) {
+      for (let x = 0; x < W; x += gap) {
+        if (img[(y * W + x) * 4 + 3] > 128) {
+          // 无开场动画：粒子初始即位于落点，直接成型
+          particles.push({
+            hx: x, hy: y,   // home 原位（初始即落点）
+            x: x, y: y,
+            vx: 0, vy: 0
+          });
+        }
+      }
+    }
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.floor(window.innerWidth);
+    H = Math.floor(window.innerHeight);
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    buildParticles();
+  }
+
+  function render() {
+    // 半透明拖尾，营造发光余晖
+    ctx.fillStyle = "rgba(0, 0, 0, 0.30)";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalCompositeOperation = "lighter";
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+
+      // 鼠标排斥力：靠近鼠标的粒子被推开
+      if (mouse.active) {
+        const dx = p.x - mouse.x;
+        const dy = p.y - mouse.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < REPEL_RADIUS && dist > 0.0001) {
+          const force = (REPEL_RADIUS - dist) / REPEL_RADIUS;
+          const ang = Math.atan2(dy, dx);
+          p.vx += Math.cos(ang) * force * REPEL_FORCE;
+          p.vy += Math.sin(ang) * force * REPEL_FORCE;
+        }
+      }
+
+      // 弹簧回归 + 阻尼
+      p.vx += (p.hx - p.x) * SPRING;
+      p.vy += (p.hy - p.y) * SPRING;
+      p.vx *= FRICTION;
+      p.vy *= FRICTION;
+      p.x += p.vx;
+      p.y += p.vy;
+
+      // 位移量决定亮度与大小（被推开的粒子更亮更大 → 强化感应反馈）
+      const disp = Math.min(1, Math.hypot(p.x - p.hx, p.y - p.hy) / 45);
+      const r = 1.2 + disp * 2.4;
+      const a = 0.6 + disp * 0.4;
+
+      // 白色粒子本身
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(255, 255, 255, ${a})`;
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    requestAnimationFrame(render);
+  }
+
+  // 事件
+  function setMouse(x, y) {
+    mouse.x = x; mouse.y = y; mouse.active = true;
+    if (hint && !hint.classList.contains("fade")) hint.classList.add("fade");
+  }
+  window.addEventListener("mousemove", (e) => setMouse(e.clientX, e.clientY));
+  window.addEventListener("mouseleave", () => { mouse.active = false; mouse.x = -9999; mouse.y = -9999; });
+  window.addEventListener("touchmove", (e) => {
+    if (e.touches[0]) setMouse(e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+  window.addEventListener("touchend", () => { mouse.active = false; mouse.x = -9999; mouse.y = -9999; });
+  window.addEventListener("resize", resize);
+
+  // 左下角输入框：回车后将文字编译成点阵
+  const inputEl = document.getElementById("input");
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const v = inputEl.value.trim();
+      if (v) { TEXT = v; buildParticles(); }
+      inputEl.blur();
+    }
+  });
+
+  resize();
+  render();
+})();
+</script>
+</body>
+</html>
